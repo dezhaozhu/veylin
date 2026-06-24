@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/db" },
+    { "path": "packages/tools" },
+    { "path": "packages/policy" },
+    { "path": "packages/agent-package" },
+    { "path": "packages/runtime" },
+    { "path": "packages/mcp-servers" },
+    { "path": "apps/server" }
+  ]
+}

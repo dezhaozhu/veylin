@@ -1,0 +1,513 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { UIMessage, useChat, CreateUIMessage } from "@ai-sdk/react";
+import { isToolUIPart, generateId } from "ai";
+import {
+  useExternalStoreRuntime,
+  useRuntimeAdapters,
+  type JoinStrategy,
+} from "@assistant-ui/core/react";
+import type { ToolExecutionStatus } from "@assistant-ui/core";
+import type {
+  ExternalStoreAdapter,
+  ExternalStoreSharedOptions,
+  ThreadHistoryAdapter,
+  AssistantRuntime,
+  ThreadMessage,
+  MessageFormatAdapter,
+  MessageFormatItem,
+  MessageFormatRepository,
+  AppendMessage,
+  RunConfig,
+  McpAppMetadata,
+} from "@assistant-ui/core";
+import {
+  getExternalStoreMessages,
+  pickExternalStoreSharedOptions,
+} from "@assistant-ui/core";
+import type { ReadonlyJSONObject } from "assistant-stream/utils";
+import { sliceMessagesUntil } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/sliceMessagesUntil";
+import { toCreateMessage } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/toCreateMessage";
+import { vercelAttachmentAdapter } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/vercelAttachmentAdapter";
+import { getVercelAIMessages } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/getVercelAIMessages";
+import { AISDKMessageConverter } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/convertMessage";
+import { wrapModelContentEnvelope } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/modelContentEnvelope";
+import {
+  type AISDKStorageFormat,
+  aiSDKV6FormatAdapter,
+} from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/adapters/aiSDKFormatAdapter";
+import {
+  useExternalHistory,
+  toExportedMessageRepository,
+} from './use-external-history';
+import { useStreamingTiming } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/use-chat/useStreamingTiming";
+import { stampMessageWithSentAt } from "./message-timestamp";
+import { createMessageQueueWithDrafts } from "./create-message-queue-with-drafts";
+import { setComposerQueueRuntime } from "./composer-queue-runtime";
+import { setBranchEdit } from "./context-sync-ref";
+import { prepareThreadRewind } from "./prepare-thread-rewind";
+import { setChatSettings } from "./chat-settings";
+import { requestChatStop } from "./chat-stop";
+
+export type CustomToCreateMessageFunction = <
+  UI_MESSAGE extends UIMessage = UIMessage,
+>(
+  message: AppendMessage,
+) => CreateUIMessage<UI_MESSAGE>;
+
+const toUIMessage = <UI_MESSAGE extends UIMessage>(
+  createMessage: CreateUIMessage<UI_MESSAGE>,
+  fallbackRole: UI_MESSAGE["role"],
+): UI_MESSAGE =>
+  ({
+    ...createMessage,
+    id: createMessage.id ?? generateId(),
+    role: createMessage.role ?? fallbackRole,
+  }) as UI_MESSAGE;
+
+export type AISDKRuntimeAdapter = ExternalStoreSharedOptions & {
+  adapters?:
+    | (NonNullable<ExternalStoreAdapter["adapters"]> & {
+        history?: ThreadHistoryAdapter | undefined;
+      })
+    | undefined;
+  toCreateMessage?: CustomToCreateMessageFunction;
+  /**
+   * Whether to automatically cancel pending interactive tool calls when the user sends a new message.
+   *
+   * When enabled (default), the pending tool calls will be marked as failed with an error message
+   * indicating the user cancelled the tool call by sending a new message.
+   *
+   * @default true
+   */
+  cancelPendingToolCallsOnSend?: boolean | undefined;
+  /**
+   * Called when `runtime.thread.resumeRun(config)` is invoked.
+   *
+   * When omitted, `resumeRun` throws `"Runtime does not support resuming runs."`.
+   * Provide this to bridge resume invocations into a custom replay channel
+   * (for example, an SSE reconnect endpoint keyed by turn id).
+   */
+  onResume?: ExternalStoreAdapter["onResume"];
+  /**
+   * How consecutive assistant messages are rendered.
+   *
+   * `"concat-content"` (the default) merges them into a single thread message.
+   * `"none"` keeps each assistant message as its own thread message, which is
+   * useful when a backend persists proactive or consecutive assistant messages
+   * as separate entries.
+   */
+  joinStrategy?: JoinStrategy | undefined;
+  /** Server thread id for stop/sync before rewind. */
+  getThreadId?: (() => string | undefined) | undefined;
+};
+
+export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessage>(
+  chatHelpers: ReturnType<typeof useChat<UI_MESSAGE>>,
+  adapter: AISDKRuntimeAdapter = {},
+) => {
+  const {
+    adapters,
+    toCreateMessage: customToCreateMessage,
+    cancelPendingToolCallsOnSend = true,
+    onResume,
+    joinStrategy,
+    getThreadId,
+  } = adapter;
+  const contextAdapters = useRuntimeAdapters();
+  const [toolStatuses, setToolStatuses] = useState<
+    Record<string, ToolExecutionStatus>
+  >({});
+  const toolArgsKeyOrderCacheRef = useRef<Map<string, Map<string, string[]>>>(
+    new Map(),
+  );
+  const toolLastInputCacheRef = useRef<Map<string, ReadonlyJSONObject>>(
+    new Map(),
+  );
+  const mcpAppMetadataCacheRef = useRef<Map<string, McpAppMetadata>>(new Map());
+  const lastRunConfigRef = useRef<RunConfig | undefined>(undefined);
+
+  const hasExecutingTools = Object.values(toolStatuses).some(
+    (s) => s?.type === "executing",
+  );
+  const isRunning =
+    chatHelpers.status === "submitted" ||
+    chatHelpers.status === "streaming" ||
+    hasExecutingTools;
+
+  const messageTiming = useStreamingTiming(chatHelpers.messages, isRunning);
+
+  // Flag the streaming message optimistic: its id can be swapped for a server
+  // id mid-run, and the repository then drops the orphaned pre-swap id (#4037).
+  const lastMessage = chatHelpers.messages.at(-1);
+  const optimisticMessageId =
+    isRunning && lastMessage?.role === "assistant" ? lastMessage.id : undefined;
+
+  const messages = AISDKMessageConverter.useThreadMessages({
+    isRunning,
+    messages: chatHelpers.messages,
+    joinStrategy,
+    metadata: useMemo(
+      () => ({
+        toolStatuses,
+        messageTiming,
+        toolArgsKeyOrderCache: toolArgsKeyOrderCacheRef.current,
+        toolLastInputCache: toolLastInputCacheRef.current,
+        mcpAppMetadataCache: mcpAppMetadataCacheRef.current,
+        ...(optimisticMessageId && { optimisticMessageId }),
+        ...(chatHelpers.error && { error: chatHelpers.error.message }),
+      }),
+      [toolStatuses, messageTiming, optimisticMessageId, chatHelpers.error],
+    ),
+  });
+
+  const [runtimeRef] = useState(() => ({
+    get current(): AssistantRuntime {
+      return runtime;
+    },
+  }));
+
+  const { isLoading, deleteMessage: deleteHistoryMessage } = useExternalHistory(
+    runtimeRef,
+    adapters?.history ?? contextAdapters?.history,
+    AISDKMessageConverter.toThreadMessages as (
+      messages: UI_MESSAGE[],
+    ) => ThreadMessage[],
+    aiSDKV6FormatAdapter as MessageFormatAdapter<
+      UI_MESSAGE,
+      AISDKStorageFormat
+    >,
+    (messages) => {
+      chatHelpers.setMessages(messages);
+    },
+  );
+
+  const completePendingToolCalls = async () => {
+    if (!cancelPendingToolCallsOnSend) return;
+
+    chatHelpers.setMessages((messages) => {
+      const lastMessage = messages.at(-1);
+      if (lastMessage?.role !== "assistant") return messages;
+
+      let hasChanges = false;
+      const parts = lastMessage.parts?.map((part) => {
+        if (!isToolUIPart(part)) return part;
+        if (part.state === "output-available" || part.state === "output-error")
+          return part;
+
+        hasChanges = true;
+        const { approval: _approval, ...rest } = part;
+        return {
+          ...rest,
+          state: "output-error" as const,
+          errorText: "User cancelled tool call by sending a new message.",
+        };
+      });
+
+      if (!hasChanges) return messages;
+      return [...messages.slice(0, -1), { ...lastMessage, parts }];
+    });
+  };
+
+  const chatHelpersRef = useRef(chatHelpers);
+  chatHelpersRef.current = chatHelpers;
+
+  const dispatchNewRef = useRef<(message: AppendMessage) => Promise<void>>(
+    async () => {},
+  );
+
+  const [queueCtrl] = useState(() => {
+    let ctrl!: ReturnType<typeof createMessageQueueWithDrafts>;
+    ctrl = createMessageQueueWithDrafts({
+      run: (message, { steer }) => {
+        ctrl.notifyBusy();
+        void (async () => {
+          try {
+            if (steer) {
+              chatHelpersRef.current.stop();
+              const threadId = chatHelpersRef.current.id;
+              if (threadId) {
+                try {
+                  await requestChatStop(threadId);
+                } catch (err) {
+                  console.warn("[chat] steer stop failed", err);
+                }
+              }
+            }
+            await dispatchNewRef.current(message);
+          } finally {
+            ctrl.notifyIdle();
+          }
+        })();
+      },
+      cancel: () => {
+        chatHelpersRef.current.stop();
+        const threadId = chatHelpersRef.current.id;
+        if (threadId) {
+          void requestChatStop(threadId).catch((err) => {
+            console.warn("[chat] queue cancel stop failed", err);
+          });
+        }
+      },
+    });
+    return ctrl;
+  });
+
+  const [, queueVersion] = useState(0);
+  useEffect(() => queueCtrl.subscribe(() => queueVersion((n) => n + 1)), [queueCtrl]);
+
+  useEffect(() => {
+    setComposerQueueRuntime({
+      getQueuedMessage: (id) => queueCtrl.getQueuedMessage(id),
+      popQueuedMessage: (id) => queueCtrl.popQueuedMessage(id),
+    });
+    return () => setComposerQueueRuntime(null);
+  }, [queueCtrl]);
+
+  const stampedAssistantIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!isRunning) return;
+    const last = chatHelpers.messages.at(-1);
+    if (last?.role !== "assistant") return;
+    if (stampedAssistantIdsRef.current.has(last.id)) return;
+    const custom = (last.metadata as { custom?: { sentAt?: number } } | undefined)
+      ?.custom;
+    if (typeof custom?.sentAt === "number") {
+      stampedAssistantIdsRef.current.add(last.id);
+      return;
+    }
+    stampedAssistantIdsRef.current.add(last.id);
+    chatHelpers.setMessages((current) =>
+      current.map((m) =>
+        m.id === last.id ? stampMessageWithSentAt(m) : m,
+      ),
+    );
+  }, [isRunning, chatHelpers.messages, chatHelpers]);
+
+  const handleNew = async (message: AppendMessage) => {
+    const createMessage = (
+      customToCreateMessage ?? toCreateMessage
+    )<UI_MESSAGE>(message);
+
+    if (!(message.startRun ?? message.role === "user")) {
+      chatHelpers.setMessages((current) => [
+        ...current,
+        stampMessageWithSentAt(
+          toUIMessage<UI_MESSAGE>(createMessage, message.role),
+        ),
+      ]);
+      return;
+    }
+
+    lastRunConfigRef.current = message.runConfig;
+    await completePendingToolCalls();
+    await chatHelpers.sendMessage(stampMessageWithSentAt(createMessage), {
+      metadata: message.runConfig,
+    });
+    setChatSettings({ pendingSkill: null });
+  };
+
+  dispatchNewRef.current = handleNew;
+
+  const runtime = useExternalStoreRuntime({
+    isRunning,
+    messages,
+    unstable_enableToolInvocations: true,
+    setToolStatuses,
+    queue: queueCtrl.adapter,
+    setMessages: (messages) =>
+      chatHelpers.setMessages(
+        messages
+          .map(getVercelAIMessages<UI_MESSAGE>)
+          .filter(Boolean)
+          .flat(),
+      ),
+    onImport: (messages) =>
+      chatHelpers.setMessages(
+        messages
+          .map(getVercelAIMessages<UI_MESSAGE>)
+          .filter(Boolean)
+          .flat(),
+      ),
+    onExportExternalState: (): MessageFormatRepository<UI_MESSAGE> => {
+      const exported = runtimeRef.current.thread.export();
+
+      const expandedMessages: MessageFormatItem<UI_MESSAGE>[] = [];
+      const lastInnerIdMap = new Map<string, string>();
+
+      for (const item of exported.messages) {
+        const innerMessages = getExternalStoreMessages<UI_MESSAGE>(
+          item.message,
+        );
+        let parentId =
+          item.parentId != null
+            ? (lastInnerIdMap.get(item.parentId) ?? item.parentId)
+            : null;
+        for (const innerMessage of innerMessages) {
+          expandedMessages.push({ parentId, message: innerMessage });
+          parentId = aiSDKV6FormatAdapter.getId(innerMessage as UIMessage);
+        }
+        if (innerMessages.length > 0) {
+          lastInnerIdMap.set(
+            item.message.id,
+            aiSDKV6FormatAdapter.getId(
+              innerMessages[innerMessages.length - 1]! as UIMessage,
+            ),
+          );
+        }
+      }
+
+      const result: MessageFormatRepository<UI_MESSAGE> = {
+        messages: expandedMessages,
+      };
+
+      if (exported.headId != null) {
+        result.headId = lastInnerIdMap.get(exported.headId) ?? exported.headId;
+      }
+
+      return result;
+    },
+    onLoadExternalState: (repo: MessageFormatRepository<UI_MESSAGE>) => {
+      // Convert MessageFormatRepository to ExportedMessageRepository
+      const exportedRepo = toExportedMessageRepository(
+        AISDKMessageConverter.toThreadMessages,
+        repo,
+      );
+
+      // Import into the thread's MessageRepository
+      runtimeRef.current.thread.import(exportedRepo);
+    },
+    onCancel: async () => {
+      const restore = queueCtrl.takeCancelRestorePrompts();
+      const threadId = chatHelpers.id;
+      if (threadId) {
+        try {
+          await requestChatStop(threadId);
+        } catch (err) {
+          console.warn("[chat] cancel stop failed", err);
+        }
+      }
+      chatHelpers.stop();
+      if (restore.length > 0) {
+        const combined = restore.join("\n\n");
+        queueMicrotask(() => {
+          runtimeRef.current.thread.composer.setText(combined);
+        });
+      }
+    },
+    onNew: handleNew,
+    onEdit: async (message) => {
+      const createMessage = (
+        customToCreateMessage ?? toCreateMessage
+      )<UI_MESSAGE>(message);
+
+      const shouldRun = message.startRun ?? message.role === "user";
+
+      if (!shouldRun) {
+        chatHelpers.setMessages((current) => [
+          ...sliceMessagesUntil(current, message.parentId),
+          toUIMessage<UI_MESSAGE>(createMessage, message.role),
+        ]);
+        return;
+      }
+
+      await prepareThreadRewind(getThreadId?.(), {
+        isRunning,
+        stop: () => chatHelpers.stop(),
+      });
+      setBranchEdit(true);
+
+      lastRunConfigRef.current = message.runConfig;
+      await completePendingToolCalls();
+      chatHelpers.setMessages((current) =>
+        sliceMessagesUntil(current, message.parentId),
+      );
+      await chatHelpers.sendMessage(createMessage, {
+        metadata: message.runConfig,
+      });
+      setChatSettings({ pendingSkill: null });
+    },
+    onDelete: async (messageId) => {
+      const threadMessages = runtimeRef.current.thread.getState().messages;
+      const messageIndex = threadMessages.findIndex(
+        (message) => message.id === messageId,
+      );
+      if (messageIndex === -1) return;
+
+      await deleteHistoryMessage(messageId);
+
+      const deleteIds = new Set(
+        getExternalStoreMessages<UI_MESSAGE>(threadMessages[messageIndex]!).map(
+          (message) => message.id,
+        ),
+      );
+      chatHelpers.setMessages((current) =>
+        current.filter((message) => !deleteIds.has(message.id)),
+      );
+    },
+    onReload: async (parentId: string | null, config) => {
+      await prepareThreadRewind(getThreadId?.(), {
+        isRunning,
+        stop: () => chatHelpers.stop(),
+      });
+      setBranchEdit(true);
+
+      lastRunConfigRef.current = config.runConfig;
+      const newMessages = sliceMessagesUntil(chatHelpers.messages, parentId);
+      chatHelpers.setMessages(newMessages);
+
+      await chatHelpers.regenerate({ metadata: config.runConfig });
+      setChatSettings({ pendingSkill: null });
+    },
+    onAddToolResult: ({
+      toolCallId,
+      toolName,
+      result,
+      isError,
+      modelContent,
+    }) => {
+      const options = { metadata: lastRunConfigRef.current };
+      if (isError) {
+        chatHelpers.addToolOutput({
+          state: "output-error",
+          tool: toolName ?? toolCallId,
+          toolCallId,
+          errorText:
+            typeof result === "string" ? result : JSON.stringify(result),
+          options,
+        });
+      } else {
+        const output =
+          modelContent !== undefined
+            ? wrapModelContentEnvelope(result, modelContent)
+            : result;
+        chatHelpers.addToolResult({
+          tool: toolName,
+          toolCallId,
+          output,
+          options,
+        });
+      }
+    },
+    onRespondToToolApproval: ({ approvalId, approved, reason }) => {
+      void chatHelpers.addToolApprovalResponse({
+        id: approvalId,
+        approved,
+        ...(reason != null && { reason }),
+        options: { metadata: lastRunConfigRef.current },
+      });
+    },
+    ...pickExternalStoreSharedOptions(adapter),
+    ...(onResume && { onResume }),
+    adapters: {
+      attachments: vercelAttachmentAdapter,
+      ...contextAdapters,
+      ...adapters,
+    },
+    isLoading,
+    extras: queueVersion,
+  });
+
+  return runtime;
+};
