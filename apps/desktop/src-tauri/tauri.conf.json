@@ -7,7 +7,7 @@
     "frontendDist": "../../web/dist",
     "devUrl": "http://localhost:5174",
     "beforeDevCommand": "npm run -w @veylin/web dev",
-    "beforeBuildCommand": "VITE_API_URL=http://127.0.0.1:8787 npm run -w @veylin/web build && npm run -w @veylin/server build:sidecar"
+    "beforeBuildCommand": "node scripts/before-build.mjs"
   },
   "app": {
     "windows": [
