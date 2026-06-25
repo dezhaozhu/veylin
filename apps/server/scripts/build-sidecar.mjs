@@ -75,31 +75,51 @@ const NATIVE_PRUNE = {
     surrealdbNpm: 'darwin-arm64',
     surrealdbPkgs: ['node', 'node-darwin-arm64'],
     onnxKeep: ['darwin', 'arm64'],
-    napiRsCanvas: 'canvas-darwin-arm64',
+    scopedKeeps: {
+      '@napi-rs': ['canvas', 'wasm-runtime', 'canvas-darwin-arm64'],
+      '@anush008': ['tokenizers', 'tokenizers-darwin-universal'],
+      '@libsql': ['client', 'core', 'hrana-client', 'isomorphic-ws', 'darwin-arm64'],
+    },
   },
   'x86_64-apple-darwin': {
     surrealdbNpm: 'darwin-x64',
     surrealdbPkgs: ['node', 'node-darwin-x64'],
     onnxKeep: ['darwin', 'x64'],
-    napiRsCanvas: 'canvas-darwin-x64',
+    scopedKeeps: {
+      '@napi-rs': ['canvas', 'wasm-runtime', 'canvas-darwin-x64'],
+      '@anush008': ['tokenizers', 'tokenizers-darwin-universal'],
+      '@libsql': ['client', 'core', 'hrana-client', 'isomorphic-ws', 'darwin-x64'],
+    },
   },
   'aarch64-unknown-linux-gnu': {
     surrealdbNpm: 'linux-arm64-gnu',
     surrealdbPkgs: ['node', 'node-linux-arm64-gnu'],
     onnxKeep: ['linux', 'arm64'],
-    napiRsCanvas: 'canvas-linux-arm64-gnu',
+    scopedKeeps: {
+      '@napi-rs': ['canvas', 'wasm-runtime', 'canvas-linux-arm64-gnu'],
+      '@anush008': ['tokenizers', 'tokenizers-linux-arm64-gnu'],
+      '@libsql': ['client', 'core', 'hrana-client', 'isomorphic-ws', 'linux-arm64-gnu'],
+    },
   },
   'x86_64-unknown-linux-gnu': {
     surrealdbNpm: 'linux-x64-gnu',
     surrealdbPkgs: ['node', 'node-linux-x64-gnu'],
     onnxKeep: ['linux', 'x64'],
-    napiRsCanvas: 'canvas-linux-x64-gnu',
+    scopedKeeps: {
+      '@napi-rs': ['canvas', 'wasm-runtime', 'canvas-linux-x64-gnu'],
+      '@anush008': ['tokenizers', 'tokenizers-linux-x64-gnu'],
+      '@libsql': ['client', 'core', 'hrana-client', 'isomorphic-ws', 'linux-x64-gnu'],
+    },
   },
   'x86_64-pc-windows-msvc': {
     surrealdbNpm: 'win32-x64-msvc',
     surrealdbPkgs: ['node', 'node-win32-x64-msvc'],
     onnxKeep: ['win32', 'x64'],
-    napiRsCanvas: 'canvas-win32-x64-msvc',
+    scopedKeeps: {
+      '@napi-rs': ['canvas', 'wasm-runtime', 'canvas-win32-x64-msvc'],
+      '@anush008': ['tokenizers', 'tokenizers-win32-x64-msvc'],
+      '@libsql': ['client', 'core', 'hrana-client', 'isomorphic-ws', 'win32-x64-msvc'],
+    },
   },
 };
 
@@ -126,6 +146,21 @@ function pruneDirEntries(dir, keep) {
   for (const entry of readdirSync(dir)) {
     if (!keep.has(entry)) {
       rmSync(join(dir, entry), { recursive: true, force: true });
+    }
+  }
+}
+
+/** Remove any leftover musl native addons on glibc Linux targets. */
+function pruneMuslSafetyNet(nodeModules, triple) {
+  if (!triple.includes('gnu')) return;
+  for (const scope of readdirSync(nodeModules)) {
+    if (!scope.startsWith('@')) continue;
+    const scopeDir = join(nodeModules, scope);
+    for (const pkg of readdirSync(scopeDir)) {
+      if (pkg.includes('-musl')) {
+        rmSync(join(scopeDir, pkg), { recursive: true, force: true });
+        console.log(`[build-sidecar] removed musl package ${scope}/${pkg}`);
+      }
     }
   }
 }
@@ -221,10 +256,12 @@ function pruneSidecarForTarget(sidecarRoot, triple) {
   pruneDirEntries(join(nodeModules, '@surrealdb', 'node', 'npm'), new Set([cfg.surrealdbNpm]));
   pruneDirEntries(join(nodeModules, '@surrealdb'), new Set(cfg.surrealdbPkgs));
 
-  // Keep only the target-matching @napi-rs/canvas native variant. On Linux, npm
-  // installs both the gnu and musl x64 builds; the musl .node has no glibc/ldd
-  // resolution and makes linuxdeploy abort while bundling the AppImage.
-  pruneDirEntries(join(nodeModules, '@napi-rs'), new Set(['canvas', 'wasm-runtime', cfg.napiRsCanvas]));
+  // Keep only target-matching native addon variants. On Linux, npm installs both
+  // gnu and musl builds; musl .node files break linuxdeploy's ldd during AppImage bundling.
+  for (const [scope, keepList] of Object.entries(cfg.scopedKeeps)) {
+    pruneDirEntries(join(nodeModules, scope), new Set(keepList));
+  }
+  pruneMuslSafetyNet(nodeModules, triple);
 
   const onnxRoot = join(nodeModules, 'onnxruntime-node', 'bin', 'napi-v6');
   if (existsSync(onnxRoot)) {
