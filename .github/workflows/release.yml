@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   release:
     name: Build desktop (${{ matrix.platform }})
@@ -24,11 +28,11 @@ jobs:
             args: '--target x86_64-apple-darwin'
             targetTriple: x86_64-apple-darwin
           - platform: ubuntu-22.04
-            args: ''
-            targetTriple: ''
+            args: '--target x86_64-unknown-linux-gnu'
+            targetTriple: x86_64-unknown-linux-gnu
           - platform: windows-latest
-            args: ''
-            targetTriple: ''
+            args: '--target x86_64-pc-windows-msvc'
+            targetTriple: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +46,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ contains(matrix.args, 'aarch64-apple-darwin') && 'aarch64-apple-darwin' || contains(matrix.args, 'x86_64-apple-darwin') && 'x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.targetTriple }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2

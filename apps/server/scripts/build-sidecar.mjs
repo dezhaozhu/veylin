@@ -58,8 +58,8 @@ if (!nodePlatform) {
 }
 
 const isWindows = nodePlatform.startsWith('win');
-const binBase = isWindows ? 'veylin-server.exe' : 'veylin-server';
-const binName = `${binBase}-${targetTriple}`;
+const binBase = 'veylin-server';
+const binName = `${binBase}-${targetTriple}${isWindows ? '.exe' : ''}`;
 
 function resolveTargetTriple() {
   for (const key of ['CARGO_BUILD_TARGET', 'TAURI_ENV_TARGET_TRIPLE']) {
@@ -373,6 +373,9 @@ const baseLink = join(binariesDir, binBase);
 rmSync(baseLink, { force: true });
 cpSync(launcherPath, baseLink);
 if (!isWindows) chmodSync(baseLink, 0o755);
+if (isWindows) {
+  cpSync(launcherPath, join(binariesDir, `${binBase}.exe`));
+}
 
 console.log(`[build-sidecar] wrote ${launcherPath}`);
 console.log(`[build-sidecar] bundle at ${outDir}`);
