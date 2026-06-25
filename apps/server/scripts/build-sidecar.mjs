@@ -75,26 +75,31 @@ const NATIVE_PRUNE = {
     surrealdbNpm: 'darwin-arm64',
     surrealdbPkgs: ['node', 'node-darwin-arm64'],
     onnxKeep: ['darwin', 'arm64'],
+    napiRsCanvas: 'canvas-darwin-arm64',
   },
   'x86_64-apple-darwin': {
     surrealdbNpm: 'darwin-x64',
     surrealdbPkgs: ['node', 'node-darwin-x64'],
     onnxKeep: ['darwin', 'x64'],
+    napiRsCanvas: 'canvas-darwin-x64',
   },
   'aarch64-unknown-linux-gnu': {
     surrealdbNpm: 'linux-arm64-gnu',
     surrealdbPkgs: ['node', 'node-linux-arm64-gnu'],
     onnxKeep: ['linux', 'arm64'],
+    napiRsCanvas: 'canvas-linux-arm64-gnu',
   },
   'x86_64-unknown-linux-gnu': {
     surrealdbNpm: 'linux-x64-gnu',
     surrealdbPkgs: ['node', 'node-linux-x64-gnu'],
     onnxKeep: ['linux', 'x64'],
+    napiRsCanvas: 'canvas-linux-x64-gnu',
   },
   'x86_64-pc-windows-msvc': {
     surrealdbNpm: 'win32-x64-msvc',
     surrealdbPkgs: ['node', 'node-win32-x64-msvc'],
     onnxKeep: ['win32', 'x64'],
+    napiRsCanvas: 'canvas-win32-x64-msvc',
   },
 };
 
@@ -215,6 +220,11 @@ function pruneSidecarForTarget(sidecarRoot, triple) {
 
   pruneDirEntries(join(nodeModules, '@surrealdb', 'node', 'npm'), new Set([cfg.surrealdbNpm]));
   pruneDirEntries(join(nodeModules, '@surrealdb'), new Set(cfg.surrealdbPkgs));
+
+  // Keep only the target-matching @napi-rs/canvas native variant. On Linux, npm
+  // installs both the gnu and musl x64 builds; the musl .node has no glibc/ldd
+  // resolution and makes linuxdeploy abort while bundling the AppImage.
+  pruneDirEntries(join(nodeModules, '@napi-rs'), new Set(['canvas', 'wasm-runtime', cfg.napiRsCanvas]));
 
   const onnxRoot = join(nodeModules, 'onnxruntime-node', 'bin', 'napi-v6');
   if (existsSync(onnxRoot)) {
