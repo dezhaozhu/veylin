@@ -125,6 +125,54 @@ function pruneDirEntries(dir, keep) {
   }
 }
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function downloadFileWithRetry(url, dest, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await pipeline(Readable.fromWeb(res.body), createWriteStream(dest));
+      return;
+    } catch (error) {
+      lastError = error;
+      rmSync(dest, { force: true });
+      if (attempt < attempts) {
+        console.warn(`[build-sidecar] download failed (${attempt}/${attempts}), retrying: ${url}`);
+        await delay(1000 * attempt);
+      }
+    }
+  }
+  throw new Error(`Failed to download ${url}: ${lastError?.message ?? lastError}`);
+}
+
+function pruneOnnxGpuProviders(onnxBinDir) {
+  if (!existsSync(onnxBinDir)) return 0;
+
+  const gpuProviderNames = [
+    'libonnxruntime_providers_cuda',
+    'libonnxruntime_providers_tensorrt',
+    'libonnxruntime_providers_openvino',
+    'libonnxruntime_providers_rocm',
+    'onnxruntime_providers_cuda',
+    'onnxruntime_providers_tensorrt',
+    'onnxruntime_providers_openvino',
+    'onnxruntime_providers_rocm',
+  ];
+  let removed = 0;
+
+  walkFiles(onnxBinDir, (file) => {
+    const name = file.split(/[\\/]/).pop() ?? '';
+    if (gpuProviderNames.some((provider) => name.includes(provider))) {
+      rmSync(file, { force: true });
+      removed += 1;
+    }
+  });
+
+  return removed;
+}
+
 function stripSidecarArtifacts(sidecarRoot) {
   const dropDirs = new Set(['test', 'tests', '__tests__', 'benchmark', 'benchmarks', 'example', 'examples']);
   const nodeModules = join(sidecarRoot, 'node_modules');
@@ -182,6 +230,10 @@ function pruneSidecarForTarget(sidecarRoot, triple) {
           rmSync(join(osPath, arch), { recursive: true, force: true });
         }
       }
+    }
+    const removedGpuProviders = pruneOnnxGpuProviders(join(onnxRoot, keepOs, keepArch));
+    if (removedGpuProviders > 0) {
+      console.log(`[build-sidecar] removed ${removedGpuProviders} ONNX Runtime GPU provider binaries`);
     }
   }
 
@@ -430,9 +482,7 @@ async function embedNodeRuntime(platform, destRoot) {
     const url = `https://nodejs.org/dist/v${NODE_VERSION}/${archiveName}.${ext}`;
     const archivePath = join(cacheRoot, `${archiveName}.${ext}`);
     console.log(`[build-sidecar] downloading ${url}`);
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Failed to download Node.js: ${res.status} ${url}`);
-    await pipeline(Readable.fromWeb(res.body), createWriteStream(archivePath));
+    await downloadFileWithRetry(url, archivePath);
 
     if (isWin) {
       execSync(`unzip -q -o "${archivePath}" -d "${cacheRoot}"`, { stdio: 'inherit' });

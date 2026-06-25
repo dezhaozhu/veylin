@@ -28,7 +28,7 @@ jobs:
             args: '--target x86_64-apple-darwin'
             targetTriple: x86_64-apple-darwin
           - platform: ubuntu-22.04
-            args: '--target x86_64-unknown-linux-gnu --verbose'
+            args: '--target x86_64-unknown-linux-gnu --bundles deb,appimage --verbose'
             targetTriple: x86_64-unknown-linux-gnu
             noStrip: true
           - platform: windows-latest
