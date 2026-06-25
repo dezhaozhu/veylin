@@ -62,8 +62,10 @@ const binBase = isWindows ? 'veylin-server.exe' : 'veylin-server';
 const binName = `${binBase}-${targetTriple}`;
 
 function resolveTargetTriple() {
-  const fromCargo = process.env.CARGO_BUILD_TARGET?.trim();
-  if (fromCargo) return fromCargo;
+  for (const key of ['CARGO_BUILD_TARGET', 'TAURI_ENV_TARGET_TRIPLE']) {
+    const value = process.env[key]?.trim();
+    if (value) return value;
+  }
   return execSync('rustc --print host-tuple', { encoding: 'utf8' }).trim();
 }
 

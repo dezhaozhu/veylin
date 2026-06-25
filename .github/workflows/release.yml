@@ -17,12 +17,16 @@ jobs:
         include:
           - platform: macos-latest
             args: '--target aarch64-apple-darwin'
+            targetTriple: aarch64-apple-darwin
           - platform: macos-latest
             args: '--target x86_64-apple-darwin'
+            targetTriple: x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: ''
+            targetTriple: ''
           - platform: windows-latest
             args: ''
+            targetTriple: ''
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +61,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI: true
+          CARGO_BUILD_TARGET: ${{ matrix.targetTriple }}
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
