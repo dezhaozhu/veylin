@@ -16,6 +16,10 @@ function parseHttpChatError(raw: string): FormattedChatError | null {
   const status = Number(match[1]);
   const serverDetail = match[2]?.trim();
 
+  if (serverDetail && /model_not_configured|Model API key is not configured/i.test(serverDetail)) {
+    return { title: ce('modelNotConfigured.title'), detail: ce('modelNotConfigured.detail') };
+  }
+
   const byStatus: Record<number, { title: string; detail: string }> = {
     429: { title: ce('rateLimited.title'), detail: ce('rateLimited.detail') },
     500: { title: ce('serverError.title'), detail: ce('serverError.detail') },
@@ -84,6 +88,9 @@ export function formatChatError(error: unknown): FormattedChatError | null {
   }
   if (/401|403|unauthorized/i.test(raw)) {
     return { title: ce('unauthorized.title'), detail: ce('unauthorized.detail') };
+  }
+  if (/model_not_configured|Model API key is not configured/i.test(raw)) {
+    return { title: ce('modelNotConfigured.title'), detail: ce('modelNotConfigured.detail') };
   }
 
   if (!raw) {

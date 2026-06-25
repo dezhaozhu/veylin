@@ -14,7 +14,20 @@
   "threadList": {
     "running": "进行中",
     "finished": "已结束",
-    "interrupted": "已中断"
+    "interrupted": "已中断",
+    "today": "今天",
+    "yesterday": "昨天",
+    "earlier": "更早",
+    "newChat": "新对话",
+    "loading": "加载对话中",
+    "moreOptions": "更多选项",
+    "archive": "归档",
+    "delete": "删除"
+  },
+  "header": {
+    "back": "后退",
+    "forward": "前进",
+    "newChat": "新对话"
   },
   "status": {
     "allDone": "全部完成"
@@ -48,12 +61,44 @@
     "urlPlaceholder": "https://内网地址 或 localhost:8080",
     "open": "打开",
     "lastOpened": "上次打开：",
+    "empty": "输入网址后，网页会嵌入显示在这里",
     "requiresDesktopOpen": "打开内网网页需要桌面端（Tauri）。纯浏览器 dev 模式无法停靠 webview，请使用 npm run dev:desktop。",
     "requiresDesktopRead": "读取网页内容需要桌面端（Tauri）；公开 URL 可改用 web_fetch 工具。"
   },
   "sidebar": {
     "resizeLeft": "调整左侧栏宽度",
-    "resizeRight": "调整右侧栏宽度"
+    "resizeRight": "调整右侧栏宽度",
+    "customize": "定制",
+    "automate": "自动化"
+  },
+  "userMenu": {
+    "settings": "设置",
+    "logOut": "退出登录",
+    "language": "语言"
+  },
+  "settings": {
+    "navTitle": "设置",
+    "general": {
+      "nav": "通用",
+      "title": "通用"
+    },
+    "language": {
+      "title": "语言",
+      "hint": "应用 UI 语言",
+      "closeMenu": "关闭语言菜单"
+    },
+    "models": {
+      "nav": "模型",
+      "title": "模型"
+    }
+  },
+  "customize": {
+    "title": "定制",
+    "skills": "技能",
+    "rules": "规则",
+    "mcp": "MCP 服务",
+    "plugins": "插件",
+    "soon": "即将推出"
   },
   "extract": {
     "noText": "{{name}} 未提取到文本内容",
@@ -90,6 +135,7 @@
     "network": { "title": "网络异常", "detail": "出现网络问题，请检查连接。" },
     "busyRetry": { "title": "服务繁忙", "detail": "请稍后重试。" },
     "unauthorized": { "title": "未授权", "detail": "会话无效或已过期，请重新登录。" },
+    "modelNotConfigured": { "title": "模型未配置", "detail": "请先打开「设置 -> Models」并配置你自己的 API Key。" },
     "unknown": { "detail": "出现问题，请重试。" },
     "retryLater": "请稍后重试。",
     "connectFailed": { "title": "连接失败" }

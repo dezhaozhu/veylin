@@ -56,6 +56,23 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function withRetry<T>(fn: () => Promise<T>, attempts: number): Promise<T> {
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (i < attempts - 1) await sleep(400 * (i + 1));
+    }
+  }
+  throw lastError;
+}
+
 function truncateFilename(name: string, max = 28): string {
   if (name.length <= max) return name;
   const ext = name.includes('.') ? name.slice(name.lastIndexOf('.')) : '';
@@ -195,14 +212,18 @@ export function RagPanel(_props: PanelContentProps) {
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
   }, [graph.nodes]);
 
-  async function refresh() {
+  async function refresh(options: { showError?: boolean; attempts?: number } = {}) {
+    const { showError = false, attempts = 1 } = options;
     setRefreshing(true);
     try {
-      const [refs, docs, kg] = await Promise.all([
-        fetchJson<{ references: Reference[] }>('/api/rag/references'),
-        fetchJson<{ documents: DocumentRow[] }>('/api/rag/documents'),
-        fetchJson<{ entities: GraphNode[]; edges: GraphEdge[] }>('/api/kg'),
-      ]);
+      const [refs, docs, kg] = await withRetry(
+        () => Promise.all([
+          fetchJson<{ references: Reference[] }>('/api/rag/references'),
+          fetchJson<{ documents: DocumentRow[] }>('/api/rag/documents'),
+          fetchJson<{ entities: GraphNode[]; edges: GraphEdge[] }>('/api/kg'),
+        ]),
+        attempts,
+      );
       setReferences(refs.references ?? []);
       setDocuments(docs.documents ?? []);
 
@@ -228,14 +249,18 @@ export function RagPanel(_props: PanelContentProps) {
       }
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (showError) {
+        setError(err instanceof Error ? err.message : String(err));
+      } else {
+        setError(null);
+      }
     } finally {
       setRefreshing(false);
     }
   }
 
   useEffect(() => {
-    void refresh();
+    void refresh({ attempts: 6 });
     const t = setInterval(() => void refresh(), 8000);
     return () => clearInterval(t);
   }, []);
@@ -289,7 +314,7 @@ export function RagPanel(_props: PanelContentProps) {
         });
         if ((result.graphEntities ?? 0) > 0) addedGraph = true;
       }
-      await refresh();
+      await refresh({ showError: true });
       setTab(addedGraph ? 'graph' : 'documents');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -304,7 +329,7 @@ export function RagPanel(_props: PanelContentProps) {
     setError(null);
     try {
       await fetchJson(`/api/rag/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' });
-      await refresh();
+      await refresh({ showError: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -363,7 +388,7 @@ export function RagPanel(_props: PanelContentProps) {
               size="icon-xs"
               title={t('rag.refresh')}
               disabled={refreshing}
-              onClick={() => void refresh()}
+              onClick={() => void refresh({ showError: true, attempts: 3 })}
             >
               <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
             </Button>

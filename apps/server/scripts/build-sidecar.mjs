@@ -7,9 +7,20 @@
  */
 import { build } from 'esbuild';
 import { nodeFileTrace } from '@vercel/nft';
-import { createWriteStream, cpSync, existsSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import {
+  chmodSync,
+  cpSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
@@ -40,7 +51,7 @@ const NODE_PLATFORMS = {
   'x86_64-pc-windows-msvc': 'win-x64',
 };
 
-const targetTriple = execSync('rustc --print host-tuple', { encoding: 'utf8' }).trim();
+const targetTriple = resolveTargetTriple();
 const nodePlatform = NODE_PLATFORMS[targetTriple];
 if (!nodePlatform) {
   throw new Error(`[build-sidecar] unsupported Rust target triple: ${targetTriple}`);
@@ -49,6 +60,135 @@ if (!nodePlatform) {
 const isWindows = nodePlatform.startsWith('win');
 const binBase = isWindows ? 'veylin-server.exe' : 'veylin-server';
 const binName = `${binBase}-${targetTriple}`;
+
+function resolveTargetTriple() {
+  const fromCargo = process.env.CARGO_BUILD_TARGET?.trim();
+  if (fromCargo) return fromCargo;
+  return execSync('rustc --print host-tuple', { encoding: 'utf8' }).trim();
+}
+
+/** Keep only native binaries for the target triple; drop dev artifacts. */
+const NATIVE_PRUNE = {
+  'aarch64-apple-darwin': {
+    surrealdbNpm: 'darwin-arm64',
+    surrealdbPkgs: ['node', 'node-darwin-arm64'],
+    onnxKeep: ['darwin', 'arm64'],
+  },
+  'x86_64-apple-darwin': {
+    surrealdbNpm: 'darwin-x64',
+    surrealdbPkgs: ['node', 'node-darwin-x64'],
+    onnxKeep: ['darwin', 'x64'],
+  },
+  'aarch64-unknown-linux-gnu': {
+    surrealdbNpm: 'linux-arm64-gnu',
+    surrealdbPkgs: ['node', 'node-linux-arm64-gnu'],
+    onnxKeep: ['linux', 'arm64'],
+  },
+  'x86_64-unknown-linux-gnu': {
+    surrealdbNpm: 'linux-x64-gnu',
+    surrealdbPkgs: ['node', 'node-linux-x64-gnu'],
+    onnxKeep: ['linux', 'x64'],
+  },
+  'x86_64-pc-windows-msvc': {
+    surrealdbNpm: 'win32-x64-msvc',
+    surrealdbPkgs: ['node', 'node-win32-x64-msvc'],
+    onnxKeep: ['win32', 'x64'],
+  },
+};
+
+function dirSizeMb(root) {
+  try {
+    const out = execSync(`du -sk ${JSON.stringify(root)}`, { encoding: 'utf8' });
+    return Number.parseInt(out.split(/\s+/)[0], 10) / 1024;
+  } catch {
+    return 0;
+  }
+}
+
+function walkFiles(root, onFile) {
+  if (!existsSync(root)) return;
+  for (const ent of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, ent.name);
+    if (ent.isDirectory()) walkFiles(path, onFile);
+    else if (ent.isFile()) onFile(path);
+  }
+}
+
+function pruneDirEntries(dir, keep) {
+  if (!existsSync(dir)) return;
+  for (const entry of readdirSync(dir)) {
+    if (!keep.has(entry)) {
+      rmSync(join(dir, entry), { recursive: true, force: true });
+    }
+  }
+}
+
+function stripSidecarArtifacts(sidecarRoot) {
+  const dropDirs = new Set(['test', 'tests', '__tests__', 'benchmark', 'benchmarks', 'example', 'examples']);
+  const nodeModules = join(sidecarRoot, 'node_modules');
+  if (!existsSync(nodeModules)) return;
+
+  walkFiles(nodeModules, (file) => {
+    const base = file.slice(nodeModules.length + 1);
+    const parts = base.split('/');
+    if (parts.some((part) => dropDirs.has(part))) {
+      rmSync(file, { force: true });
+      return;
+    }
+    if (file.endsWith('.map') || file.endsWith('.d.ts') || file.endsWith('.d.cts') || file.endsWith('.d.mts')) {
+      rmSync(file, { force: true });
+    }
+  });
+
+  const cleanupEmpty = (dir) => {
+    if (!existsSync(dir)) return;
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, ent.name);
+      if (ent.isDirectory()) cleanupEmpty(path);
+    }
+    if (dir !== nodeModules && readdirSync(dir).length === 0) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  cleanupEmpty(nodeModules);
+}
+
+function pruneSidecarForTarget(sidecarRoot, triple) {
+  const cfg = NATIVE_PRUNE[triple];
+  if (!cfg) {
+    console.warn(`[build-sidecar] no native prune profile for ${triple}, skipping platform prune`);
+    stripSidecarArtifacts(sidecarRoot);
+    return;
+  }
+
+  const nodeModules = join(sidecarRoot, 'node_modules');
+
+  pruneDirEntries(join(nodeModules, '@surrealdb', 'node', 'npm'), new Set([cfg.surrealdbNpm]));
+  pruneDirEntries(join(nodeModules, '@surrealdb'), new Set(cfg.surrealdbPkgs));
+
+  const onnxRoot = join(nodeModules, 'onnxruntime-node', 'bin', 'napi-v6');
+  if (existsSync(onnxRoot)) {
+    const [keepOs, keepArch] = cfg.onnxKeep;
+    for (const os of readdirSync(onnxRoot)) {
+      const osPath = join(onnxRoot, os);
+      if (os !== keepOs) {
+        rmSync(osPath, { recursive: true, force: true });
+        continue;
+      }
+      for (const arch of readdirSync(osPath)) {
+        if (arch !== keepArch) {
+          rmSync(join(osPath, arch), { recursive: true, force: true });
+        }
+      }
+    }
+  }
+
+  for (const pkg of ['typescript', '@types']) {
+    rmSync(join(nodeModules, pkg), { recursive: true, force: true });
+  }
+
+  stripSidecarArtifacts(sidecarRoot);
+}
 
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
@@ -113,8 +253,21 @@ for (const mcpName of ['scheduling-server', 'maintenance-server']) {
   });
 }
 
-// Trace and copy runtime files for external imports.
-const { fileList } = await nodeFileTrace([outfile], {
+// Trace and copy runtime files for the bundled server AND every EXTERNAL package.
+// EXTERNALS are not inlined by esbuild and several (e.g. @mastra/libsql) are loaded
+// via dynamic require, which static analysis from server.mjs alone cannot follow.
+// Resolving each external as an explicit trace entry pulls in their flat deps too.
+const sidecarRequire = createRequire(join(repoRoot, 'noop.js'));
+const traceEntries = [outfile];
+for (const pkg of EXTERNALS) {
+  try {
+    traceEntries.push(sidecarRequire.resolve(pkg));
+  } catch {
+    // ESM-only or export-restricted package; covered by whole-dir copy below.
+  }
+}
+
+const { fileList } = await nodeFileTrace(traceEntries, {
   base: repoRoot,
   processCwd: repoRoot,
 });
@@ -127,21 +280,86 @@ for (const absPath of fileList) {
   cpSync(absPath, dest);
 }
 
-// Ensure SurrealDB native shims from nested installs are present.
-for (const base of [
+// Whole-package copies for native / dynamically-loaded deps that tracing may miss.
+// Covers their full package contents (native .node binaries, package.json exports).
+const WHOLE_PACKAGE_COPIES = [
+  ...EXTERNALS,
+  '@mastra',
+  '@surrealdb',
+  '@anush008',
+  '@libsql',
+];
+const moduleBases = [
   resolve(repoRoot, 'node_modules'),
+  resolve(repoRoot, 'apps/server/node_modules'),
   resolve(repoRoot, 'packages/db/node_modules'),
-]) {
-  for (const scope of ['@surrealdb', '@anush008']) {
-    const src = join(base, scope);
-    if (!existsSync(src)) continue;
-    cpSync(src, join(outDir, 'node_modules', scope), { recursive: true });
-  }
-  for (const pkg of ['surrealdb']) {
+];
+const copiedPackages = new Set();
+
+function copyPackageDir(src, dest) {
+  cpSync(src, dest, {
+    recursive: true,
+    filter: (path) => !path.includes('/node_modules/.bin/'),
+  });
+}
+
+function findPackageDir(pkg) {
+  for (const base of moduleBases) {
     const src = join(base, pkg);
-    if (existsSync(src)) cpSync(src, join(outDir, 'node_modules', pkg), { recursive: true });
+    if (existsSync(join(src, 'package.json'))) return src;
+  }
+  return null;
+}
+
+function findScopeDir(scope) {
+  for (const base of moduleBases) {
+    const src = join(base, scope);
+    if (existsSync(src)) return src;
+  }
+  return null;
+}
+
+function copyPackageAndRuntimeDeps(pkg) {
+  if (copiedPackages.has(pkg)) return;
+  copiedPackages.add(pkg);
+
+  // Allow copying an entire scope, e.g. "@mastra".
+  if (pkg.startsWith('@') && pkg.split('/').length === 1) {
+    const scopeDir = findScopeDir(pkg);
+    if (!scopeDir) return;
+    copyPackageDir(scopeDir, join(outDir, 'node_modules', pkg));
+    for (const child of readdirSync(scopeDir)) {
+      copyPackageAndRuntimeDeps(`${pkg}/${child}`);
+    }
+    return;
+  }
+
+  const src = findPackageDir(pkg);
+  if (!src) return;
+  copyPackageDir(src, join(outDir, 'node_modules', pkg));
+
+  const packageJsonPath = join(src, 'package.json');
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+  const deps = {
+    ...(packageJson.dependencies ?? {}),
+    ...(packageJson.optionalDependencies ?? {}),
+    ...(packageJson.peerDependencies ?? {}),
+  };
+  for (const dep of Object.keys(deps)) {
+    copyPackageAndRuntimeDeps(dep);
   }
 }
+
+for (const pkg of WHOLE_PACKAGE_COPIES) {
+  copyPackageAndRuntimeDeps(pkg);
+}
+
+const beforePruneMb = dirSizeMb(outDir);
+pruneSidecarForTarget(outDir, targetTriple);
+const afterPruneMb = dirSizeMb(outDir);
+console.log(
+  `[build-sidecar] pruned sidecar for ${targetTriple}: ${beforePruneMb.toFixed(1)}MB -> ${afterPruneMb.toFixed(1)}MB`,
+);
 
 await embedNodeRuntime(nodePlatform, join(outDir, 'node-runtime'));
 

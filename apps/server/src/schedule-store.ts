@@ -4,7 +4,6 @@
 
 import {
   countScheduleSheets,
-  deleteScheduleSheet as deleteScheduleSheetDb,
   listScheduleColumns as listScheduleColumnsDb,
   listScheduleRows as listScheduleRowsDb,
   listScheduleSheets as listScheduleSheetsDb,
@@ -49,57 +48,8 @@ const DEFAULT_COLUMNS: ScheduleColumnDef[] = [
   { key: 'status', name: 'Status', width: 80, type: 'status', deletable: true },
 ];
 
-type SeedRow = ScheduleRowData;
-
-const SEED_ROWS: Record<string, SeedRow[]> = {
-  main: [
-    { order_no: 'WO-1001', product: 'Gearbox A', qty: 120, planned_start: '2026-06-21 08:00', planned_end: '2026-06-22 16:00', resource: 'Line 1 - CNC', status: 'normal' },
-    { order_no: 'WO-1002', product: 'Flange B', qty: 320, planned_start: '2026-06-21 09:30', planned_end: '2026-06-21 18:00', resource: 'Line 1 - Stamping', status: 'tight' },
-    { order_no: 'WO-1003', product: 'Bearing Seat C', qty: 80, planned_start: '2026-06-20 14:00', planned_end: '2026-06-21 10:00', resource: 'Line 2 - Lathe', status: 'overdue' },
-    { order_no: 'WO-1004', product: 'Motor Case D', qty: 200, planned_start: '2026-06-22 08:00', planned_end: '2026-06-23 12:00', resource: 'Line 2 - Injection', status: 'normal' },
-    { order_no: 'WO-1005', product: 'Gearbox A', qty: 60, planned_start: '2026-06-22 13:00', planned_end: '2026-06-22 20:00', resource: 'Line 1 - CNC', status: 'tight' },
-    { order_no: 'WO-1006', product: 'Bracket E', qty: 450, planned_start: '2026-06-19 08:00', planned_end: '2026-06-20 08:00', resource: 'Line 3 - Welding', status: 'overdue' },
-    { order_no: 'WO-1007', product: 'Flange B', qty: 150, planned_start: '2026-06-23 08:00', planned_end: '2026-06-23 17:00', resource: 'Line 1 - Stamping', status: 'normal' },
-    { order_no: 'WO-1008', product: 'Valve Body F', qty: 90, planned_start: '2026-06-23 10:00', planned_end: '2026-06-24 09:00', resource: 'Line 2 - Lathe', status: 'normal' },
-    { order_no: 'WO-1009', product: 'Bearing Seat C', qty: 110, planned_start: '2026-06-24 08:00', planned_end: '2026-06-24 19:00', resource: 'Line 2 - Lathe', status: 'tight' },
-    { order_no: 'WO-1010', product: 'Motor Case D', qty: 260, planned_start: '2026-06-20 08:00', planned_end: '2026-06-21 06:00', resource: 'Line 2 - Injection', status: 'overdue' },
-    { order_no: 'WO-1011', product: 'End Cap G', qty: 500, planned_start: '2026-06-24 13:00', planned_end: '2026-06-25 15:00', resource: 'Line 3 - Assembly', status: 'normal' },
-    { order_no: 'WO-1012', product: 'Bracket E', qty: 380, planned_start: '2026-06-25 08:00', planned_end: '2026-06-25 18:00', resource: 'Line 3 - Welding', status: 'tight' },
-    { order_no: 'WO-1013', product: 'Gearbox A', qty: 75, planned_start: '2026-06-25 09:00', planned_end: '2026-06-26 11:00', resource: 'Line 1 - CNC', status: 'normal' },
-    { order_no: 'WO-1014', product: 'Valve Body F', qty: 140, planned_start: '2026-06-18 08:00', planned_end: '2026-06-19 12:00', resource: 'Line 2 - Lathe', status: 'overdue' },
-    { order_no: 'WO-1015', product: 'End Cap G', qty: 220, planned_start: '2026-06-26 08:00', planned_end: '2026-06-26 20:00', resource: 'Line 3 - Assembly', status: 'normal' },
-    { order_no: 'WO-1016', product: 'Flange B', qty: 410, planned_start: '2026-06-26 13:00', planned_end: '2026-06-27 14:00', resource: 'Line 1 - Stamping', status: 'tight' },
-    { order_no: 'WO-1017', product: 'Bearing Seat C', qty: 95, planned_start: '2026-06-27 08:00', planned_end: '2026-06-27 17:00', resource: 'Line 2 - Lathe', status: 'normal' },
-    { order_no: 'WO-1018', product: 'Motor Case D', qty: 180, planned_start: '2026-06-27 10:00', planned_end: '2026-06-28 09:00', resource: 'Line 2 - Injection', status: 'normal' },
-  ],
-  urgent: [
-    { order_no: 'WO-2001', product: 'Hydraulic Cylinder H', qty: 40, planned_start: '2026-06-20 06:00', planned_end: '2026-06-20 18:00', resource: 'Line 1 - CNC', status: 'overdue' },
-    { order_no: 'WO-2002', product: 'Drive Shaft I', qty: 25, planned_start: '2026-06-21 07:00', planned_end: '2026-06-21 15:00', resource: 'Line 2 - Lathe', status: 'overdue' },
-    { order_no: 'WO-2003', product: 'Seal Ring J', qty: 800, planned_start: '2026-06-21 08:00', planned_end: '2026-06-21 20:00', resource: 'Line 1 - Stamping', status: 'tight' },
-    { order_no: 'WO-2004', product: 'Connecting Rod K', qty: 55, planned_start: '2026-06-22 08:00', planned_end: '2026-06-22 14:00', resource: 'Line 3 - Welding', status: 'tight' },
-    { order_no: 'WO-2005', product: 'Pump Body L', qty: 18, planned_start: '2026-06-22 10:00', planned_end: '2026-06-23 08:00', resource: 'Line 2 - Injection', status: 'overdue' },
-    { order_no: 'WO-2006', product: 'Flange B', qty: 90, planned_start: '2026-06-23 08:00', planned_end: '2026-06-23 16:00', resource: 'Line 1 - Stamping', status: 'tight' },
-    { order_no: 'WO-2007', product: 'Valve Body F', qty: 32, planned_start: '2026-06-23 13:00', planned_end: '2026-06-24 10:00', resource: 'Line 2 - Lathe', status: 'normal' },
-    { order_no: 'WO-2008', product: 'End Cap G', qty: 120, planned_start: '2026-06-24 08:00', planned_end: '2026-06-24 22:00', resource: 'Line 3 - Assembly', status: 'tight' },
-  ],
-  weekly: [
-    { order_no: 'WO-3001', product: 'Housing M', qty: 160, planned_start: '2026-06-23 08:00', planned_end: '2026-06-24 17:00', resource: 'Line 2 - Injection', status: 'normal' },
-    { order_no: 'WO-3002', product: 'Gear N', qty: 240, planned_start: '2026-06-23 09:00', planned_end: '2026-06-25 12:00', resource: 'Line 1 - CNC', status: 'normal' },
-    { order_no: 'WO-3003', product: 'Bracket E', qty: 180, planned_start: '2026-06-24 08:00', planned_end: '2026-06-25 18:00', resource: 'Line 3 - Welding', status: 'tight' },
-    { order_no: 'WO-3004', product: 'Bearing Seat C', qty: 70, planned_start: '2026-06-24 10:00', planned_end: '2026-06-25 16:00', resource: 'Line 2 - Lathe', status: 'normal' },
-    { order_no: 'WO-3005', product: 'Motor Case D', qty: 130, planned_start: '2026-06-25 08:00', planned_end: '2026-06-26 14:00', resource: 'Line 2 - Injection', status: 'normal' },
-    { order_no: 'WO-3006', product: 'Drive Shaft I', qty: 45, planned_start: '2026-06-25 13:00', planned_end: '2026-06-26 11:00', resource: 'Line 2 - Lathe', status: 'tight' },
-    { order_no: 'WO-3007', product: 'Flange B', qty: 200, planned_start: '2026-06-26 08:00', planned_end: '2026-06-27 17:00', resource: 'Line 1 - Stamping', status: 'normal' },
-    { order_no: 'WO-3008', product: 'End Cap G', qty: 310, planned_start: '2026-06-26 09:00', planned_end: '2026-06-28 10:00', resource: 'Line 3 - Assembly', status: 'normal' },
-    { order_no: 'WO-3009', product: 'Gearbox A', qty: 85, planned_start: '2026-06-27 08:00', planned_end: '2026-06-28 16:00', resource: 'Line 1 - CNC', status: 'tight' },
-    { order_no: 'WO-3010', product: 'Pump Body L', qty: 42, planned_start: '2026-06-27 10:00', planned_end: '2026-06-28 18:00', resource: 'Line 2 - Injection', status: 'normal' },
-  ],
-};
-
 const BUILTIN_SHEETS: ScheduleSheetMeta[] = [
   { id: 'main', name: 'Main Plan', builtin: true },
-  { id: 'urgent', name: 'Urgent Orders', builtin: true },
-  { id: 'weekly', name: 'Weekly Plan', builtin: true },
 ];
 
 interface SheetState {
@@ -110,10 +60,6 @@ interface SheetState {
 
 function cloneColumns(): ScheduleColumnDef[] {
   return DEFAULT_COLUMNS.map((c) => ({ ...c }));
-}
-
-function cloneRows(rows: SeedRow[]): ScheduleRowData[] {
-  return rows.map((r) => ({ ...r }));
 }
 
 function scheduleRowKey(row: ScheduleRowData): string {
@@ -133,14 +79,13 @@ function buildInitialStore(): Map<string, SheetState> {
     store.set(meta.id, {
       meta: { ...meta },
       columns: cloneColumns(),
-      rows: cloneRows(SEED_ROWS[meta.id] ?? []),
+      rows: [],
     });
   }
   return store;
 }
 
 let sheetStore = buildInitialStore();
-let customSheetSeq = 1;
 let scheduleHydrated = false;
 
 async function persistSheet(sheetId: string): Promise<void> {
@@ -208,12 +153,9 @@ export async function initScheduleStore(): Promise<void> {
         })),
         rows: rows.map((r) => ({ ...r.data } as ScheduleRowData)),
       });
-      if (meta.id.startsWith('custom-')) {
-        const n = Number.parseInt(meta.id.replace('custom-', ''), 10);
-        if (Number.isFinite(n)) customSheetSeq = Math.max(customSheetSeq, n + 1);
-      }
     }
-    sheetStore = next.size > 0 ? next : buildInitialStore();
+    const main = next.get(DEFAULT_SCHEDULE_SHEET);
+    sheetStore = main ? new Map([[DEFAULT_SCHEDULE_SHEET, main]]) : buildInitialStore();
   }
   scheduleHydrated = true;
 }
@@ -308,27 +250,13 @@ export async function updateScheduleRow(
 }
 
 export function createScheduleSheet(name: string): ScheduleSheetMeta | null {
-  const trimmed = name.trim();
-  if (!trimmed) return null;
-  const id = `custom-${customSheetSeq++}`;
-  const meta: ScheduleSheetMeta = { id, name: trimmed, builtin: false };
-  sheetStore.set(id, {
-    meta,
-    columns: cloneColumns(),
-    rows: [],
-  });
-  schedulePersist(id);
-  return { ...meta };
+  void name;
+  return null;
 }
 
 export function deleteScheduleSheet(sheetId: string): boolean {
-  const sheet = getSheet(sheetId);
-  if (!sheet || sheetStore.size <= 1) return false;
-  sheetStore.delete(sheetId);
-  void deleteScheduleSheetDb(sheetId).catch((e) => {
-    console.error('[schedule] delete failed:', e);
-  });
-  return true;
+  void sheetId;
+  return false;
 }
 
 export function addScheduleRow(sheetId: string): ScheduleRowData | null {
@@ -417,6 +345,5 @@ export function importScheduleSheet(
 
 export async function resetSchedule(): Promise<void> {
   sheetStore = buildInitialStore();
-  customSheetSeq = 1;
   await persistAll();
 }

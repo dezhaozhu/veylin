@@ -26,13 +26,19 @@ export function setRuntimeModelOverrides(overrides: RuntimeModelOverrides): void
   runtimeOverrides = { ...overrides };
 }
 
+function requiresUserModelSettings(): boolean {
+  return process.env.VEYLIN_REQUIRE_USER_MODEL_SETTINGS === '1';
+}
+
 function applyOpenAICompatibleOverrides(config: ModelConfig): ModelConfig {
+  const configuredUserKey =
+    runtimeOverrides.openaiApiKeyEnabled && runtimeOverrides.openaiApiKey?.trim()
+      ? runtimeOverrides.openaiApiKey.trim()
+      : '';
+
   return {
     ...config,
-    apiKey:
-      runtimeOverrides.openaiApiKeyEnabled && runtimeOverrides.openaiApiKey?.trim()
-        ? runtimeOverrides.openaiApiKey.trim()
-        : config.apiKey,
+    apiKey: configuredUserKey || (requiresUserModelSettings() ? '' : config.apiKey),
     url:
       runtimeOverrides.overrideOpenAIBaseUrl && runtimeOverrides.openaiBaseUrl?.trim()
         ? runtimeOverrides.openaiBaseUrl.trim()

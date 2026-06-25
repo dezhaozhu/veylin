@@ -14,7 +14,20 @@
   "threadList": {
     "running": "Running",
     "finished": "Finished",
-    "interrupted": "Interrupted"
+    "interrupted": "Interrupted",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "earlier": "Earlier",
+    "newChat": "New Chat",
+    "loading": "Loading chats",
+    "moreOptions": "More options",
+    "archive": "Archive",
+    "delete": "Delete"
+  },
+  "header": {
+    "back": "Back",
+    "forward": "Forward",
+    "newChat": "New Chat"
   },
   "status": {
     "allDone": "All done"
@@ -48,12 +61,44 @@
     "urlPlaceholder": "https://internal-address or localhost:8080",
     "open": "Open",
     "lastOpened": "Last opened: ",
+    "empty": "Enter a URL and the page will be embedded here",
     "requiresDesktopOpen": "Opening internal web pages requires the desktop app (Tauri). The browser-only dev mode cannot dock a webview; please use npm run dev:desktop.",
     "requiresDesktopRead": "Reading page content requires the desktop app (Tauri); for public URLs use the web_fetch tool instead."
   },
   "sidebar": {
     "resizeLeft": "Resize left sidebar",
-    "resizeRight": "Resize right sidebar"
+    "resizeRight": "Resize right sidebar",
+    "customize": "Customize",
+    "automate": "Automate"
+  },
+  "userMenu": {
+    "settings": "Settings",
+    "logOut": "Log out",
+    "language": "Language"
+  },
+  "settings": {
+    "navTitle": "Settings",
+    "general": {
+      "nav": "General",
+      "title": "General"
+    },
+    "language": {
+      "title": "Language",
+      "hint": "Application UI language",
+      "closeMenu": "Close language menu"
+    },
+    "models": {
+      "nav": "Models",
+      "title": "Models"
+    }
+  },
+  "customize": {
+    "title": "Customize",
+    "skills": "Skills",
+    "rules": "Rules",
+    "mcp": "MCP Servers",
+    "plugins": "Plugins",
+    "soon": "Soon"
   },
   "extract": {
     "noText": "{{name}}: no text content extracted",
@@ -90,6 +135,7 @@
     "network": { "title": "Network issue", "detail": "A network problem occurred. Please check your connection." },
     "busyRetry": { "title": "Service busy", "detail": "Please retry in a moment." },
     "unauthorized": { "title": "Unauthorized", "detail": "Your session is invalid or has expired. Please sign in again." },
+    "modelNotConfigured": { "title": "Model not configured", "detail": "Open Settings -> Models and add your own API key before chatting." },
     "unknown": { "detail": "Something went wrong. Please try again." },
     "retryLater": "Please try again later.",
     "connectFailed": { "title": "Connection failed" }

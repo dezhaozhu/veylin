@@ -47,6 +47,11 @@ function SkillCard({
         {skill.description && (
           <p className="text-muted-foreground mt-1 text-sm leading-relaxed">{skill.description}</p>
         )}
+        {skill.content && (
+          <p className="text-muted-foreground mt-1 line-clamp-2 text-xs leading-relaxed">
+            {skill.content}
+          </p>
+        )}
         {skill.triggers?.length > 0 && (
           <p className="text-muted-foreground mt-1 text-xs">
             Triggers: {skill.triggers.join(', ')}
@@ -135,10 +140,23 @@ export function SkillsSettingsScreen() {
 
   const saveCustom = async () => {
     if (!form.name.trim() || !form.content.trim()) return;
-    if (editing?.id) await settingsApi.updateSkill(editing.id, form);
-    else await settingsApi.createSkill(form);
-    setDialogOpen(false);
-    await load();
+    try {
+      const saved = editing?.id
+        ? await settingsApi.updateSkill(editing.id, form)
+        : await settingsApi.createSkill(form);
+      setSkills((prev) =>
+        editing?.id
+          ? prev.map((skill) =>
+              skill.source === 'custom' && skill.id === saved.skill.id ? saved.skill : skill,
+            )
+          : [saved.skill, ...prev],
+      );
+      setDialogOpen(false);
+      setEditing(null);
+      await load();
+    } catch (err) {
+      alert(`Failed to save skill: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   if (loading) {

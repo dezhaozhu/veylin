@@ -77,10 +77,21 @@ export function RulesSettingsScreen() {
         .filter(Boolean),
       enabled: form.enabled,
     };
-    if (editing) await settingsApi.updateRule(editing.id, body);
-    else await settingsApi.createRule(body);
-    setDialogOpen(false);
-    await load();
+    try {
+      const saved = editing
+        ? await settingsApi.updateRule(editing.id, body)
+        : await settingsApi.createRule(body);
+      setRules((prev) =>
+        editing
+          ? prev.map((rule) => (rule.id === saved.rule.id ? saved.rule : rule))
+          : [saved.rule, ...prev],
+      );
+      setDialogOpen(false);
+      setEditing(null);
+      await load();
+    } catch (err) {
+      alert(`Failed to save rule: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   return (
@@ -147,6 +158,7 @@ export function RulesSettingsScreen() {
           >
             <div className="min-w-0 flex-1">
               <div className="font-medium">{rule.name}</div>
+              <p className="text-muted-foreground mt-1 truncate text-sm">{rule.content}</p>
               <div className="text-muted-foreground text-xs">
                 {rule.trigger}
                 {rule.trigger === 'keyword' && rule.keywords.length > 0

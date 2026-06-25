@@ -9,7 +9,7 @@ export function ThreadRightSidebar({
   return (
     <RightSidebar
       collapsible="offcanvas"
-      className="[&_[data-slot=sidebar-inner]]:shadow-none"
+      className="[&_[data-slot=sidebar-inner]]:border-l [&_[data-slot=sidebar-inner]]:shadow-none"
       {...props}
     >
       <SidebarContent className="min-h-0 flex-1 overflow-hidden p-0">

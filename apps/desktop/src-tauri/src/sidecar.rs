@@ -32,6 +32,7 @@ impl Sidecar {
             match sidecar
                 .env("VEYLIN_DATA_DIR", &data_dir)
                 .env("VEYLIN_DESKTOP_AUTH", "1")
+                .env("VEYLIN_REQUIRE_USER_MODEL_SETTINGS", "1")
                 .env("PORT", &port)
                 .spawn()
             {
@@ -48,6 +49,7 @@ impl Sidecar {
                 if let Ok(child) = Command::new(bin)
                     .env("VEYLIN_DATA_DIR", &data_dir)
                     .env("VEYLIN_DESKTOP_AUTH", "1")
+                    .env("VEYLIN_REQUIRE_USER_MODEL_SETTINGS", "1")
                     .env("PORT", &port)
                     .spawn()
                 {
@@ -71,6 +73,7 @@ impl Sidecar {
             .current_dir(root)
             .env("VEYLIN_DATA_DIR", data_dir)
             .env("VEYLIN_DESKTOP_AUTH", "1")
+            .env("VEYLIN_REQUIRE_USER_MODEL_SETTINGS", "1")
             .env("PORT", port)
             .spawn()
         {

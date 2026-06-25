@@ -30,4 +30,4 @@ export {
 export { ContextCompression } from './processors/contextCompression';
 export { buildSummarizer, COMPACTION_SYSTEM_PROMPT } from './summarizer';
 export { selectTools } from './processors/toolSearch';
-export { BASE_SYSTEM_PROMPT, composeInstructions } from './prompts/systemPrompt';
+export { BASE_SYSTEM_PROMPT, composeInstructions, buildLocaleBlock } from './prompts/systemPrompt';

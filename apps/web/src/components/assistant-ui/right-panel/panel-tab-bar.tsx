@@ -6,6 +6,7 @@ import {
   ComposerMenuPanel,
   ComposerMenuRow,
 } from '@/components/assistant-ui/composer-menu-flyout';
+import { RightSidebarTrigger } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
 import { PANEL_KINDS, getPanelKindDef } from './panel-registry';
 import type { PanelKind, PanelTab } from './panel-types';
@@ -108,7 +109,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
 
   return (
     <>
-      <div className="border-border bg-background flex shrink-0 items-center border-b py-1.5 pl-2 pr-1.5">
+      <div className="border-border bg-background flex h-8 shrink-0 items-center border-b pl-2 pr-1.5">
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {tabs.map((tab) => {
             const active = activeId === tab.id;
@@ -167,6 +168,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
         >
           <Plus className="size-3.5" />
         </button>
+        <RightSidebarTrigger className="ml-1 size-7" />
       </div>
       {menu}
     </>

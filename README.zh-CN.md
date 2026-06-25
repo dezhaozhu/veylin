@@ -51,6 +51,8 @@ npm run -w @veylin/desktop build  # 自动：构建前端 → 打包 sidecar(含
 
 安装后双击：Tauri 启动 sidecar → 内嵌 Node 跑 `server.mjs` → SurrealDB(surrealkv) 自动初始化 → 前端 `/api` 直连本地 sidecar。
 
+桌面安装包**不内置模型凭据**。首次聊天前，请从左下角用户菜单进入 **Settings** → **Models**，配置你自己的 OpenAI-compatible API Key。
+
 ## 关键决策
 
 - 存储：**嵌入式 SurrealDB 单引擎**（业务表 + 知识库 图+向量+全文），线程记忆旁挂本地 LibSQL；不依赖外部 Postgres / Redis / Docker。

@@ -48,6 +48,8 @@ Artifacts:
 
 After installing, double-click: Tauri starts the sidecar → embedded Node runs `server.mjs` → SurrealDB (surrealkv) initializes automatically → the frontend talks to the local sidecar over `/api`.
 
+Desktop packages do **not** ship with model credentials. Open the bottom-left user menu → **Settings** → **Models** and add your own OpenAI-compatible API key before chatting.
+
 ## Architecture
 
 ```

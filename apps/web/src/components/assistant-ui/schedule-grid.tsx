@@ -1,5 +1,5 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X } from 'lucide-react';
+import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download } from 'lucide-react';
 import {
   DataGrid,
   SELECT_COLUMN_KEY,
@@ -81,6 +81,33 @@ type SchedulePayload = {
   columns?: ScheduleColumnDef[];
   rows?: ScheduleRow[];
 };
+
+const DEFAULT_EMPTY_COLUMNS: ScheduleColumnDef[] = [
+  { key: 'order_no', name: 'Order No.', width: 100, type: 'text', frozen: true, deletable: false },
+  { key: 'product', name: 'Product', width: 130, type: 'text', deletable: true },
+  { key: 'qty', name: 'Qty', width: 72, type: 'number', deletable: true },
+  { key: 'planned_start', name: 'Planned Start', width: 140, type: 'text', deletable: true },
+  { key: 'planned_end', name: 'Planned End', width: 140, type: 'text', deletable: true },
+  { key: 'resource', name: 'Resource', width: 140, type: 'text', deletable: true },
+  { key: 'status', name: 'Status', width: 80, type: 'status', deletable: true },
+];
+
+const DEFAULT_EMPTY_SHEETS: ScheduleSheet[] = [
+  { id: 'main', name: 'Main Plan', builtin: true },
+];
+
+function emptySchedulePayload(sheetId: string): SchedulePayload {
+  return {
+    sheet: sheetId,
+    sheets: DEFAULT_EMPTY_SHEETS,
+    columns: DEFAULT_EMPTY_COLUMNS,
+    rows: [],
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 async function readJsonResponse<T>(res: Response): Promise<T> {
   const text = await res.text();
@@ -492,7 +519,6 @@ export function ScheduleGrid() {
   const [columnDefs, setColumnDefs] = useState<ScheduleColumnDef[]>([]);
   const [rows, setRows] = useState<ScheduleRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
   const [sortColumns, setSortColumns] = useState<readonly SortColumn[]>([]);
@@ -547,17 +573,24 @@ export function ScheduleGrid() {
 
   const load = useCallback(
     async (sheetId: string, initial: boolean) => {
-      try {
-        const data = await fetchSchedule(sheetId);
-        applyPayload(data, initial);
-      } catch (e: unknown) {
-        if (initial) {
-          setError(e instanceof Error ? e.message : t('sched.loadFailedGeneric'));
-          setLoading(false);
+      const attempts = initial ? 6 : 1;
+      for (let i = 0; i < attempts; i++) {
+        try {
+          const data = await fetchSchedule(sheetId);
+          applyPayload(data, initial);
+          return;
+        } catch {
+          if (i < attempts - 1) {
+            await sleep(400 * (i + 1));
+            continue;
+          }
+          if (initial) {
+            applyPayload(emptySchedulePayload(sheetId), true);
+          }
         }
       }
     },
-    [applyPayload, t],
+    [applyPayload],
   );
 
   const switchSheet = useCallback(
@@ -566,7 +599,6 @@ export function ScheduleGrid() {
       resetSheetUiState();
       setActiveSheetId(sheetId);
       setLoading(true);
-      setError(null);
     },
     [activeSheetId, resetSheetUiState],
   );
@@ -856,35 +888,6 @@ export function ScheduleGrid() {
     [dataColumns],
   );
 
-  const handleAddSheet = async () => {
-    const name = window.prompt(t('sched.newSheetName'));
-    if (!name?.trim()) return;
-    const res = await fetch('/api/schedule/sheets', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name.trim() }),
-    });
-    const data = (await res.json()) as { ok?: boolean; sheet?: ScheduleSheet; sheets?: ScheduleSheet[] };
-    if (!data.ok || !data.sheet) return;
-    if (data.sheets) setSheets(data.sheets);
-    switchSheet(data.sheet.id);
-  };
-
-  const handleDeleteSheet = async (sheetId: string) => {
-    if (!window.confirm(t('sched.confirmDeleteSheet'))) return;
-    const res = await fetch(`/api/schedule/sheets/${encodeURIComponent(sheetId)}`, {
-      method: 'DELETE',
-    });
-    const data = (await res.json()) as {
-      ok?: boolean;
-      sheets?: ScheduleSheet[];
-      nextSheet?: string;
-    };
-    if (!data.ok) return;
-    if (data.sheets) setSheets(data.sheets);
-    if (data.nextSheet) switchSheet(data.nextSheet);
-  };
-
   const handleAddRow = async () => {
     const res = await fetch('/api/schedule/rows', {
       method: 'POST',
@@ -1032,18 +1035,10 @@ export function ScheduleGrid() {
 
   const hasActiveFilters = filters.query.trim() !== '';
 
-  if (loading && rows.length === 0) {
+  if (loading && rows.length === 0 && columnDefs.length === 0) {
     return (
       <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
         {t('sched.loading')}
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="text-destructive flex h-full items-center justify-center px-4 text-center text-sm">
-        {t('sched.loadError', { error })}
       </div>
     );
   }
@@ -1054,14 +1049,11 @@ export function ScheduleGrid() {
       <div className="border-border flex shrink-0 items-center gap-1 overflow-x-auto border-b px-2 py-1.5">
         {sheets.map((sheet) => {
           const active = activeSheetId === sheet.id;
-          const canDelete = sheets.length > 1;
           return (
             <div
               key={sheet.id}
               className={cn(
                 'flex shrink-0 items-center rounded-md text-xs transition-colors',
-                '[&:hover_.sheet-tab-close]:max-w-6 [&:hover_.sheet-tab-close]:p-1 [&:hover_.sheet-tab-close]:opacity-100',
-                '[&:hover_.sheet-tab-label]:pr-0.5',
                 active
                   ? 'bg-primary text-primary-foreground'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -1074,35 +1066,9 @@ export function ScheduleGrid() {
               >
                 {sheet.name}
               </button>
-              {canDelete ? (
-                <button
-                  type="button"
-                  aria-label={t('sched.deleteSheet', { name: sheet.name })}
-                  onClick={() => void handleDeleteSheet(sheet.id)}
-                  className={cn(
-                    'sheet-tab-close overflow-hidden rounded-r-md transition-all duration-150',
-                    'max-w-0 p-0 opacity-0',
-                    active
-                      ? 'hover:bg-primary-foreground/20'
-                      : 'hover:text-destructive',
-                  )}
-                >
-                  <X className="size-3" />
-                </button>
-              ) : null}
             </div>
           );
         })}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7 shrink-0"
-          aria-label={t('sched.newSheet')}
-          onClick={() => void handleAddSheet()}
-        >
-          <Plus className="size-3.5" />
-        </Button>
       </div>
 
       {/* Toolbar + filters */}

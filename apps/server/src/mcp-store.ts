@@ -61,10 +61,15 @@ export async function deleteRemoteMcpServer(tenantId: string, id: string): Promi
 
 export async function buildMcpServerConfigs(tenantId: string): Promise<McpServerConfig> {
   const remote = await listRemoteMcpServers(tenantId);
-  const configs: McpServerConfig = { ...mcpServerConfigs };
+  const active = new Set(await listActiveMcpServerNames(tenantId));
+  const configs: McpServerConfig = {};
+
+  for (const [name, config] of Object.entries(mcpServerConfigs)) {
+    if (active.has(name)) configs[name] = config;
+  }
 
   for (const server of remote) {
-    if (!server.enabled) continue;
+    if (!active.has(server.name)) continue;
     configs[server.name] = {
       url: new URL(server.url),
       ...(Object.keys(server.headers).length > 0 ? { requestInit: { headers: server.headers } } : {}),
@@ -90,8 +95,6 @@ export async function listActiveMcpServerNames(
   const remote = await listRemoteMcpServers(tenantId);
   const disabledRemote = new Set(remote.filter((s) => !s.enabled).map((s) => s.name));
   const candidates =
-    declaredMcp.length > 0
-      ? declaredMcp
-      : [...listBundledMcpServerNames(), ...remote.map((s) => s.name)];
+    declaredMcp.length > 0 ? declaredMcp : remote.map((s) => s.name);
   return [...new Set(candidates.filter((s) => !disabledBundled.has(s) && !disabledRemote.has(s)))];
 }

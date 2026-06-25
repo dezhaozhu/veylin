@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronsUpDown, Languages, LogOut, Settings } from 'lucide-react';
+import { ChevronsUpDown, LogOut, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import { useSession, logout } from '@/hooks/use-session';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
-import { SUPPORTED_LANGUAGES } from '@/i18n';
 import { cn } from '@/lib/utils';
 
 function initials(name: string): string {
@@ -17,11 +16,9 @@ function initials(name: string): string {
 export function SidebarUserMenu() {
   const { user } = useSession();
   const { openAppSettings } = useSettingsPanel();
-  const { i18n } = useTranslation();
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-
-  const currentLang = i18n.resolvedLanguage ?? i18n.language;
 
   const displayName = user?.name ?? 'Dev User';
 
@@ -67,30 +64,9 @@ export function SidebarUserMenu() {
             }}
           >
             <Settings className="text-muted-foreground size-4" />
-            <span className="flex-1">Settings</span>
+            <span className="flex-1">{t('userMenu.settings')}</span>
             <span className="text-muted-foreground text-xs">⌘ ,</span>
           </button>
-          <div className="bg-border my-1 h-px" />
-          <div className="flex items-center gap-2 px-2.5 py-2 text-sm">
-            <Languages className="text-muted-foreground size-4 shrink-0" />
-            <div className="flex flex-1 items-center gap-1">
-              {SUPPORTED_LANGUAGES.map((lang) => (
-                <button
-                  key={lang.code}
-                  type="button"
-                  className={cn(
-                    'rounded-md px-2 py-1 text-xs transition-colors',
-                    currentLang === lang.code
-                      ? 'bg-accent text-foreground font-medium'
-                      : 'text-muted-foreground hover:bg-accent/60',
-                  )}
-                  onClick={() => void i18n.changeLanguage(lang.code)}
-                >
-                  {lang.label}
-                </button>
-              ))}
-            </div>
-          </div>
           <div className="bg-border my-1 h-px" />
           <button
             type="button"
@@ -98,7 +74,7 @@ export function SidebarUserMenu() {
             onClick={() => void logout()}
           >
             <LogOut className="text-muted-foreground size-4" />
-            <span>Log out</span>
+            <span>{t('userMenu.logOut')}</span>
           </button>
         </div>
       )}

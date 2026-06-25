@@ -72,3 +72,11 @@ export function composeInstructions(
   }
   return parts.join('\n\n');
 }
+
+/** Runtime locale hint injected into the system message per chat request. */
+export function buildLocaleBlock(locale?: string): string {
+  const normalized =
+    locale === 'zh-CN' || locale?.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
+  const label = normalized === 'zh-CN' ? 'Simplified Chinese (zh-CN)' : 'English';
+  return `<system-reminder>\nUI locale: ${label}. Write your replies to the user in this language unless the user's message clearly uses a different language.\n</system-reminder>`;
+}

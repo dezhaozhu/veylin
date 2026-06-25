@@ -15,22 +15,16 @@ export function getSelectedModel(): ModelKey {
   return getChatSettings().model;
 }
 
-function isRuntimeModel(id: string): id is ModelKey {
-  return id === 'deepseek' || id === 'zenmux';
-}
-
-/** Composer model picker — only shows enabled models from Settings. */
+/** Composer model picker — shows the models the user enabled in Settings. */
 export function ModelPicker({ className }: { className?: string }) {
   const [model, setModel] = useState<ModelKey>(() => getSelectedModel());
-  const [models, setModels] = useState<ModelCatalogEntry[]>(() =>
-    listEnabledModels().filter((m) => isRuntimeModel(m.id)),
-  );
+  const [models, setModels] = useState<ModelCatalogEntry[]>(() => listEnabledModels());
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     const sync = () => {
       setModel(getSelectedModel());
-      setModels(listEnabledModels().filter((m) => isRuntimeModel(m.id)));
+      setModels(listEnabledModels());
     };
     const offChat = onChatSettingsChange(sync);
     const offModels = onModelSettingsChange(sync);

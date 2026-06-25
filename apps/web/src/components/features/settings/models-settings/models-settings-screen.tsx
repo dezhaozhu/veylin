@@ -12,10 +12,12 @@ import {
   setModelEnabled,
   type ModelCatalogEntry,
 } from '@/lib/model-settings';
-import { getChatSettings, setChatSettings, type ModelKey } from '@/lib/chat-settings';
+import { getChatSettings, setChatSettings } from '@/lib/chat-settings';
+import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 
 export function ModelsSettingsScreen() {
+  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const [settings, setSettings] = useState(() => getModelSettings());
   const [activeModel, setActiveModel] = useState(() => getChatSettings().model);
@@ -58,19 +60,17 @@ export function ModelsSettingsScreen() {
     setModelEnabled(id, enabled);
     if (!enabled && activeModel === id) {
       const next = listCatalogModels().find((m) => m.id !== id && getModelSettings().enabledModels[m.id] !== false);
-      if (next && (next.id === 'deepseek' || next.id === 'zenmux')) {
-        setActiveModel(next.id as ModelKey);
-        setChatSettings({ model: next.id as ModelKey });
+      if (next) {
+        setActiveModel(next.id);
+        setChatSettings({ model: next.id });
       }
     }
   }, [activeModel]);
 
   const selectModel = (id: string) => {
     if (getModelSettings().enabledModels[id] === false) return;
-    if (id === 'deepseek' || id === 'zenmux') {
-      setActiveModel(id);
-      setChatSettings({ model: id });
-    }
+    setActiveModel(id);
+    setChatSettings({ model: id });
   };
 
   const handleAdd = () => {
@@ -99,7 +99,7 @@ export function ModelsSettingsScreen() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h1 className="mb-6 text-2xl font-semibold tracking-tight">Models</h1>
+      <h1 className="mb-6 text-2xl font-semibold tracking-tight">{t('settings.models.title')}</h1>
 
       <div className="border-border bg-card rounded-xl border">
         <div className="border-border flex items-center gap-2 border-b px-3 py-2">
@@ -181,7 +181,8 @@ export function ModelsSettingsScreen() {
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">OpenAI API Key</div>
                 <p className="text-muted-foreground mt-1 text-sm">
-                  You can put in your OpenAI-compatible key to use configured models at cost.
+                  Veylin desktop packages do not include model credentials. Add your own
+                  OpenAI-compatible key here to use the configured models.
                   {provider.hasOpenaiApiKey && !apiKeyDraft && (
                     <span className="ml-1 text-emerald-600">Key configured.</span>
                   )}

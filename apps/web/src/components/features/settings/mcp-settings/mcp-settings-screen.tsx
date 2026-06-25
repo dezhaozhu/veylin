@@ -71,9 +71,11 @@ type InstalledItem = {
 function InstalledCard({
   item,
   onToggle,
+  onDelete,
 }: {
   item: InstalledItem;
   onToggle: (enabled: boolean) => void;
+  onDelete?: () => void;
 }) {
   const icon = mcpServerIcon(item.name);
   return (
@@ -99,6 +101,15 @@ function InstalledCard({
         onChange={onToggle}
         label={`Toggle ${item.name}`}
       />
+      {onDelete && (
+        <button
+          type="button"
+          className="text-destructive hover:bg-destructive/10 rounded-md px-2 py-1 text-xs underline"
+          onClick={onDelete}
+        >
+          Delete
+        </button>
+      )}
     </div>
   );
 }
@@ -158,7 +169,7 @@ export function McpSettingsScreen() {
     (item) =>
       (filter === 'all' || filter === 'library') &&
       (!q || item.name.toLowerCase().includes(q) || item.description.toLowerCase().includes(q)),
-  );
+  ).slice(0, 1);
 
   const showInstalled = filter === 'all' || filter === 'installed';
   const showLibrary = filter === 'all' || filter === 'library';
@@ -176,6 +187,17 @@ export function McpSettingsScreen() {
     }
   };
 
+  const deleteInstalled = async (item: InstalledItem) => {
+    if (item.source !== 'remote' || !item.remoteId) return;
+    if (!confirm(`Delete MCP server "${item.name}"?`)) return;
+    try {
+      await settingsApi.deleteMcpServer(item.remoteId);
+      await load();
+    } catch (err) {
+      alert(`Failed to delete server: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const save = async () => {
     if (!form.name.trim() || !form.url.trim()) return;
     let headers: Record<string, string> = {};
@@ -187,15 +209,19 @@ export function McpSettingsScreen() {
         return;
       }
     }
-    await settingsApi.createMcpServer({
-      name: form.name,
-      transport: form.transport,
-      url: form.url,
-      headers,
-    });
-    setDialogOpen(false);
-    setForm({ name: '', transport: 'sse', url: '', headers: '' });
-    await load();
+    try {
+      await settingsApi.createMcpServer({
+        name: form.name,
+        transport: form.transport,
+        url: form.url,
+        headers,
+      });
+      setDialogOpen(false);
+      setForm({ name: '', transport: 'sse', url: '', headers: '' });
+      await load();
+    } catch (err) {
+      alert(`Failed to add server: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   const openLibraryAdd = (name: string, transport: 'sse' | 'http' = 'http') => {
@@ -291,6 +317,7 @@ export function McpSettingsScreen() {
                   key={item.key}
                   item={item}
                   onToggle={(on) => void toggleInstalled(item, on)}
+                  onDelete={item.source === 'remote' ? () => void deleteInstalled(item) : undefined}
                 />
               ))}
             </div>

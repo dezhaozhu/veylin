@@ -1,9 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { isTauri, openWebView } from '@/lib/tauri-web-view';
+import { hideWebView, isTauri, openWebView, resizeWebView, type WebViewBounds } from '@/lib/tauri-web-view';
 import type { PanelContentProps } from '../panel-types';
 
 /** Control panel to open intranet pages in the docked Tauri web-view window. */
@@ -13,6 +13,28 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
   const [input, setInput] = useState(storedUrl);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  const measureBounds = useCallback((): WebViewBounds | null => {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect || rect.width < 1 || rect.height < 1) return null;
+    return {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  }, []);
+
+  const syncBounds = useCallback(async () => {
+    const bounds = measureBounds();
+    if (!bounds) return;
+    try {
+      await resizeWebView(bounds);
+    } catch {
+      // The webview may not exist yet; opening a URL will create it with fresh bounds.
+    }
+  }, [measureBounds]);
 
   const handleOpen = useCallback(async () => {
     const url = input.trim();
@@ -23,18 +45,41 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
     setLoading(true);
     setError(null);
     try {
-      await openWebView(url);
+      await openWebView(url, measureBounds() ?? undefined);
       updateState({ url });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [input, updateState, t]);
+  }, [input, measureBounds, updateState, t]);
+
+  useEffect(() => {
+    return () => {
+      void hideWebView();
+    };
+  }, []);
+
+  useEffect(() => {
+    const node = viewportRef.current;
+    if (!node || !isTauri()) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      void syncBounds();
+    });
+    resizeObserver.observe(node);
+    window.addEventListener('resize', syncBounds);
+    void syncBounds();
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', syncBounds);
+    };
+  }, [syncBounds]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-3">
-      <div className="flex gap-2">
+      <div className="flex shrink-0 gap-2">
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -64,6 +109,17 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
       )}
 
       {error && <p className="text-destructive text-xs whitespace-pre-wrap">{error}</p>}
+      <div
+        ref={viewportRef}
+        className="bg-background min-h-0 flex-1 overflow-hidden rounded-lg border"
+        aria-label={t('panels.web.label')}
+      >
+        {!storedUrl && (
+          <div className="text-muted-foreground flex h-full items-center justify-center px-4 text-center text-xs">
+            {t('web.empty')}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

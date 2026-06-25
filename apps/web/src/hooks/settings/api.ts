@@ -96,9 +96,9 @@ export const settingsApi = {
       body: JSON.stringify({ disabledSkills }),
     }),
   createSkill: (body: { name: string; description?: string; content: string; enabled?: boolean }) =>
-    apiFetch('/api/skills', { method: 'POST', body: JSON.stringify(body) }),
+    apiFetch<{ ok: boolean; skill: SkillListItem }>('/api/skills', { method: 'POST', body: JSON.stringify(body) }),
   updateSkill: (id: string, body: Partial<{ name: string; description: string; content: string; enabled: boolean }>) =>
-    apiFetch(`/api/skills/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    apiFetch<{ ok: boolean; skill: SkillListItem }>(`/api/skills/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteSkill: (id: string) => apiFetch(`/api/skills/${id}`, { method: 'DELETE' }),
 
   getRules: () => apiFetch<{ rules: Rule[] }>('/api/rules'),
@@ -108,9 +108,9 @@ export const settingsApi = {
     trigger?: 'always' | 'keyword';
     keywords?: string[];
     enabled?: boolean;
-  }) => apiFetch('/api/rules', { method: 'POST', body: JSON.stringify(body) }),
+  }) => apiFetch<{ ok: boolean; rule: Rule }>('/api/rules', { method: 'POST', body: JSON.stringify(body) }),
   updateRule: (id: string, body: Partial<Rule>) =>
-    apiFetch(`/api/rules/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    apiFetch<{ ok: boolean; rule: Rule }>(`/api/rules/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteRule: (id: string) => apiFetch(`/api/rules/${id}`, { method: 'DELETE' }),
 
   getMcpServers: () =>

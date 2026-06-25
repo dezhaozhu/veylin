@@ -2,12 +2,10 @@ import {
   AssistantRuntimeProvider,
   AuiProvider,
   useAui,
-  useAuiState,
 } from '@assistant-ui/react';
 import {
   AssistantChatTransport,
 } from '@assistant-ui/react-ai-sdk';
-import i18n from '@/i18n';
 import { useVeylinChatRuntime } from '@/lib/use-veylin-chat-runtime';
 import {
   CompositeAttachmentAdapter,
@@ -16,6 +14,7 @@ import {
 import { lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
 import { FileAttachmentAdapter } from '@/lib/file-attachment-adapter';
 import { getChatSettings, setChatSettings } from '@/lib/chat-settings';
+import i18n, { resolveAppLanguage } from '@/i18n';
 import { consumeBranchEdit } from '@/lib/context-sync-ref';
 import { createResilientChatFetch } from '@/lib/create-resilient-chat-fetch';
 import { useNetworkConnectivity } from '@/lib/use-network-connectivity';
@@ -37,6 +36,7 @@ import { TaskCreateToolUI } from '@/components/assistant-ui/task-create-tool';
 import { KnowledgeSearchToolUI } from '@/components/assistant-ui/knowledge-search';
 import { ChatPanelRatioSync } from '@/components/assistant-ui/chat-panel-ratio-sync';
 import { Thread } from '@/components/assistant-ui/thread';
+import { ThreadHeaderToolbar } from '@/components/assistant-ui/thread-header-toolbar';
 import { ThreadListSidebar } from '@/components/assistant-ui/threadlist-sidebar';
 import { ThreadRightSidebar } from '@/components/assistant-ui/thread-right-sidebar';
 import { SettingsPanelProvider, useSettingsPanel } from '@/hooks/settings/use-settings-panel';
@@ -44,17 +44,9 @@ import { CustomizeWorkspace } from '@/components/features/customize/customize-wo
 import { AutomateWorkspace } from '@/components/features/automate/automate-workspace';
 import { SettingsWorkspace } from '@/components/features/settings/settings-workspace';
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbList,
-  BreadcrumbPage,
-} from '@/components/ui/breadcrumb';
-import {
   RightSidebarProvider,
-  RightSidebarTrigger,
   SidebarInset,
   SidebarProvider,
-  SidebarTrigger,
 } from '@/components/ui/sidebar';
 
 const FRONTEND_SUSPEND_TOOLS = ['ask_user_question', 'read_open_page'] as const;
@@ -89,11 +81,6 @@ function sendAutomaticallyWhen({ messages }: { messages: UIMessage[] }) {
   return lastAssistantMessageIsCompleteWithToolCalls({ messages });
 }
 
-function ThreadHeaderTitle() {
-  const title = useAuiState((s) => s.threadListItem.title);
-  return <BreadcrumbPage>{title?.trim() || 'New Chat'}</BreadcrumbPage>;
-}
-
 function ChatShell() {
   const aui = useAui();
   const { view } = useSettingsPanel();
@@ -103,30 +90,24 @@ function ChatShell() {
       <SidebarProvider>
         <RightSidebarProvider>
           <ChatPanelRatioSync />
-          <div className="flex h-dvh w-full">
+          <div className="flex h-dvh w-full overflow-hidden">
             <ThreadListSidebar />
             {view === 'customize' ? (
-              <CustomizeWorkspace />
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                <CustomizeWorkspace />
+              </div>
             ) : view === 'automate' ? (
-              <AutomateWorkspace />
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                <AutomateWorkspace />
+              </div>
             ) : view === 'settings' ? (
-              <SettingsWorkspace />
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                <SettingsWorkspace />
+              </div>
             ) : (
               <>
                 <SidebarInset className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                  <header className="flex h-14 shrink-0 items-center gap-2 px-4">
-                    <SidebarTrigger />
-                    <Breadcrumb className="min-w-0 flex-1">
-                      <BreadcrumbList>
-                        <BreadcrumbItem>
-                          <ThreadHeaderTitle />
-                        </BreadcrumbItem>
-                      </BreadcrumbList>
-                    </Breadcrumb>
-                    <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                      <RightSidebarTrigger />
-                    </div>
-                  </header>
+                  <ThreadHeaderToolbar />
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                     <Thread />
                   </div>
@@ -196,7 +177,7 @@ export function AssistantChat() {
           mcpEnabled: s.mcpEnabled,
           pendingSkill: s.pendingSkill ?? undefined,
           branchEdit: consumeBranchEdit(),
-          locale: i18n.resolvedLanguage ?? i18n.language,
+          locale: resolveAppLanguage(i18n.resolvedLanguage ?? i18n.language),
         };
       },
     }),

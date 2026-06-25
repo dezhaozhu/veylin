@@ -15,27 +15,6 @@ function reminder(text: string): string {
   return `<system-reminder>\n${text}\n</system-reminder>`;
 }
 
-const LOCALE_NAMES: Record<string, string> = {
-  en: 'English',
-  'zh-CN': 'Simplified Chinese',
-};
-
-/**
- * Builds a system-reminder instructing the agent to reply in the UI locale.
- * Returns '' for unknown/empty locales so the base "match the user's language"
- * rule applies.
- */
-export function buildLocaleReminder(locale: string | undefined): string {
-  if (!locale) return '';
-  const normalized = locale.toLowerCase().startsWith('zh') ? 'zh-CN' : locale.startsWith('en') ? 'en' : locale;
-  const name = LOCALE_NAMES[normalized];
-  if (!name) return '';
-  return reminder(
-    `The user's interface language is ${name} (${normalized}). Write your replies to the user in ${name}, ` +
-      'regardless of the language of these instructions or tool output. Keep code, identifiers, file paths, and quoted data verbatim.',
-  );
-}
-
 /**
  * Heuristic: does the latest user request look like a multi-step task that
  * would benefit from a todo list? Deliberately conservative to avoid nagging

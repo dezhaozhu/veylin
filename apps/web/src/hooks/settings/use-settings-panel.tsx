@@ -19,7 +19,7 @@ const WorkspacePanelContext = createContext<WorkspacePanelContextValue | null>(n
 
 export function SettingsPanelProvider({ children }: { children: ReactNode }) {
   const [view, setView] = useState<WorkspaceView>('chat');
-  const [customizeTab, setCustomizeTab] = useState<CustomizeTab>('skills');
+  const [customizeTab, setCustomizeTab] = useState<CustomizeTab>('rules');
 
   const openCustomize = useCallback((tab?: CustomizeTab) => {
     if (tab) setCustomizeTab(tab);

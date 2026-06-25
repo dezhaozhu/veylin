@@ -178,6 +178,23 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function withRetry<T>(fn: () => Promise<T>, attempts: number): Promise<T> {
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (i < attempts - 1) await sleep(400 * (i + 1));
+    }
+  }
+  throw lastError;
+}
+
 function toFlowNodes(def: WorkflowDetail['definition']): Node[] {
   return def.nodes.map((n) => ({
     id: n.id,
@@ -282,15 +299,21 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   const selectedNode = useMemo(() => nodes.find((n) => n.id === selectedId) ?? null, [nodes, selectedId]);
   const selKind = selectedNode ? ((selectedNode.data as { kind: NodeKind }).kind) : null;
 
-  async function loadWorkflowList(): Promise<WorkflowSummary[]> {
-    const data = await fetchJson<{ workflows: WorkflowSummary[] }>('/api/workflows');
+  async function loadWorkflowList(attempts = 1): Promise<WorkflowSummary[]> {
+    const data = await withRetry(
+      () => fetchJson<{ workflows: WorkflowSummary[] }>('/api/workflows'),
+      attempts,
+    );
     const list = data.workflows ?? [];
     setWorkflows(list);
     return list;
   }
 
-  async function loadWorkflow(id: string) {
-    const data = await fetchJson<{ workflow: WorkflowDetail }>(`/api/workflows/${id}`);
+  async function loadWorkflow(id: string, attempts = 1) {
+    const data = await withRetry(
+      () => fetchJson<{ workflow: WorkflowDetail }>(`/api/workflows/${id}`),
+      attempts,
+    );
     const wf = data.workflow;
     setWorkflow(wf);
     setName(wf.name);
@@ -306,7 +329,11 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   }
 
   useEffect(() => {
-    void loadWorkflowList().catch((err) => setError(String(err)));
+    void loadWorkflowList(6).catch(() => {
+      setWorkflows([]);
+      setError(null);
+      if (!workflowId) startNewWorkflow([]);
+    });
   }, []);
 
   useEffect(() => {
@@ -317,12 +344,15 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
 
   useEffect(() => {
     if (!workflowId) return;
-    void loadWorkflow(workflowId).catch((err) => setError(String(err)));
+    void loadWorkflow(workflowId, 6).catch(() => {
+      setError(null);
+      startNewWorkflow(workflows);
+    });
   }, [workflowId]);
 
   useEffect(() => {
     if (!workflowId || !showLogs) return;
-    const poll = () => loadRuns(workflowId).catch((err) => setError(String(err)));
+    const poll = () => loadRuns(workflowId).catch(() => undefined);
     void poll();
     const t = setInterval(() => void poll(), 3000);
     return () => clearInterval(t);
@@ -670,6 +700,7 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
             onConnect={onConnect}
             nodeTypes={nodeTypes}
             fitView
+            proOptions={{ hideAttribution: true }}
             onNodeClick={(_, node) => setSelectedId(node.id)}
             onPaneClick={() => setSelectedId(null)}
           >

@@ -6,7 +6,7 @@ import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { toAISdkStream } from '@mastra/ai-sdk';
 import { MCPClient } from '@mastra/mcp';
 import { RequestContext } from '@mastra/core/di';
-import { createRuntime, DEFAULT_AGENT_ID } from '@veylin/runtime';
+import { createRuntime, DEFAULT_AGENT_ID, getModelConfig, type ModelKey } from '@veylin/runtime';
 import { setThreadPlanMode } from '@veylin/tools';
 import { toNodeHandler } from 'better-auth/node';
 import { auth, isDesktopAuth } from './auth';
@@ -62,13 +62,13 @@ import {
   deleteThreadState,
   touchThreadActivity,
 } from './thread-state';
-import { buildLocaleReminder, buildReminderBlock } from './reminders';
+import { buildReminderBlock } from './reminders';
 import { listThreadActivity } from './thread-activity';
 import { syncThreadMessagesFromClient } from './thread-sync';
 import { generateThreadTitle } from './thread-title';
 import { mastraMessagesToUi } from './message-sync';
 import { filterExternalToolsets } from './toolsets';
-import { ContextCompression, buildSummarizer } from '@veylin/runtime';
+import { ContextCompression, buildLocaleBlock, buildSummarizer } from '@veylin/runtime';
 import {
   bindActiveStream,
   captureSseToResumable,
@@ -109,7 +109,6 @@ import {
   updateRemoteMcpServer,
   deleteRemoteMcpServer,
   createMcpClient,
-  listBundledMcpServerNames,
   listActiveMcpServerNames,
 } from './mcp-store';
 import {
@@ -410,9 +409,9 @@ async function main() {
   app.get('/api/mcp-servers', async (req) => {
     const ctx = await resolveContext(req.headers);
     const remote = await listRemoteMcpServers(ctx.tenantId);
-    const bundled = listBundledMcpServerNames();
     const disabledMcp = await getDisabledMcpServers(ctx.tenantId);
-    return { bundled, remote, disabledMcp };
+    // Installed MCP is user-managed (remote); bundled stdio servers are opt-in via agent config only.
+    return { bundled: [], remote, disabledMcp };
   });
 
   app.post('/api/mcp-servers/disabled', async (req) => {
@@ -1167,6 +1166,14 @@ async function main() {
     const planMode = body.planMode === true || (threadRow?.planMode ?? false);
 
     const agent = runtime.getAgent(agentId) ?? runtime.mastra.getAgent(DEFAULT_AGENT_ID);
+    const modelKey = (body.model ?? 'deepseek') as ModelKey;
+    const modelConfig = getModelConfig(modelKey);
+    if (!modelConfig.apiKey.trim()) {
+      return reply.status(400).send({
+        error: 'model_not_configured',
+        message: 'Model API key is not configured. Open Settings -> Models and add your own API key.',
+      });
+    }
 
     const mcpAgentId = agentId;
     const declaredMcp = runtime.definitions.get(mcpAgentId)?.definition.mcpServers ?? [];
@@ -1277,7 +1284,7 @@ async function main() {
     const knowledgeBlock = knowledgeCapable
       ? await buildKnowledgeContextBlock(ctx.tenantId)
       : '';
-    const localeBlock = buildLocaleReminder(body.locale);
+    const localeBlock = buildLocaleBlock(body.locale);
     const systemBlocks = [skillsCatalog, skillBlock, rulesBlock, knowledgeBlock, reminderBlock, localeBlock]
       .filter(Boolean)
       .join('\n\n');

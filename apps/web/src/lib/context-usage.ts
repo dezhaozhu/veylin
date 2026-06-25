@@ -6,13 +6,15 @@ import type { ModelKey } from '@/lib/chat-settings';
  * the composer status line and automatic compaction.
  */
 
-export const MODEL_CONTEXT_WINDOWS: Record<ModelKey, number> = {
+const DEFAULT_CONTEXT_WINDOW = 1_000_000;
+
+export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   deepseek: 1_000_000,
   zenmux: 1_048_576,
 };
 
 export function getModelContextWindow(model: ModelKey): number {
-  return MODEL_CONTEXT_WINDOWS[model];
+  return MODEL_CONTEXT_WINDOWS[model] ?? DEFAULT_CONTEXT_WINDOW;
 }
 
 /** char/4 heuristic for a rough token-count estimate when usage is unavailable. */

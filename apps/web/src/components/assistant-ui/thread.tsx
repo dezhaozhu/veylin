@@ -284,22 +284,17 @@ const MessageError: FC = () => {
       detail: t("chatError.retryLater"),
     };
 
+  const message = formatted.detail
+    ? `${formatted.title}：${formatted.detail}`
+    : formatted.title;
+
   return (
     <MessagePrimitive.Error>
-      <ErrorPrimitive.Root className="aui-message-error-root border-border bg-muted/60 mt-2 rounded-lg border px-3 py-2.5 text-sm">
-        <div className="flex items-start gap-2">
-          <AlertCircleIcon className="text-destructive mt-0.5 size-4 shrink-0" aria-hidden />
-          <div className="min-w-0">
-            <p className="aui-message-error-message font-medium leading-snug">
-              {formatted.title}
-            </p>
-            {formatted.detail ? (
-              <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
-                {formatted.detail}
-              </p>
-            ) : null}
-          </div>
-        </div>
+      <ErrorPrimitive.Root className="aui-message-error-root border-border bg-muted/60 mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
+        <AlertCircleIcon className="text-destructive size-4 shrink-0" aria-hidden />
+        <span className="aui-message-error-message min-w-0 truncate" title={message}>
+          {message}
+        </span>
       </ErrorPrimitive.Root>
     </MessagePrimitive.Error>
   );

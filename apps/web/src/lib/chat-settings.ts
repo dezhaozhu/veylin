@@ -3,7 +3,8 @@
  * AI SDK transport body. Persisted to localStorage; changes broadcast a
  * `veylin-chat-settings` event so components stay in sync.
  */
-export type ModelKey = 'deepseek' | 'zenmux';
+/** A model id from the user-configurable catalog (built-in or custom). */
+export type ModelKey = string;
 
 export interface ChatSettings {
   model: ModelKey;

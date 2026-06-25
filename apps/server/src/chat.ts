@@ -40,7 +40,7 @@ type ChatBody = {
   pendingSkill?: string;
   /** Set when user edits/regenerates to truncate server-side memory. */
   branchEdit?: boolean;
-  /** UI locale (e.g. "en", "zh-CN"); the agent replies in this language. */
+  /** UI locale from react-i18next (en | zh-CN). */
   locale?: string;
 };
 

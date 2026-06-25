@@ -20,7 +20,7 @@ export function RightPanel() {
   const Content = def?.Component;
 
   return (
-    <div className="border-border flex h-full min-h-0 flex-col border-l">
+    <div className="flex h-full min-h-0 flex-col">
       <PanelTabBar
         tabs={tabs}
         activeId={activeId}

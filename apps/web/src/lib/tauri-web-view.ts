@@ -27,11 +27,28 @@ export interface PageContent {
   content: string;
 }
 
-export async function openWebView(url: string): Promise<void> {
+export interface WebViewBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export async function openWebView(url: string, bounds?: WebViewBounds): Promise<void> {
   if (!isTauri()) {
     throw new Error(i18n.t('web.requiresDesktopOpen'));
   }
-  await tauriInvoke('open_web_view', { url });
+  await tauriInvoke('open_web_view', { url, bounds });
+}
+
+export async function resizeWebView(bounds: WebViewBounds): Promise<void> {
+  if (!isTauri()) return;
+  await tauriInvoke('resize_web_view', { bounds });
+}
+
+export async function hideWebView(): Promise<void> {
+  if (!isTauri()) return;
+  await tauriInvoke('hide_web_view');
 }
 
 export async function readWebView(mode: 'text' | 'html' = 'text'): Promise<PageContent> {

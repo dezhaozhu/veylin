@@ -496,7 +496,7 @@ export function AutomationsSettingsScreen() {
           }
         />
         <div className="grid gap-3 md:grid-cols-2">
-          {TEMPLATES.map((t) => (
+          {TEMPLATES.slice(0, 1).map((t) => (
             <button
               key={t.id}
               type="button"

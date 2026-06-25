@@ -44,10 +44,13 @@ export function stampMessageWithSentAt<T extends { metadata?: unknown }>(
 /** Locale-aware short date + time, e.g. "May 13, 20:30" or "5月13日 20:30". */
 export function formatMessageTime(sentAt: number): string {
   const date = new Date(sentAt);
-  const lang =
-    (typeof navigator !== 'undefined' && localStorage.getItem('veylin-lang')) ||
-    (typeof navigator !== 'undefined' ? navigator.language : 'en') ||
-    'en';
+  let lang = 'en';
+  if (typeof localStorage !== 'undefined') {
+    const stored = localStorage.getItem('veylin-lang');
+    if (stored) lang = stored;
+  } else if (typeof navigator !== 'undefined') {
+    lang = navigator.language;
+  }
   const datePart = date.toLocaleDateString(lang, { month: 'short', day: 'numeric' });
   const timePart = date.toLocaleTimeString(lang, {
     hour: '2-digit',
