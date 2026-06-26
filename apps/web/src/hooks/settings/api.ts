@@ -41,7 +41,8 @@ export type Automation = {
   cron?: string | null;
   timezone?: string | null;
   sourceType?: string;
-  triggerFilter?: Record<string, unknown>;
+  eventOn?: string | string[];
+  eventFilter?: string;
   lastRunAt?: string | null;
 };
 
@@ -56,10 +57,23 @@ export type AutomationRun = {
 
 export type WebhookEndpoint = {
   id: string;
-  token: string;
-  sourceType: 'github' | 'custom';
+  name: string;
+  source: string;
   url: string;
+  eventKeyExpr: string;
+  signatureHeader: string;
+  enabled: boolean;
 };
+
+export type WebhookCreateBody =
+  | { preset: 'github'; name?: string }
+  | {
+      name: string;
+      source: string;
+      eventKeyExpr?: string;
+      signatureHeader?: string;
+      webhookSecret?: string;
+    };
 
 import { normalizeModelProviderSettings } from '@/lib/model-provider-settings';
 
@@ -176,7 +190,8 @@ export const settingsApi = {
     cron?: string;
     timezone?: string;
     sourceType?: string;
-    triggerFilter?: Record<string, unknown>;
+    eventOn?: string | string[];
+    eventFilter?: string;
     enabled?: boolean;
   }) => apiFetch('/api/automations', { method: 'POST', body: JSON.stringify(body) }),
   updateAutomation: (id: string, body: Record<string, unknown>) =>
@@ -186,10 +201,23 @@ export const settingsApi = {
     apiFetch(`/api/automations/${id}/trigger`, { method: 'POST' }),
 
   getWebhooks: () => apiFetch<{ endpoints: WebhookEndpoint[] }>('/api/webhooks'),
-  createWebhook: (sourceType: 'github' | 'custom') =>
-    apiFetch<{ endpoint: WebhookEndpoint; secret: string }>('/api/webhooks', {
+  createWebhook: (body: WebhookCreateBody) =>
+    apiFetch<{ endpoint: WebhookEndpoint; secret: string | null }>('/api/webhooks', {
       method: 'POST',
-      body: JSON.stringify({ sourceType }),
+      body: JSON.stringify(body),
     }),
   deleteWebhook: (id: string) => apiFetch(`/api/webhooks/${id}`, { method: 'DELETE' }),
+  updateWebhook: (
+    id: string,
+    body: {
+      name?: string;
+      eventKeyExpr?: string;
+      signatureHeader?: string;
+      enabled?: boolean;
+    },
+  ) =>
+    apiFetch<{ endpoint: WebhookEndpoint }>(`/api/webhooks/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
 };

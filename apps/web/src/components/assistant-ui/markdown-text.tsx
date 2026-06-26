@@ -9,10 +9,11 @@ import {
   useIsMarkdownCodeBlock,
 } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
-import { type FC, memo, useEffect, useRef, useState } from "react";
+import { type FC, memo, useEffect, useRef, useState, type ReactElement } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { MermaidDiagram } from "@/components/assistant-ui/mermaid-diagram";
 import { cn } from "@/lib/utils";
 
 const MarkdownTextImpl = () => {
@@ -83,6 +84,16 @@ const useCopyToClipboard = ({
 
   return { isCopied, copyToClipboard };
 };
+
+function mermaidSourceFromPre(children: React.ReactNode): string | null {
+  const child = children as ReactElement<{ className?: string; children?: React.ReactNode }>;
+  const className = child?.props?.className ?? "";
+  if (!className.includes("language-mermaid")) return null;
+  const raw = child?.props?.children;
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw)) return raw.map(String).join("");
+  return raw != null ? String(raw) : "";
+}
 
 const defaultComponents = memoizeMarkdownComponents({
   h1: ({ className, ...props }) => (
@@ -241,15 +252,23 @@ const defaultComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
-  pre: ({ className, ...props }) => (
-    <pre
-      className={cn(
-        "aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-t-none rounded-b-xl border border-t-0 p-3.5 text-[13px] leading-relaxed",
-        className,
-      )}
-      {...props}
-    />
-  ),
+  pre: function Pre({ className, children, ...props }) {
+    const mermaidCode = mermaidSourceFromPre(children);
+    if (mermaidCode != null) {
+      return <MermaidDiagram code={mermaidCode} />;
+    }
+    return (
+      <pre
+        className={cn(
+          "aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-t-none rounded-b-xl border border-t-0 p-3.5 text-[13px] leading-relaxed",
+          className,
+        )}
+        {...props}
+      >
+        {children}
+      </pre>
+    );
+  },
   code: function Code({ className, ...props }) {
     const isCodeBlock = useIsMarkdownCodeBlock();
     return (

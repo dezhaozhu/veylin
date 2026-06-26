@@ -120,7 +120,8 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS cron ON automation TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS timezone ON automation TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS source_type ON automation TYPE option<string>`,
-  `DEFINE FIELD IF NOT EXISTS trigger_filter ON automation FLEXIBLE TYPE object DEFAULT {}`,
+  `DEFINE FIELD IF NOT EXISTS event_on ON automation TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS event_filter ON automation TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS created_at ON automation TYPE datetime DEFAULT time::now()`,
   `DEFINE FIELD IF NOT EXISTS last_run_at ON automation TYPE option<datetime>`,
 
@@ -138,11 +139,14 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE TABLE IF NOT EXISTS webhook_endpoint SCHEMAFULL`,
   `DEFINE FIELD IF NOT EXISTS id ON webhook_endpoint TYPE string`,
   `DEFINE FIELD IF NOT EXISTS tenant_id ON webhook_endpoint TYPE string`,
-  `DEFINE FIELD IF NOT EXISTS token ON webhook_endpoint TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON webhook_endpoint TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS source ON webhook_endpoint TYPE string`,
   `DEFINE FIELD IF NOT EXISTS secret ON webhook_endpoint TYPE string`,
-  `DEFINE FIELD IF NOT EXISTS source_type ON webhook_endpoint TYPE string DEFAULT 'custom'`,
+  `DEFINE FIELD IF NOT EXISTS event_key_expr ON webhook_endpoint TYPE string DEFAULT 'type'`,
+  `DEFINE FIELD IF NOT EXISTS signature_header ON webhook_endpoint TYPE string DEFAULT 'X-Signature-256'`,
+  `DEFINE FIELD IF NOT EXISTS enabled ON webhook_endpoint TYPE bool DEFAULT true`,
   `DEFINE FIELD IF NOT EXISTS created_at ON webhook_endpoint TYPE datetime DEFAULT time::now()`,
-  `DEFINE INDEX IF NOT EXISTS webhook_token_idx ON webhook_endpoint FIELDS token UNIQUE`,
+  `DEFINE INDEX IF NOT EXISTS webhook_tenant_source_idx ON webhook_endpoint FIELDS tenant_id, source UNIQUE`,
 
   `DEFINE TABLE IF NOT EXISTS schedule_sheet SCHEMAFULL`,
   `DEFINE FIELD IF NOT EXISTS id ON schedule_sheet TYPE string`,
@@ -207,7 +211,8 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS cron ON workflow TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS timezone ON workflow TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS source_type ON workflow TYPE option<string>`,
-  `DEFINE FIELD IF NOT EXISTS trigger_filter ON workflow FLEXIBLE TYPE object DEFAULT {}`,
+  `DEFINE FIELD IF NOT EXISTS event_on ON workflow TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS event_filter ON workflow TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS definition ON workflow FLEXIBLE TYPE object DEFAULT {}`,
   `DEFINE FIELD IF NOT EXISTS created_at ON workflow TYPE datetime DEFAULT time::now()`,
   `DEFINE FIELD IF NOT EXISTS last_run_at ON workflow TYPE option<datetime>`,
@@ -221,6 +226,38 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS started_at ON workflow_run TYPE datetime DEFAULT time::now()`,
   `DEFINE FIELD IF NOT EXISTS finished_at ON workflow_run TYPE option<datetime>`,
 ];
+
+/** Legacy webhook model (token URL) → OpenHands model (source + whsec secret). */
+const WEBHOOK_LEGACY_FIELDS = ['token', 'source_type', 'url'] as const;
+
+async function migrateWebhookEndpoints(db: Surreal): Promise<void> {
+  for (const field of WEBHOOK_LEGACY_FIELDS) {
+    try {
+      await db.query(`REMOVE FIELD IF EXISTS ${field} ON TABLE webhook_endpoint`);
+    } catch {
+      // Table may not exist on a fresh install.
+    }
+  }
+
+  const dataSteps = [
+    `UPDATE webhook_endpoint SET secret = secret ?? token WHERE (secret IS NONE OR secret = '') AND token IS NOT NONE`,
+    `UPDATE webhook_endpoint SET source = source ?? source_type ?? 'custom' WHERE source IS NONE OR source = ''`,
+    `UPDATE webhook_endpoint SET name = name ?? source ?? 'Webhook' WHERE name IS NONE OR name = ''`,
+    `UPDATE webhook_endpoint SET event_key_expr = event_key_expr ?? 'type' WHERE event_key_expr IS NONE OR event_key_expr = ''`,
+    `UPDATE webhook_endpoint SET signature_header = 'X-Hub-Signature-256' WHERE (signature_header IS NONE OR signature_header = '') AND source = 'github'`,
+    `UPDATE webhook_endpoint SET signature_header = 'X-Signature-256' WHERE signature_header IS NONE OR signature_header = ''`,
+    `UPDATE webhook_endpoint UNSET token, source_type, url`,
+    `DELETE webhook_endpoint WHERE secret IS NONE OR secret = '' OR source IS NONE OR source = ''`,
+  ];
+
+  for (const sql of dataSteps) {
+    try {
+      await db.query(sql);
+    } catch {
+      // Best-effort: field names differ across legacy DB versions.
+    }
+  }
+}
 
 export async function initSchema(db: Surreal): Promise<void> {
   for (const sql of SCHEMA_STATEMENTS) {
@@ -236,4 +273,6 @@ export async function initSchema(db: Surreal): Promise<void> {
       );
     }
   }
+
+  await migrateWebhookEndpoints(db);
 }

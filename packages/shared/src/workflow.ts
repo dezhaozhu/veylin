@@ -128,8 +128,9 @@ export const workflowSchema = z.object({
   enabled: z.boolean(),
   cron: z.string().nullable().optional(),
   timezone: z.string().nullable().optional(),
-  sourceType: z.enum(['cron', 'github', 'custom']).optional(),
-  triggerFilter: z.record(z.string(), z.unknown()).default({}),
+  sourceType: z.union([z.literal('cron'), z.string().min(1)]).optional(),
+  eventOn: z.union([z.string(), z.array(z.string())]).optional(),
+  eventFilter: z.string().optional(),
   definition: workflowDefinitionSchema,
   createdAt: z.string().optional(),
   lastRunAt: z.string().nullable().optional(),
@@ -143,8 +144,9 @@ export const workflowInputSchema = z.object({
   enabled: z.boolean().default(true),
   cron: z.string().optional(),
   timezone: z.string().default('UTC'),
-  sourceType: z.enum(['cron', 'github', 'custom']).optional(),
-  triggerFilter: z.record(z.string(), z.unknown()).default({}),
+  sourceType: z.union([z.literal('cron'), z.string().min(1)]).optional(),
+  eventOn: z.union([z.string(), z.array(z.string())]).optional(),
+  eventFilter: z.string().optional(),
   definition: workflowDefinitionSchema.default({ nodes: [], edges: [] }),
 });
 

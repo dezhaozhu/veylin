@@ -1,7 +1,5 @@
-import {
-  ComposerAttachments,
-  UserMessageAttachments,
-} from "@/components/assistant-ui/attachment";
+import { UserMessageChipsRow, userMessageHasDisplayChips } from "@/components/assistant-ui/user-message-chips-row";
+import { UserMessageText } from "@/components/assistant-ui/user-message-text";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import {
   Reasoning,
@@ -11,7 +9,9 @@ import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { ToolGroupBlock } from "@/components/assistant-ui/tool-group";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { ComposerContextUsage } from "@/components/assistant-ui/composer-context-usage";
-import { ComposerContextTokens } from "@/components/assistant-ui/composer-context-tokens";
+import { ComposerChipsRow } from "@/components/assistant-ui/composer-mention/composer-chips-row";
+import { ComposerAttachmentDropzone } from "@/components/assistant-ui/composer-attachment-dropzone";
+import { ComposerMentionInput } from "@/components/assistant-ui/composer-mention/composer-mention-input";
 import { ComposerModeChips } from "@/components/assistant-ui/composer-mode-chips";
 import { ComposerPlusMenu } from "@/components/assistant-ui/composer-plus-menu";
 import { ComposerStatusBar } from "@/components/assistant-ui/composer-status-bar";
@@ -210,25 +210,26 @@ const Composer: FC = () => {
 
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
-      <ComposerQueue />
-      <ComposerPrimitive.AttachmentDropzone asChild>
-        <div
-          data-slot="aui_composer-shell"
-          className="border-border/60 data-[dragging=true]:border-ring focus-within:border-border dark:border-muted-foreground/15 dark:focus-within:border-muted-foreground/30 flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] focus-within:shadow-[0_6px_24px_-8px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.05)] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))] dark:shadow-none"
-        >
-          <ComposerAttachments />
-          <ComposerContextTokens />
-          <ComposerPrimitive.Input
-            placeholder={t("thread.composerPlaceholder")}
-            className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
-            rows={1}
-            autoFocus
-            aria-label={t("thread.composerAriaLabel")}
-            onKeyDown={onKeyDown}
-          />
-          <ComposerAction />
+      <ComposerAttachmentDropzone asChild>
+        <div className="flex w-full flex-col gap-2 data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:border-ring data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:border-dashed data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]">
+          <ComposerQueue />
+          <div
+            data-slot="aui_composer-shell"
+            className="border-border/60 focus-within:border-border dark:border-muted-foreground/15 dark:focus-within:border-muted-foreground/30 flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] focus-within:shadow-[0_6px_24px_-8px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.05)] dark:shadow-none"
+          >
+            <ComposerChipsRow />
+            <ComposerMentionInput
+              placeholder={t("thread.composerPlaceholder")}
+              className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
+              rows={1}
+              autoFocus
+              aria-label={t("thread.composerAriaLabel")}
+              onKeyDown={onKeyDown}
+            />
+            <ComposerAction />
+          </div>
         </div>
-      </ComposerPrimitive.AttachmentDropzone>
+      </ComposerAttachmentDropzone>
     </ComposerPrimitive.Root>
   );
 };
@@ -439,25 +440,40 @@ const AssistantActionBar: FC = () => {
 };
 
 const UserMessage: FC = () => {
+  const hasText = useAuiState((s) =>
+    s.message.content
+      .filter((part): part is { type: "text"; text: string } => part.type === "text")
+      .some((part) => part.text.length > 0),
+  );
+  const hasChips = useAuiState((s) => userMessageHasDisplayChips(s.message));
+  const showBubble = hasText || hasChips;
+
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
       className="fade-in slide-in-from-bottom-1 animate-in flex flex-col items-end gap-2 px-2 duration-150 [contain-intrinsic-size:auto_60px] [content-visibility:auto]"
       data-role="user"
     >
-      <UserMessageAttachments />
+      <UserMessageChipsRow />
 
-      <div className="aui-user-message-content-wrapper flex max-w-[85%] flex-col items-end">
-        <div className="relative w-max max-w-full">
-          <div className="aui-user-message-content bg-muted text-foreground rounded-3xl px-4 py-2 wrap-break-word empty:hidden">
-            <MessagePrimitive.Parts />
+      {showBubble && (
+        <div className="aui-user-message-content-wrapper flex max-w-[85%] flex-col items-end">
+          <div className="relative w-max max-w-full">
+            <div
+              className={cn(
+                "aui-user-message-content bg-muted text-foreground rounded-3xl px-4 py-2 wrap-break-word",
+                !hasText && "min-h-[2.25rem]",
+              )}
+            >
+              <UserMessageText />
+            </div>
+            <div className="aui-user-action-bar-wrapper absolute top-1/2 right-full -translate-y-1/2 pe-2">
+              <UserActionBar />
+            </div>
           </div>
-          <div className="aui-user-action-bar-wrapper absolute top-1/2 right-full -translate-y-1/2 pe-2">
-            <UserActionBar />
-          </div>
+          <UserMessageFooter />
         </div>
-        <UserMessageFooter />
-      </div>
+      )}
 
       <BranchPicker
         data-slot="aui_user-branch-picker"

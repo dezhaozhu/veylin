@@ -13,8 +13,16 @@ function messageIds(messages: Array<{ id?: string }>): string[] {
   return messages.map((m) => m.id).filter((id): id is string => Boolean(id));
 }
 
+function sharedPrefixLength(storedIds: string[], clientIds: string[]): number {
+  const limit = Math.min(storedIds.length, clientIds.length);
+  let i = 0;
+  while (i < limit && storedIds[i] === clientIds[i]) i++;
+  return i;
+}
+
 /**
- * Heuristic: client truncated history (edit/regenerate) vs normal append.
+ * Whether the AI SDK client snapshot should replace Mastra recall.
+ * Client is authoritative for UI file parts (attachments must persist).
  */
 export function shouldReplaceFromClient(
   stored: StoredMessage[],
@@ -23,16 +31,18 @@ export function shouldReplaceFromClient(
 ): boolean {
   if (branchEdit) return true;
   if (client.length === 0) return false;
+  if (stored.length === 0) return true;
   if (client.length < stored.length) return true;
 
   const storedIds = messageIds(stored);
   const clientIds = messageIds(client);
   if (clientIds.length === 0) return false;
 
-  const prefixMatch =
-    clientIds.length <= storedIds.length &&
-    clientIds.every((id, i) => id === storedIds[i]);
-  if (!prefixMatch) return false;
+  const prefix = sharedPrefixLength(storedIds, clientIds);
+  if (prefix === 0 && storedIds.length > 0) return true;
+  if (prefix < storedIds.length) return true;
+
+  if (client.length > stored.length) return true;
 
   if (client.length === stored.length) {
     const lastClient = client.at(-1);
@@ -44,6 +54,7 @@ export function shouldReplaceFromClient(
     ) {
       return true;
     }
+    if (lastClient?.id === lastStored?.id) return true;
   }
 
   return false;
@@ -75,3 +86,5 @@ export async function syncThreadMessagesFromClient(opts: {
 
   return true;
 }
+
+export { mastraMessagesToUi };

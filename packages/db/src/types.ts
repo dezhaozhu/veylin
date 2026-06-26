@@ -6,7 +6,6 @@ export type WorkflowRunStatus = 'queued' | 'running' | 'done' | 'failed';
 export type AutomationRunStatus = 'queued' | 'running' | 'done' | 'failed';
 export type RuleTrigger = 'always' | 'keyword';
 export type McpTransport = 'sse' | 'http';
-export type WebhookSourceType = 'github' | 'custom';
 
 export interface TenantRow {
   id: string;
@@ -133,7 +132,8 @@ export interface AutomationRow {
   cron?: string | null;
   timezone?: string | null;
   sourceType?: string | null;
-  triggerFilter: Record<string, unknown>;
+  eventOn?: string | string[] | null;
+  eventFilter?: string | null;
   createdAt?: string;
   lastRunAt?: string | null;
 }
@@ -153,9 +153,12 @@ export interface AutomationRunRow {
 export interface WebhookEndpointRow {
   id: string;
   tenantId: string;
-  token: string;
+  name: string;
+  source: string;
   secret: string;
-  sourceType: WebhookSourceType;
+  eventKeyExpr: string;
+  signatureHeader: string;
+  enabled: boolean;
   createdAt?: string;
 }
 
@@ -230,7 +233,8 @@ export interface WorkflowRow {
   cron?: string | null;
   timezone?: string | null;
   sourceType?: string | null;
-  triggerFilter: Record<string, unknown>;
+  eventOn?: string | string[] | null;
+  eventFilter?: string | null;
   definition: { nodes: unknown[]; edges: unknown[] };
   createdAt?: string;
   lastRunAt?: string | null;

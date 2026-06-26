@@ -70,6 +70,7 @@ export function storedMessageToUiMessage(msg: StoredUiMessage): UIMessage {
   const parts = rawParts.map(normalizePart).filter((part) => {
     if (!part || typeof part !== 'object') return false;
     const p = part as { type?: string; text?: string };
+    if (p.type === 'data-veylin-pendingSkill') return true;
     if (p.type === 'text' || p.type === 'reasoning') {
       return (p.text ?? '').trim().length > 0;
     }

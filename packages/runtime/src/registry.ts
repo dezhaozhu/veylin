@@ -56,6 +56,8 @@ export interface Runtime {
   memory: Memory;
   /** Loaded agent definitions, including the built-in default. */
   definitions: Map<string, LoadedAgent>;
+  /** Directory scanned for agent.yaml + skills (reloaded on demand). */
+  agentsDir?: string;
   /** List registered agents for UI pickers. */
   listAgents(): AgentSummary[];
   /** Skills + MCP metadata for the default (or given) agent package. */
@@ -63,6 +65,8 @@ export interface Runtime {
   getAgent(id: string): Agent | undefined;
   /** Build (and register) an extra agent at runtime. */
   createAgent(def: AgentDefinition, policy?: PolicyConfig, skills?: Skill[]): Agent;
+  /** Reload agent.yaml and bundled skills from agentsDir. */
+  reloadAgentPackages(): Promise<void>;
 }
 
 export interface CreateRuntimeOptions {
@@ -100,6 +104,17 @@ export async function loadAgentsFromDir(dir: string): Promise<LoadedAgent[]> {
   return loaded;
 }
 
+async function loadDefinitionsFromAgentsDir(agentsDir?: string): Promise<Map<string, LoadedAgent>> {
+  const definitions = new Map<string, LoadedAgent>();
+  definitions.set(DEFAULT_AGENT.id, { definition: DEFAULT_AGENT, skills: [] });
+  if (agentsDir) {
+    for (const item of await loadAgentsFromDir(agentsDir)) {
+      definitions.set(item.definition.id, item);
+    }
+  }
+  return definitions;
+}
+
 export async function createRuntime(
   opts: CreateRuntimeOptions | string,
 ): Promise<Runtime> {
@@ -110,40 +125,52 @@ export async function createRuntime(
   const libsqlUrl = resolved.libsqlUrl ?? `file:${join(resolved.dataDir, 'mastra-memory.db')}`;
 
   const memory = buildMemory(libsqlUrl);
-  const { agentsDir } = resolved;
+  const agentsDir = resolved.agentsDir;
+  const definitions = await loadDefinitionsFromAgentsDir(agentsDir);
+  const agentById = new Map<string, Agent>();
 
-  const definitions = new Map<string, LoadedAgent>();
-  definitions.set(DEFAULT_AGENT.id, { definition: DEFAULT_AGENT, skills: [] });
+  const registerPackageAgent = (id: string, loaded: LoadedAgent) => {
+    const filteredSkills = filterSkills(loaded.skills, loaded.definition.skills);
+    agentById.set(
+      id,
+      buildAgent({ definition: loaded.definition, memory, policy: defaultPolicy, skills: filteredSkills }),
+    );
+  };
 
-  if (agentsDir) {
-    for (const item of await loadAgentsFromDir(agentsDir)) {
-      definitions.set(item.definition.id, item);
-    }
+  for (const [id, loaded] of definitions) {
+    registerPackageAgent(id, loaded);
   }
 
-  const agents: Record<string, Agent> = {};
-  for (const [id, { definition, skills }] of definitions) {
-    const filteredSkills = filterSkills(skills, definition.skills);
-    agents[id] = buildAgent({ definition, memory, policy: defaultPolicy, skills: filteredSkills });
-  }
-
-  // Register the built-in subagent presets dispatched synchronously by the `task`
-  // tool. They reuse the shared policy/memory/processors via buildAgent but are
-  // intentionally kept out of `definitions` so they don't show in UI agent pickers.
   for (const preset of Object.values(SUBAGENT_PRESETS)) {
     const definition = presetToDefinition(preset);
-    agents[definition.id] = buildAgent({ definition, memory, policy: defaultPolicy });
+    agentById.set(definition.id, buildAgent({ definition, memory, policy: defaultPolicy }));
   }
 
   const mastra = new Mastra({
-    agents,
+    agents: Object.fromEntries(agentById),
     logger: new PinoLogger({ name: 'veylin', level: 'info' }),
   });
+
+  const reloadAgentPackages = async () => {
+    if (!agentsDir) return;
+    const next = await loadDefinitionsFromAgentsDir(agentsDir);
+    for (const [id, loaded] of next) {
+      definitions.set(id, loaded);
+      registerPackageAgent(id, loaded);
+    }
+    for (const id of [...definitions.keys()]) {
+      if (!next.has(id)) {
+        definitions.delete(id);
+        agentById.delete(id);
+      }
+    }
+  };
 
   return {
     mastra,
     memory,
     definitions,
+    agentsDir,
     listAgents() {
       return [...definitions.values()].map(({ definition }) => ({
         id: definition.id,
@@ -166,15 +193,14 @@ export async function createRuntime(
       };
     },
     getAgent(id) {
-      try {
-        return mastra.getAgent(id);
-      } catch {
-        return undefined;
-      }
+      return agentById.get(id);
     },
     createAgent(def, policy = defaultPolicy, skills = []) {
-      return buildAgent({ definition: def, memory, policy, skills });
+      const agent = buildAgent({ definition: def, memory, policy, skills });
+      agentById.set(def.id, agent);
+      return agent;
     },
+    reloadAgentPackages,
   };
 }
 

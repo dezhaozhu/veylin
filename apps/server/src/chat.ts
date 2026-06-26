@@ -40,6 +40,8 @@ type ChatBody = {
   pendingSkill?: string;
   /** Set when user edits/regenerates to truncate server-side memory. */
   branchEdit?: boolean;
+  /** Browser page attached via @ mention (desktop web view). */
+  attachedBrowser?: { tabId: string; url: string; title: string };
   /** UI locale from react-i18next (en | zh-CN). */
   locale?: string;
 };
@@ -218,4 +220,20 @@ export async function toAgentMessages(
 export function parseChatBody(raw: unknown): ChatBody {
   if (!raw || typeof raw !== 'object') return {};
   return raw as ChatBody;
+}
+
+/** Hint for the model when the user @-attached a docked browser page. */
+export function buildAttachedBrowserBlock(
+  attached?: ChatBody['attachedBrowser'],
+): string {
+  if (!attached?.url) return '';
+  const title = attached.title?.trim() || attached.url;
+  return (
+    '## Attached browser context\n' +
+    `The user attached the page currently shown in the desktop docked web view.\n` +
+    `- Title: ${title}\n` +
+    `- URL: ${attached.url}\n` +
+    'Use `read_open_page` to read the fully rendered page (including logged-in intranet content). ' +
+    'Do not use `web_fetch` for this page when session cookies matter.'
+  );
 }

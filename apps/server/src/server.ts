@@ -2,6 +2,9 @@ import './env';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { Readable } from 'node:stream';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { toAISdkStream } from '@mastra/ai-sdk';
 import { MCPClient } from '@mastra/mcp';
@@ -27,7 +30,7 @@ import {
   type WorkflowJob,
 } from './queue';
 import { recordAudit } from './audit';
-import { lastUserText, modelSupportsImages, parseChatBody, toAgentMessages } from './chat';
+import { buildAttachedBrowserBlock, lastUserText, modelSupportsImages, parseChatBody, toAgentMessages } from './chat';
 import { buildTaskTools } from './task-tools';
 import { buildScheduleTools } from './schedule-tools';
 import { buildSubagentTool } from './subagent-tool';
@@ -84,6 +87,7 @@ import {
   unregisterRunAbort,
 } from './resumable-chat-stream';
 import { ensureDevTenant, resolveTenantForUser, DEV_TENANT_ID } from './tenant';
+import { refreshAgentPackages, requireAgent } from './agent-packages-sync';
 import {
   listMergedSkills,
   createCustomSkill,
@@ -120,10 +124,10 @@ import {
   deleteAutomation,
   listAutomationRuns,
   listEventAutomations,
-  matchesEventFilter,
+  matchesEventTrigger,
 } from './automation-store';
 import { runAutomationJob, dispatchAutomation } from './automation-worker';
-import { buildAutomationTools } from './automation-tools';
+import { buildCustomizeTools } from './customize-tools';
 import {
   listWorkflows,
   listAllScheduledWorkflows,
@@ -141,11 +145,13 @@ import { buildWorkflowTools } from './workflow-tools';
 import {
   listWebhookEndpoints,
   createWebhookEndpoint,
+  createGithubWebhookEndpoint,
   deleteWebhookEndpoint,
-  getWebhookByToken,
-  verifyGithubSignature,
-  verifyHmacSignature,
-  parseGithubEvent,
+  updateWebhookEndpoint,
+  getWebhookConfig,
+  verifyWebhookSignature,
+  resolveEventKey,
+  buildEventContext,
 } from './webhook-store';
 import {
   applyTenantModelSettings,
@@ -153,7 +159,7 @@ import {
   updateModelSettings,
   clearModelSettings,
 } from './model-settings-store';
-import { customSkillInputSchema, ruleInputSchema, mcpServerInputSchema, automationInputSchema, workflowInputSchema } from '@veylin/shared';
+import { customSkillInputSchema, ruleInputSchema, mcpServerInputSchema, automationInputSchema, workflowInputSchema, webhookCreateInputSchema, webhookUpdateInputSchema } from '@veylin/shared';
 import { z } from 'zod';
 import {
   buildKnowledgeSearchTool,
@@ -164,6 +170,8 @@ import {
   removeKnowledgeDocument,
   searchKnowledge,
 } from './rag-store';
+import { extractPdfText } from './extract-pdf-text';
+import { RAG_UPLOAD_MAX_BYTES } from './rag-limits';
 import {
   connectDb,
   ensureDataDir,
@@ -177,8 +185,18 @@ import {
 const DATA_DIR = ensureDataDir();
 const PORT = Number(process.env.PORT ?? 8787);
 
-// Agent definitions (agent.yaml + skills) live under <repo>/examples.
-const AGENTS_DIR = new URL('../../../examples', import.meta.url).pathname;
+// Agent definitions (agent.yaml + skills). Dev: repo examples/; sidecar: copied beside server.mjs.
+function resolveAgentsDir(): string {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const besideBundle = join(moduleDir, 'examples');
+  const repoExamples = fileURLToPath(new URL('../../../examples', import.meta.url));
+  if (existsSync(join(besideBundle, 'veylin', 'agent.yaml'))) return besideBundle;
+  if (existsSync(join(repoExamples, 'veylin', 'agent.yaml'))) return repoExamples;
+  if (existsSync(besideBundle)) return besideBundle;
+  return repoExamples;
+}
+
+const AGENTS_DIR = resolveAgentsDir();
 
 function indexMcpTools(toolsets: Record<string, unknown>): { id: string; description: string }[] {
   const out: { id: string; description: string }[] = [];
@@ -222,18 +240,39 @@ async function main() {
     mcpToolIndex = indexMcpTools(mcpToolsets);
   }
 
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: true,
+    bodyLimit: RAG_UPLOAD_MAX_BYTES,
+  });
+
+  app.addHook('preParsing', async (request, _reply, payload) => {
+    if (request.method !== 'POST' || !request.url.startsWith('/api/events/')) {
+      return payload;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of payload) {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    const raw = Buffer.concat(chunks);
+    (request as typeof request & { rawBody?: Buffer }).rawBody = raw;
+    return Readable.from(raw);
+  });
 
   const runtime = await createRuntime({
     dataDir: DATA_DIR,
     libsqlUrl: mastraLibsqlUrl(DATA_DIR),
     agentsDir: AGENTS_DIR,
   });
+  app.log.info({ agentsDir: AGENTS_DIR }, 'agent packages reload on each customize/chat request');
   const boss = await createQueue();
 
   await app.register(cors, {
     origin: true,
     credentials: true,
+  });
+
+  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_req, body, done) => {
+    done(null, body);
   });
 
   if (!isDesktopAuth) {
@@ -274,7 +313,6 @@ async function main() {
 
   app.get('/api/model-settings', async (req) => {
     const ctx = await resolveContext(req.headers);
-    await applyTenantModelSettings(ctx.tenantId);
     return { settings: await getModelSettings(ctx.tenantId) };
   });
 
@@ -296,6 +334,7 @@ async function main() {
   app.get('/api/agent-context', async (req) => {
     const { agentId } = req.query as { agentId?: string };
     const ctx = await resolveContext(req.headers);
+    await refreshAgentPackages(runtime);
     const base = runtime.getAgentContext(agentId);
     const resolvedAgentId = agentId ?? base.agentId;
     const mergedSkills = await listMergedSkills(runtime, ctx.tenantId, resolvedAgentId);
@@ -728,14 +767,35 @@ async function main() {
 
   app.post('/api/webhooks', async (req, reply) => {
     const ctx = await resolveContext(req.headers);
-    const { sourceType } = (req.body ?? {}) as { sourceType?: 'github' | 'custom' };
     const baseUrl = `${req.protocol}://${req.headers.host}`;
-    const { endpoint, secret } = await createWebhookEndpoint(
-      ctx.tenantId,
-      sourceType ?? 'custom',
-      baseUrl,
-    );
-    return { ok: true, endpoint, secret };
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    if (body.preset === 'github') {
+      const { endpoint, secret } = await createGithubWebhookEndpoint(
+        ctx.tenantId,
+        baseUrl,
+        typeof body.name === 'string' ? body.name : 'GitHub',
+      );
+      return { ok: true, endpoint, secret };
+    }
+
+    const parsed = webhookCreateInputSchema.safeParse(body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false, message: parsed.error.message };
+    }
+
+    try {
+      const { endpoint, secret } = await createWebhookEndpoint(ctx.tenantId, parsed.data, baseUrl);
+      return { ok: true, endpoint, secret };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('unique') || message.includes('UNIQUE')) {
+        reply.code(409);
+        return { ok: false, message: `Webhook source '${parsed.data.source}' already exists` };
+      }
+      throw err;
+    }
   });
 
   app.delete('/api/webhooks/:id', async (req, reply) => {
@@ -749,66 +809,97 @@ async function main() {
     return { ok: true };
   });
 
-  app.post('/api/webhooks/:token', async (req, reply) => {
-    const { token } = req.params as { token: string };
-    const endpoint = await getWebhookByToken(token);
+  app.put('/api/webhooks/:id', async (req, reply) => {
+    const ctx = await resolveContext(req.headers);
+    const baseUrl = `${req.protocol}://${req.headers.host}`;
+    const { id } = req.params as { id: string };
+    const parsed = webhookUpdateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false, message: parsed.error.message };
+    }
+    const endpoint = await updateWebhookEndpoint(ctx.tenantId, id, parsed.data, baseUrl);
     if (!endpoint) {
       reply.code(404);
       return { ok: false };
     }
+    return { ok: true, endpoint };
+  });
 
-    const rawBody = JSON.stringify(req.body ?? {});
-    const githubSig = req.headers['x-hub-signature-256'] as string | undefined;
-    const hmacSig = req.headers['x-signature-256'] as string | undefined;
+  app.post('/api/events/:tenantId/:source', async (req, reply) => {
+    const { tenantId, source } = req.params as { tenantId: string; source: string };
+    const config = await getWebhookConfig(tenantId, source.toLowerCase());
+    if (!config) {
+      reply.code(404);
+      return { ok: false, message: `Unknown webhook source: ${source}` };
+    }
 
-    const valid =
-      endpoint.sourceType === 'github'
-        ? verifyGithubSignature(endpoint.secret, rawBody, githubSig)
-        : verifyHmacSignature(endpoint.secret, rawBody, hmacSig ?? githubSig);
+    const rawBody =
+      (req as typeof req & { rawBody?: Buffer }).rawBody ??
+      Buffer.from(JSON.stringify(req.body ?? {}), 'utf8');
+    const signature = req.headers[config.signatureHeader.toLowerCase()] as string | undefined;
 
-    if (!valid) {
+    if (!verifyWebhookSignature(rawBody, signature, config.secret)) {
       reply.code(401);
       return { ok: false, message: 'invalid signature' };
     }
 
     let payload: Record<string, unknown>;
     try {
-      payload = JSON.parse(rawBody) as Record<string, unknown>;
+      payload = JSON.parse(rawBody.toString('utf8')) as Record<string, unknown>;
     } catch {
-      payload = { raw: rawBody };
+      payload = { raw: rawBody.toString('utf8') };
     }
 
     const githubEventType = req.headers['x-github-event'] as string | undefined;
-    const eventContext =
-      endpoint.sourceType === 'github'
-        ? parseGithubEvent(payload, githubEventType)
-        : { event: 'custom', ...payload };
+    const eventKey = resolveEventKey(config.source, payload, config.eventKeyExpr, githubEventType);
+    const eventContext = buildEventContext(config.source, eventKey, payload, githubEventType);
 
-    const automations = await listEventAutomations(endpoint.tenantId, endpoint.sourceType);
-    const matched = automations.filter((a) => matchesEventFilter(a.triggerFilter ?? {}, eventContext));
+    const automations = await listEventAutomations(tenantId, config.source);
+    const matched = automations.filter((a) =>
+      matchesEventTrigger(
+        {
+          source: a.sourceType,
+          on: a.eventOn,
+          filter: a.eventFilter,
+        },
+        config.source,
+        eventKey,
+        payload,
+      ),
+    );
 
     for (const automation of matched) {
       await dispatchAutomation(boss, {
-        tenantId: endpoint.tenantId,
+        tenantId,
         automationId: automation.id,
         eventContext,
       });
     }
 
-    const workflows = await listEventWorkflows(endpoint.tenantId, endpoint.sourceType);
+    const workflows = await listEventWorkflows(tenantId, config.source);
     const matchedWorkflows = workflows.filter((w) =>
-      matchesEventFilter(w.triggerFilter ?? {}, eventContext),
+      matchesEventTrigger(
+        {
+          source: w.sourceType,
+          on: w.eventOn,
+          filter: w.eventFilter,
+        },
+        config.source,
+        eventKey,
+        payload,
+      ),
     );
 
     for (const workflow of matchedWorkflows) {
       await dispatchWorkflow(boss, {
-        tenantId: endpoint.tenantId,
+        tenantId,
         workflowId: workflow.id,
         eventContext,
       });
     }
 
-    return { ok: true, dispatched: matched.length + matchedWorkflows.length };
+    return { ok: true, received: true, matched: matched.length + matchedWorkflows.length };
   });
 
   // Production schedule: editable multi-sheet dataset for the right-panel data grid.
@@ -1170,7 +1261,8 @@ async function main() {
 
     const planMode = body.planMode === true || (threadRow?.planMode ?? false);
 
-    const agent = runtime.getAgent(agentId) ?? runtime.mastra.getAgent(DEFAULT_AGENT_ID);
+    await refreshAgentPackages(runtime);
+    const agent = requireAgent(runtime, agentId);
     const modelKey = (body.model ?? 'deepseek') as ModelKey;
     const modelConfig = getModelConfig(modelKey);
     if (!modelConfig.apiKey.trim()) {
@@ -1206,6 +1298,7 @@ async function main() {
     requestContext.set('tenantId', ctx.tenantId);
     requestContext.set('userId', ctx.userId);
     requestContext.set('threadId', threadId);
+    requestContext.set('publicBaseUrl', `${req.protocol}://${req.headers.host ?? '127.0.0.1:8787'}`);
     requestContext.set('discoveredToolIds', []);
     requestContext.set('mcpToolNames', mcpToolIndex);
     requestContext.set('persistTodos', async (todos: import('@veylin/tools').TodoItem[]) => {
@@ -1290,7 +1383,8 @@ async function main() {
       ? await buildKnowledgeContextBlock(ctx.tenantId)
       : '';
     const localeBlock = buildLocaleBlock(body.locale);
-    const systemBlocks = [skillsCatalog, skillBlock, rulesBlock, knowledgeBlock, reminderBlock, localeBlock]
+    const attachedBrowserBlock = buildAttachedBrowserBlock(body.attachedBrowser);
+    const systemBlocks = [skillsCatalog, skillBlock, rulesBlock, knowledgeBlock, reminderBlock, localeBlock, attachedBrowserBlock]
       .filter(Boolean)
       .join('\n\n');
     if (systemBlocks) {
@@ -1448,7 +1542,8 @@ async function main() {
   // Approval resume seam: the frontend posts the decision for a suspended run.
   app.post('/api/approve', async (req) => {
     const body = req.body as { runId: string; approved: boolean; answer?: string[] };
-    const agent = runtime.mastra.getAgent('veylin') as unknown as {
+    await refreshAgentPackages(runtime);
+    const agent = requireAgent(runtime, 'veylin') as unknown as {
       resume?: (runId: string, data: unknown) => Promise<unknown>;
     };
     await recordAudit({
@@ -1467,14 +1562,18 @@ async function main() {
   await rebuildMcp(DEV_TENANT_ID);
 
   const scheduleTools = buildScheduleTools();
-  const automationTools = buildAutomationTools(boss);
+  const customizeTools = buildCustomizeTools({
+    runtime,
+    boss,
+    onMcpRebuild: rebuildMcp,
+  });
   const workflowTools = buildWorkflowTools(boss);
   taskToolset = {
     tasks: buildTaskTools(boss),
     schedule: scheduleTools,
     subagent: buildSubagentTool(runtime, { boss, mcpToolsets, scheduleTools }),
     knowledge: { knowledge_search: buildKnowledgeSearchTool() },
-    automation: automationTools,
+    customize: customizeTools,
     workflow: workflowTools,
   };
 
@@ -1486,7 +1585,8 @@ async function main() {
       await updateTaskRow(job.taskId, { status: 'running' }).catch(() => undefined);
     }
 
-    const agent = runtime.getAgent(job.agentId) ?? runtime.mastra.getAgent(DEFAULT_AGENT_ID);
+    await refreshAgentPackages(runtime);
+    const agent = requireAgent(runtime, job.agentId);
     let result: { text?: string };
     try {
       result = (await agent.generate(job.prompt, {
@@ -1603,9 +1703,34 @@ async function main() {
     return { documents };
   });
 
-  app.post('/api/rag/documents', async (req) => {
+  app.post('/api/rag/extract-pdf', async (req, reply) => {
+    await resolveContext(req.headers);
+    const buffer = req.body as Buffer | undefined;
+    if (!buffer?.length) {
+      reply.code(400);
+      return { ok: false, message: 'empty body' };
+    }
+    if (buffer.length > RAG_UPLOAD_MAX_BYTES) {
+      reply.code(413);
+      return { ok: false, message: `PDF exceeds ${RAG_UPLOAD_MAX_BYTES} byte upload limit` };
+    }
+    try {
+      const text = await extractPdfText(new Uint8Array(buffer));
+      return { ok: true, text };
+    } catch (err) {
+      reply.code(422);
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  app.post('/api/rag/documents', async (req, reply) => {
     const ctx = await resolveContext(req.headers);
     const body = req.body as { filename: string; text: string; mimeType?: string };
+    const textBytes = Buffer.byteLength(body.text ?? '', 'utf8');
+    if (textBytes > RAG_UPLOAD_MAX_BYTES) {
+      reply.code(413);
+      return { ok: false, message: `document text exceeds ${RAG_UPLOAD_MAX_BYTES} byte upload limit` };
+    }
     const result = await ingestDocumentText(ctx.tenantId, body.filename, body.text, body.mimeType);
     return { ok: true, ...result };
   });

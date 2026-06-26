@@ -43,17 +43,6 @@ export function SidebarUserMenu() {
     };
   }, [open, close]);
 
-  useEffect(() => {
-    const onShortcut = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
-        e.preventDefault();
-        openAppSettings();
-      }
-    };
-    window.addEventListener('keydown', onShortcut);
-    return () => window.removeEventListener('keydown', onShortcut);
-  }, [openAppSettings]);
-
   return (
     <div ref={rootRef} className="relative">
       {open && (
@@ -68,7 +57,6 @@ export function SidebarUserMenu() {
           >
             <Settings className="text-muted-foreground size-4" />
             <span className="flex-1">{t('userMenu.settings')}</span>
-            <span className="text-muted-foreground text-xs">⌘ ,</span>
           </button>
           <div className="bg-border my-1 h-px" />
           <button

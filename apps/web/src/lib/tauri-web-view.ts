@@ -34,28 +34,45 @@ export interface WebViewBounds {
   height: number;
 }
 
-export async function openWebView(url: string, bounds?: WebViewBounds): Promise<void> {
+export async function openWebView(
+  tabId: string,
+  url: string,
+  bounds?: WebViewBounds,
+): Promise<void> {
   if (!isTauri()) {
     throw new Error(i18n.t('web.requiresDesktopOpen'));
   }
-  await tauriInvoke('open_web_view', { url, bounds });
+  await tauriInvoke('open_web_view', { tabId, url, bounds });
 }
 
-export async function resizeWebView(bounds: WebViewBounds): Promise<void> {
+export async function showWebView(tabId: string, bounds?: WebViewBounds): Promise<boolean> {
+  if (!isTauri()) return false;
+  return tauriInvoke<boolean>('show_web_view', { tabId, bounds });
+}
+
+export async function resizeWebView(tabId: string, bounds: WebViewBounds): Promise<void> {
   if (!isTauri()) return;
-  await tauriInvoke('resize_web_view', { bounds });
+  await tauriInvoke('resize_web_view', { tabId, bounds });
 }
 
-export async function hideWebView(): Promise<void> {
+export async function hideWebView(tabId?: string): Promise<void> {
   if (!isTauri()) return;
-  await tauriInvoke('hide_web_view');
+  await tauriInvoke('hide_web_view', { tabId: tabId ?? null });
 }
 
-export async function readWebView(mode: 'text' | 'html' = 'text'): Promise<PageContent> {
+export async function closeWebView(tabId: string): Promise<void> {
+  if (!isTauri()) return;
+  await tauriInvoke('close_web_view', { tabId });
+}
+
+export async function readWebView(
+  mode: 'text' | 'html' = 'text',
+  tabId?: string,
+): Promise<PageContent> {
   if (!isTauri()) {
     throw new Error(i18n.t('web.requiresDesktopRead'));
   }
-  return tauriInvoke<PageContent>('read_web_view', { mode });
+  return tauriInvoke<PageContent>('read_web_view', { tabId: tabId ?? null, mode });
 }
 
 export function truncatePageContent(

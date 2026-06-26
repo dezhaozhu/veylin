@@ -19,17 +19,42 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function healthCheckUrls(): string[] {
+  const urls = [apiUrl('/health')];
+  if (isTauri()) {
+    urls.push('http://127.0.0.1:8787/health', 'http://localhost:8787/health');
+  }
+  return [...new Set(urls)];
+}
+
+function setSplashHint(text: string): void {
+  const hint = document.getElementById('splash-hint');
+  if (hint && hint.dataset.errorBound !== '1') {
+    hint.textContent = text;
+  }
+}
+
+async function probeHealth(url: string): Promise<boolean> {
+  const res = await fetch(url, { cache: 'no-store' });
+  return res.ok;
+}
+
 async function waitForApiReady(signal: { cancelled: boolean }): Promise<void> {
   let lastError: unknown;
-  for (let i = 0; i < 120 && !signal.cancelled; i++) {
-    try {
-      const res = await fetch(apiUrl('/health'), { cache: 'no-store' });
-      if (res.ok) return;
-      lastError = new Error(`HTTP ${res.status}`);
-    } catch (err) {
-      lastError = err;
+  const urls = healthCheckUrls();
+  for (let i = 0; i < 90 && !signal.cancelled; i++) {
+    for (const url of urls) {
+      try {
+        if (await probeHealth(url)) return;
+        lastError = new Error(`HTTP error (${url})`);
+      } catch (err) {
+        lastError = err;
+      }
     }
-    await sleep(i < 30 ? 150 : 400);
+    if (i > 0 && i % 5 === 0) {
+      setSplashHint(`正在启动本地服务… (${i + 1})`);
+    }
+    await sleep(i < 20 ? 200 : 500);
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }

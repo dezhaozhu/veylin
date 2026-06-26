@@ -332,6 +332,13 @@ await build({
 
 writeFileSync(join(outDir, 'package.json'), JSON.stringify({ type: 'module', name: 'veylin-server-sidecar' }, null, 2));
 
+const examplesSrc = join(repoRoot, 'examples');
+const examplesDest = join(outDir, 'examples');
+if (existsSync(examplesSrc)) {
+  cpSync(examplesSrc, examplesDest, { recursive: true });
+  console.log('[build-sidecar] copied examples/ for bundled agent skills');
+}
+
 // Bundle the stdio MCP servers so they run under the embedded Node (no tsx needed).
 const mcpServersRoot = resolve(repoRoot, 'packages/mcp-servers/src');
 for (const mcpName of ['scheduling-server', 'maintenance-server']) {

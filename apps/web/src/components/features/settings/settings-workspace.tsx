@@ -1,16 +1,14 @@
-import { useState } from 'react';
 import { Box, Settings2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { GeneralSettingsScreen } from './general-settings/general-settings-screen';
 import { ModelsSettingsScreen } from './models-settings/models-settings-screen';
 import { cn } from '@/lib/utils';
 import { startWindowDrag } from '@/lib/window-drag';
 
-type SettingsTab = 'general' | 'models';
-
 export function SettingsWorkspace() {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<SettingsTab>('general');
+  const { settingsTab: tab, setSettingsTab: setTab } = useSettingsPanel();
 
   return (
     <div className="bg-background flex min-h-0 min-w-0 flex-1">

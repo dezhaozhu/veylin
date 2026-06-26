@@ -93,7 +93,7 @@ API: `GET/POST/PUT/DELETE /api/skills`, `/api/rules`, `/api/mcp-servers`
 ### Automate
 
 - **Scheduled** — an `automations` table + in-process queue (node-cron); each run creates a new thread, writes to `automation_runs`, and appears in the conversation list.
-- **Event-driven** — `POST /api/webhooks/:token` (GitHub `X-Hub-Signature-256` or custom HMAC); matching `kind=event` automations are dispatched to the queue.
+- **Event-driven** — `POST /api/events/{tenantId}/{source}` (HMAC verification); matching `kind=event` automations via OpenHands-style `on` + JMESPath `filter` are dispatched to the queue.
 - **Agent tools** — `automation_create` / `automation_list` / `automation_enable` / `automation_trigger` / `automation_update` / `automation_delete`.
 
 API: `GET/POST/PUT/DELETE /api/automations`, `POST /api/automations/:id/trigger`, `GET /api/automations/:id/runs`, `GET/POST/DELETE /api/webhooks`

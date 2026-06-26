@@ -1,5 +1,4 @@
 import type * as React from 'react';
-import { useAuiState } from '@assistant-ui/react';
 import { ArrowLeft, ArrowRight, Bot, SlidersHorizontal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -12,24 +11,19 @@ import {
   SidebarMenuItem,
   SidebarRail,
   SidebarTrigger,
-  useSidebar,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { ThreadList } from '@/components/assistant-ui/thread-list';
 import { SidebarUserMenu } from '@/components/assistant-ui/sidebar-user-menu';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
-import { useThreadNavigationHistory } from '@/lib/use-thread-navigation-history';
+import { useWorkspaceNavigation } from '@/hooks/use-workspace-navigation';
 import { cn } from '@/lib/utils';
+
 import { startWindowDrag } from '@/lib/window-drag';
 
 function ThreadListTitlebarControls() {
   const { t } = useTranslation();
-  const { state } = useSidebar();
-  const threadId = useAuiState((s) => s.threadListItem.id);
-  const title = useAuiState((s) => s.threadListItem.title);
-  const { canGoBack, canGoForward, goBack, goForward } =
-    useThreadNavigationHistory(threadId);
-  const displayTitle = title?.trim() || t('header.newChat');
+  const { canGoBack, canGoForward, goBack, goForward } = useWorkspaceNavigation();
 
   return (
     <>
@@ -43,7 +37,6 @@ function ThreadListTitlebarControls() {
           disabled={!canGoBack}
           onClick={goBack}
           aria-label={t('header.back')}
-          title={t('header.back')}
         >
           <ArrowLeft className="size-3.5" />
         </Button>
@@ -55,30 +48,14 @@ function ThreadListTitlebarControls() {
           disabled={!canGoForward}
           onClick={goForward}
           aria-label={t('header.forward')}
-          title={t('header.forward')}
         >
           <ArrowRight className="size-3.5" />
         </Button>
-        {state === 'collapsed' && (
-          <h1
-            data-tauri-drag-region
-            onMouseDown={startWindowDrag}
-            className={cn(
-              'ml-1 min-w-0 flex-1 truncate text-xs font-medium',
-              !title?.trim() && 'text-muted-foreground',
-            )}
-            title={displayTitle}
-          >
-            {displayTitle}
-          </h1>
-        )}
-        {state === 'expanded' && (
-          <div
-            data-tauri-drag-region
-            className="min-w-0 flex-1 self-stretch"
-            onMouseDown={startWindowDrag}
-          />
-        )}
+        <div
+          data-tauri-drag-region
+          className="min-w-0 flex-1 self-stretch"
+          onMouseDown={startWindowDrag}
+        />
       </div>
       <div className="h-8 shrink-0" />
     </>

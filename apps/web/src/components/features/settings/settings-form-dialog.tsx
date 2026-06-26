@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { SettingsSelect } from './settings-select';
 
 export function SettingsFormDialog({
   open,
@@ -175,17 +176,6 @@ export function FormTextarea({
   );
 }
 
-export function FormSelect({
-  className,
-  ...props
-}: React.ComponentProps<'select'>) {
-  return (
-    <select
-      className={cn(
-        'border-input bg-background h-10 w-full rounded-lg border px-3 text-sm outline-none',
-        className,
-      )}
-      {...props}
-    />
-  );
+export function FormSelect(props: React.ComponentProps<typeof SettingsSelect>) {
+  return <SettingsSelect {...props} />;
 }

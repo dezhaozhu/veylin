@@ -43,7 +43,8 @@ function rowToWorkflow(row: NonNullable<Awaited<ReturnType<typeof getWorkflowRow
     cron: row.cron,
     timezone: row.timezone,
     sourceType: (row.sourceType as Workflow['sourceType']) ?? 'cron',
-    triggerFilter: row.triggerFilter ?? {},
+    eventOn: row.eventOn ?? undefined,
+    eventFilter: row.eventFilter ?? undefined,
     definition: {
       nodes: (def?.nodes ?? []) as Workflow['definition']['nodes'],
       edges: (def?.edges ?? []) as Workflow['definition']['edges'],
@@ -94,8 +95,9 @@ export async function createWorkflow(
     enabled: input.enabled ?? true,
     cron: input.cron ?? null,
     timezone: input.timezone ?? 'UTC',
-    sourceType: input.sourceType ?? (input.kind === 'event' ? 'custom' : 'cron'),
-    triggerFilter: input.triggerFilter ?? {},
+    sourceType: input.sourceType ?? (input.kind === 'event' ? 'github' : 'cron'),
+    eventOn: input.eventOn ?? null,
+    eventFilter: input.eventFilter ?? null,
     definition: input.definition ?? { nodes: [], edges: [] },
   });
   return rowToWorkflow(row);
@@ -116,7 +118,8 @@ export async function updateWorkflow(
     ...(patch.cron !== undefined ? { cron: patch.cron ?? null } : {}),
     ...(patch.timezone != null ? { timezone: patch.timezone } : {}),
     ...(patch.sourceType != null ? { sourceType: patch.sourceType } : {}),
-    ...(patch.triggerFilter != null ? { triggerFilter: patch.triggerFilter } : {}),
+    ...(patch.eventOn !== undefined ? { eventOn: patch.eventOn ?? null } : {}),
+    ...(patch.eventFilter !== undefined ? { eventFilter: patch.eventFilter ?? null } : {}),
     ...(patch.definition != null ? { definition: patch.definition } : {}),
   });
   return row ? rowToWorkflow(row) : null;
@@ -162,4 +165,4 @@ export async function listEventWorkflows(tenantId: string, sourceType: string) {
   return rows.map(rowToWorkflow);
 }
 
-export { matchesEventFilter } from './automation-store';
+export { matchesEventTrigger } from './event-trigger-matcher';

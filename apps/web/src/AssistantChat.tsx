@@ -39,11 +39,14 @@ import { Thread } from '@/components/assistant-ui/thread';
 import { ThreadHeaderToolbar } from '@/components/assistant-ui/thread-header-toolbar';
 import { ThreadListSidebar } from '@/components/assistant-ui/threadlist-sidebar';
 import { ThreadRightSidebar } from '@/components/assistant-ui/thread-right-sidebar';
+import { PanelTabsProvider } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import { SettingsPanelProvider, useSettingsPanel } from '@/hooks/settings/use-settings-panel';
+import { WorkspaceNavigationProvider } from '@/hooks/use-workspace-navigation';
 import { CustomizeWorkspace } from '@/components/features/customize/customize-workspace';
 import { AutomateWorkspace } from '@/components/features/automate/automate-workspace';
 import { SettingsWorkspace } from '@/components/features/settings/settings-workspace';
 import { WorkspacePanelDragOverlay } from '@/components/features/workspace-panel-drag-overlay';
+import { cn } from '@/lib/utils';
 import {
   RightSidebarProvider,
   SidebarInset,
@@ -88,28 +91,20 @@ function ChatShell() {
 
   return (
     <AuiProvider value={aui}>
-      <SidebarProvider>
+      <WorkspaceNavigationProvider>
+        <PanelTabsProvider>
+        <SidebarProvider>
         <RightSidebarProvider>
           <ChatPanelRatioSync />
           <div className="flex h-dvh w-full overflow-hidden">
             <ThreadListSidebar />
-            {view === 'customize' ? (
-              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                <WorkspacePanelDragOverlay />
-                <CustomizeWorkspace />
-              </div>
-            ) : view === 'automate' ? (
-              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                <WorkspacePanelDragOverlay />
-                <AutomateWorkspace />
-              </div>
-            ) : view === 'settings' ? (
-              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                <WorkspacePanelDragOverlay />
-                <SettingsWorkspace />
-              </div>
-            ) : (
-              <>
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-1 overflow-hidden',
+                  view !== 'chat' && 'hidden',
+                )}
+              >
                 <SidebarInset className="flex min-h-0 flex-1 flex-col overflow-hidden">
                   <ThreadHeaderToolbar />
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -117,11 +112,31 @@ function ChatShell() {
                   </div>
                 </SidebarInset>
                 <ThreadRightSidebar />
-              </>
-            )}
+              </div>
+              {view === 'customize' && (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                  <WorkspacePanelDragOverlay />
+                  <CustomizeWorkspace />
+                </div>
+              )}
+              {view === 'automate' && (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                  <WorkspacePanelDragOverlay />
+                  <AutomateWorkspace />
+                </div>
+              )}
+              {view === 'settings' && (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                  <WorkspacePanelDragOverlay />
+                  <SettingsWorkspace />
+                </div>
+              )}
+            </div>
           </div>
         </RightSidebarProvider>
-      </SidebarProvider>
+        </SidebarProvider>
+        </PanelTabsProvider>
+      </WorkspaceNavigationProvider>
     </AuiProvider>
   );
 }
@@ -144,7 +159,7 @@ export function AssistantChat() {
     },
     onFinish: () => {
       useNetworkReconnectStore.getState().clearTransientBanner();
-      setChatSettings({ pendingSkill: null });
+      setChatSettings({ pendingSkill: null, attachedBrowserTab: null });
     },
     adapters: {
       attachments: new CompositeAttachmentAdapter([
@@ -180,6 +195,7 @@ export function AssistantChat() {
           planMode: s.planMode,
           mcpEnabled: s.mcpEnabled,
           pendingSkill: s.pendingSkill ?? undefined,
+          attachedBrowser: s.attachedBrowserTab ?? undefined,
           branchEdit: consumeBranchEdit(),
           locale: resolveAppLanguage(i18n.resolvedLanguage ?? i18n.language),
         };

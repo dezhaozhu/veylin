@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState, type FC } from 'react';
 import { useAui, useAuiState } from '@assistant-ui/store';
 import { applyCompactToThread } from '@/lib/compact-context';
 import { getChatSettings } from '@/lib/chat-settings';
+import { commitPendingSkillAtEnd } from '@/lib/composer-pending-skill';
 import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
 import {
   ComposerMenuFlyoutItem,
@@ -21,6 +22,7 @@ import {
 } from '@/components/assistant-ui/composer-menu-flyout';
 import { ComposerMcpFlyout } from '@/components/assistant-ui/composer-mcp-flyout';
 import { ComposerSkillsFlyout } from '@/components/assistant-ui/composer-skills-flyout';
+import { addComposerFiles } from '@/lib/add-composer-files';
 import { FILE_ATTACHMENT_ACCEPT } from '@/lib/file-attachment-adapter';
 import {
   useAgentContext,
@@ -65,10 +67,8 @@ export const ComposerPlusMenu: FC = () => {
     document.body.appendChild(input);
     input.onchange = () => {
       const files = input.files;
-      if (files) {
-        for (const file of files) {
-          addAttachment(file);
-        }
+      if (files && files.length > 0) {
+        void addComposerFiles((file) => addAttachment(file), files);
       }
       document.body.removeChild(input);
     };
@@ -86,10 +86,8 @@ export const ComposerPlusMenu: FC = () => {
     document.body.appendChild(input);
     input.onchange = () => {
       const files = input.files;
-      if (files) {
-        for (const file of files) {
-          addAttachment(file);
-        }
+      if (files && files.length > 0) {
+        void addComposerFiles((file) => addAttachment(file), files);
       }
       document.body.removeChild(input);
     };
@@ -107,7 +105,14 @@ export const ComposerPlusMenu: FC = () => {
   }, [open, close]);
 
   const selectSkill = (name: string) => {
-    setPendingSkill(name);
+    const composer = aui.composer();
+    const text = composer.getState().text;
+    commitPendingSkillAtEnd(
+      (next) => composer.setText(next),
+      setPendingSkill,
+      text,
+      name,
+    );
     close();
   };
 

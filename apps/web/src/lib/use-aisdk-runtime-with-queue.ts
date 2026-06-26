@@ -43,11 +43,13 @@ import {
 } from './use-external-history';
 import { useStreamingTiming } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/use-chat/useStreamingTiming";
 import { stampMessageWithSentAt } from "./message-timestamp";
+import { stampOutgoingUserMessage } from "./pending-skill-message";
 import { createMessageQueueWithDrafts } from "./create-message-queue-with-drafts";
 import { setComposerQueueRuntime } from "./composer-queue-runtime";
 import { setBranchEdit } from "./context-sync-ref";
 import { prepareThreadRewind } from "./prepare-thread-rewind";
-import { setChatSettings } from "./chat-settings";
+import { getChatSettings, setChatSettings } from "./chat-settings";
+import { stripAllPendingSkillTokens } from "./pending-skill-text";
 import { requestChatStop } from "./chat-stop";
 
 export type CustomToCreateMessageFunction = <
@@ -65,6 +67,43 @@ const toUIMessage = <UI_MESSAGE extends UIMessage>(
     id: createMessage.id ?? generateId(),
     role: createMessage.role ?? fallbackRole,
   }) as UI_MESSAGE;
+
+function stripPendingSkillToken<UI_MESSAGE extends UIMessage>(
+  message: CreateUIMessage<UI_MESSAGE>,
+): CreateUIMessage<UI_MESSAGE> {
+  const { pendingSkill, pendingSkillInsertAt } = getChatSettings();
+  if (!pendingSkill) return message;
+
+  const next = { ...message } as CreateUIMessage<UI_MESSAGE> & {
+    content?: string;
+    parts?: Array<Record<string, unknown>>;
+  };
+
+  if (typeof next.content === 'string') {
+    next.content = stripAllPendingSkillTokens(
+      next.content,
+      pendingSkill,
+      pendingSkillInsertAt,
+    );
+  }
+
+  if (Array.isArray(next.parts)) {
+    next.parts = next.parts.map((part) =>
+      part.type === 'text' && typeof part.text === 'string'
+        ? {
+            ...part,
+            text: stripAllPendingSkillTokens(
+              part.text,
+              pendingSkill,
+              pendingSkillInsertAt,
+            ),
+          }
+        : part,
+    );
+  }
+
+  return next;
+}
 
 export type AISDKRuntimeAdapter = ExternalStoreSharedOptions & {
   adapters?:
@@ -286,15 +325,16 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   }, [isRunning, chatHelpers.messages, chatHelpers]);
 
   const handleNew = async (message: AppendMessage) => {
-    const createMessage = (
+    const createMessage = stripPendingSkillToken((
       customToCreateMessage ?? toCreateMessage
-    )<UI_MESSAGE>(message);
+    )<UI_MESSAGE>(message));
 
     if (!(message.startRun ?? message.role === "user")) {
       chatHelpers.setMessages((current) => [
         ...current,
-        stampMessageWithSentAt(
-          toUIMessage<UI_MESSAGE>(createMessage, message.role),
+        toUIMessage<UI_MESSAGE>(
+          stampOutgoingUserMessage(createMessage),
+          message.role,
         ),
       ]);
       return;
@@ -302,7 +342,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
 
     lastRunConfigRef.current = message.runConfig;
     await completePendingToolCalls();
-    await chatHelpers.sendMessage(stampMessageWithSentAt(createMessage), {
+    await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage), {
       metadata: message.runConfig,
     });
     setChatSettings({ pendingSkill: null });
@@ -423,7 +463,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       chatHelpers.setMessages((current) =>
         sliceMessagesUntil(current, message.parentId),
       );
-      await chatHelpers.sendMessage(createMessage, {
+      await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage), {
         metadata: message.runConfig,
       });
       setChatSettings({ pendingSkill: null });

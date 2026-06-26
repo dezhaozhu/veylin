@@ -20,6 +20,30 @@ import {
   useMemo,
 } from "react";
 
+import { readPendingSkillFromMessage } from '@/lib/pending-skill-message';
+
+function countFileParts(messages: Array<{ parts?: unknown[] }>): number {
+  return messages.reduce((total, message) => {
+    const parts = message.parts ?? [];
+    return (
+      total +
+      parts.filter(
+        (part) =>
+          typeof part === "object" &&
+          part != null &&
+          (part as { type?: string }).type === "file",
+      ).length
+    );
+  }, 0);
+}
+
+function countSkillMarkers(messages: Array<{ parts?: unknown[]; metadata?: unknown }>): number {
+  return messages.reduce(
+    (total, message) => total + (readPendingSkillFromMessage(message) ? 1 : 0),
+    0,
+  );
+}
+
 export const toExportedMessageRepository = <TMessage>(
   toThreadMessages: (messages: TMessage[]) => ThreadMessage[],
   messages: MessageFormatRepository<TMessage>,
@@ -96,15 +120,33 @@ export const useExternalHistory = <TMessage>(
         const repo = await formatAdapter.load();
         if (repo && repo.messages.length > 0) {
           const converted = toExportedMessageRepository(toThreadMessages, repo);
-          runtimeRef.current.thread.import(converted);
 
           const tempRepo = new MessageRepository();
           tempRepo.import(converted);
-          const messages = tempRepo.getMessages();
+          const serverMessages = tempRepo
+            .getMessages()
+            .flatMap(getExternalStoreMessages<TMessage>);
 
-          onSetMessagesRef.current(
-            messages.flatMap(getExternalStoreMessages<TMessage>),
-          );
+          const localMessages = runtimeRef.current.thread
+            .getState()
+            .messages.flatMap(getExternalStoreMessages<TMessage>);
+
+          const localFileParts = countFileParts(localMessages);
+          const serverFileParts = countFileParts(serverMessages);
+          const localSkills = countSkillMarkers(localMessages);
+          const serverSkills = countSkillMarkers(serverMessages);
+
+          if (
+            localMessages.length > 0 &&
+            (serverMessages.length < localMessages.length ||
+              serverFileParts < localFileParts ||
+              serverSkills < localSkills)
+          ) {
+            return;
+          }
+
+          runtimeRef.current.thread.import(converted);
+          onSetMessagesRef.current(serverMessages);
 
           historyIds.current = new Set(
             converted.messages.map((m) => m.message.id),

@@ -7,7 +7,9 @@ import {
   upsertTenantSettings,
 } from '@veylin/db';
 import type { CustomSkillInput, SkillListItem } from '@veylin/shared';
+import { dirname } from 'node:path';
 import type { Runtime } from '@veylin/runtime';
+import { refreshAgentPackages } from './agent-packages-sync';
 
 export async function getDisabledSkills(tenantId: string): Promise<string[]> {
   const row = await getTenantSettingsRow(tenantId);
@@ -60,6 +62,7 @@ export async function listMergedSkills(
   tenantId: string,
   agentId?: string,
 ): Promise<SkillListItem[]> {
+  await refreshAgentPackages(runtime);
   const ctx = runtime.getAgentContext(agentId);
   const disabled = new Set(await getDisabledSkills(tenantId));
   const custom = await listCustomSkills(tenantId);
@@ -111,5 +114,7 @@ export async function resolveSkillContent(
 
   const loaded = runtime.definitions.get(agentId ?? 'veylin');
   const fileSkill = loaded?.skills.find((s) => s.name === name);
-  return fileSkill?.content ?? null;
+  if (!fileSkill?.content) return null;
+  const baseDir = dirname(fileSkill.path);
+  return `Base directory for this skill: ${baseDir}\n\n${fileSkill.content}`;
 }

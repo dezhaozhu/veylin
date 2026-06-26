@@ -34,8 +34,9 @@ export function buildAutomationTools(boss: QueuePort) {
       prompt: z.string(),
       cron: z.string().optional().describe('Cron expression for schedule kind'),
       timezone: z.string().default('UTC'),
-      sourceType: z.enum(['cron', 'github', 'custom']).optional(),
-      triggerFilter: z.record(z.string(), z.unknown()).optional(),
+      sourceType: z.union([z.literal('cron'), z.string().min(1)]).optional(),
+      eventOn: z.union([z.string(), z.array(z.string())]).optional(),
+      eventFilter: z.string().optional(),
       enabled: z.boolean().default(true),
     }),
     outputSchema: z.object({ id: z.string(), name: z.string() }),
@@ -51,7 +52,8 @@ export function buildAutomationTools(boss: QueuePort) {
         cron: input.cron,
         timezone: input.timezone ?? 'UTC',
         sourceType: input.sourceType,
-        triggerFilter: input.triggerFilter ?? {},
+        eventOn: input.eventOn,
+        eventFilter: input.eventFilter,
       });
       if (row.enabled && row.kind === 'schedule' && row.cron) {
         await registerAutomationSchedule(boss, row.id, row.cron, row.timezone ?? 'UTC', {
@@ -151,8 +153,9 @@ export function buildAutomationTools(boss: QueuePort) {
       prompt: z.string().optional(),
       cron: z.string().optional().describe('Cron expression for schedule kind'),
       timezone: z.string().optional(),
-      sourceType: z.enum(['cron', 'github', 'custom']).optional(),
-      triggerFilter: z.record(z.string(), z.unknown()).optional(),
+      sourceType: z.union([z.literal('cron'), z.string().min(1)]).optional(),
+      eventOn: z.union([z.string(), z.array(z.string())]).optional(),
+      eventFilter: z.string().optional(),
       enabled: z.boolean().optional(),
     }),
     outputSchema: z.object({ ok: z.boolean() }),

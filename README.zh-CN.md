@@ -75,7 +75,7 @@ API：`GET/POST/PUT/DELETE /api/skills`、`/api/rules`、`/api/mcp-servers`
 ### Automate
 
 - **定时**：`automations` 表 + 进程内队列（node-cron）；每次运行新建 thread，写入 `automation_runs`，出现在会话列表。
-- **事件**：`POST /api/webhooks/:token`（GitHub `X-Hub-Signature-256` 或自定义 HMAC）；匹配 `kind=event` 的 automation 后投递队列。
+- **事件**：`POST /api/events/{tenantId}/{source}`（HMAC 验签）；按 OpenHands 风格 `on` + JMESPath `filter` 匹配 `kind=event` 的 automation 后投递队列。
 
 API：`GET/POST/PUT/DELETE /api/automations`、`POST /api/automations/:id/trigger`、`GET /api/automations/:id/runs`、`GET/POST/DELETE /api/webhooks`
 

@@ -6,12 +6,22 @@
 /** A model id from the user catalog. */
 export type ModelKey = string;
 
+export type AttachedBrowserTab = {
+  tabId: string;
+  url: string;
+  title: string;
+};
+
 export interface ChatSettings {
   model: ModelKey;
   agentId: string;
   planMode: boolean;
   /** Skill selected from + menu for the next message (UI hint). */
   pendingSkill: string | null;
+  /** Character index in composer text where the skill chip is inserted. */
+  pendingSkillInsertAt: number;
+  /** Browser page attached via @ mention for the next message. */
+  attachedBrowserTab: AttachedBrowserTab | null;
   /** MCP server on/off; omitted or true means enabled. */
   mcpEnabled: Record<string, boolean>;
 }
@@ -24,6 +34,8 @@ const DEFAULTS: ChatSettings = {
   agentId: 'veylin',
   planMode: false,
   pendingSkill: null,
+  pendingSkillInsertAt: 0,
+  attachedBrowserTab: null,
   mcpEnabled: {},
 };
 
@@ -43,6 +55,9 @@ export function setChatSettings(patch: Partial<ChatSettings>): ChatSettings {
   const next = { ...current, ...patch };
   if (patch.mcpEnabled) {
     next.mcpEnabled = { ...current.mcpEnabled, ...patch.mcpEnabled };
+  }
+  if (patch.pendingSkill === null) {
+    next.pendingSkillInsertAt = 0;
   }
   localStorage.setItem(KEY, JSON.stringify(next));
   window.dispatchEvent(new CustomEvent(EVENT, { detail: next }));

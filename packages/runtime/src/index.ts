@@ -6,6 +6,7 @@ export {
   type CreateRuntimeOptions,
   type LoadedAgent,
   type AgentSummary,
+  type AgentContext,
 } from './registry';
 export { buildAgent, toolNeedsApproval, type BuildAgentOptions } from './agents';
 export {

@@ -4,6 +4,7 @@ import {
   getChatSettings,
   onChatSettingsChange,
   setChatSettings,
+  type AttachedBrowserTab,
 } from '@/lib/chat-settings';
 
 export interface AgentContextResponse {
@@ -56,11 +57,26 @@ export function usePlanMode() {
 }
 
 export function usePendingSkill() {
-  const pendingSkill = useChatSettingsState().pendingSkill;
-  const setPendingSkill = useCallback((name: string | null) => {
-    setChatSettings({ pendingSkill: name });
+  const { pendingSkill, pendingSkillInsertAt } = useChatSettingsState();
+  const setPendingSkill = useCallback((name: string | null, insertAt?: number) => {
+    if (name === null) {
+      setChatSettings({ pendingSkill: null, pendingSkillInsertAt: 0 });
+      return;
+    }
+    setChatSettings({
+      pendingSkill: name,
+      pendingSkillInsertAt: insertAt ?? 0,
+    });
   }, []);
-  return { pendingSkill, setPendingSkill };
+  return { pendingSkill, pendingSkillInsertAt, setPendingSkill };
+}
+
+export function useAttachedBrowserTab() {
+  const attachedBrowserTab = useChatSettingsState().attachedBrowserTab;
+  const setAttachedBrowserTab = useCallback((tab: AttachedBrowserTab | null) => {
+    setChatSettings({ attachedBrowserTab: tab });
+  }, []);
+  return { attachedBrowserTab, setAttachedBrowserTab };
 }
 
 export function useMcpEnabled() {

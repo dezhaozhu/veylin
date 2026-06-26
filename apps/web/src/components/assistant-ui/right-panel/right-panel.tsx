@@ -1,13 +1,15 @@
 import { useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { hideWebView, isTauri } from '@/lib/tauri-web-view';
+import { closeWebView, hideWebView, isTauri } from '@/lib/tauri-web-view';
+import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { PanelTabBar } from './panel-tab-bar';
 import { getPanelKindDef } from './panel-registry';
-import { usePanelTabs } from './use-panel-tabs';
+import { usePanelTabs } from './panel-tabs-context';
 
 /** Unified right-panel container: tab strip + content area hosting any panel kind. */
 export function RightPanel() {
   const { t } = useTranslation();
+  const { view } = useSettingsPanel();
   const { tabs, activeId, activeTab, open, close, activate, updateState } = usePanelTabs();
 
   const handleUpdateState = useCallback(
@@ -22,10 +24,10 @@ export function RightPanel() {
 
   useEffect(() => {
     if (!isTauri()) return;
-    if (activeTab?.kind !== 'web') {
+    if (view !== 'chat' || activeTab?.kind !== 'web') {
       void hideWebView();
     }
-  }, [activeTab?.kind, activeTab?.id]);
+  }, [view, activeTab?.kind, activeTab?.id]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

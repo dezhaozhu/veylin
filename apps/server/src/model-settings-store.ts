@@ -62,16 +62,6 @@ function normalize(raw: RawModelSettings | undefined): StoredModelSettings {
   };
 }
 
-function hasLegacyFields(raw: RawModelSettings): boolean {
-  return (
-    raw.providerName !== undefined ||
-    raw.openaiApiKey !== undefined ||
-    raw.openaiApiKeyEnabled !== undefined ||
-    raw.overrideOpenAIBaseUrl !== undefined ||
-    raw.openaiBaseUrl !== undefined
-  );
-}
-
 function toView(settings: StoredModelSettings): ModelSettingsView {
   return {
     modelName: settings.modelName,
@@ -84,15 +74,12 @@ function toView(settings: StoredModelSettings): ModelSettingsView {
 async function loadStoredSettings(tenantId: string): Promise<StoredModelSettings> {
   const row = await getTenantSettingsRow(tenantId);
   const raw = row?.modelSettings as RawModelSettings | undefined;
-  const next = normalize(raw);
-  if (raw && hasLegacyFields(raw)) {
-    await upsertTenantSettings(tenantId, { modelSettings: next });
-  }
-  return next;
+  return normalize(raw);
 }
 
 export async function getModelSettings(tenantId: string): Promise<ModelSettingsView> {
   const stored = await loadStoredSettings(tenantId);
+  applyModelSettingsToRuntime(stored);
   return toView(stored);
 }
 

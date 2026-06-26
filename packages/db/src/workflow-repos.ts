@@ -2,6 +2,30 @@ import { getDb } from './client';
 import { newId, normalizeId, queryRows, createRecord, selectById, deleteById, toDbDatetime } from './query';
 import type { WorkflowRow, WorkflowRunRow } from './types';
 
+function serializeEventOn(value: string | string[] | null | undefined): string | null {
+  if (value == null) return null;
+  if (Array.isArray(value)) return JSON.stringify(value);
+  return value;
+}
+
+function parseEventOn(raw: unknown): string | string[] | null {
+  if (raw == null || raw === '') return null;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (Array.isArray(parsed)) return parsed.map(String);
+      } catch {
+        return trimmed;
+      }
+    }
+    return trimmed;
+  }
+  if (Array.isArray(raw)) return raw.map(String);
+  return null;
+}
+
 function mapWorkflow(r: Record<string, unknown>): WorkflowRow {
   const def = (r.definition as { nodes?: unknown[]; edges?: unknown[] }) ?? {};
   return {
@@ -14,7 +38,8 @@ function mapWorkflow(r: Record<string, unknown>): WorkflowRow {
     cron: (r.cron as string | null) ?? null,
     timezone: (r.timezone as string | null) ?? null,
     sourceType: (r.source_type as string | null) ?? null,
-    triggerFilter: (r.trigger_filter as Record<string, unknown>) ?? {},
+    eventOn: parseEventOn(r.event_on),
+    eventFilter: (r.event_filter as string | null) ?? null,
     definition: {
       nodes: def.nodes ?? [],
       edges: def.edges ?? [],
@@ -67,7 +92,7 @@ export async function listEventWorkflowRows(
   );
   return rows
     .map(mapWorkflow)
-    .filter((w) => (w.sourceType ?? 'custom') === sourceType || w.sourceType === 'custom');
+    .filter((w) => w.sourceType === sourceType);
 }
 
 export async function getWorkflowRow(tenantId: string, id: string): Promise<WorkflowRow | null> {
@@ -91,7 +116,8 @@ export async function insertWorkflow(
     cron: input.cron ?? undefined,
     timezone: input.timezone ?? 'UTC',
     source_type: input.sourceType ?? 'cron',
-    trigger_filter: input.triggerFilter ?? {},
+    event_on: serializeEventOn(input.eventOn),
+    event_filter: input.eventFilter ?? null,
     definition: input.definition ?? { nodes: [], edges: [] },
   });
   return (await getWorkflowRow(tenantId, id))!;
@@ -111,7 +137,8 @@ export async function updateWorkflowRow(
     ['cron', 'cron'],
     ['timezone', 'timezone'],
     ['sourceType', 'source_type'],
-    ['triggerFilter', 'trigger_filter'],
+    ['eventOn', 'event_on'],
+    ['eventFilter', 'event_filter'],
     ['definition', 'definition'],
     ['lastRunAt', 'last_run_at'],
   ] as const) {
@@ -121,7 +148,12 @@ export async function updateWorkflowRow(
         sets.push(`${col} = NONE`);
       } else {
         sets.push(`${col} = $${key}`);
-        vars[key] = col === 'last_run_at' ? toDbDatetime(val) : val;
+        vars[key] =
+          key === 'eventOn'
+            ? serializeEventOn(val as string | string[] | null)
+            : col === 'last_run_at'
+              ? toDbDatetime(val)
+              : val;
       }
     }
   }

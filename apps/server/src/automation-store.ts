@@ -25,7 +25,8 @@ function rowToAutomation(row: NonNullable<Awaited<ReturnType<typeof getAutomatio
     cron: row.cron,
     timezone: row.timezone,
     sourceType: (row.sourceType as Automation['sourceType']) ?? 'cron',
-    triggerFilter: row.triggerFilter ?? {},
+    eventOn: row.eventOn ?? undefined,
+    eventFilter: row.eventFilter ?? undefined,
     createdAt: row.createdAt,
     lastRunAt: row.lastRunAt,
   };
@@ -73,8 +74,9 @@ export async function createAutomation(
     enabled: input.enabled ?? true,
     cron: input.cron ?? null,
     timezone: input.timezone ?? 'UTC',
-    sourceType: input.sourceType ?? (input.kind === 'event' ? 'custom' : 'cron'),
-    triggerFilter: input.triggerFilter ?? {},
+    sourceType: input.sourceType ?? (input.kind === 'event' ? 'github' : 'cron'),
+    eventOn: input.eventOn ?? null,
+    eventFilter: input.eventFilter ?? null,
   });
   return rowToAutomation(row);
 }
@@ -93,7 +95,8 @@ export async function updateAutomation(
     ...(patch.cron !== undefined ? { cron: patch.cron ?? null } : {}),
     ...(patch.timezone != null ? { timezone: patch.timezone } : {}),
     ...(patch.sourceType != null ? { sourceType: patch.sourceType } : {}),
-    ...(patch.triggerFilter != null ? { triggerFilter: patch.triggerFilter } : {}),
+    ...(patch.eventOn !== undefined ? { eventOn: patch.eventOn ?? null } : {}),
+    ...(patch.eventFilter !== undefined ? { eventFilter: patch.eventFilter ?? null } : {}),
   });
   return row ? rowToAutomation(row) : null;
 }
@@ -141,21 +144,7 @@ export function automationScheduleName(automationId: string): string {
   return `auto:${automationId}`;
 }
 
-export function matchesEventFilter(
-  filter: Record<string, unknown>,
-  payload: Record<string, unknown>,
-): boolean {
-  if (Object.keys(filter).length === 0) return true;
-  for (const [key, expected] of Object.entries(filter)) {
-    const actual = payload[key];
-    if (Array.isArray(expected)) {
-      if (!expected.includes(actual as never)) return false;
-    } else if (actual !== expected) {
-      return false;
-    }
-  }
-  return true;
-}
+export { matchesEventTrigger, matchesEventKey } from './event-trigger-matcher';
 
 export async function listEventAutomations(tenantId: string, sourceType: string) {
   const rows = await listEventAutomationRows(tenantId, sourceType);

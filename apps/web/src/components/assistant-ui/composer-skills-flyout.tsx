@@ -1,5 +1,6 @@
 import type { FC } from 'react';
 import { cn } from '@/lib/utils';
+import { skillMenuDescription } from '@/lib/skill-menu-description';
 import { ComposerMenuPanel } from '@/components/assistant-ui/composer-menu-flyout';
 
 export const ComposerSkillsFlyout: FC<{
@@ -30,8 +31,8 @@ export const ComposerSkillsFlyout: FC<{
         >
           <div className="text-sm font-medium">{s.name}</div>
           {s.description && (
-            <div className="text-muted-foreground mt-0.5 line-clamp-2 text-xs">
-              {s.description}
+            <div className="text-muted-foreground mt-0.5 truncate text-xs">
+              {skillMenuDescription(s.description)}
             </div>
           )}
         </button>

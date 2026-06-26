@@ -9,6 +9,7 @@ import {
 import { listRules, buildRulesMemoryBlock } from './rules-store';
 import { createMcpClient, listActiveMcpServerNames } from './mcp-store';
 import { applyTenantModelSettings } from './model-settings-store';
+import { refreshAgentPackages, requireAgent } from './agent-packages-sync';
 
 export interface RunAgentOptions {
   runtime: Runtime;
@@ -41,6 +42,7 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
   const identity = { threadId, tenantId, resourceId: userId };
   await ensureThreadState(identity);
   await applyTenantModelSettings(tenantId);
+  await refreshAgentPackages(runtime);
 
   const eventBlock =
     eventContext && Object.keys(eventContext).length > 0
@@ -89,7 +91,7 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
     await syncWorkingMemory(runtime.memory, identity, skills, null);
   });
 
-  const agent = runtime.getAgent(agentId) ?? runtime.mastra.getAgent('veylin');
+  const agent = requireAgent(runtime, agentId);
   const messages = systemBlocks
     ? [
         { role: 'system', content: systemBlocks },

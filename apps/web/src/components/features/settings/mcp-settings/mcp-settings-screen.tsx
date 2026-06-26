@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Check, Plus } from 'lucide-react';
 import type { McpServer } from '@/hooks/settings/api';
 import { settingsApi } from '@/hooks/settings/api';
-import { SettingsSwitch } from '../settings-switch';
 import {
   PageHeader,
   PageSearchBar,
@@ -15,10 +14,15 @@ import {
   FormInput,
   FormSelect,
   FormTextarea,
-  SettingsInlineEditor,
+  SettingsFormDialog,
 } from '../settings-form-dialog';
+import { SettingsDeleteDialog } from '../settings-item-actions';
+import {
+  SettingsConnectedList,
+  SettingsListIcon,
+  SettingsListRow,
+} from '../settings-list';
 import { mcpServerIcon } from '@/lib/mcp-icon';
-import { cn } from '@/lib/utils';
 
 const LIBRARY = [
   {
@@ -69,7 +73,16 @@ type InstalledItem = {
   remoteId?: string;
 };
 
-function InstalledCard({
+function McpIcon({ name, enabled }: { name: string; enabled: boolean }) {
+  const label = mcpServerIcon(name).label;
+  return (
+    <SettingsListIcon statusDot={enabled} className="text-[10px] font-semibold">
+      <span>{label}</span>
+    </SettingsListIcon>
+  );
+}
+
+function InstalledRow({
   item,
   onToggle,
   onDelete,
@@ -79,40 +92,28 @@ function InstalledCard({
   onDelete?: () => void;
 }) {
   const { t } = useTranslation();
-  const icon = mcpServerIcon(item.name);
+
+  const menuItems = [
+    {
+      label: item.enabled ? t('common.disable') : t('common.enable'),
+      onClick: () => onToggle(!item.enabled),
+    },
+    ...(onDelete
+      ? [{ label: t('common.delete'), onClick: onDelete, destructive: true }]
+      : []),
+  ];
+
   return (
-    <div className="border-border bg-card flex min-w-[280px] flex-1 items-center gap-3 rounded-xl border px-4 py-3">
-      <div
-        className={cn(
-          'flex size-10 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-white',
-          icon.bg,
-        )}
-      >
-        {icon.label}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-medium">{item.name}</div>
-        <div className="text-muted-foreground truncate text-xs">
-          <span className="font-medium">{item.transport}</span>
-          <span className="mx-1">·</span>
-          {item.detail}
-        </div>
-      </div>
-      <SettingsSwitch
-        checked={item.enabled}
-        onChange={onToggle}
-        label={t('customize.mcpPage.toggle', { name: item.name })}
-      />
-      {onDelete && (
-        <button
-          type="button"
-          className="text-destructive hover:bg-destructive/10 rounded-md px-2 py-1 text-xs underline"
-          onClick={onDelete}
-        >
-          {t('common.delete')}
-        </button>
-      )}
-    </div>
+    <SettingsListRow
+      icon={<McpIcon name={item.name} enabled={item.enabled} />}
+      title={item.name}
+      subtitle={t('customize.mcpPage.serverLine', {
+        transport: item.transport,
+        detail: item.detail,
+      })}
+      subtitleAction
+      menuItems={menuItems}
+    />
   );
 }
 
@@ -124,6 +125,8 @@ export function McpSettingsScreen() {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'installed' | 'library'>('all');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<InstalledItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState({
     name: '',
     transport: 'sse' as 'sse' | 'http',
@@ -172,7 +175,7 @@ export function McpSettingsScreen() {
     (item) =>
       (filter === 'all' || filter === 'library') &&
       (!q || item.name.toLowerCase().includes(q) || t(item.descriptionKey).toLowerCase().includes(q)),
-  ).slice(0, 1);
+  );
 
   const showInstalled = filter === 'all' || filter === 'installed';
   const showLibrary = filter === 'all' || filter === 'library';
@@ -190,14 +193,17 @@ export function McpSettingsScreen() {
     }
   };
 
-  const deleteInstalled = async (item: InstalledItem) => {
-    if (item.source !== 'remote' || !item.remoteId) return;
-    if (!confirm(t('customize.mcpPage.confirmDelete', { name: item.name }))) return;
+  const confirmDelete = async () => {
+    if (!deleteTarget?.remoteId || deleting) return;
+    setDeleting(true);
     try {
-      await settingsApi.deleteMcpServer(item.remoteId);
+      await settingsApi.deleteMcpServer(deleteTarget.remoteId);
+      setDeleteTarget(null);
       await load();
     } catch (err) {
       alert(t('customize.mcpPage.deleteFailed', { error: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -238,7 +244,12 @@ export function McpSettingsScreen() {
         title={t('customize.mcpPage.title')}
         description={t('customize.mcpPage.description')}
         action={
-          <PrimaryActionButton onClick={() => setDialogOpen(true)}>
+          <PrimaryActionButton
+            onClick={() => {
+              setForm({ name: '', transport: 'sse', url: '', headers: '' });
+              setDialogOpen(true);
+            }}
+          >
             {t('customize.mcpPage.addCustom')}
           </PrimaryActionButton>
         }
@@ -249,25 +260,25 @@ export function McpSettingsScreen() {
         onChange={setQuery}
         placeholder={t('customize.mcpPage.searchPlaceholder')}
         filter={
-          <select
-            className="border-input bg-background h-10 rounded-lg border px-3 text-sm"
+          <FormSelect
+            className="w-auto min-w-[8rem]"
             value={filter}
             onChange={(e) => setFilter(e.target.value as typeof filter)}
           >
             <option value="all">{t('customize.mcpPage.filterAll')}</option>
             <option value="installed">{t('customize.mcpPage.installed')}</option>
             <option value="library">{t('customize.mcpPage.libraryTitle')}</option>
-          </select>
+          </FormSelect>
         }
       />
 
-      <SettingsInlineEditor
+      <SettingsFormDialog
         open={dialogOpen}
+        onOpenChange={setDialogOpen}
         title={t('customize.mcpPage.addTitle')}
         description={t('customize.mcpPage.editorDescription')}
         submitLabel={t('customize.mcpPage.addServer')}
         onSubmit={() => void save()}
-        onCancel={() => setDialogOpen(false)}
       >
         <FormField label={t('common.name')} required>
           <FormInput
@@ -305,71 +316,71 @@ export function McpSettingsScreen() {
             onChange={(e) => setForm((f) => ({ ...f, headers: e.target.value }))}
           />
         </FormField>
-      </SettingsInlineEditor>
+      </SettingsFormDialog>
 
       {showInstalled && (
         <section className="mb-8">
-          <SectionHeading title={t('customize.mcpPage.installed')} count={installedItems.length} />
-          <div className="flex flex-col gap-2">
-            {installedItems.length === 0 && (
-              <p className="text-muted-foreground text-sm">{t('customize.mcpPage.noInstalledMatch')}</p>
-            )}
-            <div className="flex flex-wrap gap-2">
+          <SectionHeading
+            title={t('customize.mcpPage.connected')}
+            count={installedItems.length}
+          />
+          {installedItems.length === 0 ? (
+            <p className="text-muted-foreground text-sm">{t('customize.mcpPage.noInstalledMatch')}</p>
+          ) : (
+            <SettingsConnectedList>
               {installedItems.map((item) => (
-                <InstalledCard
+                <InstalledRow
                   key={item.key}
                   item={item}
                   onToggle={(on) => void toggleInstalled(item, on)}
-                  onDelete={item.source === 'remote' ? () => void deleteInstalled(item) : undefined}
+                  onDelete={item.source === 'remote' ? () => setDeleteTarget(item) : undefined}
                 />
               ))}
-            </div>
-          </div>
+            </SettingsConnectedList>
+          )}
         </section>
       )}
 
       {showLibrary && (
         <section>
           <SectionHeading title={t('customize.mcpPage.libraryTitle')} count={libraryItems.length} />
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {libraryItems.map((item) => {
-              const installed = installedNames.has(item.id) || installedNames.has(item.name.toLowerCase());
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => !installed && openLibraryAdd(item.name)}
-                  className={cn(
-                    'border-border bg-card group relative rounded-xl border p-4 text-left transition-colors',
-                    !installed && 'hover:border-foreground/20 hover:bg-accent/30',
-                    installed && 'opacity-70',
-                  )}
-                >
-                  <div className="mb-3 flex items-start justify-between gap-2">
-                    <div className="bg-muted flex size-9 items-center justify-center rounded-lg text-xs font-bold">
-                      {item.name.slice(0, 2).toUpperCase()}
-                    </div>
-                    {!installed ? (
-                      <span className="border-border text-muted-foreground flex size-7 items-center justify-center rounded-md border opacity-0 transition-opacity group-hover:opacity-100">
-                        <Plus className="size-4" />
-                      </span>
-                    ) : (
-                      <Check className="text-emerald-600 size-4" />
-                    )}
-                  </div>
-                  <div className="font-medium">{item.name}</div>
-                  <div className="text-muted-foreground mb-2 text-[10px] font-medium tracking-wide uppercase">
-                    {item.transport}
-                  </div>
-                  <p className="text-muted-foreground line-clamp-2 text-xs leading-relaxed">
-                    {t(item.descriptionKey)}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
+          {libraryItems.length > 0 ? (
+            <SettingsConnectedList>
+              {libraryItems.map((item) => {
+                const installed = installedNames.has(item.id) || installedNames.has(item.name.toLowerCase());
+                return (
+                  <SettingsListRow
+                    key={item.id}
+                    asButton={!installed}
+                    onClick={() => !installed && openLibraryAdd(item.name)}
+                    icon={
+                      <SettingsListIcon className="text-[10px] font-semibold">
+                        <span>{item.name.slice(0, 2).toUpperCase()}</span>
+                      </SettingsListIcon>
+                    }
+                    title={item.name}
+                    subtitle={t(item.descriptionKey)}
+                    trailing={
+                      installed ? (
+                        <Check className="text-emerald-600 size-4 shrink-0" />
+                      ) : undefined
+                    }
+                  />
+                );
+              })}
+            </SettingsConnectedList>
+          ) : null}
         </section>
       )}
+
+      <SettingsDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={t('customize.mcpPage.deleteTitle')}
+        description={t('customize.mcpPage.confirmDelete', { name: deleteTarget?.name ?? '' })}
+        onConfirm={confirmDelete}
+        busy={deleting}
+      />
     </div>
   );
 }

@@ -18,9 +18,23 @@ export async function loadAgentDefinition(yamlPath: string): Promise<AgentDefini
   return agentDefinitionSchema.parse(parsed);
 }
 
+function parseSkillFrontmatter(content: string): { name?: string; description?: string } {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return {};
+  const yaml = match[1]!;
+  const unquote = (value: string) => value.trim().replace(/^['"]|['"]$/g, '');
+  const name = yaml.match(/^name:\s*(.+)$/m)?.[1];
+  const description = yaml.match(/^description:\s*(.+)$/m)?.[1];
+  return {
+    ...(name ? { name: unquote(name) } : {}),
+    ...(description ? { description: unquote(description) } : {}),
+  };
+}
+
 /**
- * Load skills from a directory. Each skill is a subfolder containing SKILL.md
- * whose first heading is the name and first paragraph the description.
+ * Load skills from a directory. Each skill is a subfolder containing SKILL.md.
+ * Uses YAML frontmatter `name` / `description` when present, otherwise falls back
+ * to the first markdown heading and paragraph.
  */
 export async function loadSkillsDir(dir: string): Promise<Skill[]> {
   const root = resolve(dir);
@@ -40,11 +54,14 @@ export async function loadSkillsDir(dir: string): Promise<Skill[]> {
     } catch {
       continue;
     }
+    const frontmatter = parseSkillFrontmatter(content);
     const nameMatch = content.match(/^#\s+(.+)$/m);
-    const descMatch = content.split('\n').find((l) => l.trim() && !l.startsWith('#'));
+    const descMatch = content
+      .split('\n')
+      .find((l) => l.trim() && !l.startsWith('#') && !l.startsWith('---'));
     skills.push({
-      name: nameMatch?.[1]?.trim() ?? entry.name,
-      description: descMatch?.trim() ?? '',
+      name: frontmatter.name ?? nameMatch?.[1]?.trim() ?? entry.name,
+      description: frontmatter.description ?? descMatch?.trim() ?? '',
       content,
       path: skillFile,
     });

@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SettingsDeleteDialog } from '@/components/features/settings/settings-item-actions';
 import { cn } from '@/lib/utils';
 import { extractTextFromFile, RAG_UPLOAD_ACCEPT } from '@/lib/extract-file-text';
 import type { PanelContentProps } from '../panel-types';
@@ -171,6 +172,7 @@ export function RagPanel(_props: PanelContentProps) {
   const graphSigRef = useRef<string>('');
   const fitTimerRef = useRef<number | undefined>(undefined);
   const [uploading, setUploading] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; filename: string } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -323,12 +325,14 @@ export function RagPanel(_props: PanelContentProps) {
     }
   }
 
-  async function onDelete(documentId: string, filename: string) {
-    if (!window.confirm(t('rag.confirmDelete', { filename }))) return;
-    setDeletingId(documentId);
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    const { id } = deleteTarget;
+    setDeletingId(id);
     setError(null);
     try {
-      await fetchJson(`/api/rag/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' });
+      await fetchJson(`/api/rag/documents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      setDeleteTarget(null);
       await refresh({ showError: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -614,7 +618,8 @@ export function RagPanel(_props: PanelContentProps) {
                           size="icon-xs"
                           title={t('rag.delete')}
                           disabled={deletingId === d.id}
-                          onClick={() => void onDelete(d.id, d.filename)}
+                          data-no-window-drag
+                          onClick={() => setDeleteTarget({ id: d.id, filename: d.filename })}
                         >
                           {deletingId === d.id ? (
                             <Loader2 className="size-3.5 animate-spin" />
@@ -636,6 +641,19 @@ export function RagPanel(_props: PanelContentProps) {
           )
         ) : null}
       </div>
+
+      <SettingsDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && !deletingId && setDeleteTarget(null)}
+        title={t('rag.delete')}
+        description={
+          deleteTarget
+            ? t('rag.confirmDelete', { filename: deleteTarget.filename })
+            : ''
+        }
+        onConfirm={confirmDelete}
+        busy={deletingId !== null}
+      />
     </div>
   );
 }
