@@ -15,12 +15,16 @@ export function ensureDataDir(): string {
   return dir;
 }
 
+function toUrlPath(...segments: string[]): string {
+  return join(...segments).replace(/\\/g, '/');
+}
+
 export function surrealKvUrl(dataDir?: string): string {
   const dir = dataDir ?? ensureDataDir();
-  return `surrealkv://${join(dir, 'veylin')}`;
+  return `surrealkv://${toUrlPath(dir, 'veylin')}`;
 }
 
 export function mastraLibsqlUrl(dataDir?: string): string {
   const dir = dataDir ?? ensureDataDir();
-  return `file:${join(dir, 'mastra-memory.db')}`;
+  return `file:${toUrlPath(dir, 'mastra-memory.db')}`;
 }

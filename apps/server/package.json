@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./src/server.ts",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node --import tsx --watch src/server.ts",
     "start": "tsx src/server.ts",
     "build:bundle": "esbuild src/server.ts --bundle --platform=node --format=esm --outfile=dist/server.mjs --packages=external",
     "build:sidecar": "node scripts/build-sidecar.mjs",
