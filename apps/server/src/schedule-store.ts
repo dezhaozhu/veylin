@@ -4,6 +4,7 @@
 
 import {
   countScheduleSheets,
+  deleteScheduleSheet as deleteScheduleSheetDb,
   listScheduleColumns as listScheduleColumnsDb,
   listScheduleRows as listScheduleRowsDb,
   listScheduleSheets as listScheduleSheetsDb,
@@ -154,8 +155,13 @@ export async function initScheduleStore(): Promise<void> {
         rows: rows.map((r) => ({ ...r.data } as ScheduleRowData)),
       });
     }
-    const main = next.get(DEFAULT_SCHEDULE_SHEET);
-    sheetStore = main ? new Map([[DEFAULT_SCHEDULE_SHEET, main]]) : buildInitialStore();
+    sheetStore = next;
+    if (!sheetStore.has(DEFAULT_SCHEDULE_SHEET)) {
+      const initial = buildInitialStore();
+      const main = initial.get(DEFAULT_SCHEDULE_SHEET)!;
+      sheetStore.set(DEFAULT_SCHEDULE_SHEET, main);
+      await persistSheet(DEFAULT_SCHEDULE_SHEET);
+    }
   }
   scheduleHydrated = true;
 }
@@ -249,14 +255,46 @@ export async function updateScheduleRow(
   return { ...sheet.rows[idx]! };
 }
 
-export function createScheduleSheet(name: string): ScheduleSheetMeta | null {
-  void name;
-  return null;
+function slugifySheetId(name: string): string {
+  const base =
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+      .replace(/[^a-z0-9_\u4e00-\u9fff-]/g, '') || 'sheet';
+  let id = base;
+  let n = 1;
+  while (sheetStore.has(id)) {
+    id = `${base}_${n++}`;
+  }
+  return id;
 }
 
-export function deleteScheduleSheet(sheetId: string): boolean {
-  void sheetId;
-  return false;
+export function createScheduleSheet(name: string): ScheduleSheetMeta | null {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const id = slugifySheetId(trimmed);
+  const meta: ScheduleSheetMeta = { id, name: trimmed, builtin: false };
+  sheetStore.set(id, {
+    meta,
+    columns: cloneColumns(),
+    rows: [],
+  });
+  schedulePersist(id);
+  return { ...meta };
+}
+
+export async function deleteScheduleSheet(sheetId: string): Promise<boolean> {
+  const sheet = sheetStore.get(sheetId);
+  if (!sheet || sheet.meta.builtin || sheetId === DEFAULT_SCHEDULE_SHEET) return false;
+  sheetStore.delete(sheetId);
+  try {
+    await deleteScheduleSheetDb(sheetId);
+    return true;
+  } catch (e) {
+    console.error('[schedule] delete sheet failed:', e);
+    return false;
+  }
 }
 
 export function addScheduleRow(sheetId: string): ScheduleRowData | null {

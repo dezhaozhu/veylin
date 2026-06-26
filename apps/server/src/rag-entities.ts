@@ -1,5 +1,6 @@
-import { getModelConfig } from '@veylin/runtime';
+import { DEFAULT_MODEL, getModelConfig } from '@veylin/runtime';
 import { insertEntity, insertRelates } from '@veylin/db';
+import { applyTenantModelSettings } from './model-settings-store';
 
 type ExtractedEntity = { name: string; type: string };
 type ExtractedEdge = { from: string; to: string; relation: string };
@@ -47,7 +48,7 @@ function relationForSentence(sentence: string, from: ExtractedEntity, to: Extrac
 
 function heuristicExtract(text: string): { entities: ExtractedEntity[]; edges: ExtractedEdge[] } {
   const byName = new Map<string, ExtractedEntity>();
-  const sentenceEntities: ExtractedEntity[][] = [];
+  const sentenceEntityGroups: { sentence: string; entities: ExtractedEntity[] }[] = [];
   const sentences = text.split(/[\n。；;!?！？]+/).map((s) => s.trim()).filter(Boolean);
 
   function add(name: string): ExtractedEntity | null {
@@ -86,14 +87,13 @@ function heuristicExtract(text: string): { entities: ExtractedEntity[]; edges: E
       const entity = add('维护周期');
       if (entity && !current.some((e) => e.name === entity.name)) current.push(entity);
     }
-    if (current.length > 0) sentenceEntities.push(current);
+    if (current.length > 0) sentenceEntityGroups.push({ sentence, entities: current });
   }
 
   const entities = [...byName.values()].slice(0, 16);
   const edges: ExtractedEdge[] = [];
 
-  for (const [sentenceIndex, group] of sentenceEntities.entries()) {
-    const sentence = sentences[sentenceIndex] ?? '';
+  for (const { sentence, entities: group } of sentenceEntityGroups) {
     const primary = group.find((e) => e.type === 'work_order') ?? group[0];
     if (!primary) continue;
     for (const target of group) {
@@ -113,8 +113,12 @@ function heuristicExtract(text: string): { entities: ExtractedEntity[]; edges: E
   return { entities, edges };
 }
 
-async function llmExtract(text: string): Promise<{ entities: ExtractedEntity[]; edges: ExtractedEdge[] } | null> {
-  const cfg = getModelConfig('deepseek');
+async function llmExtract(
+  tenantId: string,
+  text: string,
+): Promise<{ entities: ExtractedEntity[]; edges: ExtractedEdge[] } | null> {
+  await applyTenantModelSettings(tenantId);
+  const cfg = getModelConfig(DEFAULT_MODEL);
   if (!cfg.apiKey) return null;
   const excerpt = text.slice(0, 4000);
   try {
@@ -164,7 +168,7 @@ export async function extractAndStoreGraph(
   documentId: string,
   text: string,
 ): Promise<{ entities: number; edges: number }> {
-  const extracted = (await llmExtract(text)) ?? heuristicExtract(text);
+  const extracted = (await llmExtract(tenantId, text)) ?? heuristicExtract(text);
   const nameToId = new Map<string, string>();
 
   for (const ent of extracted.entities) {

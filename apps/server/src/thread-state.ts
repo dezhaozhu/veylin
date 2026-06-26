@@ -53,7 +53,15 @@ function toRow(r: Awaited<ReturnType<typeof getThreadStateRow>>): ThreadStateRow
 
 export async function ensureThreadState(identity: ThreadIdentity): Promise<ThreadStateRow> {
   const existing = toRow(await getThreadStateRow(identity.threadId));
-  if (existing) return existing;
+  if (existing) {
+    if (
+      existing.tenantId !== identity.tenantId ||
+      existing.resourceId !== identity.resourceId
+    ) {
+      throw new Error('forbidden');
+    }
+    return existing;
+  }
   await insertThreadState({
     threadId: identity.threadId,
     tenantId: identity.tenantId,
@@ -78,6 +86,18 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
 
 export async function getThreadState(threadId: string): Promise<ThreadStateRow | null> {
   return toRow(await getThreadStateRow(threadId));
+}
+
+/** Returns 403 when an existing thread belongs to another tenant/resource. */
+export async function requireThreadOwnership(
+  threadId: string,
+  ctx: { tenantId: string; userId: string },
+): Promise<ThreadStateRow> {
+  const row = await getThreadState(threadId);
+  if (!row || row.tenantId !== ctx.tenantId || row.resourceId !== ctx.userId) {
+    throw new Error('forbidden');
+  }
+  return row;
 }
 
 export async function setPlanMode(threadId: string, planMode: boolean): Promise<void> {

@@ -79,7 +79,6 @@ async function loadStoredSettings(tenantId: string): Promise<StoredModelSettings
 
 export async function getModelSettings(tenantId: string): Promise<ModelSettingsView> {
   const stored = await loadStoredSettings(tenantId);
-  applyModelSettingsToRuntime(stored);
   return toView(stored);
 }
 

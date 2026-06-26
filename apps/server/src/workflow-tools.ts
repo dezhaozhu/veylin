@@ -14,7 +14,7 @@ function ctxValue(ctx: WorkflowCtx | undefined, key: string): string | undefined
   return ctx?.requestContext?.get(key) as string | undefined;
 }
 
-export function buildWorkflowTools(boss: QueuePort) {
+export function buildWorkflowTools(queue: QueuePort) {
   const workflowList = createTool({
     id: 'workflow_list',
     description: 'List visual workflow DAGs for the current user.',
@@ -55,7 +55,7 @@ export function buildWorkflowTools(boss: QueuePort) {
       const tenantId = ctxValue(ctx, 'tenantId') ?? '00000000-0000-0000-0000-000000000000';
       const row = await getWorkflow(tenantId, input.id);
       if (!row) return { ok: false, jobId: null };
-      const jobId = await dispatchWorkflow(boss, {
+      const jobId = await dispatchWorkflow(queue, {
         tenantId,
         workflowId: row.id,
         eventContext: { manual: true },
@@ -78,12 +78,16 @@ export function buildWorkflowTools(boss: QueuePort) {
       definition: workflowDefinitionSchema.optional(),
       message: z.string().optional(),
     }),
-    execute: async (input) => {
+    execute: async (input, ctx?: WorkflowCtx) => {
+      const tenantId = ctxValue(ctx, 'tenantId');
+      if (!tenantId) {
+        return { ok: false, message: 'tenantId required' };
+      }
       try {
         const current = input.currentDefinition
           ? workflowDefinitionSchema.parse(input.currentDefinition)
           : undefined;
-        const generated = await generateWorkflowFromPrompt(input.prompt, current);
+        const generated = await generateWorkflowFromPrompt(tenantId, input.prompt, current);
         return { ok: true, ...generated };
       } catch (err) {
         return { ok: false, message: err instanceof Error ? err.message : String(err) };

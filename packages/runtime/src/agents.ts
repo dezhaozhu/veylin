@@ -31,26 +31,27 @@ function resolveActiveToolIds(
   permitted: BuiltinToolId[],
   discovered: string[],
 ): BuiltinToolId[] {
+  const denied = new Set(
+    (definition.disallowedTools ?? []).filter((t): t is BuiltinToolId => t in builtinTools),
+  );
+  const applyDeny = (ids: BuiltinToolId[]) => ids.filter((id) => !denied.has(id));
+
   const discoveredBuiltins = discovered.filter(
     (id): id is BuiltinToolId => id in builtinTools && permitted.includes(id as BuiltinToolId),
   );
   const declared = definition.tools.filter((t): t is BuiltinToolId => t in builtinTools);
 
-  // Full-toolset agents (the main agent) always run with every policy-permitted
-  // builtin, so they never need tool_search to discover their own capabilities.
-  // Policy still applies (plan mode keeps denying dangerous, bash/web_fetch keep
-  // their approval gate).
   if (definition.fullToolset && declared.length === 0) {
-    return Array.from(new Set([...permitted, ...discoveredBuiltins]));
+    return applyDeny(Array.from(new Set([...permitted, ...discoveredBuiltins])));
   }
 
   if (declared.length > 0) {
     const base = declared.filter((id) => permitted.includes(id));
-    return Array.from(new Set([...base, ...discoveredBuiltins]));
+    return applyDeny(Array.from(new Set([...base, ...discoveredBuiltins])));
   }
 
   const alwaysOn = ALWAYS_ON_TOOLS.filter((id) => permitted.includes(id));
-  return Array.from(new Set([...alwaysOn, ...discoveredBuiltins]));
+  return applyDeny(Array.from(new Set([...alwaysOn, ...discoveredBuiltins])));
 }
 
 export interface BuildAgentOptions {

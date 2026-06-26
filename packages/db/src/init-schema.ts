@@ -46,6 +46,10 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS label ON task TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS result ON task TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS job_id ON task TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS worker_thread_id ON task TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS subagent_type ON task TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS total_tokens ON task TYPE option<int>`,
+  `DEFINE FIELD IF NOT EXISTS duration_ms ON task TYPE option<int>`,
   `DEFINE FIELD IF NOT EXISTS created_at ON task TYPE datetime DEFAULT time::now()`,
   `DEFINE FIELD IF NOT EXISTS updated_at ON task TYPE datetime DEFAULT time::now()`,
 

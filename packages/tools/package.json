@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@veylin/runtime": "*",
     "@veylin/shared": "*",
     "@mastra/core": "^1.45.0",
     "linkedom": "^0.18.12",

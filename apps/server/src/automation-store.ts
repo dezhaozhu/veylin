@@ -11,6 +11,7 @@ import {
   updateAutomationRunRow,
 } from '@veylin/db';
 import type { Automation, AutomationInput, AutomationRun } from '@veylin/shared';
+import { validateWebhookFilter } from './webhook-filter';
 
 function rowToAutomation(row: NonNullable<Awaited<ReturnType<typeof getAutomationRow>>>): Automation {
   return {
@@ -66,6 +67,10 @@ export async function createAutomation(
   userId: string,
   input: AutomationInput,
 ): Promise<Automation> {
+  if (input.eventFilter?.trim()) {
+    const filterResult = validateWebhookFilter(input.eventFilter);
+    if (!filterResult.ok) throw new Error(filterResult.error);
+  }
   const row = await insertAutomation(tenantId, userId, {
     name: input.name.trim(),
     kind: input.kind,
@@ -86,6 +91,10 @@ export async function updateAutomation(
   id: string,
   patch: Partial<AutomationInput> & { enabled?: boolean },
 ): Promise<Automation | null> {
+  if (patch.eventFilter !== undefined && patch.eventFilter?.trim()) {
+    const filterResult = validateWebhookFilter(patch.eventFilter);
+    if (!filterResult.ok) throw new Error(filterResult.error);
+  }
   const row = await updateAutomationRow(tenantId, id, {
     ...(patch.name != null ? { name: patch.name.trim() } : {}),
     ...(patch.kind != null ? { kind: patch.kind } : {}),

@@ -16,10 +16,10 @@ import { extractAndStoreGraph } from './rag-entities';
 const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 150;
 
-let lastReferences: KnowledgeReference[] = [];
+let lastReferencesByTenant = new Map<string, KnowledgeReference[]>();
 
-export function getLastKnowledgeReferences(): KnowledgeReference[] {
-  return lastReferences;
+export function getLastKnowledgeReferences(tenantId: string): KnowledgeReference[] {
+  return lastReferencesByTenant.get(tenantId) ?? [];
 }
 
 function chunkText(text: string, source: string): { text: string; source: string; offset: number }[] {
@@ -88,7 +88,7 @@ export async function searchKnowledge(
     embedding = null;
   }
   const references = await hybridSearchChunks(tenantId, query, embedding, 8);
-  lastReferences = references;
+  lastReferencesByTenant.set(tenantId, references);
   const context = references
     .map((r, i) => `[${i + 1}] ${r.source} (offset ${r.offset})\n${r.text}`)
     .join('\n\n');
@@ -116,9 +116,10 @@ export function buildKnowledgeSearchTool() {
       context: z.string(),
     }),
     execute: async (input, ctx?: { requestContext?: { get(key: string): unknown } }) => {
-      const tenantId =
-        (ctx?.requestContext?.get('tenantId') as string | undefined) ??
-        '00000000-0000-0000-0000-000000000000';
+      const tenantId = ctx?.requestContext?.get('tenantId') as string | undefined;
+      if (!tenantId) {
+        return { references: [], context: '' };
+      }
       const result = await searchKnowledge(tenantId, input.query);
       return result;
     },

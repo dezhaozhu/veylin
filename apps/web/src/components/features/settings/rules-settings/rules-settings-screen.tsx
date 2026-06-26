@@ -23,17 +23,6 @@ import {
   SettingsListRow,
 } from '../settings-list';
 
-function ruleSubtitle(rule: Rule, t: (key: string) => string): string {
-  const kind = t('customize.rulesPage.ruleKind');
-  if (rule.trigger === 'keyword' && rule.keywords.length > 0) {
-    return `${kind} · ${t('customize.rulesPage.triggerKeyword')} · ${rule.keywords.join(', ')}`;
-  }
-  if (rule.trigger === 'keyword') {
-    return `${kind} · ${t('customize.rulesPage.triggerKeyword')}`;
-  }
-  return `${kind} · ${t('customize.rulesPage.triggerAlways')}`;
-}
-
 function RuleRow({
   rule,
   onToggle,
@@ -54,8 +43,9 @@ function RuleRow({
           <List className="size-4" />
         </SettingsListIcon>
       }
-      title={rule.content}
-      subtitle={ruleSubtitle(rule, t)}
+      title={rule.name}
+      subtitle={rule.content}
+      subtitleClamp={2}
       menuItems={[
         {
           label: rule.enabled ? t('common.disable') : t('common.enable'),

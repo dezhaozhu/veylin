@@ -14,6 +14,7 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { MermaidDiagram } from "@/components/assistant-ui/mermaid-diagram";
+import { copyToClipboard } from "@/lib/copy-to-clipboard";
 import { cn } from "@/lib/utils";
 
 const MarkdownTextImpl = () => {
@@ -67,22 +68,16 @@ const useCopyToClipboard = ({
     };
   }, []);
 
-  const copyToClipboard = (value: string) => {
-    if (!value || typeof navigator === "undefined" || !navigator.clipboard) {
-      return;
-    }
-
-    navigator.clipboard.writeText(value).then(
-      () => {
-        setIsCopied(true);
-        if (timerRef.current) clearTimeout(timerRef.current);
-        timerRef.current = setTimeout(() => setIsCopied(false), copiedDuration);
-      },
-      () => {},
-    );
+  const copyToClipboardValue = async (value: string) => {
+    if (!value || isCopied) return;
+    const ok = await copyToClipboard(value);
+    if (!ok) return;
+    setIsCopied(true);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setIsCopied(false), copiedDuration);
   };
 
-  return { isCopied, copyToClipboard };
+  return { isCopied, copyToClipboard: copyToClipboardValue };
 };
 
 function mermaidSourceFromPre(children: React.ReactNode): string | null {

@@ -49,6 +49,10 @@ export interface TaskRow {
   label?: string | null;
   result?: string | null;
   jobId?: string | null;
+  workerThreadId?: string | null;
+  subagentType?: string | null;
+  totalTokens?: number | null;
+  durationMs?: number | null;
   createdAt?: string;
   updatedAt?: string;
 }

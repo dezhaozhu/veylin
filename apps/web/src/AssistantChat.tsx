@@ -32,7 +32,7 @@ import { WebFetchToolUI } from '@/components/assistant-ui/web-fetch';
 import { ReadOpenPageToolUI } from '@/components/assistant-ui/read-open-page';
 import { TodoWriteToolUI } from '@/components/assistant-ui/todo-write';
 import { ToolSearchToolUI } from '@/components/assistant-ui/tool-search';
-import { TaskCreateToolUI } from '@/components/assistant-ui/task-create-tool';
+import { TaskToolUI, TaskContinueToolUI } from '@/components/assistant-ui/task-tool';
 import { KnowledgeSearchToolUI } from '@/components/assistant-ui/knowledge-search';
 import { ChatPanelRatioSync } from '@/components/assistant-ui/chat-panel-ratio-sync';
 import { Thread } from '@/components/assistant-ui/thread';
@@ -210,7 +210,8 @@ export function AssistantChat() {
         <AskUserQuestionToolUI />
         <TodoWriteToolUI />
         <ToolSearchToolUI />
-        <TaskCreateToolUI />
+        <TaskToolUI />
+        <TaskContinueToolUI />
         <KnowledgeSearchToolUI />
         <WebFetchToolUI />
         <ReadOpenPageToolUI />

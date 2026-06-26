@@ -128,15 +128,11 @@ export function ModelsSettingsScreen() {
     setDeletingModel(true);
     setSaveError(null);
     try {
-      const { settings: next } = await settingsApi.clearModelSettings();
-      applyProviderToDrafts(next, setProvider, setModelNameDraft, setRequestUrlDraft);
-      notifyModelProviderChange(next);
       removeCatalogModel(deleteTarget.id);
+      const next = liveProvider.configured ? liveProvider : provider;
       ensureActiveModelConfigured(next);
-      setApiKeyDraft('');
-      await refreshProvider();
       if (activeModel === deleteTarget.id) {
-        const nextModel = listConfiguredModels(next)[0];
+        const nextModel = listConfiguredModels(next).find((m) => m.id !== deleteTarget.id);
         if (nextModel) {
           setActiveModel(nextModel.id);
           setChatSettings({ model: nextModel.id });
@@ -173,8 +169,7 @@ export function ModelsSettingsScreen() {
       }
 
       setProvider(next);
-      setModelNameDraft('');
-      setRequestUrlDraft('');
+      applyProviderToDrafts(next, setProvider, setModelNameDraft, setRequestUrlDraft);
       setApiKeyDraft('');
       const entry = upsertCatalogModel(next.modelName);
       setActiveModel(entry.id);

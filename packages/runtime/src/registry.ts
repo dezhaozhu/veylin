@@ -26,6 +26,7 @@ const DEFAULT_AGENT: AgentDefinition = {
     'and approval before execution.',
   skills: [],
   tools: [],
+  disallowedTools: [],
   mcpServers: [],
   approvalRequired: [],
   subAgents: [],

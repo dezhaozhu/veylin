@@ -1,3 +1,4 @@
+import { parseEventOn, serializeEventOn } from './event-on';
 import type { Surreal } from 'surrealdb';
 import { getDb } from './client';
 import { newId, normalizeId, queryRows, createRecord, upsertById, selectById, deleteById, toDbDatetime } from './query';
@@ -59,6 +60,10 @@ function mapTask(r: Record<string, unknown>): TaskRow {
     label: (r.label as string | null) ?? null,
     result: (r.result as string | null) ?? null,
     jobId: (r.job_id as string | null) ?? null,
+    workerThreadId: (r.worker_thread_id as string | null) ?? null,
+    subagentType: (r.subagent_type as string | null) ?? null,
+    totalTokens: r.total_tokens != null ? Number(r.total_tokens) : null,
+    durationMs: r.duration_ms != null ? Number(r.duration_ms) : null,
     createdAt: r.created_at ? String(r.created_at) : undefined,
     updatedAt: r.updated_at ? String(r.updated_at) : undefined,
   };
@@ -102,30 +107,6 @@ function mapMcp(r: Record<string, unknown>): McpServerRow {
     enabled: Boolean(r.enabled ?? true),
     createdAt: r.created_at ? String(r.created_at) : undefined,
   };
-}
-
-function serializeEventOn(value: string | string[] | null | undefined): string | null {
-  if (value == null) return null;
-  if (Array.isArray(value)) return JSON.stringify(value);
-  return value;
-}
-
-function parseEventOn(raw: unknown): string | string[] | null {
-  if (raw == null || raw === '') return null;
-  if (typeof raw === 'string') {
-    const trimmed = raw.trim();
-    if (trimmed.startsWith('[')) {
-      try {
-        const parsed = JSON.parse(trimmed) as unknown;
-        if (Array.isArray(parsed)) return parsed.map(String);
-      } catch {
-        return trimmed;
-      }
-    }
-    return trimmed;
-  }
-  if (Array.isArray(raw)) return raw.map(String);
-  return null;
 }
 
 function mapAutomation(r: Record<string, unknown>): AutomationRow {
@@ -568,6 +549,10 @@ export async function insertTask(
     label: row.label ?? null,
     result: row.result ?? null,
     job_id: row.jobId ?? null,
+    worker_thread_id: row.workerThreadId ?? null,
+    subagent_type: row.subagentType ?? null,
+    total_tokens: row.totalTokens ?? null,
+    duration_ms: row.durationMs ?? null,
     updated_at: new Date(),
   });
   return (await getTaskRow(id))!;
@@ -599,6 +584,10 @@ export async function updateTaskRow(
     ['result', 'result'],
     ['jobId', 'job_id'],
     ['prompt', 'prompt'],
+    ['workerThreadId', 'worker_thread_id'],
+    ['subagentType', 'subagent_type'],
+    ['totalTokens', 'total_tokens'],
+    ['durationMs', 'duration_ms'],
   ] as const) {
     const val = patch[key];
     if (val !== undefined) {

@@ -218,7 +218,6 @@ pub async fn resize_web_view(
     let label = web_view_label(&tab_id)?;
     if let Some(webview) = app.get_webview(&label) {
         apply_bounds(&webview, bounds)?;
-        webview.show().map_err(|e| e.to_string())?;
     }
     Ok(())
 }

@@ -242,7 +242,7 @@ export function buildScheduleTools() {
         message: z.string(),
       }),
       execute: async (input) => {
-        const ok = deleteScheduleSheet(input.sheet);
+        const ok = await deleteScheduleSheet(input.sheet);
         return { ok, message: ok ? `Deleted sheet ${input.sheet}` : 'Failed to delete sheet' };
       },
     }),

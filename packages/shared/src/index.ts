@@ -6,3 +6,4 @@ export * from './mcp';
 export * from './automation';
 export * from './webhook';
 export * from './workflow';
+export * from './task-notification';

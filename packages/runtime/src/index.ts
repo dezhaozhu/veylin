@@ -14,9 +14,10 @@ export {
   SUBAGENT_TYPES,
   subagentAgentId,
   presetToDefinition,
+  isSubagentPresetKey,
+  formatPresetListing,
   type SubagentPreset,
   type SubagentType,
-  type SchedulePresetMode,
 } from './subagent-presets';
 export { buildMemory } from './memory';
 export { buildStorage, buildObservability } from './storage';
@@ -34,4 +35,17 @@ export {
 export { ContextCompression } from './processors/contextCompression';
 export { buildSummarizer, COMPACTION_SYSTEM_PROMPT } from './summarizer';
 export { selectTools } from './processors/toolSearch';
-export { BASE_SYSTEM_PROMPT, composeInstructions, buildLocaleBlock } from './prompts/systemPrompt';
+export {
+  BASE_SYSTEM_PROMPT,
+  composeInstructions,
+  buildLocaleBlock,
+} from './prompts/systemPrompt';
+export { buildAgentOrchestrationBlock } from './prompts/agentOrchestration';
+export { buildCoordinatorOrchestrationBlock, isCoordinatorMode } from './prompts/coordinatorMode';
+export {
+  FORK_SUBAGENT_TYPE,
+  FORK_TAG,
+  buildForkDirectiveBlock,
+  forkWorkerEnvelope,
+  isForkDirective,
+} from './prompts/forkSubagent';

@@ -6,6 +6,17 @@
     "rag": { "label": "Knowledge", "desc": "Local document retrieval, citations and knowledge graph" },
     "workflow": { "label": "Workflow", "desc": "Visual workflow orchestration" }
   },
+  "subagent": {
+    "dispatching": "Dispatching {{label}}…",
+    "background": "background",
+    "queued": "queued · {{id}}…",
+    "fork": "fork",
+    "continuing": "Continuing task {{id}}…",
+    "continueQueued": "Follow-up queued for {{id}}…",
+    "continueResult": "Task {{id}} updated",
+    "duration": "{{ms}} ms",
+    "tokens": "{{count}} tokens"
+  },
   "panelTab": {
     "closeMenu": "Close menu",
     "close": "Close {{title}}",

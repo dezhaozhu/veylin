@@ -392,7 +392,12 @@ for (const absPath of fileList) {
 // Covers their full package contents (native .node binaries, package.json exports).
 const WHOLE_PACKAGE_COPIES = [
   ...EXTERNALS,
-  '@mastra',
+  '@mastra/core',
+  '@mastra/mcp',
+  '@mastra/memory',
+  '@mastra/ai-sdk',
+  '@mastra/loggers',
+  '@mastra/observability',
   '@surrealdb',
   '@anush008',
   '@libsql',

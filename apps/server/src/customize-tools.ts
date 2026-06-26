@@ -36,13 +36,13 @@ function ctxValue(ctx: CustomizeCtx | undefined, key: string): string | undefine
 
 export interface BuildCustomizeToolsOptions {
   runtime: Runtime;
-  boss: QueuePort;
+  queue: QueuePort;
   onMcpRebuild: (tenantId: string) => Promise<void>;
   defaultBaseUrl?: string;
 }
 
 export function buildCustomizeTools(opts: BuildCustomizeToolsOptions) {
-  const { runtime, boss, onMcpRebuild, defaultBaseUrl = 'http://127.0.0.1:8787' } = opts;
+  const { runtime, queue, onMcpRebuild, defaultBaseUrl = 'http://127.0.0.1:8787' } = opts;
 
   const skillList = createTool({
     id: 'skill_list',
@@ -362,7 +362,7 @@ export function buildCustomizeTools(opts: BuildCustomizeToolsOptions) {
     },
   });
 
-  const automationTools = buildAutomationTools(boss);
+  const automationTools = buildAutomationTools(queue);
 
   return {
     skill_list: skillList,

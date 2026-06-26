@@ -6,6 +6,17 @@
     "rag": { "label": "知识库", "desc": "本地文档检索、引用追踪和知识图谱" },
     "workflow": { "label": "工作流", "desc": "可视化工作流编排" }
   },
+  "subagent": {
+    "dispatching": "正在派发 {{label}}…",
+    "background": "后台",
+    "queued": "已排队 · {{id}}…",
+    "fork": "分叉",
+    "continuing": "继续任务 {{id}}…",
+    "continueQueued": "跟进已排队 {{id}}…",
+    "continueResult": "任务 {{id}} 已更新",
+    "duration": "{{ms}} 毫秒",
+    "tokens": "{{count}} tokens"
+  },
   "panelTab": {
     "closeMenu": "关闭菜单",
     "close": "关闭 {{title}}",

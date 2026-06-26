@@ -1,10 +1,11 @@
-import { getModelConfig } from '@veylin/runtime';
+import { DEFAULT_MODEL, getModelConfig } from '@veylin/runtime';
 import {
   WORKFLOW_NODE_META,
   workflowDefinitionSchema,
   type WorkflowDefinition,
 } from '@veylin/shared';
 import { z } from 'zod';
+import { applyTenantModelSettings } from './model-settings-store';
 
 const generateResultSchema = z.object({
   name: z.string().min(1),
@@ -61,10 +62,12 @@ function parseJsonContent(raw: string): unknown {
 }
 
 export async function generateWorkflowFromPrompt(
+  tenantId: string,
   prompt: string,
   current?: WorkflowDefinition,
 ): Promise<{ name: string; definition: WorkflowDefinition }> {
-  const cfg = getModelConfig('deepseek');
+  await applyTenantModelSettings(tenantId);
+  const cfg = getModelConfig(DEFAULT_MODEL);
   if (!cfg.apiKey) {
     throw new Error('Model API key is not configured; cannot generate workflow');
   }

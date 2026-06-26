@@ -14,7 +14,7 @@ import { setThreadPlanMode } from '@veylin/tools';
 import { toNodeHandler } from 'better-auth/node';
 import { auth, isDesktopAuth } from './auth';
 import {
-  createQueue,
+  createInProcQueue,
   registerWorkers,
   registerSchedules,
   registerAutomationWorkers,
@@ -31,9 +31,10 @@ import {
 } from './queue';
 import { recordAudit } from './audit';
 import { buildAttachedBrowserBlock, lastUserText, modelSupportsImages, parseChatBody, toAgentMessages } from './chat';
-import { buildTaskTools } from './task-tools';
+import { buildAgentTaskTools } from './agent-task-tool';
+import { executeSubagentJob, CancelledTaskError, listDispatchableCustomAgentIds } from './agent-task-runner';
+import { scheduleDreamConsolidation } from './dream-service';
 import { buildScheduleTools } from './schedule-tools';
-import { buildSubagentTool } from './subagent-tool';
 import {
   addScheduleColumn,
   addScheduleRow,
@@ -64,6 +65,7 @@ import {
   listThreadsForResource,
   deleteThreadState,
   touchThreadActivity,
+  requireThreadOwnership,
 } from './thread-state';
 import { buildReminderBlock } from './reminders';
 import { listThreadActivity } from './thread-activity';
@@ -71,7 +73,7 @@ import { syncThreadMessagesFromClient } from './thread-sync';
 import { generateThreadTitle } from './thread-title';
 import { mastraMessagesToUi } from './message-sync';
 import { filterExternalToolsets } from './toolsets';
-import { ContextCompression, buildLocaleBlock, buildSummarizer } from '@veylin/runtime';
+import { ContextCompression, buildLocaleBlock, buildSummarizer, buildAgentOrchestrationBlock, buildCoordinatorOrchestrationBlock, isCoordinatorMode } from '@veylin/runtime';
 import {
   bindActiveStream,
   captureSseToResumable,
@@ -223,6 +225,10 @@ async function resolveContext(headers: Record<string, string | string[] | undefi
   return { userId: 'dev-user', tenantId: DEV_TENANT_ID, authed: false };
 }
 
+function isForbiddenError(err: unknown): boolean {
+  return err instanceof Error && err.message === 'forbidden';
+}
+
 async function main() {
   await connectDb();
   await initResumableChatStreams();
@@ -232,12 +238,27 @@ async function main() {
   let mcp: MCPClient | null = null;
   let mcpToolsets: Record<string, unknown> = {};
   let mcpToolIndex: { id: string; description: string }[] = [];
+  const mcpCacheByTenant = new Map<
+    string,
+    { toolsets: Record<string, unknown>; index: { id: string; description: string }[] }
+  >();
   let taskToolset: Record<string, unknown> = {};
 
   async function rebuildMcp(tenantId: string) {
     mcp = await createMcpClient(tenantId);
     mcpToolsets = (await mcp.listToolsets().catch(() => ({}))) as Record<string, unknown>;
     mcpToolIndex = indexMcpTools(mcpToolsets);
+    mcpCacheByTenant.set(tenantId, { toolsets: mcpToolsets, index: mcpToolIndex });
+  }
+
+  async function ensureMcpForTenant(tenantId: string) {
+    const cached = mcpCacheByTenant.get(tenantId);
+    if (cached) {
+      mcpToolsets = cached.toolsets;
+      mcpToolIndex = cached.index;
+      return;
+    }
+    await rebuildMcp(tenantId);
   }
 
   const app = Fastify({
@@ -264,7 +285,8 @@ async function main() {
     agentsDir: AGENTS_DIR,
   });
   app.log.info({ agentsDir: AGENTS_DIR }, 'agent packages reload on each customize/chat request');
-  const boss = await createQueue();
+  const queue = createInProcQueue();
+  await queue.start();
 
   await app.register(cors, {
     origin: true,
@@ -534,7 +556,7 @@ async function main() {
     }
     const automation = await createAutomation(ctx.tenantId, ctx.userId, parsed.data);
     if (automation.enabled && automation.kind === 'schedule' && automation.cron) {
-      await registerAutomationSchedule(boss, automation.id, automation.cron, automation.timezone ?? 'UTC', {
+      await registerAutomationSchedule(queue, automation.id, automation.cron, automation.timezone ?? 'UTC', {
         tenantId: ctx.tenantId,
         automationId: automation.id,
         eventContext: {},
@@ -558,13 +580,13 @@ async function main() {
     }
     if (automation.kind === 'schedule' && automation.cron) {
       if (automation.enabled) {
-        await registerAutomationSchedule(boss, automation.id, automation.cron, automation.timezone ?? 'UTC', {
+        await registerAutomationSchedule(queue, automation.id, automation.cron, automation.timezone ?? 'UTC', {
           tenantId: ctx.tenantId,
           automationId: automation.id,
           eventContext: {},
         });
       } else {
-        await unregisterAutomationSchedule(boss, automation.id);
+        await unregisterAutomationSchedule(queue, automation.id);
       }
     }
     return { ok: true, automation };
@@ -580,7 +602,7 @@ async function main() {
     }
     const ok = await deleteAutomation(ctx.tenantId, id);
     if (existing.kind === 'schedule') {
-      await unregisterAutomationSchedule(boss, id);
+      await unregisterAutomationSchedule(queue, id);
     }
     return { ok };
   });
@@ -593,7 +615,7 @@ async function main() {
       reply.code(404);
       return { ok: false };
     }
-    const jobId = await dispatchAutomation(boss, {
+    const jobId = await dispatchAutomation(queue, {
       tenantId: ctx.tenantId,
       automationId: automation.id,
       eventContext: { manual: true },
@@ -641,7 +663,7 @@ async function main() {
     try {
       const workflow = await createWorkflow(ctx.tenantId, ctx.userId, parsed.data);
       if (workflow.enabled && workflow.kind === 'schedule' && workflow.cron) {
-        await registerWorkflowSchedule(boss, workflow.id, workflow.cron, workflow.timezone ?? 'UTC', {
+        await registerWorkflowSchedule(queue, workflow.id, workflow.cron, workflow.timezone ?? 'UTC', {
           tenantId: ctx.tenantId,
           workflowId: workflow.id,
           eventContext: {},
@@ -673,13 +695,13 @@ async function main() {
       }
       if (workflow.kind === 'schedule' && workflow.cron) {
         if (workflow.enabled) {
-          await registerWorkflowSchedule(boss, workflow.id, workflow.cron, workflow.timezone ?? 'UTC', {
+          await registerWorkflowSchedule(queue, workflow.id, workflow.cron, workflow.timezone ?? 'UTC', {
             tenantId: ctx.tenantId,
             workflowId: workflow.id,
             eventContext: {},
           });
         } else {
-          await unregisterWorkflowSchedule(boss, workflow.id);
+          await unregisterWorkflowSchedule(queue, workflow.id);
         }
       }
       return { ok: true, workflow };
@@ -702,7 +724,7 @@ async function main() {
     }
     const ok = await deleteWorkflow(ctx.tenantId, id);
     if (existing.kind === 'schedule') {
-      await unregisterWorkflowSchedule(boss, id);
+      await unregisterWorkflowSchedule(queue, id);
     }
     return { ok };
   });
@@ -715,7 +737,7 @@ async function main() {
       reply.code(404);
       return { ok: false };
     }
-    const jobId = await dispatchWorkflow(boss, {
+    const jobId = await dispatchWorkflow(queue, {
       tenantId: ctx.tenantId,
       workflowId: workflow.id,
       eventContext: { manual: true },
@@ -736,6 +758,8 @@ async function main() {
   });
 
   app.post('/api/workflows/generate', async (req, reply) => {
+    const ctx = await resolveContext(req.headers);
+    await applyTenantModelSettings(ctx.tenantId);
     const body = (req.body ?? {}) as { prompt?: string; currentDefinition?: unknown };
     const prompt = body.prompt?.trim();
     if (!prompt) {
@@ -747,6 +771,7 @@ async function main() {
         ? workflowInputSchema.shape.definition.safeParse(body.currentDefinition)
         : null;
       const generated = await generateWorkflowFromPrompt(
+        ctx.tenantId,
         prompt,
         parsed?.success ? parsed.data : undefined,
       );
@@ -870,7 +895,7 @@ async function main() {
     );
 
     for (const automation of matched) {
-      await dispatchAutomation(boss, {
+      await dispatchAutomation(queue, {
         tenantId,
         automationId: automation.id,
         eventContext,
@@ -892,7 +917,7 @@ async function main() {
     );
 
     for (const workflow of matchedWorkflows) {
-      await dispatchWorkflow(boss, {
+      await dispatchWorkflow(queue, {
         tenantId,
         workflowId: workflow.id,
         eventContext,
@@ -904,6 +929,7 @@ async function main() {
 
   // Production schedule: editable multi-sheet dataset for the right-panel data grid.
   app.get('/api/schedule', async (req) => {
+    await resolveContext(req.headers);
     const { sheet } = req.query as { sheet?: string };
     const sheetId = resolveScheduleSheetId(sheet);
     return {
@@ -916,6 +942,7 @@ async function main() {
   });
 
   app.post('/api/schedule/sheets', async (req, reply) => {
+    await resolveContext(req.headers);
     const { name } = (req.body ?? {}) as { name?: string };
     if (!name?.trim()) {
       reply.code(400);
@@ -930,8 +957,9 @@ async function main() {
   });
 
   app.delete('/api/schedule/sheets/:sheetId', async (req, reply) => {
+    await resolveContext(req.headers);
     const { sheetId } = req.params as { sheetId: string };
-    if (!deleteScheduleSheet(sheetId)) {
+    if (!(await deleteScheduleSheet(sheetId))) {
       reply.code(400);
       return { ok: false, message: 'Failed to delete sheet' };
     }
@@ -941,6 +969,7 @@ async function main() {
   });
 
   app.post('/api/schedule/rows', async (req, reply) => {
+    await resolveContext(req.headers);
     const { sheet } = (req.body ?? {}) as { sheet?: string };
     const sheetId = resolveScheduleSheetId(sheet);
     const row = addScheduleRow(sheetId);
@@ -952,6 +981,7 @@ async function main() {
   });
 
   app.delete('/api/schedule/rows', async (req, reply) => {
+    await resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       row_keys?: string[];
@@ -964,6 +994,7 @@ async function main() {
   });
 
   app.post('/api/schedule/columns', async (req, reply) => {
+    await resolveContext(req.headers);
     const { sheet, name } = (req.body ?? {}) as { sheet?: string; name?: string };
     const sheetId = resolveScheduleSheetId(sheet);
     if (!name?.trim()) {
@@ -985,6 +1016,7 @@ async function main() {
   });
 
   app.delete('/api/schedule/columns', async (req, reply) => {
+    await resolveContext(req.headers);
     const { sheet, key } = (req.body ?? {}) as { sheet?: string; key?: string };
     const sheetId = resolveScheduleSheetId(sheet);
     if (!key || !deleteScheduleColumn(sheetId, key)) {
@@ -1000,6 +1032,7 @@ async function main() {
   });
 
   app.patch('/api/schedule', async (req, reply) => {
+    await resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       row_key?: string;
@@ -1022,6 +1055,7 @@ async function main() {
   });
 
   app.post('/api/schedule/import', async (req, reply) => {
+    await resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       rows?: ScheduleRowPatch[];
@@ -1052,15 +1086,30 @@ async function main() {
   // Checkpoints removed — edit/compact rewind replaces manual snapshots.
 
   // Tasks: list/get for the UI task panel.
-  app.get('/api/tasks', async (req) => {
+  app.get('/api/tasks', async (req, reply) => {
+    const ctx = await resolveContext(req.headers);
     const { threadId } = req.query as { threadId?: string };
-    const rows = threadId ? await listTasksByParentThread(threadId) : [];
+    if (!threadId) return { tasks: [] };
+    try {
+      await requireThreadOwnership(threadId, ctx);
+    } catch (err) {
+      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
+      throw err;
+    }
+    const rows = await listTasksByParentThread(threadId);
     return { tasks: rows };
   });
 
-  app.get('/api/todos', async (req) => {
+  app.get('/api/todos', async (req, reply) => {
+    const ctx = await resolveContext(req.headers);
     const { threadId } = req.query as { threadId?: string };
     if (!threadId) return { todos: [] };
+    try {
+      await requireThreadOwnership(threadId, ctx);
+    } catch (err) {
+      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
+      throw err;
+    }
     const state = await getThreadState(threadId);
     return { todos: state?.todos ?? [] };
   });
@@ -1081,10 +1130,18 @@ async function main() {
     return { activity };
   });
 
-  app.get('/api/threads/:threadId', async (req) => {
+  app.get('/api/threads/:threadId', async (req, reply) => {
     const { threadId } = req.params as { threadId: string };
     const ctx = await resolveContext(req.headers);
     const state = await getThreadState(threadId);
+    if (state) {
+      try {
+        await requireThreadOwnership(threadId, ctx);
+      } catch (err) {
+        if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
+        throw err;
+      }
+    }
     if (!state) {
       return {
         remoteId: threadId,
@@ -1130,8 +1187,15 @@ async function main() {
     return { title };
   });
 
-  app.delete('/api/threads/:threadId', async (req) => {
+  app.delete('/api/threads/:threadId', async (req, reply) => {
     const { threadId } = req.params as { threadId: string };
+    const ctx = await resolveContext(req.headers);
+    try {
+      await requireThreadOwnership(threadId, ctx);
+    } catch (err) {
+      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
+      throw err;
+    }
     await deleteThreadState(threadId);
     return { ok: true };
   });
@@ -1145,16 +1209,29 @@ async function main() {
     return { state };
   });
 
-  app.get('/api/threads/:threadId/messages', async (req) => {
+  app.get('/api/threads/:threadId/messages', async (req, reply) => {
     const { threadId } = req.params as { threadId: string };
     const ctx = await resolveContext(req.headers);
+    try {
+      await requireThreadOwnership(threadId, ctx);
+    } catch (err) {
+      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
+      throw err;
+    }
     const recalled = await runtime.memory.recall({ threadId, resourceId: ctx.userId, perPage: false });
     return { messages: mastraMessagesToUi(recalled.messages ?? []) };
   });
 
-  app.get('/api/plan-mode', async (req) => {
+  app.get('/api/plan-mode', async (req, reply) => {
     const { threadId } = req.query as { threadId?: string };
     if (!threadId) return { planMode: false };
+    const ctx = await resolveContext(req.headers);
+    try {
+      await requireThreadOwnership(threadId, ctx);
+    } catch (err) {
+      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
+      throw err;
+    }
     const state = await getThreadState(threadId);
     return { planMode: state?.planMode ?? false };
   });
@@ -1181,6 +1258,7 @@ async function main() {
     if (!threadId) return { ok: false, error: 'threadId required' };
     try {
       const ctx = await resolveContext(req.headers);
+      await applyTenantModelSettings(ctx.tenantId);
       const identity = { threadId, tenantId: ctx.tenantId, resourceId: ctx.userId };
       await ensureThreadState(identity);
 
@@ -1192,7 +1270,7 @@ async function main() {
         perPage: false,
       });
       const stored = recalled?.messages ?? [];
-      const modelKey = query.model ?? 'deepseek';
+      const modelKey = (query.model ?? 'default') as ModelKey;
       const compressor = new ContextCompression({
         summarizer: buildSummarizer(modelKey),
       });
@@ -1220,6 +1298,8 @@ async function main() {
   });
 
   app.post('/api/resume', async (req) => {
+    const ctx = await resolveContext(req.headers);
+    await applyTenantModelSettings(ctx.tenantId);
     const body = req.body as { runId?: string; resumeData?: unknown; agentId?: string };
     const agent = runtime.getAgent(body.agentId ?? DEFAULT_AGENT_ID) as unknown as {
       resumeStream?: (data: unknown, opts: { runId: string }) => Promise<unknown>;
@@ -1240,6 +1320,7 @@ async function main() {
 
     const ctx = await resolveContext(req.headers);
     await applyTenantModelSettings(ctx.tenantId);
+    await ensureMcpForTenant(ctx.tenantId);
     const threadId = body.id ?? body.threadId ?? `thread-${ctx.userId}`;
     const agentId = body.agentId ?? DEFAULT_AGENT_ID;
     const identity = { threadId, tenantId: ctx.tenantId, resourceId: ctx.userId };
@@ -1263,7 +1344,7 @@ async function main() {
 
     await refreshAgentPackages(runtime);
     const agent = requireAgent(runtime, agentId);
-    const modelKey = (body.model ?? 'deepseek') as ModelKey;
+    const modelKey = (body.model ?? 'default') as ModelKey;
     const modelConfig = getModelConfig(modelKey);
     if (!modelConfig.apiKey.trim()) {
       return reply.status(400).send({
@@ -1298,6 +1379,7 @@ async function main() {
     requestContext.set('tenantId', ctx.tenantId);
     requestContext.set('userId', ctx.userId);
     requestContext.set('threadId', threadId);
+    requestContext.set('parentAgentId', agentId);
     requestContext.set('publicBaseUrl', `${req.protocol}://${req.headers.host ?? '127.0.0.1:8787'}`);
     requestContext.set('discoveredToolIds', []);
     requestContext.set('mcpToolNames', mcpToolIndex);
@@ -1384,7 +1466,16 @@ async function main() {
       : '';
     const localeBlock = buildLocaleBlock(body.locale);
     const attachedBrowserBlock = buildAttachedBrowserBlock(body.attachedBrowser);
-    const systemBlocks = [skillsCatalog, skillBlock, rulesBlock, knowledgeBlock, reminderBlock, localeBlock, attachedBrowserBlock]
+    const agentDefForBlocks = runtime.definitions.get(agentId)?.definition;
+    const fullToolset = agentDefForBlocks?.fullToolset === true;
+    const coordinatorMode = isCoordinatorMode() && !planMode && fullToolset;
+    const orchestrationBlock =
+      !planMode && fullToolset
+        ? coordinatorMode
+          ? buildCoordinatorOrchestrationBlock(listDispatchableCustomAgentIds(runtime, agentId))
+          : buildAgentOrchestrationBlock(listDispatchableCustomAgentIds(runtime, agentId))
+        : '';
+    const systemBlocks = [skillsCatalog, skillBlock, rulesBlock, knowledgeBlock, reminderBlock, orchestrationBlock, localeBlock, attachedBrowserBlock]
       .filter(Boolean)
       .join('\n\n');
     if (systemBlocks) {
@@ -1394,28 +1485,25 @@ async function main() {
     const discoveredIds = (requestContext.get('discoveredToolIds') as string[]) ?? [];
     const agentDef = runtime.definitions.get(agentId)?.definition;
     const declaredBuiltinTools = agentDef?.tools ?? [];
-    const fullToolset = agentDef?.fullToolset === true;
     const activeToolsets = planMode
       ? {}
-      : fullToolset
-        ? {
-            // Full-toolset (main) agent: always expose tasks / subagent / schedule
-            // plus its declared MCP, no tool_search discovery gating.
-            ...agentMcp,
-            ...taskToolset,
-          }
-        : {
-            ...filterExternalToolsets(
-              agentMcp,
-              taskToolset,
-              discoveredIds,
-              declaredMcp,
-              declaredBuiltinTools,
-            ),
-            // Schedule edit/read tools are always available outside plan mode so
-            // the model can modify the grid regardless of agent or query language.
-            ...(taskToolset.schedule ? { schedule: taskToolset.schedule } : {}),
-          };
+      : coordinatorMode
+        ? { agent: taskToolset.agent }
+        : fullToolset
+          ? {
+              ...agentMcp,
+              ...taskToolset,
+            }
+          : {
+              ...filterExternalToolsets(
+                agentMcp,
+                taskToolset,
+                discoveredIds,
+                declaredMcp,
+                declaredBuiltinTools,
+              ),
+              ...(taskToolset.schedule ? { schedule: taskToolset.schedule } : {}),
+            };
     const stream = await agent.stream(agentMessages as never, {
       memory: { thread: threadId, resource: ctx.userId },
       requestContext,
@@ -1444,6 +1532,7 @@ async function main() {
         void clearActiveStream(threadId).catch((err) => {
           app.log.warn({ err, threadId }, 'clearActiveStream failed');
         });
+        scheduleDreamConsolidation(runtime, identity);
       },
       execute: async ({ writer }) => {
         try {
@@ -1486,6 +1575,13 @@ async function main() {
   /** AI SDK + agent-style stream resume by thread id. */
   app.get('/api/chat/:threadId/stream', async (req, reply) => {
     const { threadId } = req.params as { threadId: string };
+    const ctx = await resolveContext(req.headers);
+    try {
+      await requireThreadOwnership(threadId, ctx);
+    } catch (err) {
+      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
+      throw err;
+    }
     const streamId = await getActiveStreamId(threadId);
     if (!streamId) {
       return reply.status(204).send();
@@ -1509,8 +1605,15 @@ async function main() {
   });
 
   /** Explicit stop: cancel generation and clear resumable stream (not a disconnect). */
-  app.post('/api/chat/:threadId/stop', async (req) => {
+  app.post('/api/chat/:threadId/stop', async (req, reply) => {
     const { threadId } = req.params as { threadId: string };
+    const ctx = await resolveContext(req.headers);
+    try {
+      await requireThreadOwnership(threadId, ctx);
+    } catch (err) {
+      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
+      throw err;
+    }
     const body = (req.body ?? {}) as { activeStreamId?: string };
     const result = await stopChatStream({
       threadId,
@@ -1541,13 +1644,16 @@ async function main() {
 
   // Approval resume seam: the frontend posts the decision for a suspended run.
   app.post('/api/approve', async (req) => {
+    const ctx = await resolveContext(req.headers);
+    await applyTenantModelSettings(ctx.tenantId);
     const body = req.body as { runId: string; approved: boolean; answer?: string[] };
     await refreshAgentPackages(runtime);
     const agent = requireAgent(runtime, 'veylin') as unknown as {
       resume?: (runId: string, data: unknown) => Promise<unknown>;
     };
     await recordAudit({
-      tenantId: DEV_TENANT_ID,
+      tenantId: ctx.tenantId,
+      userId: ctx.userId,
       action: 'approval.decision',
       detail: { runId: body.runId, approved: body.approved },
     });
@@ -1564,90 +1670,42 @@ async function main() {
   const scheduleTools = buildScheduleTools();
   const customizeTools = buildCustomizeTools({
     runtime,
-    boss,
+    queue,
     onMcpRebuild: rebuildMcp,
   });
-  const workflowTools = buildWorkflowTools(boss);
+  const workflowTools = buildWorkflowTools(queue);
+  const agentTaskTools = buildAgentTaskTools(runtime, { queue, mcpToolsets });
   taskToolset = {
-    tasks: buildTaskTools(boss),
+    agent: agentTaskTools,
     schedule: scheduleTools,
-    subagent: buildSubagentTool(runtime, { boss, mcpToolsets, scheduleTools }),
     knowledge: { knowledge_search: buildKnowledgeSearchTool() },
     customize: customizeTools,
     workflow: workflowTools,
   };
 
-  await registerWorkers(boss, async (job: SubagentJob) => {
-    if (job.taskId) {
-      const taskRow = await getTaskRow(job.taskId);
-      if (taskRow?.status === 'cancelled') return;
-
-      await updateTaskRow(job.taskId, { status: 'running' }).catch(() => undefined);
-    }
-
+  await registerWorkers(queue, async (job: SubagentJob) => {
     await refreshAgentPackages(runtime);
-    const agent = requireAgent(runtime, job.agentId);
-    let result: { text?: string };
     try {
-      result = (await agent.generate(job.prompt, {
-        memory: { thread: job.threadId, resource: job.tenantId },
-      } as never)) as { text?: string };
+      await applyTenantModelSettings(job.tenantId);
+      await ensureMcpForTenant(job.tenantId);
+      await executeSubagentJob(runtime, { mcpToolsets }, job);
     } catch (err) {
-      if (job.taskId) {
-        const taskRow = await getTaskRow(job.taskId);
-        if (taskRow?.status === 'cancelled') return;
-        await updateTaskRow(job.taskId, {
-          status: 'failed',
-          result: String(err),
-        }).catch(() => undefined);
-      }
+      if (err instanceof CancelledTaskError) return;
       throw err;
-    }
-
-    if (job.taskId) {
-      const taskRow = await getTaskRow(job.taskId);
-      if (taskRow?.status === 'cancelled') return;
-      await updateTaskRow(job.taskId, {
-        status: 'done',
-        result: result?.text ?? '',
-      }).catch(() => undefined);
-    }
-
-    // Write the sub-agent result back into the parent thread so the main
-    // conversation can see and continue from it (M2 writeback).
-    if (job.parentThreadId) {
-      const label = job.label ?? job.agentId;
-      const text = `[subagent:${label}]\n${result?.text ?? '(no output)'}`;
-      try {
-        await runtime.memory.saveMessages({
-          messages: [
-            {
-              id: crypto.randomUUID(),
-              role: 'assistant',
-              createdAt: new Date(),
-              threadId: job.parentThreadId,
-              resourceId: job.parentResource ?? job.tenantId,
-              content: { format: 2, parts: [{ type: 'text', text }] },
-            },
-          ],
-        } as never);
-      } catch (err) {
-        app.log.warn({ err }, 'subagent writeback failed');
-      }
     }
   });
 
-  await registerAutomationWorkers(boss, async (job: AutomationJob) => {
+  await registerAutomationWorkers(queue, async (job: AutomationJob) => {
     await runAutomationJob(runtime, job);
   });
 
-  await registerWorkflowWorkers(boss, async (job: WorkflowJob) => {
+  await registerWorkflowWorkers(queue, async (job: WorkflowJob) => {
     await runWorkflowJob(runtime, job);
   });
 
   const dbAutomations = await listAllScheduledAutomations();
   for (const a of dbAutomations) {
-    await registerAutomationSchedule(boss, a.id, a.cron!, a.timezone ?? 'UTC', {
+    await registerAutomationSchedule(queue, a.id, a.cron!, a.timezone ?? 'UTC', {
       tenantId: a.tenantId,
       automationId: a.id,
       eventContext: {},
@@ -1659,7 +1717,7 @@ async function main() {
 
   const dbWorkflows = await listAllScheduledWorkflows();
   for (const w of dbWorkflows) {
-    await registerWorkflowSchedule(boss, w.id, w.cron!, w.timezone ?? 'UTC', {
+    await registerWorkflowSchedule(queue, w.id, w.cron!, w.timezone ?? 'UTC', {
       tenantId: w.tenantId,
       workflowId: w.id,
       eventContext: {},
@@ -1669,9 +1727,13 @@ async function main() {
     app.log.info(`registered ${dbWorkflows.length} DB workflow schedule(s) across all tenants`);
   }
 
-  app.post('/api/subagent', async (req) => {
+  app.post('/api/subagent', async (req, reply) => {
+    const ctx = await resolveContext(req.headers);
     const job = req.body as SubagentJob;
-    const id = await boss.send(SUBAGENT_QUEUE, job);
+    if (job.tenantId !== ctx.tenantId) {
+      return reply.status(403).send({ error: 'forbidden' });
+    }
+    const id = await queue.send(SUBAGENT_QUEUE, job);
     return { ok: true, jobId: id };
   });
 
@@ -1693,7 +1755,7 @@ async function main() {
     }
   }
   if (schedules.length > 0) {
-    await registerSchedules(boss, schedules);
+    await registerSchedules(queue, schedules);
     app.log.info(`registered ${schedules.length} cron schedule(s)`);
   }
 
@@ -1746,8 +1808,9 @@ async function main() {
     return { ok: true };
   });
 
-  app.get('/api/rag/references', async () => {
-    return { references: getLastKnowledgeReferences() };
+  app.get('/api/rag/references', async (req) => {
+    const ctx = await resolveContext(req.headers);
+    return { references: getLastKnowledgeReferences(ctx.tenantId) };
   });
 
   app.post('/api/rag/search', async (req, reply) => {

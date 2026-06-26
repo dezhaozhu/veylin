@@ -47,6 +47,7 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
   }, []);
 
   const syncBounds = useCallback(async () => {
+    if (view !== 'chat' || !storedUrl) return;
     const bounds = measureBounds();
     if (!bounds) return;
     try {
@@ -54,7 +55,7 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
     } catch {
       // The webview may not exist yet; opening a URL will create it with fresh bounds.
     }
-  }, [measureBounds, tabId]);
+  }, [measureBounds, tabId, view, storedUrl]);
 
   const revealWebView = useCallback(async () => {
     if (!isTauri() || !storedUrl) return;
@@ -111,7 +112,7 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
     resizeObserver.observe(node);
     window.addEventListener('resize', syncBounds);
     const onMenuClosed = () => {
-      if (storedUrl) void syncBounds();
+      if (storedUrl && view === 'chat') void syncBounds();
     };
     window.addEventListener(PANEL_TAB_MENU_CLOSED_EVENT, onMenuClosed);
 

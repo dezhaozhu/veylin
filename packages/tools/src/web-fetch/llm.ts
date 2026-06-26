@@ -1,3 +1,4 @@
+import { DEFAULT_MODEL, getModelConfig } from '@veylin/runtime';
 import { makeSecondaryModelPrompt } from './prompt';
 
 export const MAX_MARKDOWN_LENGTH = 100_000;
@@ -5,21 +6,12 @@ export const MAX_MARKDOWN_LENGTH = 100_000;
 type ModelCfg = { url: string; modelId: string; apiKey: string };
 
 function webFetchModelConfig(): ModelCfg | undefined {
-  const key = process.env.VEYLIN_WEB_FETCH_MODEL ?? 'deepseek';
-  if (key === 'zenmux') {
-    const apiKey = process.env.ZENMUX_API_KEY ?? '';
-    if (!apiKey) return undefined;
-    return {
-      url: (process.env.ZENMUX_BASE_URL ?? 'https://zenmux.ai/api/v1').replace(/\/$/, ''),
-      modelId: process.env.ZENMUX_MODEL ?? 'google/gemini-3.1-flash-lite-preview',
-      apiKey,
-    };
-  }
-  const apiKey = process.env.DEEPSEEK_API_KEY ?? '';
+  const cfg = getModelConfig(DEFAULT_MODEL);
+  const apiKey = cfg.apiKey.trim();
   if (!apiKey) return undefined;
   return {
-    url: (process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1').replace(/\/$/, ''),
-    modelId: process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-flash',
+    url: cfg.url.replace(/\/$/, ''),
+    modelId: cfg.modelId,
     apiKey,
   };
 }

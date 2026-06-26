@@ -13,10 +13,12 @@ export const agentDefinitionSchema = z.object({
   instructions: z.string(),
   skills: z.array(z.string()).default([]),
   tools: z.array(z.string()).default([]),
+  /** Builtin tool ids this agent must not use (denylist). */
+  disallowedTools: z.array(z.string()).default([]),
   mcpServers: z.array(z.string()).default([]),
   /** Tools listed here always require human approval before execution. */
   approvalRequired: z.array(z.string()).default([]),
-  /** Sub-agents this agent may route to (for AgentNetwork). */
+  /** Registered agent ids this agent may dispatch via the `task` tool (empty = any). */
   subAgents: z.array(z.string()).default([]),
   /**
    * When true, the agent always runs with the full set of policy-permitted

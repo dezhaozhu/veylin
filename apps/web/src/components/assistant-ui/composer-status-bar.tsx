@@ -17,6 +17,7 @@ interface TaskRow {
   status: string;
   label?: string | null;
   agentId: string;
+  subagentType?: string | null;
 }
 
 const TASK_STATUS_STYLE: Record<string, string> = {
@@ -182,7 +183,7 @@ export function ComposerStatusBar() {
                   <li key={task.id} className="flex items-center gap-2">
                     {task.status === 'running' && <LoaderIcon className="size-3 animate-spin" />}
                     <span className={cn(TASK_STATUS_STYLE[task.status] ?? '')}>
-                      {task.label ?? task.agentId}
+                      {task.subagentType ?? task.label ?? task.agentId}
                     </span>
                     <span className="text-muted-foreground font-mono text-[10px]">
                       {task.status}
