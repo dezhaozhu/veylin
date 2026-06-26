@@ -27,6 +27,10 @@ export default defineConfig({
   server: {
     port: 5174,
     proxy: {
+      '/health': {
+        target: process.env.VITE_API_URL ?? 'http://localhost:8787',
+        changeOrigin: true,
+      },
       '/api': {
         target: process.env.VITE_API_URL ?? 'http://localhost:8787',
         changeOrigin: true,

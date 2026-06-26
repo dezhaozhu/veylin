@@ -1,67 +1,117 @@
 import { getTenantSettingsRow, upsertTenantSettings } from '@veylin/db';
-import { setRuntimeModelOverrides, type RuntimeModelOverrides } from '@veylin/runtime';
+import {
+  isModelProviderConfigured,
+  setRuntimeModelOverrides,
+} from '@veylin/runtime';
 
 export type ModelSettingsInput = {
+  modelName?: string;
+  requestUrl?: string;
+  apiKey?: string;
+};
+
+export type ModelSettingsView = {
+  modelName: string;
+  requestUrl: string;
+  hasApiKey: boolean;
+  configured: boolean;
+};
+
+type StoredModelSettings = {
+  modelName: string;
+  requestUrl: string;
+  apiKey: string;
+};
+
+/** Legacy rows persisted before the modelName / requestUrl / apiKey schema. */
+type RawModelSettings = Partial<StoredModelSettings> & {
+  providerName?: string;
   openaiApiKeyEnabled?: boolean;
   openaiApiKey?: string;
   overrideOpenAIBaseUrl?: boolean;
   openaiBaseUrl?: string;
 };
 
-export type ModelSettingsView = {
-  openaiApiKeyEnabled: boolean;
-  hasOpenaiApiKey: boolean;
-  overrideOpenAIBaseUrl: boolean;
-  openaiBaseUrl: string;
+const EMPTY_STORED: StoredModelSettings = {
+  modelName: '',
+  requestUrl: '',
+  apiKey: '',
 };
 
-const DEFAULT_MODEL_SETTINGS: Required<Omit<RuntimeModelOverrides, 'openaiApiKey'>> & {
-  openaiApiKey: string;
-} = {
-  openaiApiKeyEnabled: false,
-  openaiApiKey: '',
-  overrideOpenAIBaseUrl: false,
-  openaiBaseUrl: '',
-};
+function normalize(raw: RawModelSettings | undefined): StoredModelSettings {
+  const source = raw ?? {};
+  const legacyApiKey =
+    source.openaiApiKeyEnabled === true && typeof source.openaiApiKey === 'string'
+      ? source.openaiApiKey
+      : '';
+  const legacyRequestUrl =
+    source.overrideOpenAIBaseUrl === true && typeof source.openaiBaseUrl === 'string'
+      ? source.openaiBaseUrl
+      : '';
+  const modelName =
+    typeof source.modelName === 'string'
+      ? source.modelName
+      : typeof source.providerName === 'string'
+        ? source.providerName
+        : '';
 
-function normalize(settings: RuntimeModelOverrides | undefined): Required<RuntimeModelOverrides> {
   return {
-    openaiApiKeyEnabled: settings?.openaiApiKeyEnabled === true,
-    openaiApiKey: settings?.openaiApiKey ?? '',
-    overrideOpenAIBaseUrl: settings?.overrideOpenAIBaseUrl === true,
-    openaiBaseUrl: settings?.openaiBaseUrl ?? '',
+    modelName,
+    requestUrl: typeof source.requestUrl === 'string' ? source.requestUrl : legacyRequestUrl,
+    apiKey: typeof source.apiKey === 'string' ? source.apiKey : legacyApiKey,
   };
 }
 
-function toView(settings: Required<RuntimeModelOverrides>): ModelSettingsView {
+function hasLegacyFields(raw: RawModelSettings): boolean {
+  return (
+    raw.providerName !== undefined ||
+    raw.openaiApiKey !== undefined ||
+    raw.openaiApiKeyEnabled !== undefined ||
+    raw.overrideOpenAIBaseUrl !== undefined ||
+    raw.openaiBaseUrl !== undefined
+  );
+}
+
+function toView(settings: StoredModelSettings): ModelSettingsView {
   return {
-    openaiApiKeyEnabled: settings.openaiApiKeyEnabled,
-    hasOpenaiApiKey: settings.openaiApiKey.trim().length > 0,
-    overrideOpenAIBaseUrl: settings.overrideOpenAIBaseUrl,
-    openaiBaseUrl: settings.openaiBaseUrl,
+    modelName: settings.modelName,
+    requestUrl: settings.requestUrl,
+    hasApiKey: settings.apiKey.trim().length > 0,
+    configured: isModelProviderConfigured(settings),
   };
+}
+
+async function loadStoredSettings(tenantId: string): Promise<StoredModelSettings> {
+  const row = await getTenantSettingsRow(tenantId);
+  const raw = row?.modelSettings as RawModelSettings | undefined;
+  const next = normalize(raw);
+  if (raw && hasLegacyFields(raw)) {
+    await upsertTenantSettings(tenantId, { modelSettings: next });
+  }
+  return next;
 }
 
 export async function getModelSettings(tenantId: string): Promise<ModelSettingsView> {
-  const row = await getTenantSettingsRow(tenantId);
-  return toView(normalize(row?.modelSettings));
+  const stored = await loadStoredSettings(tenantId);
+  return toView(stored);
+}
+
+export async function clearModelSettings(tenantId: string): Promise<ModelSettingsView> {
+  await upsertTenantSettings(tenantId, { modelSettings: EMPTY_STORED });
+  applyModelSettingsToRuntime(EMPTY_STORED);
+  return toView(EMPTY_STORED);
 }
 
 export async function updateModelSettings(
   tenantId: string,
   patch: ModelSettingsInput,
 ): Promise<ModelSettingsView> {
-  const existing = normalize((await getTenantSettingsRow(tenantId))?.modelSettings);
+  const existing = await loadStoredSettings(tenantId);
   const next = normalize({
     ...existing,
-    ...(patch.openaiApiKeyEnabled !== undefined
-      ? { openaiApiKeyEnabled: patch.openaiApiKeyEnabled }
-      : {}),
-    ...(patch.openaiApiKey !== undefined ? { openaiApiKey: patch.openaiApiKey } : {}),
-    ...(patch.overrideOpenAIBaseUrl !== undefined
-      ? { overrideOpenAIBaseUrl: patch.overrideOpenAIBaseUrl }
-      : {}),
-    ...(patch.openaiBaseUrl !== undefined ? { openaiBaseUrl: patch.openaiBaseUrl } : {}),
+    ...(patch.modelName !== undefined ? { modelName: patch.modelName } : {}),
+    ...(patch.requestUrl !== undefined ? { requestUrl: patch.requestUrl } : {}),
+    ...(patch.apiKey !== undefined ? { apiKey: patch.apiKey } : {}),
   });
   await upsertTenantSettings(tenantId, { modelSettings: next });
   applyModelSettingsToRuntime(next);
@@ -69,13 +119,10 @@ export async function updateModelSettings(
 }
 
 export async function applyTenantModelSettings(tenantId: string): Promise<void> {
-  const row = await getTenantSettingsRow(tenantId);
-  applyModelSettingsToRuntime(normalize(row?.modelSettings));
+  const stored = await loadStoredSettings(tenantId);
+  applyModelSettingsToRuntime(stored);
 }
 
-function applyModelSettingsToRuntime(settings: Required<RuntimeModelOverrides>): void {
-  setRuntimeModelOverrides({
-    ...DEFAULT_MODEL_SETTINGS,
-    ...settings,
-  });
+function applyModelSettingsToRuntime(settings: StoredModelSettings): void {
+  setRuntimeModelOverrides({ ...EMPTY_STORED, ...settings });
 }

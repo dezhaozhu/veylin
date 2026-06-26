@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { hideWebView, isTauri, openWebView, resizeWebView, type WebViewBounds } from '@/lib/tauri-web-view';
+import { PANEL_TAB_MENU_CLOSED_EVENT } from '@/components/assistant-ui/right-panel/panel-events';
 import type { PanelContentProps } from '../panel-types';
 
 /** Control panel to open intranet pages in the docked Tauri web-view window. */
@@ -69,13 +70,21 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
     });
     resizeObserver.observe(node);
     window.addEventListener('resize', syncBounds);
-    void syncBounds();
+    const onMenuClosed = () => {
+      if (storedUrl) void syncBounds();
+    };
+    window.addEventListener(PANEL_TAB_MENU_CLOSED_EVENT, onMenuClosed);
+    const frame = window.requestAnimationFrame(() => {
+      void syncBounds();
+    });
 
     return () => {
+      window.cancelAnimationFrame(frame);
       resizeObserver.disconnect();
       window.removeEventListener('resize', syncBounds);
+      window.removeEventListener(PANEL_TAB_MENU_CLOSED_EVENT, onMenuClosed);
     };
-  }, [syncBounds]);
+  }, [syncBounds, storedUrl]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-3">
@@ -100,13 +109,6 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
           {loading ? <Loader2 className="size-3.5 animate-spin" /> : t('web.open')}
         </Button>
       </div>
-
-      {storedUrl && !error && (
-        <p className="text-muted-foreground truncate text-[11px]">
-          {t('web.lastOpened')}
-          <span className="text-foreground">{storedUrl}</span>
-        </p>
-      )}
 
       {error && <p className="text-destructive text-xs whitespace-pre-wrap">{error}</p>}
       <div

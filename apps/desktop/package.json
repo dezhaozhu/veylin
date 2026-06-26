@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "tauri": "tauri",
-    "dev": "tauri dev",
-    "build": "tauri build"
+    "dev": "node scripts/ensure-sidecar.mjs && tauri dev",
+    "build": "node scripts/build.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.3"

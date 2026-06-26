@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useAui } from '@assistant-ui/store';
+import { useTranslation } from 'react-i18next';
 import {
   Clock,
   FolderGit2,
@@ -30,39 +31,35 @@ import { cn } from '@/lib/utils';
 const TEMPLATES = [
   {
     id: 'pr-triage',
-    name: 'PR triage digest',
-    category: 'Code review',
+    nameKey: 'automate.templates.prTriage.name',
+    categoryKey: 'automate.templates.prTriage.category',
     icon: 'GH',
-    description: 'Summarize open pull requests and flag items that need attention.',
-    prompt:
-      'Review open pull requests from the last 24 hours. Summarize risk, reviewers, and blockers. Post a concise digest.',
+    descriptionKey: 'automate.templates.prTriage.description',
+    promptKey: 'automate.templates.prTriage.prompt',
   },
   {
     id: 'security-pass',
-    name: 'Nightly security pass',
-    category: 'Security',
+    nameKey: 'automate.templates.securityPass.name',
+    categoryKey: 'automate.templates.securityPass.category',
     icon: 'GH',
-    description: 'Scan dependencies and surface CVEs before the next standup.',
-    prompt:
-      'Run a security review of dependencies changed in the last day. List CVEs, severity, and recommended actions.',
+    descriptionKey: 'automate.templates.securityPass.description',
+    promptKey: 'automate.templates.securityPass.prompt',
   },
   {
     id: 'slack-digest',
-    name: 'Slack standup digest',
-    category: 'Reporting',
+    nameKey: 'automate.templates.slackDigest.name',
+    categoryKey: 'automate.templates.slackDigest.category',
     icon: 'SL',
-    description: 'Compile engineering updates and post them to your team channel.',
-    prompt:
-      'Prepare a weekday standup digest from recent repo activity and open tasks. Format for Slack.',
+    descriptionKey: 'automate.templates.slackDigest.description',
+    promptKey: 'automate.templates.slackDigest.prompt',
   },
   {
     id: 'incident-hook',
-    name: 'Incident webhook summary',
-    category: 'Operations',
+    nameKey: 'automate.templates.incidentHook.name',
+    categoryKey: 'automate.templates.incidentHook.category',
     icon: 'WH',
-    description: 'React to incident webhooks and produce an actionable summary.',
-    prompt:
-      'When an incident webhook fires, summarize impact, affected services, and recommended next steps.',
+    descriptionKey: 'automate.templates.incidentHook.description',
+    promptKey: 'automate.templates.incidentHook.prompt',
   },
 ] as const;
 
@@ -106,12 +103,13 @@ function AutomationCard({
   onDelete: () => void;
   onSelect: () => void;
 }) {
+  const { t } = useTranslation();
   const scheduleLabel =
     automation.kind === 'schedule'
-      ? automation.cron ?? 'Scheduled'
+      ? automation.cron ?? t('automate.scheduled')
       : automation.sourceType === 'github'
-        ? 'Runs on GitHub events'
-        : 'Event-driven';
+        ? t('automate.runsOnGithubEvents')
+        : t('automate.eventDriven');
 
   return (
     <div
@@ -129,15 +127,15 @@ function AutomationCard({
             type="button"
             className="text-muted-foreground hover:text-foreground rounded px-1.5 py-1 text-xs"
             onClick={onEdit}
-            aria-label="Edit"
+            aria-label={t('common.edit')}
           >
-            Edit
+            {t('common.edit')}
           </button>
           <button
             type="button"
             className="text-muted-foreground hover:text-foreground rounded p-1"
             onClick={onDelete}
-            aria-label="Delete"
+            aria-label={t('common.delete')}
           >
             <MoreVertical className="size-4" />
           </button>
@@ -149,7 +147,7 @@ function AutomationCard({
       <div className="mb-4 flex flex-wrap gap-1.5">
         <MetaPill icon={FolderGit2}>{automation.agentId}</MetaPill>
         <MetaPill icon={Clock}>{scheduleLabel}</MetaPill>
-        <MetaPill icon={Tag}>{automation.kind}</MetaPill>
+        <MetaPill icon={Tag}>{t(`automate.kind.${automation.kind}`)}</MetaPill>
       </div>
       <div className="flex items-center gap-2">
         <Button
@@ -158,13 +156,13 @@ function AutomationCard({
           className="rounded-lg"
           onClick={onRun}
           disabled={!automation.enabled}
-          title={automation.enabled ? 'Run now' : 'Enable the automation to run it'}
+          title={automation.enabled ? t('automate.runNow') : t('automate.enableToRun')}
         >
           <Play className="mr-1.5 size-3.5" />
-          Run now
+          {t('automate.runNow')}
         </Button>
         <Button size="sm" variant="ghost" className="rounded-lg text-xs" onClick={onToggle}>
-          {automation.enabled ? 'Disable' : 'Enable'}
+          {automation.enabled ? t('common.disable') : t('common.enable')}
         </Button>
       </div>
     </div>
@@ -183,6 +181,7 @@ const EMPTY_FORM = {
 };
 
 export function AutomationsSettingsScreen() {
+  const { t } = useTranslation();
   const aui = useAui();
   const { closeWorkspace } = useSettingsPanel();
   const [automations, setAutomations] = useState<Automation[]>([]);
@@ -205,7 +204,7 @@ export function AutomationsSettingsScreen() {
         closeWorkspace();
       } catch {
         // Thread may not be loaded yet; surface a gentle hint.
-        alert('Unable to open this run yet. Try again after it appears in the sidebar.');
+        alert(t('automate.openRunFailed'));
       }
     },
     [aui, closeWorkspace],
@@ -276,7 +275,7 @@ export function AutomationsSettingsScreen() {
     try {
       triggerFilter = JSON.parse(form.triggerFilter || '{}') as Record<string, unknown>;
     } catch {
-      alert('Trigger filter must be valid JSON');
+      alert(t('automate.triggerFilterJsonError'));
       return;
     }
     const body = {
@@ -300,8 +299,8 @@ export function AutomationsSettingsScreen() {
     setEditingId(null);
     setForm({
       ...EMPTY_FORM,
-      name: template.name,
-      prompt: template.prompt,
+      name: t(template.nameKey),
+      prompt: t(template.promptKey),
       kind: template.id === 'incident-hook' ? 'event' : 'schedule',
       sourceType: template.id === 'incident-hook' ? 'github' : 'cron',
     });
@@ -311,50 +310,50 @@ export function AutomationsSettingsScreen() {
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
-        title="Automations"
-        description="View active and inactive automations, search by metadata, and inspect read-only details."
-        action={<PrimaryActionButton onClick={openCreate}>Add Automation</PrimaryActionButton>}
+        title={t('automate.title')}
+        description={t('automate.description')}
+        action={<PrimaryActionButton onClick={openCreate}>{t('automate.addAutomation')}</PrimaryActionButton>}
       />
 
-      <PageSearchBar value={query} onChange={setQuery} placeholder="Search automations…" />
+      <PageSearchBar value={query} onChange={setQuery} placeholder={t('automate.searchPlaceholder')} />
 
       <SettingsInlineEditor
         open={dialogOpen}
-        title={editingId ? 'Edit automation' : 'Add automation'}
-        description="Run an agent prompt on a schedule or in response to an event."
-        submitLabel={editingId ? 'Save changes' : 'Create'}
+        title={editingId ? t('automate.editTitle') : t('automate.addTitle')}
+        description={t('automate.editorDescription')}
+        submitLabel={editingId ? t('common.saveChanges') : t('common.create')}
         onSubmit={() => void save()}
         onCancel={() => {
           setDialogOpen(false);
           setEditingId(null);
         }}
       >
-        <FormField label="Name" required>
+        <FormField label={t('common.name')} required>
           <FormInput
-            placeholder="e.g. Nightly PR digest"
+            placeholder={t('automate.namePlaceholder')}
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
           />
         </FormField>
-        <FormField label="Trigger">
+        <FormField label={t('automate.trigger')}>
           <FormSelect
             value={form.kind}
             onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value as 'schedule' | 'event' }))}
           >
-            <option value="schedule">Schedule (cron)</option>
-            <option value="event">Event-driven</option>
+            <option value="schedule">{t('automate.triggerSchedule')}</option>
+            <option value="event">{t('automate.triggerEvent')}</option>
           </FormSelect>
         </FormField>
         {form.kind === 'schedule' ? (
           <>
-            <FormField label="Cron" hint="Standard 5-field cron, e.g. 0 9 * * 1-5 (weekdays 9am).">
+            <FormField label={t('automate.cron')} hint={t('automate.cronHint')}>
               <FormInput
                 placeholder="0 9 * * 1-5"
                 value={form.cron}
                 onChange={(e) => setForm((f) => ({ ...f, cron: e.target.value }))}
               />
             </FormField>
-            <FormField label="Timezone">
+            <FormField label={t('automate.timezone')}>
               <FormInput
                 placeholder="UTC"
                 value={form.timezone}
@@ -364,19 +363,16 @@ export function AutomationsSettingsScreen() {
           </>
         ) : (
           <>
-            <FormField label="Event source">
+            <FormField label={t('automate.eventSource')}>
               <FormSelect
                 value={form.sourceType}
                 onChange={(e) => setForm((f) => ({ ...f, sourceType: e.target.value }))}
               >
                 <option value="github">GitHub</option>
-                <option value="custom">Custom</option>
+                <option value="custom">{t('common.custom')}</option>
               </FormSelect>
             </FormField>
-            <FormField
-              label="Trigger filter"
-              hint='Optional JSON; matched against the event payload, e.g. {"event":"github.push"}'
-            >
+            <FormField label={t('automate.triggerFilter')} hint={t('automate.triggerFilterHint')}>
               <FormTextarea
                 className="min-h-20 font-mono text-xs"
                 placeholder="{}"
@@ -386,9 +382,9 @@ export function AutomationsSettingsScreen() {
             </FormField>
           </>
         )}
-        <FormField label="Prompt" required hint="The instruction the agent runs each time.">
+        <FormField label={t('automate.prompt')} required hint={t('automate.promptHint')}>
           <FormTextarea
-            placeholder="Summarize open pull requests and flag blockers…"
+            placeholder={t('automate.promptPlaceholder')}
             value={form.prompt}
             onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))}
           />
@@ -396,9 +392,9 @@ export function AutomationsSettingsScreen() {
       </SettingsInlineEditor>
 
       <section className="mb-8">
-        <SectionHeading title="Active" count={active.length} />
+        <SectionHeading title={t('automate.active')} count={active.length} />
         {active.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No active automations.</p>
+          <p className="text-muted-foreground text-sm">{t('automate.noActive')}</p>
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {active.map((a) => (
@@ -411,7 +407,7 @@ export function AutomationsSettingsScreen() {
                 }
                 onEdit={() => openEdit(a)}
                 onDelete={() => {
-                  if (confirm('Delete automation?')) void settingsApi.deleteAutomation(a.id).then(load);
+                  if (confirm(t('automate.confirmDelete'))) void settingsApi.deleteAutomation(a.id).then(load);
                 }}
                 onSelect={() => setDetailId(a.id)}
               />
@@ -421,9 +417,9 @@ export function AutomationsSettingsScreen() {
       </section>
 
       <section className="mb-10">
-        <SectionHeading title="Inactive" count={inactive.length} />
+        <SectionHeading title={t('automate.inactive')} count={inactive.length} />
         {inactive.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No inactive automations.</p>
+          <p className="text-muted-foreground text-sm">{t('automate.noInactive')}</p>
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {inactive.map((a) => (
@@ -436,7 +432,7 @@ export function AutomationsSettingsScreen() {
                 }
                 onEdit={() => openEdit(a)}
                 onDelete={() => {
-                  if (confirm('Delete automation?')) void settingsApi.deleteAutomation(a.id).then(load);
+                  if (confirm(t('automate.confirmDelete'))) void settingsApi.deleteAutomation(a.id).then(load);
                 }}
                 onSelect={() => setDetailId(a.id)}
               />
@@ -447,17 +443,17 @@ export function AutomationsSettingsScreen() {
 
       {detail && (
         <section className="border-border mb-10 rounded-xl border p-4">
-          <h3 className="mb-2 font-medium">Details · {detail.name}</h3>
+          <h3 className="mb-2 font-medium">{t('automate.details', { name: detail.name })}</h3>
           <pre className="bg-muted mb-3 whitespace-pre-wrap rounded-lg p-3 text-xs">{detail.prompt}</pre>
           {detail.kind === 'event' && (
             <pre className="bg-muted mb-3 rounded-lg p-3 text-xs">
               {JSON.stringify(detail.triggerFilter ?? {}, null, 2)}
             </pre>
           )}
-          <SectionHeading title="Recent runs" count={runs.length} />
+          <SectionHeading title={t('automate.recentRuns')} count={runs.length} />
           <div className="flex flex-col gap-1.5">
             {runs.length === 0 && (
-              <p className="text-muted-foreground text-xs">No runs yet.</p>
+              <p className="text-muted-foreground text-xs">{t('automate.noRuns')}</p>
             )}
             {runs.slice(0, 5).map((run) => (
               <button
@@ -465,7 +461,7 @@ export function AutomationsSettingsScreen() {
                 type="button"
                 onClick={() => void openRunThread(run.threadId)}
                 className="hover:bg-accent/40 text-muted-foreground flex items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors"
-                title="Open this run's conversation"
+                title={t('automate.openRunConversation')}
               >
                 <span
                   className={cn(
@@ -476,10 +472,10 @@ export function AutomationsSettingsScreen() {
                     run.status === 'queued' && 'bg-muted text-muted-foreground',
                   )}
                 >
-                  {run.status}
+                  {t(`automate.runStatus.${run.status}`)}
                 </span>
                 <span>{new Date(run.startedAt).toLocaleString()}</span>
-                <span className="text-primary ml-auto underline">Open</span>
+                <span className="text-primary ml-auto underline">{t('common.open')}</span>
               </button>
             ))}
           </div>
@@ -487,38 +483,31 @@ export function AutomationsSettingsScreen() {
       )}
 
       <section className="mb-8">
-        <SectionHeading
-          title="Start from a proven workflow"
-          trailing={
-            <span className="text-muted-foreground text-xs">
-              Pre-filled prompts you can launch immediately
-            </span>
-          }
-        />
+        <SectionHeading title={t('automate.templatesTitle')} />
         <div className="grid gap-3 md:grid-cols-2">
-          {TEMPLATES.slice(0, 1).map((t) => (
+          {TEMPLATES.slice(0, 1).map((template) => (
             <button
-              key={t.id}
+              key={template.id}
               type="button"
-              onClick={() => applyTemplate(t)}
+              onClick={() => applyTemplate(template)}
               className="border-border bg-card hover:bg-accent/20 group rounded-xl border p-4 text-left transition-colors"
             >
               <div className="mb-3 flex items-start justify-between">
                 <div className="bg-muted flex size-9 items-center justify-center rounded-lg text-[10px] font-bold">
-                  {t.icon}
+                  {template.icon}
                 </div>
                 <Plus className="text-muted-foreground size-4 opacity-0 transition-opacity group-hover:opacity-100" />
               </div>
-              <div className="text-muted-foreground mb-1 text-[11px] font-medium">{t.category}</div>
-              <div className="mb-2 font-medium">{t.name}</div>
-              <p className="text-muted-foreground text-xs leading-relaxed">{t.description}</p>
+              <div className="text-muted-foreground mb-1 text-[11px] font-medium">{t(template.categoryKey)}</div>
+              <div className="mb-2 font-medium">{t(template.nameKey)}</div>
+              <p className="text-muted-foreground text-xs leading-relaxed">{t(template.descriptionKey)}</p>
             </button>
           ))}
         </div>
       </section>
 
       <section className="border-border border-t pt-6">
-        <SectionHeading title="Webhook endpoints" count={webhooks.length} />
+        <SectionHeading title={t('automate.webhooks')} count={webhooks.length} />
         <div className="mb-3 flex gap-2">
           <Button
             type="button"
@@ -535,7 +524,7 @@ export function AutomationsSettingsScreen() {
                 .catch((err) => setHookError(String(err)));
             }}
           >
-            + GitHub webhook
+            {t('automate.addGithubWebhook')}
           </Button>
           <Button
             type="button"
@@ -552,7 +541,7 @@ export function AutomationsSettingsScreen() {
                 .catch((err) => setHookError(String(err)));
             }}
           >
-            + Custom webhook
+            {t('automate.addCustomWebhook')}
           </Button>
         </div>
         {hookError ? (
@@ -561,24 +550,24 @@ export function AutomationsSettingsScreen() {
         {createdHook && (
           <div className="border-amber-500/40 bg-amber-500/10 mb-3 rounded-lg border p-3 text-sm">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <strong>Secret (shown once — copy now)</strong>
+              <strong>{t('automate.secretShownOnce')}</strong>
               <button
                 type="button"
                 className="text-xs underline"
                 onClick={() => setCreatedHook(null)}
               >
-                Dismiss
+                {t('common.dismiss')}
               </button>
             </div>
             <code className="mb-3 block break-all text-xs">{createdHook.secret}</code>
             <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-muted-foreground text-xs">Test it with curl:</span>
+              <span className="text-muted-foreground text-xs">{t('automate.testWithCurl')}</span>
               <button
                 type="button"
                 className="text-xs underline"
                 onClick={() => void navigator.clipboard?.writeText(buildWebhookCurl(createdHook))}
               >
-                Copy
+                {t('common.copy')}
               </button>
             </div>
             <pre className="bg-background overflow-x-auto rounded-md p-3 text-[11px] leading-relaxed">
@@ -599,10 +588,20 @@ export function AutomationsSettingsScreen() {
                 )
               }
             >
-              Copy curl
+              {t('automate.copyCurl')}
             </button>
-            <button type="button" className="text-destructive text-xs underline" onClick={() => void settingsApi.deleteWebhook(w.id).then(load)}>
-              Delete
+            <button
+              type="button"
+              className="text-destructive shrink-0 text-xs underline"
+              onClick={() => {
+                if (!confirm(t('automate.confirmDeleteWebhook'))) return;
+                void settingsApi
+                  .deleteWebhook(w.id)
+                  .then(load)
+                  .catch((err) => setHookError(String(err)));
+              }}
+            >
+              {t('common.delete')}
             </button>
           </div>
         ))}

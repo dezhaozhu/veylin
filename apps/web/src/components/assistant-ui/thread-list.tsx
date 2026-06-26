@@ -140,9 +140,12 @@ const ThreadListNew: FC = () => {
     <ThreadListPrimitive.New asChild>
       <Button
         variant="ghost"
-        className="aui-thread-list-new hover:bg-muted data-active:bg-muted h-8 justify-start gap-2 rounded-md px-2.5 text-sm font-normal"
+        size="sm"
+        className="aui-thread-list-new hover:bg-muted data-active:bg-muted h-8 w-full justify-start gap-2 rounded-md p-2 text-sm font-normal"
       >
-        <PlusIcon className="size-4" />
+        <span className="flex size-4 shrink-0 items-center justify-center">
+          <PlusIcon className="size-4" />
+        </span>
         {t('threadList.newChat')}
       </Button>
     </ThreadListPrimitive.New>
@@ -158,9 +161,10 @@ const ThreadListSkeleton: FC = () => {
           key={i}
           role="status"
           aria-label={t('threadList.loading')}
-          className="aui-thread-list-skeleton-wrapper flex h-8 items-center px-2.5"
+          className="aui-thread-list-skeleton-wrapper flex h-8 items-center gap-2 px-2"
         >
-          <Skeleton className="aui-thread-list-skeleton h-3.5 w-full" />
+          <span className="size-4 shrink-0" aria-hidden />
+          <Skeleton className="aui-thread-list-skeleton h-3.5 min-w-0 flex-1" />
         </div>
       ))}
     </div>
@@ -249,12 +253,14 @@ const ThreadListItem: FC = () => {
   return (
     <ThreadListItemPrimitive.Root className="aui-thread-list-item group hover:bg-muted focus-visible:bg-muted data-active:bg-muted relative flex h-8 items-center gap-1 rounded-md transition-colors focus-visible:outline-none">
       <ThreadListItemPrimitive.Trigger
-        className="aui-thread-list-item-trigger flex h-full min-w-0 flex-1 items-center gap-1.5 px-2.5 text-start text-sm"
+        className="aui-thread-list-item-trigger flex h-full min-w-0 flex-1 items-center gap-2 px-2 text-start text-sm"
         onClick={ackTerminal}
       >
-        {showBadge && effectiveActivity ? (
-          <ThreadListItemActivityBadge kind={effectiveActivity.kind} />
-        ) : null}
+        <span className="flex size-4 shrink-0 items-center justify-center">
+          {showBadge && effectiveActivity ? (
+            <ThreadListItemActivityBadge kind={effectiveActivity.kind} />
+          ) : null}
+        </span>
         <span className="aui-thread-list-item-title min-w-0 truncate">
           <ThreadListItemPrimitive.Title fallback={t('threadList.newChat')} />
         </span>

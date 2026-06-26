@@ -21,6 +21,9 @@ export { buildMemory } from './memory';
 export { buildStorage, buildObservability } from './storage';
 export {
   getModelConfig,
+  getRuntimeModelOverrides,
+  isModelProviderConfigured,
+  isRuntimeModelConfigured,
   setRuntimeModelOverrides,
   DEFAULT_MODEL,
   type ModelKey,

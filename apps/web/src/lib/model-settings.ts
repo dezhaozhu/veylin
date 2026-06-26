@@ -4,55 +4,76 @@ import { getChatSettings, setChatSettings } from '@/lib/chat-settings';
 export type ModelCatalogEntry = {
   id: string;
   label: string;
-  builtin?: boolean;
 };
 
-export const BUILTIN_MODELS: ModelCatalogEntry[] = [
-  { id: 'deepseek', label: 'DeepSeek-V4-Flash', builtin: true },
-  { id: 'zenmux', label: 'Gemini-3.1-flash', builtin: true },
-];
-
 export type ModelSettings = {
-  customModels: ModelCatalogEntry[];
+  models: ModelCatalogEntry[];
   enabledModels: Record<string, boolean>;
 };
 
 const KEY = 'veylin-model-settings';
 const EVENT = 'veylin-model-settings';
 
+const LEGACY_BUILTIN_IDS = new Set(['deepseek', 'zenmux']);
+
 const DEFAULTS: ModelSettings = {
-  customModels: [],
-  enabledModels: Object.fromEntries(BUILTIN_MODELS.map((m) => [m.id, true])),
+  models: [],
+  enabledModels: {},
 };
 
+function sanitizeEnabledModels(
+  models: ModelCatalogEntry[],
+  raw: Record<string, boolean> | undefined,
+): Record<string, boolean> {
+  const validIds = new Set(models.map((m) => m.id));
+  const enabledModels: Record<string, boolean> = {};
+  for (const [id, on] of Object.entries(raw ?? {})) {
+    if (!LEGACY_BUILTIN_IDS.has(id) && validIds.has(id)) {
+      enabledModels[id] = on;
+    }
+  }
+  for (const m of models) {
+    if (enabledModels[m.id] === undefined) enabledModels[m.id] = true;
+  }
+  return enabledModels;
+}
+
+export function slugModelId(modelName: string): string {
+  const slug = modelName.trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase();
+  return slug || 'model';
+}
+
+export function catalogEntryFromModelName(modelName: string): ModelCatalogEntry {
+  const label = modelName.trim();
+  return { id: slugModelId(label), label };
+}
+
 export function getModelSettings(): ModelSettings {
-  if (typeof window === 'undefined') return { ...DEFAULTS, enabledModels: { ...DEFAULTS.enabledModels } };
+  if (typeof window === 'undefined') {
+    return { models: [], enabledModels: {} };
+  }
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) {
-      return { ...DEFAULTS, enabledModels: { ...DEFAULTS.enabledModels } };
-    }
-    const parsed = JSON.parse(raw) as Partial<ModelSettings>;
-    const enabledModels = { ...DEFAULTS.enabledModels, ...(parsed.enabledModels ?? {}) };
-    for (const m of BUILTIN_MODELS) {
-      if (enabledModels[m.id] === undefined) enabledModels[m.id] = true;
-    }
+    if (!raw) return { models: [], enabledModels: {} };
+    const parsed = JSON.parse(raw) as Partial<ModelSettings> & { customModels?: ModelCatalogEntry[] };
+    const models = parsed.models ?? parsed.customModels ?? [];
     return {
-      customModels: parsed.customModels ?? [],
-      enabledModels,
+      models,
+      enabledModels: sanitizeEnabledModels(models, parsed.enabledModels),
     };
   } catch {
-    return { ...DEFAULTS, enabledModels: { ...DEFAULTS.enabledModels } };
+    return { models: [], enabledModels: {} };
   }
 }
 
 export function setModelSettings(patch: Partial<ModelSettings>): ModelSettings {
   const current = getModelSettings();
+  const models = patch.models ?? current.models;
   const next: ModelSettings = {
-    customModels: patch.customModels ?? current.customModels,
+    models,
     enabledModels: patch.enabledModels
-      ? { ...current.enabledModels, ...patch.enabledModels }
-      : current.enabledModels,
+      ? sanitizeEnabledModels(models, { ...current.enabledModels, ...patch.enabledModels })
+      : sanitizeEnabledModels(models, current.enabledModels),
   };
   localStorage.setItem(KEY, JSON.stringify(next));
   window.dispatchEvent(new CustomEvent(EVENT, { detail: next }));
@@ -67,15 +88,7 @@ export function onModelSettingsChange(cb: (s: ModelSettings) => void): () => voi
 }
 
 export function listCatalogModels(): ModelCatalogEntry[] {
-  const { customModels } = getModelSettings();
-  const seen = new Set<string>();
-  const out: ModelCatalogEntry[] = [];
-  for (const m of [...BUILTIN_MODELS, ...customModels]) {
-    if (seen.has(m.id)) continue;
-    seen.add(m.id);
-    out.push(m);
-  }
-  return out;
+  return getModelSettings().models;
 }
 
 export function isModelEnabled(id: string): boolean {
@@ -86,38 +99,35 @@ export function setModelEnabled(id: string, enabled: boolean): void {
   setModelSettings({ enabledModels: { [id]: enabled } });
 }
 
-export function addCustomModel(label: string): ModelCatalogEntry | null {
-  const trimmed = label.trim();
-  if (!trimmed) return null;
-  const id = slugModelId(trimmed);
-  const catalog = listCatalogModels();
-  if (catalog.some((m) => m.id === id || m.label.toLowerCase() === trimmed.toLowerCase())) {
-    return catalog.find((m) => m.id === id || m.label.toLowerCase() === trimmed.toLowerCase()) ?? null;
-  }
-  const entry: ModelCatalogEntry = { id, label: trimmed };
-  const { customModels } = getModelSettings();
+export function upsertCatalogModel(modelName: string): ModelCatalogEntry {
+  const entry = catalogEntryFromModelName(modelName);
+  const settings = getModelSettings();
+  const models = [...settings.models.filter((m) => m.id !== entry.id), entry];
   setModelSettings({
-    customModels: [...customModels, entry],
-    enabledModels: { [id]: true },
+    models,
+    enabledModels: { ...settings.enabledModels, [entry.id]: true },
   });
   return entry;
 }
 
-function slugModelId(label: string): string {
-  const base = label
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-  return base || `model-${Date.now()}`;
+export function removeCatalogModel(id: string): boolean {
+  const settings = getModelSettings();
+  if (!settings.models.some((m) => m.id === id)) return false;
+  const models = settings.models.filter((m) => m.id !== id);
+  const enabledModels = { ...settings.enabledModels };
+  delete enabledModels[id];
+  setModelSettings({ models, enabledModels });
+  return true;
 }
 
 function ensureActiveModelEnabled(settings: ModelSettings): void {
-  const catalog = [...BUILTIN_MODELS, ...settings.customModels];
-  const enabled = catalog.filter((m) => settings.enabledModels[m.id] !== false);
+  const enabled = settings.models.filter((m) => settings.enabledModels[m.id] !== false);
   if (enabled.length === 0) return;
   const current = getChatSettings().model;
-  if (settings.enabledModels[current] !== false) return;
-  const fallback = enabled.find((m) => m.builtin)?.id ?? enabled[0]!.id;
+  if (settings.enabledModels[current] !== false && settings.models.some((m) => m.id === current)) {
+    return;
+  }
+  const fallback = enabled[0]!.id;
   if (fallback === current) return;
   setChatSettings({ model: fallback as ModelKey });
 }

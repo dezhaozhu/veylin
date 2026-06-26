@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { GeneralSettingsScreen } from './general-settings/general-settings-screen';
 import { ModelsSettingsScreen } from './models-settings/models-settings-screen';
 import { cn } from '@/lib/utils';
+import { startWindowDrag } from '@/lib/window-drag';
 
 type SettingsTab = 'general' | 'models';
 
@@ -14,7 +15,11 @@ export function SettingsWorkspace() {
   return (
     <div className="bg-background flex min-h-0 min-w-0 flex-1">
       <aside className="border-border bg-muted/20 flex w-52 shrink-0 flex-col border-r">
-        <div className="border-border border-b px-4 py-3">
+        <div
+          data-tauri-drag-region
+          className="border-border border-b px-4 py-3"
+          onMouseDown={startWindowDrag}
+        >
           <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
             {t('settings.navTitle')}
           </span>

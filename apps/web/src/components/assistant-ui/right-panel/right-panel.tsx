@@ -1,5 +1,6 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import { PanelTabBar } from './panel-tab-bar';
 import { getPanelKindDef } from './panel-registry';
 import { usePanelTabs } from './use-panel-tabs';
@@ -18,6 +19,13 @@ export function RightPanel() {
 
   const def = activeTab ? getPanelKindDef(activeTab.kind) : undefined;
   const Content = def?.Component;
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    if (activeTab?.kind !== 'web') {
+      void hideWebView();
+    }
+  }, [activeTab?.kind, activeTab?.id]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

@@ -7,8 +7,11 @@ import {
   ComposerMenuRow,
 } from '@/components/assistant-ui/composer-menu-flyout';
 import { RightSidebarTrigger } from '@/components/ui/sidebar';
+import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import { cn } from '@/lib/utils';
+import { startWindowDrag } from '@/lib/window-drag';
 import { PANEL_KINDS, getPanelKindDef } from './panel-registry';
+import { PANEL_TAB_MENU_CLOSED_EVENT } from './panel-events';
 import type { PanelKind, PanelTab } from './panel-types';
 
 interface PanelTabBarProps {
@@ -30,9 +33,20 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement>(null);
+  const menuWasOpen = useRef(false);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
   const close = useCallback(() => setMenuOpen(false), []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    if (menuOpen) {
+      void hideWebView();
+    } else if (menuWasOpen.current) {
+      window.dispatchEvent(new CustomEvent(PANEL_TAB_MENU_CLOSED_EVENT));
+    }
+    menuWasOpen.current = menuOpen;
+  }, [menuOpen]);
 
   const updateMenuPos = useCallback(() => {
     const el = addBtnRef.current;
@@ -153,6 +167,11 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
               </div>
             );
           })}
+          <div
+            data-tauri-drag-region
+            className="min-w-8 flex-1 self-stretch"
+            onMouseDown={startWindowDrag}
+          />
         </div>
 
         <button

@@ -476,6 +476,8 @@ if (isWindows) {
   cpSync(launcherPath, join(binariesDir, `${binBase}.exe`));
 }
 
+writeFileSync(join(outDir, '.target-triple'), `${targetTriple}\n`);
+
 console.log(`[build-sidecar] wrote ${launcherPath}`);
 console.log(`[build-sidecar] bundle at ${outDir}`);
 console.log(`[build-sidecar] node ${NODE_VERSION} (${nodePlatform}) embedded`);
@@ -502,7 +504,7 @@ function writeLauncher(path, win) {
       '  SIDE="${VEYLIN_SIDECAR_DIR:-$DIR/../../../server/dist/sidecar}"',
       'fi',
       'NODE_BIN="$SIDE/node-runtime/bin/node"',
-      'if [ ! -x "$NODE_BIN" ]; then',
+      'if [ ! -x "$NODE_BIN" ] || ! "$NODE_BIN" -v >/dev/null 2>&1; then',
       '  NODE_BIN="$(command -v node 2>/dev/null || true)"',
       'fi',
       'if [ -z "$NODE_BIN" ]; then',

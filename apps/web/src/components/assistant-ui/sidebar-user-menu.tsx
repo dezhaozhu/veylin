@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronsUpDown, LogOut, Settings } from 'lucide-react';
+import { ChevronsUpDown, Loader2, LogOut, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { buttonVariants } from '@/components/ui/button';
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
+import { useAppUpdater } from '@/hooks/use-app-updater';
 import { useSession, logout } from '@/hooks/use-session';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { cn } from '@/lib/utils';
@@ -16,6 +18,7 @@ function initials(name: string): string {
 export function SidebarUserMenu() {
   const { user } = useSession();
   const { openAppSettings } = useSettingsPanel();
+  const { updateAvailable, installing, installUpdate } = useAppUpdater();
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -91,11 +94,40 @@ export function SidebarUserMenu() {
                 {initials(displayName)}
               </AvatarFallback>
             </Avatar>
-            <div className="grid flex-1 text-left text-sm leading-tight">
+            <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">{displayName}</span>
               <span className="text-muted-foreground truncate text-xs">free</span>
             </div>
-            <ChevronsUpDown className="text-muted-foreground ml-auto size-4" />
+            {updateAvailable && (
+              <span
+                role="button"
+                tabIndex={0}
+                aria-disabled={installing}
+                className={cn(
+                  buttonVariants({ variant: 'default', size: 'xs' }),
+                  'shrink-0',
+                  installing && 'pointer-events-none opacity-70',
+                )}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void installUpdate();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' && e.key !== ' ') return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void installUpdate();
+                }}
+              >
+                {installing ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  t('userMenu.update')
+                )}
+              </span>
+            )}
+            <ChevronsUpDown className="text-muted-foreground ml-auto size-4 shrink-0" />
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>

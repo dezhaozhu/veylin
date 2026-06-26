@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { Rule } from '@/hooks/settings/api';
 import { settingsApi } from '@/hooks/settings/api';
 import { SettingsSwitch } from '../settings-switch';
@@ -17,6 +18,7 @@ import {
 } from '../settings-form-dialog';
 
 export function RulesSettingsScreen() {
+  const { t } = useTranslation();
   const [rules, setRules] = useState<Rule[]>([]);
   const [query, setQuery] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -90,57 +92,57 @@ export function RulesSettingsScreen() {
       setEditing(null);
       await load();
     } catch (err) {
-      alert(`Failed to save rule: ${err instanceof Error ? err.message : String(err)}`);
+      alert(t('customize.rulesPage.saveFailed', { error: err instanceof Error ? err.message : String(err) }));
     }
   };
 
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader
-        title="Rules"
-        description="Custom instructions injected into the system prompt — always, or when keywords appear in the user message."
-        action={<PrimaryActionButton onClick={openCreate}>Add rule</PrimaryActionButton>}
+        title={t('customize.rulesPage.title')}
+        description={t('customize.rulesPage.description')}
+        action={<PrimaryActionButton onClick={openCreate}>{t('customize.rulesPage.addRule')}</PrimaryActionButton>}
       />
 
-      <PageSearchBar value={query} onChange={setQuery} placeholder="Search rules…" />
+      <PageSearchBar value={query} onChange={setQuery} placeholder={t('customize.rulesPage.searchPlaceholder')} />
 
       <SettingsInlineEditor
         open={dialogOpen}
-        title={editing ? 'Edit rule' : 'Add rule'}
-        description="Rules are prepended to the system prompt when their trigger matches."
-        submitLabel={editing ? 'Save changes' : 'Add rule'}
+        title={editing ? t('customize.rulesPage.editTitle') : t('customize.rulesPage.addTitle')}
+        description={t('customize.rulesPage.editorDescription')}
+        submitLabel={editing ? t('common.saveChanges') : t('customize.rulesPage.addRule')}
         onSubmit={() => void save()}
         onCancel={() => setDialogOpen(false)}
       >
-        <FormField label="Name" required>
+        <FormField label={t('common.name')} required>
           <FormInput
-            placeholder="e.g. safety-checklist"
+            placeholder={t('customize.rulesPage.namePlaceholder')}
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
           />
         </FormField>
-        <FormField label="Content" required hint="Instruction text injected into the system prompt.">
+        <FormField label={t('common.content')} required hint={t('customize.rulesPage.contentHint')}>
           <FormTextarea
-            placeholder="Always verify schedule conflicts before proposing changes…"
+            placeholder={t('customize.rulesPage.contentPlaceholder')}
             value={form.content}
             onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
           />
         </FormField>
-        <FormField label="Trigger">
+        <FormField label={t('customize.rulesPage.trigger')}>
           <FormSelect
             value={form.trigger}
             onChange={(e) =>
               setForm((f) => ({ ...f, trigger: e.target.value as 'always' | 'keyword' }))
             }
           >
-            <option value="always">Always</option>
-            <option value="keyword">Keyword</option>
+            <option value="always">{t('customize.rulesPage.triggerAlways')}</option>
+            <option value="keyword">{t('customize.rulesPage.triggerKeyword')}</option>
           </FormSelect>
         </FormField>
         {form.trigger === 'keyword' && (
-          <FormField label="Keywords" hint="Comma-separated; rule applies when any keyword appears in the user message.">
+          <FormField label={t('customize.rulesPage.keywords')} hint={t('customize.rulesPage.keywordsHint')}>
             <FormInput
-              placeholder="schedule, risk, overdue"
+              placeholder={t('customize.rulesPage.keywordsPlaceholder')}
               value={form.keywords}
               onChange={(e) => setForm((f) => ({ ...f, keywords: e.target.value }))}
             />
@@ -148,7 +150,7 @@ export function RulesSettingsScreen() {
         )}
       </SettingsInlineEditor>
 
-      <SectionHeading title="All rules" count={filtered.length} />
+      <SectionHeading title={t('customize.rulesPage.allRules')} count={filtered.length} />
 
       <div className="flex flex-col gap-2">
         {filtered.map((rule) => (
@@ -160,28 +162,28 @@ export function RulesSettingsScreen() {
               <div className="font-medium">{rule.name}</div>
               <p className="text-muted-foreground mt-1 truncate text-sm">{rule.content}</p>
               <div className="text-muted-foreground text-xs">
-                {rule.trigger}
+                {rule.trigger === 'always' ? t('customize.rulesPage.triggerAlways') : t('customize.rulesPage.triggerKeyword')}
                 {rule.trigger === 'keyword' && rule.keywords.length > 0
                   ? ` · ${rule.keywords.join(', ')}`
                   : ''}
               </div>
             </div>
             <button type="button" className="text-xs underline" onClick={() => openEdit(rule)}>
-              Edit
+              {t('common.edit')}
             </button>
             <button
               type="button"
               className="text-destructive text-xs underline"
               onClick={() => {
-                if (confirm('Delete rule?')) void settingsApi.deleteRule(rule.id).then(load);
+                if (confirm(t('customize.rulesPage.confirmDelete'))) void settingsApi.deleteRule(rule.id).then(load);
               }}
             >
-              Delete
+              {t('common.delete')}
             </button>
             <SettingsSwitch
               checked={rule.enabled}
               onChange={(on) => void settingsApi.updateRule(rule.id, { enabled: on }).then(load)}
-              label={`Toggle ${rule.name}`}
+              label={t('customize.rulesPage.toggle', { name: rule.name })}
             />
           </div>
         ))}

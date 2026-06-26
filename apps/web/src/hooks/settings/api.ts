@@ -1,3 +1,5 @@
+import { apiUrl } from '@/lib/api-base';
+
 const API = '';
 
 export type SkillListItem = {
@@ -59,18 +61,26 @@ export type WebhookEndpoint = {
   url: string;
 };
 
+import { normalizeModelProviderSettings } from '@/lib/model-provider-settings';
+
 export type ModelProviderSettings = {
-  openaiApiKeyEnabled: boolean;
-  hasOpenaiApiKey: boolean;
-  overrideOpenAIBaseUrl: boolean;
-  openaiBaseUrl: string;
+  modelName: string;
+  requestUrl: string;
+  hasApiKey: boolean;
+  configured: boolean;
 };
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
+  const hasBody = init?.body != null && init.body !== '';
+  const headers = new Headers(init?.headers);
+  if (hasBody && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const res = await fetch(apiUrl(`${API}${path}`), {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     ...init,
+    headers,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -80,13 +90,35 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const settingsApi = {
-  getModelSettings: () =>
-    apiFetch<{ settings: ModelProviderSettings }>('/api/model-settings'),
-  updateModelSettings: (body: Partial<ModelProviderSettings> & { openaiApiKey?: string }) =>
-    apiFetch<{ settings: ModelProviderSettings }>('/api/model-settings', {
+  getModelSettings: async () => {
+    const res = await apiFetch<{ settings: ModelProviderSettings }>('/api/model-settings');
+    return { settings: normalizeModelProviderSettings(res.settings) };
+  },
+  updateModelSettings: async (body: { modelName?: string; requestUrl?: string; apiKey?: string }) => {
+    const res = await apiFetch<{ settings: ModelProviderSettings }>('/api/model-settings', {
       method: 'PUT',
       body: JSON.stringify(body),
-    }),
+    });
+    return { settings: normalizeModelProviderSettings(res.settings) };
+  },
+  clearModelSettings: async () => {
+    try {
+      const res = await apiFetch<{ settings: ModelProviderSettings }>('/api/model-settings', {
+        method: 'DELETE',
+      });
+      return { settings: normalizeModelProviderSettings(res.settings) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes('404') && !message.includes('Not Found')) {
+        throw err;
+      }
+      return settingsApi.updateModelSettings({
+        modelName: '',
+        requestUrl: '',
+        apiKey: '',
+      });
+    }
+  },
 
   getSkills: () =>
     apiFetch<{ skills: SkillListItem[]; disabledSkills: string[] }>('/api/skills'),

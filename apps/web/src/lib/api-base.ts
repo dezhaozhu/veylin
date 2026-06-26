@@ -1,5 +1,6 @@
 /** Sidecar origin. Empty in Vite dev (proxy forwards `/api`); set at desktop build time. */
-const API_ORIGIN = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+const API_ORIGIN =
+  (import.meta.env?.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
 export function apiUrl(path: string): string {
   if (path.startsWith('http://') || path.startsWith('https://')) return path;

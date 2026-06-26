@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -30,6 +31,8 @@ export function SettingsFormDialog({
   onSubmit: () => void;
   onCancel?: () => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="gap-0 p-0 sm:max-w-md">
@@ -51,7 +54,7 @@ export function SettingsFormDialog({
               onOpenChange(false);
             }}
           >
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="button" onClick={onSubmit}>
             {submitLabel}
@@ -83,6 +86,7 @@ export function SettingsInlineEditor({
   onSubmit: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation();
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -108,7 +112,7 @@ export function SettingsInlineEditor({
         <button
           type="button"
           className="text-muted-foreground hover:text-foreground rounded-md p-1"
-          aria-label="Close"
+          aria-label={t('common.close')}
           onClick={onCancel}
         >
           <X className="size-4" />
@@ -119,7 +123,7 @@ export function SettingsInlineEditor({
       </div>
       <div className="border-border flex justify-end gap-2 border-t px-5 py-4">
         <Button type="button" variant="outline" onClick={onCancel}>
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button type="button" onClick={onSubmit}>
           {submitLabel}

@@ -20,6 +20,7 @@ import { SidebarUserMenu } from '@/components/assistant-ui/sidebar-user-menu';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { useThreadNavigationHistory } from '@/lib/use-thread-navigation-history';
 import { cn } from '@/lib/utils';
+import { startWindowDrag } from '@/lib/window-drag';
 
 function ThreadListTitlebarControls() {
   const { t } = useTranslation();
@@ -60,6 +61,8 @@ function ThreadListTitlebarControls() {
         </Button>
         {state === 'collapsed' && (
           <h1
+            data-tauri-drag-region
+            onMouseDown={startWindowDrag}
             className={cn(
               'ml-1 min-w-0 flex-1 truncate text-xs font-medium',
               !title?.trim() && 'text-muted-foreground',
@@ -68,6 +71,13 @@ function ThreadListTitlebarControls() {
           >
             {displayTitle}
           </h1>
+        )}
+        {state === 'expanded' && (
+          <div
+            data-tauri-drag-region
+            className="min-w-0 flex-1 self-stretch"
+            onMouseDown={startWindowDrag}
+          />
         )}
       </div>
       <div className="h-8 shrink-0" />
@@ -83,15 +93,17 @@ export function ThreadListSidebar({ ...props }: React.ComponentProps<typeof Side
   return (
     <Sidebar {...props}>
       <ThreadListTitlebarControls />
-      <SidebarHeader className="aui-sidebar-header mb-2 border-b">
-        <div className="aui-sidebar-header-content flex flex-col gap-1 px-1">
+      <SidebarHeader className="aui-sidebar-header mb-2 border-b p-0">
+        <div className="aui-sidebar-header-content flex flex-col gap-1 px-2 pb-2">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
                 onClick={() => openCustomize('rules')}
                 className={cn(view === 'customize' && 'bg-accent font-medium')}
               >
-                <SlidersHorizontal className="size-4" />
+                <span className="flex size-4 shrink-0 items-center justify-center">
+                  <SlidersHorizontal className="size-4" />
+                </span>
                 <span>{t('sidebar.customize')}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -100,7 +112,9 @@ export function ThreadListSidebar({ ...props }: React.ComponentProps<typeof Side
                 onClick={() => openAutomate()}
                 className={cn(view === 'automate' && 'bg-accent font-medium')}
               >
-                <Bot className="size-4" />
+                <span className="flex size-4 shrink-0 items-center justify-center">
+                  <Bot className="size-4" />
+                </span>
                 <span>{t('sidebar.automate')}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>

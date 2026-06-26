@@ -106,6 +106,16 @@
   }
 }
 
+[data-tauri-drag-region] {
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+[data-tauri-drag-region] :is(a, button, input, select, textarea, [role="button"], [data-no-window-drag]) {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
 /* Thread viewport — thin pill thumb, no visible track (ref. design) */
 [data-slot="aui_thread-viewport"] {
   scrollbar-width: thin;

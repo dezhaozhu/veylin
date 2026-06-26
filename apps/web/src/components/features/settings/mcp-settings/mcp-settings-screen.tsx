@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Check, Plus } from 'lucide-react';
 import type { McpServer } from '@/hooks/settings/api';
 import { settingsApi } from '@/hooks/settings/api';
@@ -24,37 +25,37 @@ const LIBRARY = [
     id: 'github',
     name: 'GitHub',
     transport: 'HTTP',
-    description: 'Review PRs, triage issues, and post summaries from repository events.',
+    descriptionKey: 'customize.mcpPage.library.github',
   },
   {
     id: 'slack',
     name: 'Slack',
     transport: 'HTTP',
-    description: 'Send automation digests and alerts to channels your team already uses.',
+    descriptionKey: 'customize.mcpPage.library.slack',
   },
   {
     id: 'linear',
     name: 'Linear',
     transport: 'HTTP',
-    description: 'Sync issue status and create follow-up tasks from agent workflows.',
+    descriptionKey: 'customize.mcpPage.library.linear',
   },
   {
     id: 'notion',
     name: 'Notion',
     transport: 'HTTP',
-    description: 'Publish reports and structured notes to shared team workspaces.',
+    descriptionKey: 'customize.mcpPage.library.notion',
   },
   {
     id: 'tavily',
     name: 'Tavily',
     transport: 'HTTP',
-    description: 'Web search and research for agents that need fresh external context.',
+    descriptionKey: 'customize.mcpPage.library.tavily',
   },
   {
     id: 'supabase',
     name: 'Supabase',
     transport: 'HTTP',
-    description: 'Query project data and run operational checks against your database.',
+    descriptionKey: 'customize.mcpPage.library.supabase',
   },
 ] as const;
 
@@ -77,6 +78,7 @@ function InstalledCard({
   onToggle: (enabled: boolean) => void;
   onDelete?: () => void;
 }) {
+  const { t } = useTranslation();
   const icon = mcpServerIcon(item.name);
   return (
     <div className="border-border bg-card flex min-w-[280px] flex-1 items-center gap-3 rounded-xl border px-4 py-3">
@@ -99,7 +101,7 @@ function InstalledCard({
       <SettingsSwitch
         checked={item.enabled}
         onChange={onToggle}
-        label={`Toggle ${item.name}`}
+        label={t('customize.mcpPage.toggle', { name: item.name })}
       />
       {onDelete && (
         <button
@@ -107,7 +109,7 @@ function InstalledCard({
           className="text-destructive hover:bg-destructive/10 rounded-md px-2 py-1 text-xs underline"
           onClick={onDelete}
         >
-          Delete
+          {t('common.delete')}
         </button>
       )}
     </div>
@@ -115,6 +117,7 @@ function InstalledCard({
 }
 
 export function McpSettingsScreen() {
+  const { t } = useTranslation();
   const [bundled, setBundled] = useState<string[]>([]);
   const [remote, setRemote] = useState<McpServer[]>([]);
   const [disabledMcp, setDisabledMcp] = useState<Set<string>>(new Set());
@@ -168,7 +171,7 @@ export function McpSettingsScreen() {
   const libraryItems = LIBRARY.filter(
     (item) =>
       (filter === 'all' || filter === 'library') &&
-      (!q || item.name.toLowerCase().includes(q) || item.description.toLowerCase().includes(q)),
+      (!q || item.name.toLowerCase().includes(q) || t(item.descriptionKey).toLowerCase().includes(q)),
   ).slice(0, 1);
 
   const showInstalled = filter === 'all' || filter === 'installed';
@@ -189,12 +192,12 @@ export function McpSettingsScreen() {
 
   const deleteInstalled = async (item: InstalledItem) => {
     if (item.source !== 'remote' || !item.remoteId) return;
-    if (!confirm(`Delete MCP server "${item.name}"?`)) return;
+    if (!confirm(t('customize.mcpPage.confirmDelete', { name: item.name }))) return;
     try {
       await settingsApi.deleteMcpServer(item.remoteId);
       await load();
     } catch (err) {
-      alert(`Failed to delete server: ${err instanceof Error ? err.message : String(err)}`);
+      alert(t('customize.mcpPage.deleteFailed', { error: err instanceof Error ? err.message : String(err) }));
     }
   };
 
@@ -205,7 +208,7 @@ export function McpSettingsScreen() {
       try {
         headers = JSON.parse(form.headers) as Record<string, string>;
       } catch {
-        alert('Headers must be valid JSON');
+        alert(t('customize.mcpPage.headersJsonError'));
         return;
       }
     }
@@ -220,7 +223,7 @@ export function McpSettingsScreen() {
       setForm({ name: '', transport: 'sse', url: '', headers: '' });
       await load();
     } catch (err) {
-      alert(`Failed to add server: ${err instanceof Error ? err.message : String(err)}`);
+      alert(t('customize.mcpPage.addFailed', { error: err instanceof Error ? err.message : String(err) }));
     }
   };
 
@@ -232,11 +235,11 @@ export function McpSettingsScreen() {
   return (
     <div className="mx-auto max-w-5xl">
       <PageHeader
-        title="Model Context Protocol (MCP)"
-        description="Add Model Context Protocol servers to expand what your agent can do. Toggle installed servers on or off without uninstalling."
+        title={t('customize.mcpPage.title')}
+        description={t('customize.mcpPage.description')}
         action={
           <PrimaryActionButton onClick={() => setDialogOpen(true)}>
-            Add custom server
+            {t('customize.mcpPage.addCustom')}
           </PrimaryActionButton>
         }
       />
@@ -244,36 +247,36 @@ export function McpSettingsScreen() {
       <PageSearchBar
         value={query}
         onChange={setQuery}
-        placeholder="Search MCP servers…"
+        placeholder={t('customize.mcpPage.searchPlaceholder')}
         filter={
           <select
             className="border-input bg-background h-10 rounded-lg border px-3 text-sm"
             value={filter}
             onChange={(e) => setFilter(e.target.value as typeof filter)}
           >
-            <option value="all">All</option>
-            <option value="installed">Installed</option>
-            <option value="library">Library</option>
+            <option value="all">{t('customize.mcpPage.filterAll')}</option>
+            <option value="installed">{t('customize.mcpPage.installed')}</option>
+            <option value="library">{t('customize.mcpPage.libraryTitle')}</option>
           </select>
         }
       />
 
       <SettingsInlineEditor
         open={dialogOpen}
-        title="Add MCP server"
-        description="Connect a remote MCP server over SSE or HTTP."
-        submitLabel="Add server"
+        title={t('customize.mcpPage.addTitle')}
+        description={t('customize.mcpPage.editorDescription')}
+        submitLabel={t('customize.mcpPage.addServer')}
         onSubmit={() => void save()}
         onCancel={() => setDialogOpen(false)}
       >
-        <FormField label="Name" required>
+        <FormField label={t('common.name')} required>
           <FormInput
-            placeholder="e.g. github"
+            placeholder={t('customize.mcpPage.namePlaceholder')}
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
           />
         </FormField>
-        <FormField label="Transport" hint="SSE for streaming endpoints; HTTP for streamable HTTP MCP.">
+        <FormField label={t('customize.mcpPage.transport')} hint={t('customize.mcpPage.transportHint')}>
           <FormSelect
             value={form.transport}
             onChange={(e) =>
@@ -292,8 +295,8 @@ export function McpSettingsScreen() {
           />
         </FormField>
         <FormField
-          label="Headers"
-          hint='Optional JSON object, e.g. {"Authorization":"Bearer ..."}'
+          label={t('customize.mcpPage.headers')}
+          hint={t('customize.mcpPage.headersHint')}
         >
           <FormTextarea
             className="min-h-20 font-mono text-xs"
@@ -306,10 +309,10 @@ export function McpSettingsScreen() {
 
       {showInstalled && (
         <section className="mb-8">
-          <SectionHeading title="Installed" count={installedItems.length} />
+          <SectionHeading title={t('customize.mcpPage.installed')} count={installedItems.length} />
           <div className="flex flex-col gap-2">
             {installedItems.length === 0 && (
-              <p className="text-muted-foreground text-sm">No installed servers match your search.</p>
+              <p className="text-muted-foreground text-sm">{t('customize.mcpPage.noInstalledMatch')}</p>
             )}
             <div className="flex flex-wrap gap-2">
               {installedItems.map((item) => (
@@ -327,7 +330,7 @@ export function McpSettingsScreen() {
 
       {showLibrary && (
         <section>
-          <SectionHeading title="Library" count={libraryItems.length} />
+          <SectionHeading title={t('customize.mcpPage.libraryTitle')} count={libraryItems.length} />
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {libraryItems.map((item) => {
               const installed = installedNames.has(item.id) || installedNames.has(item.name.toLowerCase());
@@ -359,7 +362,7 @@ export function McpSettingsScreen() {
                     {item.transport}
                   </div>
                   <p className="text-muted-foreground line-clamp-2 text-xs leading-relaxed">
-                    {item.description}
+                    {t(item.descriptionKey)}
                   </p>
                 </button>
               );

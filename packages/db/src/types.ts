@@ -80,10 +80,9 @@ export interface TenantSettingsRow {
   disabledSkills: string[];
   disabledMcpServers: string[];
   modelSettings?: {
-    openaiApiKeyEnabled?: boolean;
-    openaiApiKey?: string;
-    overrideOpenAIBaseUrl?: boolean;
-    openaiBaseUrl?: string;
+    modelName?: string;
+    requestUrl?: string;
+    apiKey?: string;
   };
   updatedAt?: string;
 }

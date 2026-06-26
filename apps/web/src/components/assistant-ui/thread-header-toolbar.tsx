@@ -2,6 +2,7 @@ import { useAuiState } from '@assistant-ui/react';
 import { useTranslation } from 'react-i18next';
 import { RightSidebarTrigger, useRightSidebar, useSidebar } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
+import { startWindowDrag } from '@/lib/window-drag';
 
 export function ThreadHeaderToolbar() {
   const { t } = useTranslation();
@@ -14,6 +15,8 @@ export function ThreadHeaderToolbar() {
     <header className="flex h-8 shrink-0 items-center gap-0.5 bg-background px-2">
       {state === 'expanded' && (
         <h1
+          data-tauri-drag-region
+          onMouseDown={startWindowDrag}
           className={cn(
             'min-w-0 flex-1 truncate px-1 text-xs font-medium',
             !title?.trim() && 'text-muted-foreground',

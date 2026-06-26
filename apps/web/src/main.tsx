@@ -1,12 +1,19 @@
-import { StrictMode, useEffect, useState } from 'react';
+import { Component, StrictMode, useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { apiUrl, installApiFetchShim } from '@/lib/api-base';
+import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import '@/i18n';
 import { App } from './App';
 import './index.css';
 
 installApiFetchShim();
+
+// Child web-views are native layers above the UI; clear any leftover instance on load
+// (e.g. Vite HMR) so the splash screen is not partially covered.
+if (isTauri()) {
+  void hideWebView();
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -48,12 +55,60 @@ function setSplashError(message: string, onRetry: () => void): void {
   });
 }
 
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="bg-background text-foreground flex min-h-dvh flex-col items-center justify-center gap-3 p-8 text-center">
+          <p className="text-lg font-medium">界面加载失败</p>
+          <p className="text-muted-foreground max-w-md text-sm">{this.state.error.message}</p>
+          <button
+            type="button"
+            className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm"
+            onClick={() => window.location.reload()}
+          >
+            重新加载
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function StartupError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="bg-background text-foreground flex min-h-dvh flex-col items-center justify-center gap-3 p-8 text-center">
+      <p className="text-lg font-medium">本地服务暂未就绪</p>
+      <p className="text-muted-foreground max-w-md text-sm">{message}</p>
+      <p className="text-muted-foreground max-w-md text-xs">
+        桌面端请用 <code className="font-mono">npm run -w @veylin/desktop dev</code> 启动；仅 Web 开发请确认 8787 端口上的 server 已运行。
+      </p>
+      <button
+        type="button"
+        className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm"
+        onClick={onRetry}
+      >
+        重试
+      </button>
+    </div>
+  );
+}
+
 function StartupGate() {
   const [ready, setReady] = useState(false);
+  const [startupError, setStartupError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     const signal = { cancelled: false };
+    setStartupError(null);
     void waitForApiReady(signal)
       .then(() => {
         if (!signal.cancelled) {
@@ -63,9 +118,9 @@ function StartupGate() {
       })
       .catch((err) => {
         if (!signal.cancelled) {
-          setSplashError(err instanceof Error ? err.message : String(err), () =>
-            setAttempt((value) => value + 1),
-          );
+          const message = err instanceof Error ? err.message : String(err);
+          setStartupError(message);
+          setSplashError(message, () => setAttempt((value) => value + 1));
         }
       });
     return () => {
@@ -73,7 +128,18 @@ function StartupGate() {
     };
   }, [attempt]);
 
-  if (ready) return <App />;
+  if (startupError) {
+    return <StartupError message={startupError} onRetry={() => setAttempt((value) => value + 1)} />;
+  }
+
+  if (ready) {
+    return (
+      <AppErrorBoundary>
+        <App />
+      </AppErrorBoundary>
+    );
+  }
+
   return null;
 }
 

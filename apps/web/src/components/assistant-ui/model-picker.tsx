@@ -1,13 +1,12 @@
 import { ChevronDownIcon } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { getChatSettings, setChatSettings, onChatSettingsChange, type ModelKey } from '@/lib/chat-settings';
-import {
-  listEnabledModels,
-  onModelSettingsChange,
-  type ModelCatalogEntry,
-} from '@/lib/model-settings';
+import { onModelSettingsChange } from '@/lib/model-settings';
+import { listConfiguredModels } from '@/lib/model-availability';
+import { useModelProvider } from '@/hooks/use-model-provider';
 
 export type { ModelKey };
 
@@ -15,16 +14,23 @@ export function getSelectedModel(): ModelKey {
   return getChatSettings().model;
 }
 
-/** Composer model picker — shows the models the user enabled in Settings. */
+/** Composer model picker — only shows models with a configured API key. */
 export function ModelPicker({ className }: { className?: string }) {
+  const { t } = useTranslation();
+  const { provider, loading } = useModelProvider();
   const [model, setModel] = useState<ModelKey>(() => getSelectedModel());
-  const [models, setModels] = useState<ModelCatalogEntry[]>(() => listEnabledModels());
+  const [catalogVersion, setCatalogVersion] = useState(0);
   const [open, setOpen] = useState(false);
+
+  const models = useMemo(
+    () => listConfiguredModels(provider),
+    [provider, catalogVersion],
+  );
 
   useEffect(() => {
     const sync = () => {
       setModel(getSelectedModel());
-      setModels(listEnabledModels());
+      setCatalogVersion((v) => v + 1);
     };
     const offChat = onChatSettingsChange(sync);
     const offModels = onModelSettingsChange(sync);
@@ -42,9 +48,15 @@ export function ModelPicker({ className }: { className?: string }) {
     setOpen(false);
   };
 
+  if (loading) {
+    return <span className="text-muted-foreground px-2 text-xs">…</span>;
+  }
+
   if (!current) {
     return (
-      <span className="text-muted-foreground px-2 text-xs">No models enabled</span>
+      <span className="text-muted-foreground px-2 text-xs">
+        {t('settings.models.notConfigured')}
+      </span>
     );
   }
 

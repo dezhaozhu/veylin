@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { SkillListItem } from '@/hooks/settings/api';
 import { settingsApi } from '@/hooks/settings/api';
 import { SettingsSwitch } from '../settings-switch';
@@ -27,6 +28,8 @@ function SkillCard({
   onEdit?: () => void;
   onDelete?: () => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="border-border bg-card flex items-start gap-3 rounded-xl border p-4">
       <div className="bg-primary/10 text-primary flex size-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold">
@@ -41,7 +44,7 @@ function SkillCard({
               skill.source === 'bundled' ? 'bg-muted text-muted-foreground' : 'bg-blue-500/15 text-blue-600',
             )}
           >
-            {skill.source}
+            {t(`customize.skillsPage.source.${skill.source}`)}
           </span>
         </div>
         {skill.description && (
@@ -54,30 +57,31 @@ function SkillCard({
         )}
         {skill.triggers?.length > 0 && (
           <p className="text-muted-foreground mt-1 text-xs">
-            Triggers: {skill.triggers.join(', ')}
+            {t('customize.skillsPage.triggers', { triggers: skill.triggers.join(', ') })}
           </p>
         )}
         {skill.source === 'custom' && (
           <div className="mt-2 flex gap-3">
             {onEdit && (
               <button type="button" className="text-xs underline" onClick={onEdit}>
-                Edit
+                {t('common.edit')}
               </button>
             )}
             {onDelete && (
               <button type="button" className="text-destructive text-xs underline" onClick={onDelete}>
-                Delete
+                {t('common.delete')}
               </button>
             )}
           </div>
         )}
       </div>
-      <SettingsSwitch checked={skill.enabled} onChange={onToggle} label={`Toggle ${skill.name}`} />
+      <SettingsSwitch checked={skill.enabled} onChange={onToggle} label={t('customize.skillsPage.toggle', { name: skill.name })} />
     </div>
   );
 }
 
 export function SkillsSettingsScreen() {
+  const { t } = useTranslation();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -155,49 +159,49 @@ export function SkillsSettingsScreen() {
       setEditing(null);
       await load();
     } catch (err) {
-      alert(`Failed to save skill: ${err instanceof Error ? err.message : String(err)}`);
+      alert(t('customize.skillsPage.saveFailed', { error: err instanceof Error ? err.message : String(err) }));
     }
   };
 
   if (loading) {
-    return <div className="text-muted-foreground text-sm">Loading skills…</div>;
+    return <div className="text-muted-foreground text-sm">{t('customize.skillsPage.loading')}</div>;
   }
 
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader
-        title="Skills"
-        description="Enable bundled skills or create custom knowledge blocks that agents can activate during conversations."
-        action={<PrimaryActionButton onClick={openCreate}>Add custom skill</PrimaryActionButton>}
+        title={t('customize.skillsPage.title')}
+        description={t('customize.skillsPage.description')}
+        action={<PrimaryActionButton onClick={openCreate}>{t('customize.skillsPage.addCustom')}</PrimaryActionButton>}
       />
 
-      <PageSearchBar value={query} onChange={setQuery} placeholder="Search skills…" />
+      <PageSearchBar value={query} onChange={setQuery} placeholder={t('customize.skillsPage.searchPlaceholder')} />
 
       <SettingsInlineEditor
         open={dialogOpen}
-        title={editing ? 'Edit skill' : 'Add custom skill'}
-        description="Skills provide specialized knowledge the agent can load when relevant."
-        submitLabel={editing ? 'Save changes' : 'Add skill'}
+        title={editing ? t('customize.skillsPage.editTitle') : t('customize.skillsPage.addTitle')}
+        description={t('customize.skillsPage.editorDescription')}
+        submitLabel={editing ? t('common.saveChanges') : t('customize.skillsPage.addSkill')}
         onSubmit={() => void saveCustom()}
         onCancel={() => setDialogOpen(false)}
       >
-        <FormField label="Name" required>
+        <FormField label={t('common.name')} required>
           <FormInput
-            placeholder="e.g. schedule-risk-review"
+            placeholder={t('customize.skillsPage.namePlaceholder')}
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
           />
         </FormField>
-        <FormField label="Description" hint="Short summary shown in the skills list.">
+        <FormField label={t('common.description')} hint={t('customize.skillsPage.descriptionHint')}>
           <FormInput
-            placeholder="What this skill helps with"
+            placeholder={t('customize.skillsPage.descriptionPlaceholder')}
             value={form.description}
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
           />
         </FormField>
-        <FormField label="Content" required hint="Markdown body injected when the skill is activated.">
+        <FormField label={t('common.content')} required hint={t('customize.skillsPage.contentHint')}>
           <FormTextarea
-            placeholder="## When to use&#10;..."
+            placeholder={t('customize.skillsPage.contentPlaceholder')}
             value={form.content}
             onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
           />
@@ -205,7 +209,7 @@ export function SkillsSettingsScreen() {
       </SettingsInlineEditor>
 
       <section className="mb-8">
-        <SectionHeading title="Built-in" count={bundled.length} />
+        <SectionHeading title={t('customize.skillsPage.builtIn')} count={bundled.length} />
         <div className="flex flex-col gap-2">
           {bundled.map((s) => (
             <SkillCard
@@ -218,7 +222,7 @@ export function SkillsSettingsScreen() {
       </section>
 
       <section className="mb-8">
-        <SectionHeading title="Custom" count={custom.length} />
+        <SectionHeading title={t('customize.skillsPage.custom')} count={custom.length} />
         <div className="flex flex-col gap-2">
           {custom.map((s) => (
             <SkillCard
@@ -232,7 +236,7 @@ export function SkillsSettingsScreen() {
               }}
               onEdit={() => openEdit(s)}
               onDelete={async () => {
-                if (s.id && confirm('Delete this skill?')) {
+                if (s.id && confirm(t('customize.skillsPage.confirmDelete'))) {
                   await settingsApi.deleteSkill(s.id);
                   await load();
                 }

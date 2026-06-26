@@ -3,7 +3,7 @@
  * AI SDK transport body. Persisted to localStorage; changes broadcast a
  * `veylin-chat-settings` event so components stay in sync.
  */
-/** A model id from the user-configurable catalog (built-in or custom). */
+/** A model id from the user catalog. */
 export type ModelKey = string;
 
 export interface ChatSettings {
@@ -20,7 +20,7 @@ const KEY = 'veylin-chat-settings';
 const EVENT = 'veylin-chat-settings';
 
 const DEFAULTS: ChatSettings = {
-  model: 'deepseek',
+  model: '',
   agentId: 'veylin',
   planMode: false,
   pendingSkill: null,

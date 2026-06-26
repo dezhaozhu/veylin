@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import { startWindowDrag } from '@/lib/window-drag';
 
 export function PageHeader({
   title,
@@ -12,7 +13,11 @@ export function PageHeader({
 }) {
   return (
     <div className="border-border mb-6 flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-start sm:justify-between">
-      <div className="min-w-0">
+      <div
+        className="min-w-0"
+        data-tauri-drag-region
+        onMouseDown={startWindowDrag}
+      >
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {description && (
           <p className="text-muted-foreground mt-1 max-w-2xl text-sm leading-relaxed">
@@ -20,7 +25,7 @@ export function PageHeader({
           </p>
         )}
       </div>
-      {action && <div className="shrink-0">{action}</div>}
+      {action && <div className="shrink-0" data-no-window-drag>{action}</div>}
     </div>
   );
 }

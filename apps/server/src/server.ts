@@ -151,6 +151,7 @@ import {
   applyTenantModelSettings,
   getModelSettings,
   updateModelSettings,
+  clearModelSettings,
 } from './model-settings-store';
 import { customSkillInputSchema, ruleInputSchema, mcpServerInputSchema, automationInputSchema, workflowInputSchema } from '@veylin/shared';
 import { z } from 'zod';
@@ -273,18 +274,23 @@ async function main() {
 
   app.get('/api/model-settings', async (req) => {
     const ctx = await resolveContext(req.headers);
+    await applyTenantModelSettings(ctx.tenantId);
     return { settings: await getModelSettings(ctx.tenantId) };
   });
 
   app.put('/api/model-settings', async (req) => {
     const ctx = await resolveContext(req.headers);
     const body = (req.body ?? {}) as {
-      openaiApiKeyEnabled?: boolean;
-      openaiApiKey?: string;
-      overrideOpenAIBaseUrl?: boolean;
-      openaiBaseUrl?: string;
+      modelName?: string;
+      requestUrl?: string;
+      apiKey?: string;
     };
     return { settings: await updateModelSettings(ctx.tenantId, body) };
+  });
+
+  app.delete('/api/model-settings', async (req) => {
+    const ctx = await resolveContext(req.headers);
+    return { settings: await clearModelSettings(ctx.tenantId) };
   });
 
   app.get('/api/agent-context', async (req) => {
@@ -1095,8 +1101,7 @@ async function main() {
         perPage: false,
       });
       const stored = recalled?.messages ?? [];
-      const modelKey =
-        query.model === 'zenmux' || query.model === 'deepseek' ? query.model : 'deepseek';
+      const modelKey = query.model ?? 'deepseek';
       const compressor = new ContextCompression({
         summarizer: buildSummarizer(modelKey),
       });
@@ -1469,8 +1474,8 @@ async function main() {
     schedule: scheduleTools,
     subagent: buildSubagentTool(runtime, { boss, mcpToolsets, scheduleTools }),
     knowledge: { knowledge_search: buildKnowledgeSearchTool() },
-    ...automationTools,
-    ...workflowTools,
+    automation: automationTools,
+    workflow: workflowTools,
   };
 
   await registerWorkers(boss, async (job: SubagentJob) => {

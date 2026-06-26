@@ -1,10 +1,5 @@
-/**
- * Only two models per local policy: DeepSeek-V4-Flash (default) and
- * ZenMux Gemini-3.1-flash. Both are reached via OpenAI-compatible endpoints,
- * expressed as Mastra custom-provider model configs.
- */
-
-export type ModelKey = 'deepseek' | 'zenmux';
+/** Catalog model id selected in chat (built-in or custom). */
+export type ModelKey = string;
 
 export interface ModelConfig {
   providerId: string;
@@ -14,10 +9,9 @@ export interface ModelConfig {
 }
 
 export interface RuntimeModelOverrides {
-  openaiApiKeyEnabled?: boolean;
-  openaiApiKey?: string;
-  overrideOpenAIBaseUrl?: boolean;
-  openaiBaseUrl?: string;
+  modelName?: string;
+  requestUrl?: string;
+  apiKey?: string;
 }
 
 let runtimeOverrides: RuntimeModelOverrides = {};
@@ -26,41 +20,57 @@ export function setRuntimeModelOverrides(overrides: RuntimeModelOverrides): void
   runtimeOverrides = { ...overrides };
 }
 
+export function getRuntimeModelOverrides(): RuntimeModelOverrides {
+  return { ...runtimeOverrides };
+}
+
 function requiresUserModelSettings(): boolean {
   return process.env.VEYLIN_REQUIRE_USER_MODEL_SETTINGS === '1';
 }
 
-function applyOpenAICompatibleOverrides(config: ModelConfig): ModelConfig {
-  const configuredUserKey =
-    runtimeOverrides.openaiApiKeyEnabled && runtimeOverrides.openaiApiKey?.trim()
-      ? runtimeOverrides.openaiApiKey.trim()
-      : '';
+function resolvedModelName(): string {
+  return runtimeOverrides.modelName?.trim() ?? '';
+}
 
+export function isModelProviderConfigured(overrides: RuntimeModelOverrides): boolean {
+  const apiKey = overrides.apiKey?.trim() ?? '';
+  const requestUrl = overrides.requestUrl?.trim() ?? '';
+  const modelName = overrides.modelName?.trim() ?? '';
+  return Boolean(apiKey && requestUrl && modelName);
+}
+
+export function isRuntimeModelConfigured(): boolean {
+  return isModelProviderConfigured(runtimeOverrides);
+}
+
+function defaultEnvConfig(catalogId: string): ModelConfig {
   return {
-    ...config,
-    apiKey: configuredUserKey || (requiresUserModelSettings() ? '' : config.apiKey),
-    url:
-      runtimeOverrides.overrideOpenAIBaseUrl && runtimeOverrides.openaiBaseUrl?.trim()
-        ? runtimeOverrides.openaiBaseUrl.trim()
-        : config.url,
+    providerId: catalogId,
+    modelId: process.env.VEYLIN_MODEL ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-flash',
+    url: process.env.VEYLIN_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1',
+    apiKey:
+      process.env.VEYLIN_API_KEY ??
+      process.env.DEEPSEEK_API_KEY ??
+      process.env.ZENMUX_API_KEY ??
+      '',
   };
 }
 
-export function getModelConfig(key: ModelKey): ModelConfig {
-  if (key === 'zenmux') {
-    return applyOpenAICompatibleOverrides({
-      providerId: 'zenmux',
-      modelId: process.env.ZENMUX_MODEL ?? 'google/gemini-3.1-flash-lite-preview',
-      url: process.env.ZENMUX_BASE_URL ?? 'https://zenmux.ai/api/v1',
-      apiKey: process.env.ZENMUX_API_KEY ?? '',
-    });
-  }
-  return applyOpenAICompatibleOverrides({
-    providerId: 'deepseek',
-    modelId: process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-flash',
-    url: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1',
-    apiKey: process.env.DEEPSEEK_API_KEY ?? '',
-  });
+function applyOpenAICompatibleOverrides(config: ModelConfig): ModelConfig {
+  const configuredApiKey = runtimeOverrides.apiKey?.trim() ?? '';
+  const modelName = resolvedModelName();
+
+  return {
+    ...config,
+    apiKey: configuredApiKey || (requiresUserModelSettings() ? '' : config.apiKey),
+    url: runtimeOverrides.requestUrl?.trim() || config.url,
+    modelId: modelName || config.modelId,
+  };
 }
 
-export const DEFAULT_MODEL: ModelKey = 'deepseek';
+/** Resolve LLM config for any catalog model id using the shared provider settings. */
+export function getModelConfig(catalogId: ModelKey = DEFAULT_MODEL): ModelConfig {
+  return applyOpenAICompatibleOverrides(defaultEnvConfig(catalogId));
+}
+
+export const DEFAULT_MODEL = 'default';

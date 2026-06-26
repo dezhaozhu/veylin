@@ -43,6 +43,7 @@ import { SettingsPanelProvider, useSettingsPanel } from '@/hooks/settings/use-se
 import { CustomizeWorkspace } from '@/components/features/customize/customize-workspace';
 import { AutomateWorkspace } from '@/components/features/automate/automate-workspace';
 import { SettingsWorkspace } from '@/components/features/settings/settings-workspace';
+import { WorkspacePanelDragOverlay } from '@/components/features/workspace-panel-drag-overlay';
 import {
   RightSidebarProvider,
   SidebarInset,
@@ -93,15 +94,18 @@ function ChatShell() {
           <div className="flex h-dvh w-full overflow-hidden">
             <ThreadListSidebar />
             {view === 'customize' ? (
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                <WorkspacePanelDragOverlay />
                 <CustomizeWorkspace />
               </div>
             ) : view === 'automate' ? (
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                <WorkspacePanelDragOverlay />
                 <AutomateWorkspace />
               </div>
             ) : view === 'settings' ? (
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                <WorkspacePanelDragOverlay />
                 <SettingsWorkspace />
               </div>
             ) : (
