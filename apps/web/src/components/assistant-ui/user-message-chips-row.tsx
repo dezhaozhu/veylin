@@ -9,10 +9,10 @@ import { readPendingSkillFromMessage } from '@/lib/pending-skill-message';
 
 export function userMessageHasDisplayChips(message: {
   role?: string;
-  attachments?: unknown[];
+  attachments?: readonly unknown[];
   metadata?: unknown;
-  parts?: unknown[];
-  content?: unknown[];
+  parts?: readonly unknown[];
+  content?: readonly unknown[];
 }): boolean {
   if (message.role !== 'user') return false;
   const hasSkill = readPendingSkillFromMessage(message) != null;

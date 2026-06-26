@@ -6,8 +6,8 @@ export const PENDING_SKILL_DATA_PART = 'data-veylin-pendingSkill';
 
 export function readPendingSkillFromMessage(message: {
   metadata?: unknown;
-  parts?: unknown[];
-  content?: unknown[];
+  parts?: readonly unknown[];
+  content?: readonly unknown[];
 }): string | null {
   const custom = (message.metadata as { custom?: { pendingSkill?: string } } | undefined)?.custom;
   if (custom?.pendingSkill) return custom.pendingSkill;

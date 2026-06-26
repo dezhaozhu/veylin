@@ -22,9 +22,10 @@ import {
 
 import { readPendingSkillFromMessage } from '@/lib/pending-skill-message';
 
-function countFileParts(messages: Array<{ parts?: unknown[] }>): number {
-  return messages.reduce((total, message) => {
-    const parts = message.parts ?? [];
+function countFileParts(messages: ReadonlyArray<unknown>): number {
+  return messages.reduce<number>((total, message) => {
+    if (!message || typeof message !== 'object') return total;
+    const parts = (message as { parts?: readonly unknown[] }).parts ?? [];
     return (
       total +
       parts.filter(
@@ -37,11 +38,11 @@ function countFileParts(messages: Array<{ parts?: unknown[] }>): number {
   }, 0);
 }
 
-function countSkillMarkers(messages: Array<{ parts?: unknown[]; metadata?: unknown }>): number {
-  return messages.reduce(
-    (total, message) => total + (readPendingSkillFromMessage(message) ? 1 : 0),
-    0,
-  );
+function countSkillMarkers(messages: ReadonlyArray<unknown>): number {
+  return messages.reduce<number>((total, message) => {
+    if (!message || typeof message !== 'object') return total;
+    return total + (readPendingSkillFromMessage(message as { parts?: readonly unknown[]; metadata?: unknown }) ? 1 : 0);
+  }, 0);
 }
 
 export const toExportedMessageRepository = <TMessage>(
