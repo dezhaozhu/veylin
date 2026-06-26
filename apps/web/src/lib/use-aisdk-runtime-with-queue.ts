@@ -30,7 +30,6 @@ import type { ReadonlyJSONObject } from "assistant-stream/utils";
 import { sliceMessagesUntil } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/sliceMessagesUntil";
 import { toCreateMessage } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/toCreateMessage";
 import { vercelAttachmentAdapter } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/vercelAttachmentAdapter";
-import { getVercelAIMessages } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/getVercelAIMessages";
 import { AISDKMessageConverter } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/convertMessage";
 import { wrapModelContentEnvelope } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/modelContentEnvelope";
 import {
@@ -51,6 +50,11 @@ import { prepareThreadRewind } from "./prepare-thread-rewind";
 import { getChatSettings, setChatSettings } from "./chat-settings";
 import { stripAllPendingSkillTokens } from "./pending-skill-text";
 import { requestChatStop } from "./chat-stop";
+import {
+  getActiveBranchThreadMessages,
+  isThreadMessageInput,
+  resolveThreadMessagesToUi,
+} from "./resolve-branch-ui-messages";
 
 export type CustomToCreateMessageFunction = <
   UI_MESSAGE extends UIMessage = UIMessage,
@@ -166,6 +170,37 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   );
   const mcpAppMetadataCacheRef = useRef<Map<string, McpAppMetadata>>(new Map());
   const lastRunConfigRef = useRef<RunConfig | undefined>(undefined);
+  const messageCacheRef = useRef(new Map<string, UI_MESSAGE>());
+
+  const rememberUiMessages = (uiMessages: readonly UI_MESSAGE[]) => {
+    for (const message of uiMessages) {
+      messageCacheRef.current.set(message.id, message);
+    }
+  };
+
+  const applyThreadMessagesToChat = (
+    input: readonly UI_MESSAGE[] | readonly ThreadMessage[],
+  ) => {
+    // Branch picker calls setMessages with bound UI messages only; onImport passes
+    // full ThreadMessage[]. Always resolve the active branch from the repository
+    // export when we are not given thread messages directly.
+    const threadMessages = isThreadMessageInput(input)
+      ? input
+      : getActiveBranchThreadMessages(runtimeRef.current.thread.export());
+
+    const uiMessages = resolveThreadMessagesToUi(
+      threadMessages,
+      messageCacheRef.current,
+    );
+    if (uiMessages.length === 0 && threadMessages.length > 0) {
+      console.warn(
+        "[chat] branch switch could not resolve UI messages; keeping current chat state",
+      );
+      return;
+    }
+    rememberUiMessages(uiMessages);
+    chatHelpers.setMessages(uiMessages);
+  };
 
   const hasExecutingTools = Object.values(toolStatuses).some(
     (s) => s?.type === "executing",
@@ -218,6 +253,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       AISDKStorageFormat
     >,
     (messages) => {
+      rememberUiMessages(messages);
       chatHelpers.setMessages(messages);
     },
   );
@@ -304,6 +340,10 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     return () => setComposerQueueRuntime(null);
   }, [queueCtrl]);
 
+  useEffect(() => {
+    rememberUiMessages(chatHelpers.messages);
+  }, [chatHelpers.messages]);
+
   const stampedAssistantIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!isRunning) return;
@@ -356,20 +396,8 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     unstable_enableToolInvocations: true,
     setToolStatuses,
     queue: queueCtrl.adapter,
-    setMessages: (messages) =>
-      chatHelpers.setMessages(
-        messages
-          .map(getVercelAIMessages<UI_MESSAGE>)
-          .filter(Boolean)
-          .flat(),
-      ),
-    onImport: (messages) =>
-      chatHelpers.setMessages(
-        messages
-          .map(getVercelAIMessages<UI_MESSAGE>)
-          .filter(Boolean)
-          .flat(),
-      ),
+    setMessages: applyThreadMessagesToChat,
+    onImport: applyThreadMessagesToChat,
     onExportExternalState: (): MessageFormatRepository<UI_MESSAGE> => {
       const exported = runtimeRef.current.thread.export();
 
