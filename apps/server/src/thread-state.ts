@@ -5,8 +5,10 @@ import {
   getThreadStateRow,
   insertThreadState,
   listThreadStatesForResource,
+  listThreadStatesForTenant,
   updateThreadState,
 } from '@veylin/db';
+import { isDesktopAuth } from './auth';
 import {
   mergeSkillNamesIntoWorkingMemory,
   replaceThreadMessages,
@@ -54,6 +56,13 @@ function toRow(r: Awaited<ReturnType<typeof getThreadStateRow>>): ThreadStateRow
 export async function ensureThreadState(identity: ThreadIdentity): Promise<ThreadStateRow> {
   const existing = toRow(await getThreadStateRow(identity.threadId));
   if (existing) {
+    if (isDesktopAuth) {
+      if (existing.tenantId !== identity.tenantId) {
+        await updateThreadState(identity.threadId, { tenantId: identity.tenantId });
+        existing.tenantId = identity.tenantId;
+      }
+      return existing;
+    }
     if (
       existing.tenantId !== identity.tenantId ||
       existing.resourceId !== identity.resourceId
@@ -88,16 +97,78 @@ export async function getThreadState(threadId: string): Promise<ThreadStateRow |
   return toRow(await getThreadStateRow(threadId));
 }
 
+/** Worker / automation threads — excluded from the sidebar chat list. */
+export function isSidebarChatThreadId(threadId: string): boolean {
+  if (threadId.startsWith('task-')) return false;
+  if (threadId.startsWith('subagent-')) return false;
+  if (threadId.startsWith('cron-')) return false;
+  return true;
+}
+
+/** Read-only thread resolve: returns null instead of throwing when missing or not owned. */
+export async function resolveThreadForRead(
+  threadId: string,
+  ctx: { tenantId: string; userId: string },
+): Promise<ThreadStateRow | null> {
+  const row = await getThreadState(threadId);
+  if (!row) return null;
+  if (isDesktopAuth) {
+    if (row.tenantId !== ctx.tenantId) {
+      await updateThreadState(threadId, { tenantId: ctx.tenantId });
+      row.tenantId = ctx.tenantId;
+    }
+    return row;
+  }
+  if (row.tenantId !== ctx.tenantId || row.resourceId !== ctx.userId) {
+    return null;
+  }
+  return row;
+}
+
 /** Returns 403 when an existing thread belongs to another tenant/resource. */
 export async function requireThreadOwnership(
   threadId: string,
   ctx: { tenantId: string; userId: string },
 ): Promise<ThreadStateRow> {
-  const row = await getThreadState(threadId);
-  if (!row || row.tenantId !== ctx.tenantId || row.resourceId !== ctx.userId) {
+  const row = await resolveThreadForRead(threadId, ctx);
+  if (!row) {
     throw new Error('forbidden');
   }
   return row;
+}
+
+/** Desktop startup: drop internal worker threads and empty dev leftovers. */
+export async function pruneDesktopThreadClutter(
+  tenantId: string,
+  resourceId: string,
+  memory: Memory,
+): Promise<void> {
+  if (!isDesktopAuth) return;
+
+  const rows = await listThreadStatesForTenant(tenantId);
+  for (const r of rows) {
+    const { threadId } = r;
+    if (!isSidebarChatThreadId(threadId)) {
+      await deleteThreadState(threadId).catch(() => undefined);
+      continue;
+    }
+
+    const recalled = await memory.recall({
+      threadId,
+      resourceId: r.resourceId,
+      perPage: 1,
+    });
+    const hasMessages = (recalled.messages?.length ?? 0) > 0;
+
+    if (!hasMessages) {
+      await deleteThreadState(threadId).catch(() => undefined);
+      continue;
+    }
+
+    if (r.resourceId !== resourceId) {
+      await deleteThreadState(threadId).catch(() => undefined);
+    }
+  }
 }
 
 export async function setPlanMode(threadId: string, planMode: boolean): Promise<void> {
@@ -262,7 +333,9 @@ export async function listThreadsForResource(
   resourceId: string,
   memory?: Memory,
 ): Promise<ThreadListEntry[]> {
-  const rows = await listThreadStatesForResource(tenantId, resourceId);
+  const rows = (await listThreadStatesForResource(tenantId, resourceId)).filter((row) =>
+    isSidebarChatThreadId(row.threadId),
+  );
 
   if (!memory) {
     return rows.map((row) => ({
@@ -277,7 +350,7 @@ export async function listThreadsForResource(
   for (const row of rows) {
     const recalled = await memory.recall({
       threadId: row.threadId,
-      resourceId,
+      resourceId: row.resourceId,
       perPage: 1,
     });
     if ((recalled.messages?.length ?? 0) === 0) {

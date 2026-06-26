@@ -122,7 +122,7 @@ function AutomationCard({
 }) {
   const { t } = useTranslation();
   const scheduleLabel =
-    automation.kind === 'schedule'
+    automation.kind === 'cron'
       ? (automation.cron
           ? humanizeCronExpression(automation.cron, t) ?? automation.cron
           : t('automate.scheduled'))
@@ -178,7 +178,7 @@ function AutomationCard({
 
 const EMPTY_FORM = {
   name: '',
-  kind: 'schedule' as 'schedule' | 'event',
+  kind: 'cron' as 'cron' | 'event',
   agentId: 'veylin',
   prompt: '',
   cron: '0 9 * * 1-5',
@@ -228,7 +228,7 @@ export function AutomationsSettingsScreen() {
   });
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const cronSummary = useMemo(
-    () => (form.kind === 'schedule' ? humanizeCronExpression(form.cron, t) : null),
+    () => (form.kind === 'cron' ? humanizeCronExpression(form.cron, t) : null),
     [form.kind, form.cron, t],
   );
 
@@ -348,7 +348,7 @@ export function AutomationsSettingsScreen() {
       kind: form.kind,
       agentId: form.agentId,
       prompt: form.prompt,
-      cron: form.kind === 'schedule' ? form.cron : undefined,
+      cron: form.kind === 'cron' ? form.cron : undefined,
       timezone: form.timezone,
       sourceType: form.kind === 'event' ? form.sourceType : 'cron',
       eventOn:
@@ -503,7 +503,7 @@ export function AutomationsSettingsScreen() {
       ...EMPTY_FORM,
       name: t(template.nameKey),
       prompt: t(template.promptKey),
-      kind: template.id === 'incident-hook' ? 'event' : 'schedule',
+      kind: template.id === 'incident-hook' ? 'event' : 'cron',
       sourceType: template.id === 'incident-hook' ? 'github' : 'cron',
       eventOn: template.id === 'incident-hook' ? 'pull_request.opened' : '',
       eventFilter: '',
@@ -543,13 +543,13 @@ export function AutomationsSettingsScreen() {
         <FormField label={t('automate.trigger')}>
           <FormSelect
             value={form.kind}
-            onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value as 'schedule' | 'event' }))}
+            onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value as 'cron' | 'event' }))}
           >
-            <option value="schedule">{t('automate.triggerSchedule')}</option>
+            <option value="cron">{t('automate.triggerSchedule')}</option>
             <option value="event">{t('automate.triggerEvent')}</option>
           </FormSelect>
         </FormField>
-        {form.kind === 'schedule' ? (
+        {form.kind === 'cron' ? (
           <>
             <FormField label={t('automate.cron')} hint={t('automate.cronHint')}>
               <FormInput

@@ -1,7 +1,7 @@
 export type MembershipRole = 'owner' | 'admin' | 'member';
 export type TaskStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
-export type AutomationKind = 'schedule' | 'event';
-export type WorkflowKind = 'manual' | 'schedule' | 'event';
+export type AutomationKind = 'cron' | 'event';
+export type WorkflowKind = 'manual' | 'cron' | 'event';
 export type WorkflowRunStatus = 'queued' | 'running' | 'done' | 'failed';
 export type AutomationRunStatus = 'queued' | 'running' | 'done' | 'failed';
 export type RuleTrigger = 'always' | 'keyword';
@@ -166,13 +166,13 @@ export interface WebhookEndpointRow {
   createdAt?: string;
 }
 
-export interface ScheduleSheetRow {
+export interface TableSheetRow {
   id: string;
   name: string;
   builtin: boolean;
 }
 
-export interface ScheduleColumnRow {
+export interface TableColumnRow {
   sheetId: string;
   key: string;
   name: string;
@@ -183,7 +183,7 @@ export interface ScheduleColumnRow {
   position: number;
 }
 
-export interface ScheduleRowRecord {
+export interface TableRowRecord {
   sheetId: string;
   rowKey: string;
   data: Record<string, string | number>;

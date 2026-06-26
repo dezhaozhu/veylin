@@ -7,10 +7,10 @@ import { z } from 'zod';
  *   Transform→ set / template / code
  *   Integrate→ http_request
  *   AI       → run_agent / knowledge_retrieval
- *   Data     → dataset_read / dataset_write
+ *   Data     → table_read / table_write
  *   Output   → end
  *
- * Legacy kinds (trigger/condition/knowledge_search/schedule_read/schedule_write/output)
+ * Legacy kinds (trigger/condition/knowledge_search/output)
  * remain accepted for backward compatibility and are normalized by the runner.
  */
 export const workflowNodeKindSchema = z.enum([
@@ -23,15 +23,13 @@ export const workflowNodeKindSchema = z.enum([
   'http_request',
   'knowledge_retrieval',
   'run_agent',
-  'dataset_read',
-  'dataset_write',
+  'table_read',
+  'table_write',
   'end',
   // legacy aliases
   'trigger',
   'condition',
   'knowledge_search',
-  'schedule_read',
-  'schedule_write',
   'output',
 ]);
 
@@ -81,7 +79,7 @@ export const workflowCaseSchema = z.object({
 
 export type WorkflowCase = z.infer<typeof workflowCaseSchema>;
 
-export const workflowKindSchema = z.enum(['manual', 'schedule', 'event']);
+export const workflowKindSchema = z.enum(['manual', 'cron', 'event']);
 export type WorkflowKind = z.infer<typeof workflowKindSchema>;
 
 export const workflowRunStatusSchema = z.enum(['queued', 'running', 'done', 'failed']);
@@ -185,10 +183,10 @@ export function normalizeWorkflowNodeKind(kind: string): WorkflowNodeKind {
       return 'if_else';
     case 'knowledge_search':
       return 'knowledge_retrieval';
-    case 'schedule_read':
-      return 'dataset_read';
-    case 'schedule_write':
-      return 'dataset_write';
+    case 'dataset_read':
+      return 'table_read';
+    case 'dataset_write':
+      return 'table_write';
     case 'output':
       return 'end';
     default:
@@ -212,7 +210,7 @@ export const WORKFLOW_NODE_META: WorkflowNodeMeta[] = [
   { kind: 'http_request', label: 'HTTP request', category: 'integration' },
   { kind: 'run_agent', label: 'Run agent', category: 'ai' },
   { kind: 'knowledge_retrieval', label: 'Knowledge retrieval', category: 'ai' },
-  { kind: 'dataset_read', label: 'Read dataset', category: 'data' },
-  { kind: 'dataset_write', label: 'Write dataset', category: 'data' },
+  { kind: 'table_read', label: 'Read table', category: 'data' },
+  { kind: 'table_write', label: 'Write table', category: 'data' },
   { kind: 'end', label: 'Output', category: 'output' },
 ];

@@ -9,7 +9,15 @@ import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { toAISdkStream } from '@mastra/ai-sdk';
 import { MCPClient } from '@mastra/mcp';
 import { RequestContext } from '@mastra/core/di';
-import { createRuntime, DEFAULT_AGENT_ID, getModelConfig, type ModelKey } from '@veylin/runtime';
+import {
+  createRuntime,
+  DEFAULT_AGENT_ID,
+  getModelConfig,
+  getDefaultCatalogModel,
+  listModelCatalogPublic,
+  loadModelCatalog,
+  type ModelKey,
+} from '@veylin/runtime';
 import { setThreadPlanMode } from '@veylin/tools';
 import { toNodeHandler } from 'better-auth/node';
 import { auth, isDesktopAuth } from './auth';
@@ -34,24 +42,24 @@ import { buildAttachedBrowserBlock, lastUserText, modelSupportsImages, parseChat
 import { buildAgentTaskTools } from './agent-task-tool';
 import { executeSubagentJob, CancelledTaskError, listDispatchableCustomAgentIds } from './agent-task-runner';
 import { scheduleDreamConsolidation } from './dream-service';
-import { buildScheduleTools } from './schedule-tools';
+import { buildTableTools } from './table-tools';
 import {
-  addScheduleColumn,
-  addScheduleRow,
-  createScheduleSheet,
-  deleteScheduleColumn,
-  deleteScheduleRows,
-  deleteScheduleSheet,
-  importScheduleSheet,
-  initScheduleStore,
-  listSchedule,
-  listScheduleColumns,
-  listScheduleSheets,
-  resolveScheduleSheetId,
-  updateScheduleRow,
-  DEFAULT_SCHEDULE_SHEET,
-  type ScheduleRowPatch,
-} from './schedule-store';
+  addTableColumn,
+  addTableRow,
+  createTableSheet,
+  deleteTableColumn,
+  deleteTableRows,
+  deleteTableSheet,
+  importTableSheet,
+  initTableStore,
+  listTableColumns,
+  listTableRows,
+  listTableSheets,
+  resolveTableSheetId,
+  updateTableRow,
+  DEFAULT_TABLE_SHEET,
+  type TableRowPatch,
+} from './table-store';
 import {
   activateSkill,
   ensureThreadState,
@@ -66,6 +74,8 @@ import {
   deleteThreadState,
   touchThreadActivity,
   requireThreadOwnership,
+  resolveThreadForRead,
+  pruneDesktopThreadClutter,
 } from './thread-state';
 import { buildReminderBlock } from './reminders';
 import { listThreadActivity } from './thread-activity';
@@ -119,7 +129,7 @@ import {
 } from './mcp-store';
 import {
   listAutomations,
-  listAllScheduledAutomations,
+  listAllCronAutomations,
   getAutomation,
   createAutomation,
   updateAutomation,
@@ -129,10 +139,10 @@ import {
   matchesEventTrigger,
 } from './automation-store';
 import { runAutomationJob, dispatchAutomation } from './automation-worker';
-import { buildCustomizeTools } from './customize-tools';
+import { buildWorkspaceConfigTool } from './workspace-config-tool';
 import {
   listWorkflows,
-  listAllScheduledWorkflows,
+  listAllCronWorkflows,
   getWorkflow,
   createWorkflow,
   updateWorkflow,
@@ -232,7 +242,7 @@ function isForbiddenError(err: unknown): boolean {
 async function main() {
   await connectDb();
   await initResumableChatStreams();
-  await initScheduleStore();
+  await initTableStore();
   await ensureDevTenant();
 
   let mcp: MCPClient | null = null;
@@ -284,6 +294,9 @@ async function main() {
     libsqlUrl: mastraLibsqlUrl(DATA_DIR),
     agentsDir: AGENTS_DIR,
   });
+  if (isDesktopAuth) {
+    await pruneDesktopThreadClutter(DEV_TENANT_ID, 'dev-user', runtime.memory);
+  }
   app.log.info({ agentsDir: AGENTS_DIR }, 'agent packages reload on each customize/chat request');
   const queue = createInProcQueue();
   await queue.start();
@@ -335,7 +348,28 @@ async function main() {
 
   app.get('/api/model-settings', async (req) => {
     const ctx = await resolveContext(req.headers);
+    const catalog = loadModelCatalog();
+    if (catalog.length > 0) {
+      const primary = getDefaultCatalogModel() ?? catalog[0]!;
+      return {
+        settings: {
+          modelName: primary.label,
+          requestUrl: 'local-catalog',
+          hasApiKey: true,
+          configured: true,
+        },
+      };
+    }
     return { settings: await getModelSettings(ctx.tenantId) };
+  });
+
+  app.get('/api/model-catalog', async () => {
+    const models = listModelCatalogPublic();
+    const primary = getDefaultCatalogModel();
+    return {
+      models,
+      defaultId: primary?.id ?? models[0]?.id ?? null,
+    };
   });
 
   app.put('/api/model-settings', async (req) => {
@@ -555,7 +589,7 @@ async function main() {
       return { ok: false, message: parsed.error.message };
     }
     const automation = await createAutomation(ctx.tenantId, ctx.userId, parsed.data);
-    if (automation.enabled && automation.kind === 'schedule' && automation.cron) {
+    if (automation.enabled && automation.kind === 'cron' && automation.cron) {
       await registerAutomationSchedule(queue, automation.id, automation.cron, automation.timezone ?? 'UTC', {
         tenantId: ctx.tenantId,
         automationId: automation.id,
@@ -578,7 +612,7 @@ async function main() {
       reply.code(404);
       return { ok: false };
     }
-    if (automation.kind === 'schedule' && automation.cron) {
+    if (automation.kind === 'cron' && automation.cron) {
       if (automation.enabled) {
         await registerAutomationSchedule(queue, automation.id, automation.cron, automation.timezone ?? 'UTC', {
           tenantId: ctx.tenantId,
@@ -601,7 +635,7 @@ async function main() {
       return { ok: false };
     }
     const ok = await deleteAutomation(ctx.tenantId, id);
-    if (existing.kind === 'schedule') {
+    if (existing.kind === 'cron') {
       await unregisterAutomationSchedule(queue, id);
     }
     return { ok };
@@ -662,7 +696,7 @@ async function main() {
     }
     try {
       const workflow = await createWorkflow(ctx.tenantId, ctx.userId, parsed.data);
-      if (workflow.enabled && workflow.kind === 'schedule' && workflow.cron) {
+      if (workflow.enabled && workflow.kind === 'cron' && workflow.cron) {
         await registerWorkflowSchedule(queue, workflow.id, workflow.cron, workflow.timezone ?? 'UTC', {
           tenantId: ctx.tenantId,
           workflowId: workflow.id,
@@ -693,7 +727,7 @@ async function main() {
         reply.code(404);
         return { ok: false };
       }
-      if (workflow.kind === 'schedule' && workflow.cron) {
+      if (workflow.kind === 'cron' && workflow.cron) {
         if (workflow.enabled) {
           await registerWorkflowSchedule(queue, workflow.id, workflow.cron, workflow.timezone ?? 'UTC', {
             tenantId: ctx.tenantId,
@@ -723,7 +757,7 @@ async function main() {
       return { ok: false };
     }
     const ok = await deleteWorkflow(ctx.tenantId, id);
-    if (existing.kind === 'schedule') {
+    if (existing.kind === 'cron') {
       await unregisterWorkflowSchedule(queue, id);
     }
     return { ok };
@@ -927,81 +961,81 @@ async function main() {
     return { ok: true, received: true, matched: matched.length + matchedWorkflows.length };
   });
 
-  // Production schedule: editable multi-sheet dataset for the right-panel data grid.
-  app.get('/api/schedule', async (req) => {
+  // Editable multi-sheet table dataset for the right-panel data grid.
+  app.get('/api/table', async (req) => {
     await resolveContext(req.headers);
     const { sheet } = req.query as { sheet?: string };
-    const sheetId = resolveScheduleSheetId(sheet);
+    const sheetId = resolveTableSheetId(sheet);
     return {
       sheet: sheetId,
-      sheets: listScheduleSheets(),
-      defaultSheet: DEFAULT_SCHEDULE_SHEET,
-      columns: listScheduleColumns(sheetId),
-      rows: listSchedule(sheetId),
+      sheets: listTableSheets(),
+      defaultSheet: DEFAULT_TABLE_SHEET,
+      columns: listTableColumns(sheetId),
+      rows: listTableRows(sheetId),
     };
   });
 
-  app.post('/api/schedule/sheets', async (req, reply) => {
+  app.post('/api/table/sheets', async (req, reply) => {
     await resolveContext(req.headers);
     const { name } = (req.body ?? {}) as { name?: string };
     if (!name?.trim()) {
       reply.code(400);
       return { ok: false, message: 'name is required' };
     }
-    const sheet = createScheduleSheet(name);
+    const sheet = createTableSheet(name);
     if (!sheet) {
       reply.code(400);
       return { ok: false, message: 'Failed to create sheet' };
     }
-    return { ok: true, sheet, sheets: listScheduleSheets() };
+    return { ok: true, sheet, sheets: listTableSheets() };
   });
 
-  app.delete('/api/schedule/sheets/:sheetId', async (req, reply) => {
+  app.delete('/api/table/sheets/:sheetId', async (req, reply) => {
     await resolveContext(req.headers);
     const { sheetId } = req.params as { sheetId: string };
-    if (!(await deleteScheduleSheet(sheetId))) {
+    if (!(await deleteTableSheet(sheetId))) {
       reply.code(400);
       return { ok: false, message: 'Failed to delete sheet' };
     }
-    const sheets = listScheduleSheets();
-    const nextSheet = sheets[0]?.id ?? DEFAULT_SCHEDULE_SHEET;
+    const sheets = listTableSheets();
+    const nextSheet = sheets[0]?.id ?? DEFAULT_TABLE_SHEET;
     return { ok: true, sheets, nextSheet };
   });
 
-  app.post('/api/schedule/rows', async (req, reply) => {
+  app.post('/api/table/rows', async (req, reply) => {
     await resolveContext(req.headers);
     const { sheet } = (req.body ?? {}) as { sheet?: string };
-    const sheetId = resolveScheduleSheetId(sheet);
-    const row = addScheduleRow(sheetId);
+    const sheetId = resolveTableSheetId(sheet);
+    const row = addTableRow(sheetId);
     if (!row) {
       reply.code(400);
       return { ok: false, message: 'Failed to add row' };
     }
-    return { ok: true, sheet: sheetId, row, rows: listSchedule(sheetId) };
+    return { ok: true, sheet: sheetId, row, rows: listTableRows(sheetId) };
   });
 
-  app.delete('/api/schedule/rows', async (req, reply) => {
+  app.delete('/api/table/rows', async (req, reply) => {
     await resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       row_keys?: string[];
       order_nos?: string[];
     };
-    const sheetId = resolveScheduleSheetId(body.sheet);
+    const sheetId = resolveTableSheetId(body.sheet);
     const rowKeys = body.row_keys ?? body.order_nos ?? [];
-    const removed = deleteScheduleRows(sheetId, rowKeys);
-    return { ok: true, sheet: sheetId, removed, rows: listSchedule(sheetId) };
+    const removed = deleteTableRows(sheetId, rowKeys);
+    return { ok: true, sheet: sheetId, removed, rows: listTableRows(sheetId) };
   });
 
-  app.post('/api/schedule/columns', async (req, reply) => {
+  app.post('/api/table/columns', async (req, reply) => {
     await resolveContext(req.headers);
     const { sheet, name } = (req.body ?? {}) as { sheet?: string; name?: string };
-    const sheetId = resolveScheduleSheetId(sheet);
+    const sheetId = resolveTableSheetId(sheet);
     if (!name?.trim()) {
       reply.code(400);
       return { ok: false, message: 'name is required' };
     }
-    const column = addScheduleColumn(sheetId, name);
+    const column = addTableColumn(sheetId, name);
     if (!column) {
       reply.code(400);
       return { ok: false, message: 'Failed to add column' };
@@ -1010,43 +1044,43 @@ async function main() {
       ok: true,
       sheet: sheetId,
       column,
-      columns: listScheduleColumns(sheetId),
-      rows: listSchedule(sheetId),
+      columns: listTableColumns(sheetId),
+      rows: listTableRows(sheetId),
     };
   });
 
-  app.delete('/api/schedule/columns', async (req, reply) => {
+  app.delete('/api/table/columns', async (req, reply) => {
     await resolveContext(req.headers);
     const { sheet, key } = (req.body ?? {}) as { sheet?: string; key?: string };
-    const sheetId = resolveScheduleSheetId(sheet);
-    if (!key || !deleteScheduleColumn(sheetId, key)) {
+    const sheetId = resolveTableSheetId(sheet);
+    if (!key || !deleteTableColumn(sheetId, key)) {
       reply.code(400);
       return { ok: false, message: 'Failed to delete column' };
     }
     return {
       ok: true,
       sheet: sheetId,
-      columns: listScheduleColumns(sheetId),
-      rows: listSchedule(sheetId),
+      columns: listTableColumns(sheetId),
+      rows: listTableRows(sheetId),
     };
   });
 
-  app.patch('/api/schedule', async (req, reply) => {
+  app.patch('/api/table', async (req, reply) => {
     await resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       row_key?: string;
       row_id?: string;
       order_no?: string;
-    } & ScheduleRowPatch;
+    } & TableRowPatch;
     const { sheet, row_key, row_id, order_no, ...patch } = body;
     const key = row_key ?? row_id ?? order_no;
     if (key == null || key === '') {
       reply.code(400);
       return { ok: false, message: 'row_key is required' };
     }
-    const sheetId = resolveScheduleSheetId(sheet);
-    const row = await updateScheduleRow(key, patch, sheetId);
+    const sheetId = resolveTableSheetId(sheet);
+    const row = await updateTableRow(key, patch, sheetId);
     if (!row) {
       reply.code(404);
       return { ok: false, message: 'Row not found' };
@@ -1054,19 +1088,19 @@ async function main() {
     return { ok: true, sheet: sheetId, row };
   });
 
-  app.post('/api/schedule/import', async (req, reply) => {
+  app.post('/api/table/import', async (req, reply) => {
     await resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
-      rows?: ScheduleRowPatch[];
+      rows?: TableRowPatch[];
       new_column_names?: string[];
     };
-    const sheetId = resolveScheduleSheetId(body.sheet);
+    const sheetId = resolveTableSheetId(body.sheet);
     if (!Array.isArray(body.rows)) {
       reply.code(400);
       return { ok: false, message: 'rows is required' };
     }
-    const result = importScheduleSheet(
+    const result = importTableSheet(
       sheetId,
       body.rows,
       body.new_column_names ?? [],
@@ -1086,32 +1120,22 @@ async function main() {
   // Checkpoints removed — edit/compact rewind replaces manual snapshots.
 
   // Tasks: list/get for the UI task panel.
-  app.get('/api/tasks', async (req, reply) => {
+  app.get('/api/tasks', async (req) => {
     const ctx = await resolveContext(req.headers);
     const { threadId } = req.query as { threadId?: string };
     if (!threadId) return { tasks: [] };
-    try {
-      await requireThreadOwnership(threadId, ctx);
-    } catch (err) {
-      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
-      throw err;
-    }
+    const row = await resolveThreadForRead(threadId, ctx);
+    if (!row) return { tasks: [] };
     const rows = await listTasksByParentThread(threadId);
     return { tasks: rows };
   });
 
-  app.get('/api/todos', async (req, reply) => {
+  app.get('/api/todos', async (req) => {
     const ctx = await resolveContext(req.headers);
     const { threadId } = req.query as { threadId?: string };
     if (!threadId) return { todos: [] };
-    try {
-      await requireThreadOwnership(threadId, ctx);
-    } catch (err) {
-      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
-      throw err;
-    }
-    const state = await getThreadState(threadId);
-    return { todos: state?.todos ?? [] };
+    const row = await resolveThreadForRead(threadId, ctx);
+    return { todos: row?.todos ?? [] };
   });
 
   app.get('/api/threads', async (req) => {
@@ -1209,31 +1233,27 @@ async function main() {
     return { state };
   });
 
-  app.get('/api/threads/:threadId/messages', async (req, reply) => {
+  app.get('/api/threads/:threadId/messages', async (req) => {
     const { threadId } = req.params as { threadId: string };
     const ctx = await resolveContext(req.headers);
-    try {
-      await requireThreadOwnership(threadId, ctx);
-    } catch (err) {
-      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
-      throw err;
+    const row = await resolveThreadForRead(threadId, ctx);
+    if (!row) {
+      return { messages: [] };
     }
-    const recalled = await runtime.memory.recall({ threadId, resourceId: ctx.userId, perPage: false });
+    const recalled = await runtime.memory.recall({
+      threadId,
+      resourceId: row.resourceId,
+      perPage: false,
+    });
     return { messages: mastraMessagesToUi(recalled.messages ?? []) };
   });
 
-  app.get('/api/plan-mode', async (req, reply) => {
+  app.get('/api/plan-mode', async (req) => {
     const { threadId } = req.query as { threadId?: string };
     if (!threadId) return { planMode: false };
     const ctx = await resolveContext(req.headers);
-    try {
-      await requireThreadOwnership(threadId, ctx);
-    } catch (err) {
-      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
-      throw err;
-    }
-    const state = await getThreadState(threadId);
-    return { planMode: state?.planMode ?? false };
+    const row = await resolveThreadForRead(threadId, ctx);
+    return { planMode: row?.planMode ?? false };
   });
 
   app.post('/api/plan-mode', async (req) => {
@@ -1259,14 +1279,22 @@ async function main() {
     try {
       const ctx = await resolveContext(req.headers);
       await applyTenantModelSettings(ctx.tenantId);
-      const identity = { threadId, tenantId: ctx.tenantId, resourceId: ctx.userId };
-      await ensureThreadState(identity);
+      const threadRow = await ensureThreadState({
+        threadId,
+        tenantId: ctx.tenantId,
+        resourceId: ctx.userId,
+      });
+      const identity = {
+        threadId,
+        tenantId: threadRow.tenantId,
+        resourceId: threadRow.resourceId,
+      };
 
       await stopChatStream({ threadId }).catch(() => undefined);
 
       const recalled = await runtime.memory.recall({
         threadId,
-        resourceId: ctx.userId,
+        resourceId: threadRow.resourceId,
         perPage: false,
       });
       const stored = recalled?.messages ?? [];
@@ -1323,24 +1351,32 @@ async function main() {
     await ensureMcpForTenant(ctx.tenantId);
     const threadId = body.id ?? body.threadId ?? `thread-${ctx.userId}`;
     const agentId = body.agentId ?? DEFAULT_AGENT_ID;
-    const identity = { threadId, tenantId: ctx.tenantId, resourceId: ctx.userId };
+    const threadRow = await ensureThreadState({
+      threadId,
+      tenantId: ctx.tenantId,
+      resourceId: ctx.userId,
+    });
+    const identity = {
+      threadId,
+      tenantId: threadRow.tenantId,
+      resourceId: threadRow.resourceId,
+    };
 
-    await ensureThreadState(identity);
     await touchThreadActivity(threadId);
     await restoreTodosFromHistoryIfEmpty(threadId, messages as never);
 
-    let threadRow = await getThreadState(threadId);
+    let threadRowState = threadRow;
     if (body.planMode === true) {
       await setThreadPlanModeDb(threadId, true);
       setThreadPlanMode(threadId, true);
-      threadRow = await getThreadState(threadId);
+      threadRowState = (await getThreadState(threadId)) ?? threadRow;
     } else if (body.planMode === false) {
       await setThreadPlanModeDb(threadId, false);
       setThreadPlanMode(threadId, false);
-      threadRow = await getThreadState(threadId);
+      threadRowState = (await getThreadState(threadId)) ?? threadRow;
     }
 
-    const planMode = body.planMode === true || (threadRow?.planMode ?? false);
+    const planMode = body.planMode === true || (threadRowState?.planMode ?? false);
 
     await refreshAgentPackages(runtime);
     const agent = requireAgent(runtime, agentId);
@@ -1396,7 +1432,7 @@ async function main() {
       const content = await resolveSkillContent(runtime, ctx.tenantId, agentId, name);
       if (!content) return;
       const skills = await activateSkill(threadId, name, content);
-      await syncWorkingMemory(runtime.memory, identity, skills, threadRow?.workingMemory ?? null);
+      await syncWorkingMemory(runtime.memory, identity, skills, threadRowState?.workingMemory ?? null);
     });
     requestContext.set('enabledSkillNames', enabledSkillNames);
     requestContext.set(
@@ -1414,20 +1450,20 @@ async function main() {
       );
       if (content) {
         const skills = await activateSkill(threadId, body.pendingSkill, content);
-        threadRow = {
-          ...(threadRow ?? (await ensureThreadState(identity))),
+        threadRowState = {
+          ...(threadRowState ?? (await ensureThreadState(identity))),
           activatedSkills: skills,
         };
         await syncWorkingMemory(
           runtime.memory,
           identity,
           skills,
-          threadRow.workingMemory ?? null,
+          threadRowState.workingMemory ?? null,
         );
       }
     }
 
-    let skillBlock = getSkillMemoryBlock(threadRow?.activatedSkills ?? {});
+    let skillBlock = getSkillMemoryBlock(threadRowState?.activatedSkills ?? {});
 
     await syncThreadMessagesFromClient({
       memory: runtime.memory,
@@ -1453,9 +1489,9 @@ async function main() {
     const rulesBlock = buildRulesMemoryBlock(rules, lastUserText(messages));
     const skillsCatalog = buildSkillsCatalogBlock(mergedSkills);
     const reminderBlock = buildReminderBlock({
-      todos: threadRow?.todos ?? [],
+      todos: threadRowState?.todos ?? [],
       lastUserText: lastUserText(messages),
-      todosUpdatedAt: threadRow?.updatedAt,
+      todosUpdatedAt: threadRowState?.updatedAt,
     });
     // Live knowledge-base awareness: only when the main (full-toolset) agent has
     // knowledge_search available and not in plan mode (tools disabled there).
@@ -1502,7 +1538,7 @@ async function main() {
                 declaredMcp,
                 declaredBuiltinTools,
               ),
-              ...(taskToolset.schedule ? { schedule: taskToolset.schedule } : {}),
+              ...(taskToolset.table ? { table: taskToolset.table } : {}),
             };
     const stream = await agent.stream(agentMessages as never, {
       memory: { thread: threadId, resource: ctx.userId },
@@ -1576,11 +1612,9 @@ async function main() {
   app.get('/api/chat/:threadId/stream', async (req, reply) => {
     const { threadId } = req.params as { threadId: string };
     const ctx = await resolveContext(req.headers);
-    try {
-      await requireThreadOwnership(threadId, ctx);
-    } catch (err) {
-      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
-      throw err;
+    const row = await resolveThreadForRead(threadId, ctx);
+    if (!row) {
+      return reply.status(204).send();
     }
     const streamId = await getActiveStreamId(threadId);
     if (!streamId) {
@@ -1667,8 +1701,8 @@ async function main() {
   // Connect MCP servers; expose their tools to chat as a toolset.
   await rebuildMcp(DEV_TENANT_ID);
 
-  const scheduleTools = buildScheduleTools();
-  const customizeTools = buildCustomizeTools({
+  const tableTools = buildTableTools();
+  const workspaceConfig = buildWorkspaceConfigTool({
     runtime,
     queue,
     onMcpRebuild: rebuildMcp,
@@ -1677,9 +1711,9 @@ async function main() {
   const agentTaskTools = buildAgentTaskTools(runtime, { queue, mcpToolsets });
   taskToolset = {
     agent: agentTaskTools,
-    schedule: scheduleTools,
+    table: tableTools,
     knowledge: { knowledge_search: buildKnowledgeSearchTool() },
-    customize: customizeTools,
+    config: { workspace_config: workspaceConfig },
     workflow: workflowTools,
   };
 
@@ -1703,7 +1737,7 @@ async function main() {
     await runWorkflowJob(runtime, job);
   });
 
-  const dbAutomations = await listAllScheduledAutomations();
+  const dbAutomations = await listAllCronAutomations();
   for (const a of dbAutomations) {
     await registerAutomationSchedule(queue, a.id, a.cron!, a.timezone ?? 'UTC', {
       tenantId: a.tenantId,
@@ -1715,7 +1749,7 @@ async function main() {
     app.log.info(`registered ${dbAutomations.length} DB automation schedule(s) across all tenants`);
   }
 
-  const dbWorkflows = await listAllScheduledWorkflows();
+  const dbWorkflows = await listAllCronWorkflows();
   for (const w of dbWorkflows) {
     await registerWorkflowSchedule(queue, w.id, w.cron!, w.timezone ?? 'UTC', {
       tenantId: w.tenantId,

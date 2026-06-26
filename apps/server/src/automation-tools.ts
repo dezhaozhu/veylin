@@ -29,7 +29,7 @@ export function buildAutomationTools(boss: QueuePort) {
       'Create a scheduled or event-driven automation that runs an agent prompt automatically.',
     inputSchema: z.object({
       name: z.string(),
-      kind: z.enum(['schedule', 'event']).default('schedule'),
+      kind: z.enum(['cron', 'event']).default('cron'),
       agentId: z.string().default('veylin'),
       prompt: z.string(),
       cron: z.string().optional().describe('Cron expression for schedule kind'),
@@ -45,7 +45,7 @@ export function buildAutomationTools(boss: QueuePort) {
       const userId = ctxValue(ctx, 'userId') ?? 'dev-user';
       const row = await createAutomation(tenantId, userId, {
         name: input.name,
-        kind: input.kind ?? 'schedule',
+        kind: input.kind ?? 'cron',
         agentId: input.agentId ?? 'veylin',
         prompt: input.prompt,
         enabled: input.enabled ?? true,
@@ -55,7 +55,7 @@ export function buildAutomationTools(boss: QueuePort) {
         eventOn: input.eventOn,
         eventFilter: input.eventFilter,
       });
-      if (row.enabled && row.kind === 'schedule' && row.cron) {
+      if (row.enabled && row.kind === 'cron' && row.cron) {
         await registerAutomationSchedule(boss, row.id, row.cron, row.timezone ?? 'UTC', {
           tenantId,
           automationId: row.id,
@@ -109,7 +109,7 @@ export function buildAutomationTools(boss: QueuePort) {
       const tenantId = ctxValue(ctx, 'tenantId') ?? '00000000-0000-0000-0000-000000000000';
       const row = await updateAutomation(tenantId, input.id, { enabled: input.enabled });
       if (!row) return { ok: false };
-      if (row.kind === 'schedule' && row.cron) {
+      if (row.kind === 'cron' && row.cron) {
         if (row.enabled) {
           await registerAutomationSchedule(boss, row.id, row.cron, row.timezone ?? 'UTC', {
             tenantId,
@@ -164,7 +164,7 @@ export function buildAutomationTools(boss: QueuePort) {
       const { id, ...patch } = input;
       const row = await updateAutomation(tenantId, id, patch);
       if (!row) return { ok: false };
-      if (row.kind === 'schedule') {
+      if (row.kind === 'cron') {
         await unregisterAutomationSchedule(boss, row.id);
         if (row.enabled && row.cron) {
           await registerAutomationSchedule(boss, row.id, row.cron, row.timezone ?? 'UTC', {
@@ -188,7 +188,7 @@ export function buildAutomationTools(boss: QueuePort) {
       const existing = await getAutomation(tenantId, input.id);
       if (!existing) return { ok: false };
       const ok = await deleteAutomation(tenantId, input.id);
-      if (existing.kind === 'schedule') {
+      if (existing.kind === 'cron') {
         await unregisterAutomationSchedule(boss, input.id);
       }
       return { ok };

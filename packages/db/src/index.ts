@@ -3,6 +3,6 @@ export { resolveDataDir, ensureDataDir, surrealKvUrl, mastraLibsqlUrl } from './
 export { queryRows, newId, rid, normalizeId } from './query';
 export * from './types';
 export * from './repos';
-export * from './schedule-repos';
+export * from './table-repos';
 export * from './rag-repos';
 export * from './workflow-repos';

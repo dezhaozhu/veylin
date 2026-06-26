@@ -29,12 +29,15 @@ impl Sidecar {
         let port = std::env::var("PORT").unwrap_or_else(|_| "8787".into());
 
         if let Ok(sidecar) = app.shell().sidecar("veylin-server") {
-            match sidecar
+            let mut cmd = sidecar
                 .env("VEYLIN_DATA_DIR", &data_dir)
                 .env("VEYLIN_DESKTOP_AUTH", "1")
                 .env("VEYLIN_REQUIRE_USER_MODEL_SETTINGS", "1")
-                .env("PORT", &port)
-                .spawn()
+                .env("PORT", &port);
+            if let Some(path) = model_catalog_path(&data_dir) {
+                cmd = cmd.env("VEYLIN_MODEL_CATALOG_PATH", path);
+            }
+            match cmd.spawn()
             {
                 Ok((_rx, child)) => {
                     *self.0.lock().unwrap() = Some(SidecarChild::Shell(child));
@@ -70,11 +73,15 @@ impl Sidecar {
 
         match Command::new("npm")
             .args(["run", "-w", "@veylin/server", "start"])
-            .current_dir(root)
-            .env("VEYLIN_DATA_DIR", data_dir)
+            .current_dir(&root)
+            .env("VEYLIN_DATA_DIR", &data_dir)
             .env("VEYLIN_DESKTOP_AUTH", "1")
             .env("VEYLIN_REQUIRE_USER_MODEL_SETTINGS", "1")
-            .env("PORT", port)
+            .env(
+                "VEYLIN_MODEL_CATALOG_PATH",
+                root.join("data/models.local.json").to_string_lossy().as_ref(),
+            )
+            .env("PORT", &port)
             .spawn()
         {
             Ok(child) => {
@@ -97,6 +104,25 @@ impl Sidecar {
             }
         }
     }
+}
+
+fn model_catalog_path(data_dir: &str) -> Option<String> {
+    if let Ok(path) = std::env::var("VEYLIN_MODEL_CATALOG_PATH") {
+        if !path.trim().is_empty() {
+            return Some(path);
+        }
+    }
+    let in_data = PathBuf::from(data_dir).join("models.local.json");
+    if in_data.exists() {
+        return Some(in_data.to_string_lossy().into_owned());
+    }
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        let path = PathBuf::from(home).join(".veylin").join("models.local.json");
+        if path.exists() {
+            return Some(path.to_string_lossy().into_owned());
+        }
+    }
+    None
 }
 
 fn app_data_dir(app: &AppHandle) -> String {

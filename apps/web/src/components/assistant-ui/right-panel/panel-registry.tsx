@@ -4,7 +4,7 @@
  * Tab responsibilities (do not overlap):
  * | Tab       | Role                                      | vs Automate                          |
  * |-----------|-------------------------------------------|--------------------------------------|
- * | Table     | Business schedule data (editable grid)    | Automate = single-step cron/event    |
+ * | Table     | Editable spreadsheet grid (table store)   | Automate = single-step cron/event    |
  * | Web       | Embedded browser for read_open_page       |   -> Agent prompt, separate storage  |
  * | Knowledge | RAG upload, search, citations + KG        | Workflow = multi-step executable DAG |
  * | Workflow  | Visual DAG editor + real execution engine | Both share InProcQueue / cron / hook |
@@ -13,14 +13,14 @@
  */
 import { BookOpen, Globe, Table, Workflow } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { ScheduleGrid } from '@/components/assistant-ui/schedule-grid';
+import { TableGrid } from '@/components/assistant-ui/table-grid';
 import { WebBrowserPanel } from '@/components/assistant-ui/right-panel/panels/web-browser-panel';
 import { RagPanel } from '@/components/assistant-ui/right-panel/panels/rag-panel';
 import { WorkflowPanel } from '@/components/assistant-ui/right-panel/panels/workflow-panel';
 import type { PanelContentProps, PanelKind, PanelKindDef } from './panel-types';
 
 function TablePanel(_props: PanelContentProps) {
-  return <ScheduleGrid />;
+  return <TableGrid />;
 }
 
 function WebPanel(props: PanelContentProps) {

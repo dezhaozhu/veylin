@@ -27,10 +27,14 @@ export {
   isModelProviderConfigured,
   isRuntimeModelConfigured,
   setRuntimeModelOverrides,
+  listModelCatalogPublic,
+  getDefaultCatalogModel,
+  loadModelCatalog,
   DEFAULT_MODEL,
   type ModelKey,
   type ModelConfig,
   type RuntimeModelOverrides,
+  type ModelCatalogEntry,
 } from './models';
 export { ContextCompression } from './processors/contextCompression';
 export { buildSummarizer, COMPACTION_SYSTEM_PROMPT } from './summarizer';

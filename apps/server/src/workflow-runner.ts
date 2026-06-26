@@ -12,7 +12,7 @@ import type { WorkflowJob, QueuePort } from './queue';
 import { WORKFLOW_QUEUE } from './queue';
 import { runAgentPrompt } from './agent-run';
 import { searchKnowledge } from './rag-store';
-import { listSchedule, updateScheduleRow, DEFAULT_SCHEDULE_SHEET } from './schedule-store';
+import { listTableRows, updateTableRow, DEFAULT_TABLE_SHEET } from './table-store';
 import { ensureThreadState, setThreadTitle } from './thread-state';
 import {
   evaluateCase,
@@ -194,19 +194,19 @@ async function executeNode(
       return { text: result.text };
     }
 
-    case 'dataset_read': {
-      const sheetId = String(data.sheetId ?? DEFAULT_SCHEDULE_SHEET);
-      const rows = listSchedule(sheetId);
+    case 'table_read': {
+      const sheetId = String(data.sheetId ?? DEFAULT_TABLE_SHEET);
+      const rows = listTableRows(sheetId);
       return { sheetId, rows, count: rows.length };
     }
 
-    case 'dataset_write': {
-      const sheetId = String(data.sheetId ?? DEFAULT_SCHEDULE_SHEET);
+    case 'table_write': {
+      const sheetId = String(data.sheetId ?? DEFAULT_TABLE_SHEET);
       const rowKey = interpolate(String(data.rowKey ?? ''), ctx);
       const rawPatch = (data.patch as Record<string, unknown>) ?? {};
       const patch = interpolateDeep(rawPatch, ctx) as Record<string, string | number>;
-      if (!rowKey) throw new Error('dataset_write requires rowKey');
-      const updated = await updateScheduleRow(rowKey, patch, sheetId);
+      if (!rowKey) throw new Error('table_write requires rowKey');
+      const updated = await updateTableRow(rowKey, patch, sheetId);
       if (!updated) throw new Error(`dataset row not found: ${rowKey}`);
       return { sheetId, row: updated };
     }

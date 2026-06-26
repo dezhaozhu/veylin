@@ -152,25 +152,25 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS created_at ON webhook_endpoint TYPE datetime DEFAULT time::now()`,
   `DEFINE INDEX IF NOT EXISTS webhook_tenant_source_idx ON webhook_endpoint FIELDS tenant_id, source UNIQUE`,
 
-  `DEFINE TABLE IF NOT EXISTS schedule_sheet SCHEMAFULL`,
-  `DEFINE FIELD IF NOT EXISTS id ON schedule_sheet TYPE string`,
-  `DEFINE FIELD IF NOT EXISTS name ON schedule_sheet TYPE string`,
-  `DEFINE FIELD IF NOT EXISTS builtin ON schedule_sheet TYPE bool DEFAULT false`,
+  `DEFINE TABLE IF NOT EXISTS table_sheet SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON table_sheet TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON table_sheet TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS builtin ON table_sheet TYPE bool DEFAULT false`,
 
-  `DEFINE TABLE IF NOT EXISTS schedule_column SCHEMAFULL`,
-  `DEFINE FIELD IF NOT EXISTS sheet_id ON schedule_column TYPE string`,
-  `DEFINE FIELD IF NOT EXISTS key ON schedule_column TYPE string`,
-  `DEFINE FIELD IF NOT EXISTS name ON schedule_column TYPE string`,
-  `DEFINE FIELD IF NOT EXISTS width ON schedule_column TYPE int`,
-  `DEFINE FIELD IF NOT EXISTS type ON schedule_column TYPE string`,
-  `DEFINE FIELD IF NOT EXISTS frozen ON schedule_column TYPE option<bool>`,
-  `DEFINE FIELD IF NOT EXISTS deletable ON schedule_column TYPE bool DEFAULT true`,
-  `DEFINE FIELD IF NOT EXISTS position ON schedule_column TYPE int DEFAULT 0`,
+  `DEFINE TABLE IF NOT EXISTS table_column SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS sheet_id ON table_column TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS key ON table_column TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON table_column TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS width ON table_column TYPE int`,
+  `DEFINE FIELD IF NOT EXISTS type ON table_column TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS frozen ON table_column TYPE option<bool>`,
+  `DEFINE FIELD IF NOT EXISTS deletable ON table_column TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS position ON table_column TYPE int DEFAULT 0`,
 
-  `DEFINE TABLE IF NOT EXISTS schedule_row SCHEMAFULL`,
-  `DEFINE FIELD IF NOT EXISTS sheet_id ON schedule_row TYPE string`,
-  `DEFINE FIELD IF NOT EXISTS row_key ON schedule_row TYPE string`,
-  `DEFINE FIELD IF NOT EXISTS data ON schedule_row FLEXIBLE TYPE object`,
+  `DEFINE TABLE IF NOT EXISTS table_row SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS sheet_id ON table_row TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS row_key ON table_row TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS data ON table_row FLEXIBLE TYPE object`,
 
   `DEFINE TABLE IF NOT EXISTS document SCHEMAFULL`,
   `DEFINE FIELD IF NOT EXISTS id ON document TYPE string`,
@@ -279,4 +279,55 @@ export async function initSchema(db: Surreal): Promise<void> {
   }
 
   await migrateWebhookEndpoints(db);
+  await migrateLegacyNaming(db);
+}
+
+/** One-time fixes: cron trigger kind + table workflow node kinds. */
+async function migrateLegacyNaming(db: Surreal): Promise<void> {
+  for (const sql of [
+    `UPDATE automation SET kind = 'cron' WHERE kind = 'schedule'`,
+    `UPDATE workflow SET kind = 'cron' WHERE kind = 'schedule'`,
+  ]) {
+    try {
+      await db.query(sql);
+    } catch {
+      // Table may not exist on a fresh install.
+    }
+  }
+
+  try {
+    const result = await db.query('SELECT * FROM workflow');
+    const rows = result?.[0];
+    if (!Array.isArray(rows)) return;
+    for (const row of rows) {
+      const def = (row as { definition?: { nodes?: { kind?: string }[]; edges?: unknown[] } }).definition;
+      if (!def?.nodes?.length) continue;
+      let changed = false;
+      const nodes = def.nodes.map((n) => {
+        if (n.kind === 'dataset_read') {
+          changed = true;
+          return { ...n, kind: 'table_read' };
+        }
+        if (n.kind === 'dataset_write') {
+          changed = true;
+          return { ...n, kind: 'table_write' };
+        }
+        return n;
+      });
+      if (!changed) continue;
+      const rawId = (row as { id?: unknown }).id;
+      const id =
+        rawId && typeof rawId === 'object' && rawId !== null && 'id' in rawId
+          ? String((rawId as { id: unknown }).id)
+          : String(rawId ?? '').split(':').pop() ?? '';
+      if (!id) continue;
+      await db.query('UPDATE type::thing($table, $id) SET definition = $definition', {
+        table: 'workflow',
+        id,
+        definition: { ...def, nodes },
+      });
+    }
+  } catch {
+    // Best-effort for legacy workflow definitions.
+  }
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const automationKindSchema = z.enum(['schedule', 'event']);
+export const automationKindSchema = z.enum(['cron', 'event']);
 /** Schedule automations use `cron`; event automations use a webhook source slug (e.g. `github`, `linear`). */
 export const automationSourceTypeSchema = z.union([z.literal('cron'), z.string().min(1)]);
 export const automationRunStatusSchema = z.enum(['queued', 'running', 'done', 'failed']);

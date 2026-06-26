@@ -115,7 +115,7 @@ function mapAutomation(r: Record<string, unknown>): AutomationRow {
     tenantId: String(r.tenant_id ?? ''),
     userId: String(r.user_id ?? ''),
     name: String(r.name ?? ''),
-    kind: (r.kind as AutomationRow['kind']) ?? 'schedule',
+    kind: (r.kind as AutomationRow['kind']) ?? 'cron',
     agentId: String(r.agent_id ?? ''),
     prompt: String(r.prompt ?? ''),
     enabled: Boolean(r.enabled ?? true),
@@ -258,6 +258,14 @@ export async function updateThreadState(
     sets.push('title = $title');
     vars.title = patch.title;
   }
+  if (patch.tenantId !== undefined) {
+    sets.push('tenant_id = $tenantId');
+    vars.tenantId = patch.tenantId;
+  }
+  if (patch.resourceId !== undefined) {
+    sets.push('resource_id = $resourceId');
+    vars.resourceId = patch.resourceId;
+  }
   await getDb().query(
     `UPDATE thread_state SET ${sets.join(', ')} WHERE thread_id = $threadId`,
     vars,
@@ -272,6 +280,15 @@ export async function listThreadStatesForResource(
     getDb(),
     'SELECT * FROM thread_state WHERE tenant_id = $tenantId AND resource_id = $resourceId ORDER BY updated_at DESC',
     { tenantId, resourceId },
+  );
+  return rows.map(mapThreadState);
+}
+
+export async function listThreadStatesForTenant(tenantId: string): Promise<ThreadStateRow[]> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    'SELECT * FROM thread_state WHERE tenant_id = $tenantId ORDER BY updated_at DESC',
+    { tenantId },
   );
   return rows.map(mapThreadState);
 }
@@ -615,10 +632,10 @@ export async function listAutomationRows(tenantId: string, userId?: string): Pro
   return rows.map(mapAutomation);
 }
 
-export async function listAllScheduledAutomationRows(): Promise<AutomationRow[]> {
+export async function listAllCronAutomationRows(): Promise<AutomationRow[]> {
   const rows = await queryRows<Record<string, unknown>>(
     getDb(),
-    "SELECT * FROM automation WHERE kind = 'schedule' AND enabled = true",
+    "SELECT * FROM automation WHERE kind = 'cron' AND enabled = true",
   );
   return rows.map(mapAutomation).filter((a) => !!a.cron);
 }

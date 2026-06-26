@@ -339,28 +339,7 @@ if (existsSync(examplesSrc)) {
   console.log('[build-sidecar] copied examples/ for bundled agent skills');
 }
 
-// Bundle the stdio MCP servers so they run under the embedded Node (no tsx needed).
-const mcpServersRoot = resolve(repoRoot, 'packages/mcp-servers/src');
-for (const mcpName of ['scheduling-server', 'maintenance-server']) {
-  await build({
-    entryPoints: [join(mcpServersRoot, `${mcpName}.ts`)],
-    outfile: join(outDir, `${mcpName}.mjs`),
-    bundle: true,
-    platform: 'node',
-    format: 'esm',
-    target: 'node22',
-    packages: 'bundle',
-    banner: {
-      js: [
-        "import { createRequire as __ia_createRequire } from 'node:module';",
-        'const require = __ia_createRequire(import.meta.url);',
-      ].join('\n'),
-    },
-    sourcemap: false,
-    logLevel: 'error',
-  });
-}
-
+// Bundled stdio MCP servers removed; remote MCP is configured per tenant.
 // Trace and copy runtime files for the bundled server AND every EXTERNAL package.
 // EXTERNALS are not inlined by esbuild and several (e.g. @mastra/libsql) are loaded
 // via dynamic require, which static analysis from server.mjs alone cannot follow.

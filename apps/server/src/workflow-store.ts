@@ -3,7 +3,7 @@ import {
   getWorkflowRow,
   insertWorkflow,
   insertWorkflowRun,
-  listAllScheduledWorkflowRows,
+  listAllCronWorkflowRows,
   listEventWorkflowRows,
   listWorkflowRows,
   listWorkflowRunRows,
@@ -72,8 +72,8 @@ export async function listWorkflows(tenantId: string, userId?: string): Promise<
   return rows.map(rowToWorkflow);
 }
 
-export async function listAllScheduledWorkflows(): Promise<Workflow[]> {
-  const rows = await listAllScheduledWorkflowRows();
+export async function listAllCronWorkflows(): Promise<Workflow[]> {
+  const rows = await listAllCronWorkflowRows();
   return rows.map(rowToWorkflow);
 }
 

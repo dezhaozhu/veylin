@@ -50,10 +50,10 @@ export async function listWorkflowRows(tenantId: string, userId?: string): Promi
   return rows.map(mapWorkflow);
 }
 
-export async function listAllScheduledWorkflowRows(): Promise<WorkflowRow[]> {
+export async function listAllCronWorkflowRows(): Promise<WorkflowRow[]> {
   const rows = await queryRows<Record<string, unknown>>(
     getDb(),
-    "SELECT * FROM workflow WHERE kind = 'schedule' AND enabled = true",
+    "SELECT * FROM workflow WHERE kind = 'cron' AND enabled = true",
   );
   return rows.map(mapWorkflow).filter((w) => !!w.cron);
 }

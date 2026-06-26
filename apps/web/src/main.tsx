@@ -2,6 +2,7 @@ import { Component, StrictMode, useEffect, useState, type ReactNode } from 'reac
 import { createRoot } from 'react-dom/client';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { apiUrl, installApiFetchShim } from '@/lib/api-base';
+import { bootstrapModelCatalogFromServer } from '@/hooks/use-server-model-catalog';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import '@/i18n';
 import { App } from './App';
@@ -135,6 +136,7 @@ function StartupGate() {
     const signal = { cancelled: false };
     setStartupError(null);
     void waitForApiReady(signal)
+      .then(() => bootstrapModelCatalogFromServer())
       .then(() => {
         if (!signal.cancelled) {
           setReady(true);

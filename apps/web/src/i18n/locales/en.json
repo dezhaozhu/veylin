@@ -1,7 +1,7 @@
 {
   "panels": {
     "empty": "Click + above to create a panel",
-    "table": { "label": "Table", "desc": "Editable spreadsheet for schedules and datasets" },
+    "table": { "label": "Table", "desc": "Editable multi-sheet spreadsheet" },
     "web": { "label": "Web", "desc": "Embedded browser for internal pages and tools" },
     "rag": { "label": "Knowledge", "desc": "Local document retrieval, citations and knowledge graph" },
     "workflow": { "label": "Workflow", "desc": "Visual workflow orchestration" }
@@ -359,7 +359,7 @@
     "confirmDeleteWebhook": "Delete this webhook endpoint?",
     "deletingWebhook": "Deleting…",
     "kind": {
-      "schedule": "Schedule",
+      "cron": "Cron",
       "event": "Event"
     },
     "runStatus": {
@@ -445,15 +445,15 @@
     "selectAll": "Select all",
     "selectRow": "Select row",
     "status": { "normal": "Normal", "tight": "Tight", "overdue": "Overdue" },
-    "loadFailedGeneric": "Failed to load schedule data",
+    "loadFailedGeneric": "Failed to load table data",
     "newSheetName": "New sheet name",
     "confirmDeleteSheet": "Delete this sheet? This cannot be undone.",
     "newColumnName": "New column name",
     "columnNotDeletable": "This column cannot be deleted.",
     "confirmImport": "Importing will replace current data. Continue?",
     "importFailed": "Import failed",
-    "loading": "Loading schedule data…",
-    "loadError": "Failed to load schedule data: {{error}}",
+    "loading": "Loading table data…",
+    "loadError": "Failed to load table data: {{error}}",
     "deleteSheet": "Delete sheet {{name}}",
     "newSheet": "New sheet",
     "rowsN": "Rows ({{count}})",
@@ -469,7 +469,7 @@
     "noData": "No data",
     "noMatch": "No matching data",
     "addFirstRow": "Add first row",
-    "ariaGrid": "Schedule grid"
+    "ariaGrid": "Table grid"
   },
   "rag": {
     "unknownTime": "Unknown time",
@@ -538,8 +538,8 @@
       "http_request": "HTTP request",
       "knowledge_retrieval": "Knowledge retrieval",
       "run_agent": "Run agent",
-      "dataset_read": "Read dataset",
-      "dataset_write": "Write dataset",
+      "table_read": "Read table",
+      "table_write": "Write table",
       "end": "Output"
     },
     "cat": {

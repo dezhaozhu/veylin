@@ -1,7 +1,7 @@
 {
   "panels": {
     "empty": "点击上方 + 新建一个面板",
-    "table": { "label": "表格", "desc": "可编辑的排产与数据表格" },
+    "table": { "label": "表格", "desc": "可编辑的多工作表数据表格" },
     "web": { "label": "网页", "desc": "内嵌浏览器，访问内网页面和工具" },
     "rag": { "label": "知识库", "desc": "本地文档检索、引用追踪和知识图谱" },
     "workflow": { "label": "工作流", "desc": "可视化工作流编排" }
@@ -359,7 +359,7 @@
     "confirmDeleteWebhook": "删除这个 Webhook 端点？",
     "deletingWebhook": "删除中…",
     "kind": {
-      "schedule": "定时",
+      "cron": "定时",
       "event": "事件"
     },
     "runStatus": {
@@ -445,15 +445,15 @@
     "selectAll": "全选",
     "selectRow": "选择行",
     "status": { "normal": "正常", "tight": "紧张", "overdue": "逾期" },
-    "loadFailedGeneric": "排产数据加载失败",
+    "loadFailedGeneric": "表格数据加载失败",
     "newSheetName": "新工作表名称",
     "confirmDeleteSheet": "删除该工作表？此操作不可恢复。",
     "newColumnName": "新列名称",
     "columnNotDeletable": "该列不可删除。",
     "confirmImport": "导入将替换当前数据，是否继续？",
     "importFailed": "导入失败",
-    "loading": "加载排产数据…",
-    "loadError": "排产数据加载失败：{{error}}",
+    "loading": "加载表格数据…",
+    "loadError": "表格数据加载失败：{{error}}",
     "deleteSheet": "删除工作表 {{name}}",
     "newSheet": "新建工作表",
     "rowsN": "行（{{count}}）",
@@ -469,7 +469,7 @@
     "noData": "暂无数据",
     "noMatch": "无匹配数据",
     "addFirstRow": "添加第一行",
-    "ariaGrid": "排产表格"
+    "ariaGrid": "数据表格"
   },
   "rag": {
     "unknownTime": "未知时间",
@@ -538,8 +538,8 @@
       "http_request": "HTTP 请求",
       "knowledge_retrieval": "知识检索",
       "run_agent": "跑 Agent",
-      "dataset_read": "读数据表",
-      "dataset_write": "写数据表",
+      "table_read": "读表格",
+      "table_write": "写表格",
       "end": "输出"
     },
     "cat": {

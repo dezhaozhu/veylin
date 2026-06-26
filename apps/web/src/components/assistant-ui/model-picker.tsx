@@ -7,6 +7,7 @@ import { getChatSettings, setChatSettings, onChatSettingsChange, type ModelKey }
 import { onModelSettingsChange } from '@/lib/model-settings';
 import { listConfiguredModels } from '@/lib/model-availability';
 import { useModelProvider } from '@/hooks/use-model-provider';
+import { useServerModelCatalog } from '@/hooks/use-server-model-catalog';
 
 export type { ModelKey };
 
@@ -17,15 +18,18 @@ export function getSelectedModel(): ModelKey {
 /** Composer model picker — only shows models with a configured API key. */
 export function ModelPicker({ className }: { className?: string }) {
   const { t } = useTranslation();
-  const { provider, loading } = useModelProvider();
+  const { provider, loading: providerLoading } = useModelProvider();
+  const { models: serverModels, loading: catalogLoading } = useServerModelCatalog();
   const [model, setModel] = useState<ModelKey>(() => getSelectedModel());
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [open, setOpen] = useState(false);
 
-  const models = useMemo(
-    () => listConfiguredModels(provider),
-    [provider, catalogVersion],
-  );
+  const models = useMemo(() => {
+    if (serverModels.length > 0) return serverModels;
+    return listConfiguredModels(provider);
+  }, [serverModels, provider, catalogVersion]);
+
+  const loading = providerLoading || catalogLoading;
 
   useEffect(() => {
     const sync = () => {

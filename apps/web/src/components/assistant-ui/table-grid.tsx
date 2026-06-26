@@ -21,33 +21,33 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { exportScheduleToExcel, parseScheduleExcelFile } from '@/lib/schedule-excel';
+import { exportTableToExcel, parseTableExcelFile } from '@/lib/table-excel';
 
-type ScheduleStatus = 'normal' | 'tight' | 'overdue';
-type ScheduleColumnType = 'text' | 'number' | 'status';
+type TableRowStatus = 'normal' | 'tight' | 'overdue';
+type TableColumnType = 'text' | 'number' | 'status';
 
-type ScheduleRow = Record<string, string | number> & { order_no: string; row_id?: string };
+type TableRow = Record<string, string | number> & { order_no: string; row_id?: string };
 
-function rowKey(row: ScheduleRow): string {
+function rowKey(row: TableRow): string {
   return String(row.row_id ?? row.order_no);
 }
 
-interface ScheduleColumnDef {
+interface TableColumnDef {
   key: string;
   name: string;
   width: number;
-  type: ScheduleColumnType;
+  type: TableColumnType;
   frozen?: boolean;
   deletable: boolean;
 }
 
-interface ScheduleSheet {
+interface TableSheet {
   id: string;
   name: string;
   builtin: boolean;
 }
 
-interface ScheduleGridTotals {
+interface TableGridTotals {
   rowCount: number;
   selectedCount: number;
 }
@@ -56,7 +56,7 @@ type FilterState = {
   query: string;
 };
 
-const STATUS_META: Record<ScheduleStatus, { labelKey: string; className: string }> = {
+const STATUS_META: Record<TableRowStatus, { labelKey: string; className: string }> = {
   normal: { labelKey: 'sched.status.normal', className: 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300' },
   tight: { labelKey: 'sched.status.tight', className: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' },
   overdue: { labelKey: 'sched.status.overdue', className: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300' },
@@ -77,12 +77,12 @@ type HistoryBatch = ScheduleEdit[];
 
 type SchedulePayload = {
   sheet?: string;
-  sheets?: ScheduleSheet[];
-  columns?: ScheduleColumnDef[];
-  rows?: ScheduleRow[];
+  sheets?: TableSheet[];
+  columns?: TableColumnDef[];
+  rows?: TableRow[];
 };
 
-const DEFAULT_EMPTY_COLUMNS: ScheduleColumnDef[] = [
+const DEFAULT_EMPTY_COLUMNS: TableColumnDef[] = [
   { key: 'order_no', name: 'Order No.', width: 100, type: 'text', frozen: true, deletable: false },
   { key: 'product', name: 'Product', width: 130, type: 'text', deletable: true },
   { key: 'qty', name: 'Qty', width: 72, type: 'number', deletable: true },
@@ -92,7 +92,7 @@ const DEFAULT_EMPTY_COLUMNS: ScheduleColumnDef[] = [
   { key: 'status', name: 'Status', width: 80, type: 'status', deletable: true },
 ];
 
-const DEFAULT_EMPTY_SHEETS: ScheduleSheet[] = [
+const DEFAULT_EMPTY_SHEETS: TableSheet[] = [
   { id: 'main', name: 'Main Plan', builtin: true },
 ];
 
@@ -122,7 +122,7 @@ async function readJsonResponse<T>(res: Response): Promise<T> {
 }
 
 async function fetchSchedule(sheetId: string): Promise<SchedulePayload> {
-  const res = await fetch(`/api/schedule?sheet=${encodeURIComponent(sheetId)}`);
+  const res = await fetch(`/api/table?sheet=${encodeURIComponent(sheetId)}`);
   const data = await readJsonResponse<SchedulePayload>(res);
   if (!res.ok) {
     throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
@@ -130,9 +130,9 @@ async function fetchSchedule(sheetId: string): Promise<SchedulePayload> {
   return data;
 }
 
-async function patchRow(sheetId: string, row: ScheduleRow): Promise<boolean> {
+async function patchRow(sheetId: string, row: TableRow): Promise<boolean> {
   try {
-    const res = await fetch('/api/schedule', {
+    const res = await fetch('/api/table', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sheet: sheetId, row_key: rowKey(row), ...row }),
@@ -145,10 +145,10 @@ async function patchRow(sheetId: string, row: ScheduleRow): Promise<boolean> {
 }
 
 function applyHistoryBatch(
-  allRows: ScheduleRow[],
+  allRows: TableRow[],
   batch: HistoryBatch,
   mode: 'undo' | 'redo',
-): ScheduleRow[] {
+): TableRow[] {
   const valueKey = mode === 'undo' ? 'before' : 'after';
   return allRows.map((row) => {
     const key = rowKey(row);
@@ -163,8 +163,8 @@ function applyHistoryBatch(
 }
 
 function collectEdits(
-  beforeRows: readonly ScheduleRow[],
-  afterRows: readonly ScheduleRow[],
+  beforeRows: readonly TableRow[],
+  afterRows: readonly TableRow[],
   columnKey: string,
   indexes: readonly number[],
   editableKeys: ReadonlySet<string>,
@@ -188,7 +188,7 @@ function collectEdits(
   return edits;
 }
 
-function applyFilters(rows: ScheduleRow[], filters: FilterState): ScheduleRow[] {
+function applyFilters(rows: TableRow[], filters: FilterState): TableRow[] {
   const q = filters.query.trim().toLowerCase();
   if (!q) return rows;
   return rows.filter((row) =>
@@ -199,7 +199,7 @@ function applyFilters(rows: ScheduleRow[], filters: FilterState): ScheduleRow[] 
 function compareScheduleValues(
   a: string | number | undefined,
   b: string | number | undefined,
-  type: ScheduleColumnType,
+  type: TableColumnType,
 ): number {
   const aEmpty = a === undefined || a === '';
   const bEmpty = b === undefined || b === '';
@@ -210,11 +210,11 @@ function compareScheduleValues(
   return String(a).localeCompare(String(b), 'zh-CN', { numeric: true });
 }
 
-function sortScheduleRows(
-  rows: ScheduleRow[],
+function sortTableRows(
+  rows: TableRow[],
   sortColumns: readonly SortColumn[],
-  columnDefs: ScheduleColumnDef[],
-): ScheduleRow[] {
+  columnDefs: TableColumnDef[],
+): TableRow[] {
   if (sortColumns.length === 0) return rows;
   const { columnKey, direction } = sortColumns[0]!;
   const colDef = columnDefs.find((c) => c.key === columnKey);
@@ -225,13 +225,13 @@ function sortScheduleRows(
   });
 }
 
-function cellTextValue(row: ScheduleRow, columnKey: string): string {
+function cellTextValue(row: TableRow, columnKey: string): string {
   const value = row[columnKey];
   if (value === undefined || value === null) return '';
   return String(value);
 }
 
-function ScheduleGridFooter({ totals }: { totals: ScheduleGridTotals }) {
+function TableGridFooter({ totals }: { totals: TableGridTotals }) {
   const { t } = useTranslation();
   return (
     <div
@@ -373,7 +373,7 @@ function SelectRowCell({
 function StatusBadge({ status }: { status: string }) {
   const { t } = useTranslation();
   if (!status) return null;
-  const meta = STATUS_META[status as ScheduleStatus] ?? STATUS_META.normal;
+  const meta = STATUS_META[status as TableRowStatus] ?? STATUS_META.normal;
   return (
     <span
       className={cn(
@@ -386,7 +386,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function StatusEditor({ row, column, onRowChange, onClose }: RenderEditCellProps<ScheduleRow>) {
+function StatusEditor({ row, column, onRowChange, onClose }: RenderEditCellProps<TableRow>) {
   const { t } = useTranslation();
   const value = row[column.key] === undefined ? '' : String(row[column.key]);
   return (
@@ -405,7 +405,7 @@ function StatusEditor({ row, column, onRowChange, onClose }: RenderEditCellProps
   );
 }
 
-function NumberEditor({ row, column, onRowChange, onClose }: RenderEditCellProps<ScheduleRow>) {
+function NumberEditor({ row, column, onRowChange, onClose }: RenderEditCellProps<TableRow>) {
   const raw = row[column.key];
   const display = raw === undefined || raw === '' ? '' : String(raw);
   return (
@@ -423,7 +423,7 @@ function NumberEditor({ row, column, onRowChange, onClose }: RenderEditCellProps
   );
 }
 
-function CenteredTextEditor({ row, column, onRowChange, onClose }: RenderEditCellProps<ScheduleRow>) {
+function CenteredTextEditor({ row, column, onRowChange, onClose }: RenderEditCellProps<TableRow>) {
   const value =
     row[column.key] === undefined || row[column.key] === null ? '' : String(row[column.key]);
   return (
@@ -437,14 +437,14 @@ function CenteredTextEditor({ row, column, onRowChange, onClose }: RenderEditCel
   );
 }
 
-function cellDisplayValue(row: ScheduleRow, key: string): string {
+function cellDisplayValue(row: TableRow, key: string): string {
   const value = row[key];
   if (value === undefined || value === null) return '';
   return String(value);
 }
 
-function buildDataColumn(def: ScheduleColumnDef): Column<ScheduleRow> {
-  const headerCell = ({ tabIndex, sortDirection }: RenderHeaderCellProps<ScheduleRow>) => (
+function buildDataColumn(def: TableColumnDef): Column<TableRow> {
+  const headerCell = ({ tabIndex, sortDirection }: RenderHeaderCellProps<TableRow>) => (
     <SelectableColumnHeader
       columnKey={def.key}
       name={def.name}
@@ -452,7 +452,7 @@ function buildDataColumn(def: ScheduleColumnDef): Column<ScheduleRow> {
       sortDirection={sortDirection}
     />
   );
-  const base: Pick<Column<ScheduleRow>, 'key' | 'name' | 'width' | 'frozen' | 'sortable' | 'renderHeaderCell'> = {
+  const base: Pick<Column<TableRow>, 'key' | 'name' | 'width' | 'frozen' | 'sortable' | 'renderHeaderCell'> = {
     key: def.key,
     name: def.name,
     width: def.width,
@@ -475,7 +475,7 @@ function buildDataColumn(def: ScheduleColumnDef): Column<ScheduleRow> {
   if (def.type === 'status') {
     return {
       ...base,
-      renderCell: ({ row }: RenderCellProps<ScheduleRow>) => (
+      renderCell: ({ row }: RenderCellProps<TableRow>) => (
         <div className="flex w-full justify-center px-2">
           <StatusBadge status={String(row[def.key] ?? '')} />
         </div>
@@ -493,7 +493,7 @@ function buildDataColumn(def: ScheduleColumnDef): Column<ScheduleRow> {
 }
 
 function makeOnCellPaste(editableKeys: ReadonlySet<string>) {
-  return (args: CellPasteArgs<ScheduleRow>, event: React.ClipboardEvent): ScheduleRow => {
+  return (args: CellPasteArgs<TableRow>, event: React.ClipboardEvent): TableRow => {
     const text = event.clipboardData.getData('text/plain').trim();
     const { column, row } = args;
     if (!editableKeys.has(column.key)) return row;
@@ -512,12 +512,12 @@ function makeOnCellPaste(editableKeys: ReadonlySet<string>) {
   };
 }
 
-export function ScheduleGrid() {
+export function TableGrid() {
   const { t } = useTranslation();
-  const [sheets, setSheets] = useState<ScheduleSheet[]>([]);
+  const [sheets, setSheets] = useState<TableSheet[]>([]);
   const [activeSheetId, setActiveSheetId] = useState('main');
-  const [columnDefs, setColumnDefs] = useState<ScheduleColumnDef[]>([]);
-  const [rows, setRows] = useState<ScheduleRow[]>([]);
+  const [columnDefs, setColumnDefs] = useState<TableColumnDef[]>([]);
+  const [rows, setRows] = useState<TableRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
@@ -611,7 +611,7 @@ export function ScheduleGrid() {
 
   const filteredRows = useMemo(() => {
     const filtered = applyFilters(rows, filters);
-    return sortScheduleRows(filtered, sortColumns, columnDefs);
+    return sortTableRows(filtered, sortColumns, columnDefs);
   }, [rows, filters, sortColumns, columnDefs]);
 
   const toggleSort = useCallback((columnKey: string) => {
@@ -672,7 +672,7 @@ export function ScheduleGrid() {
   );
 
   const onCellClick = useCallback(
-    (args: CellMouseArgs<ScheduleRow>, event: CellMouseEvent) => {
+    (args: CellMouseArgs<TableRow>, event: CellMouseEvent) => {
       if (args.column.key === SELECT_COL_KEY) return;
       clearColumnSelection();
       const { rowIdx, row } = args;
@@ -692,7 +692,7 @@ export function ScheduleGrid() {
     [applyRowSelectionRange, clearColumnSelection, handleRowSelect, selectedRows],
   );
 
-  const totals = useMemo<ScheduleGridTotals>(
+  const totals = useMemo<TableGridTotals>(
     () => ({
       rowCount: filteredRows.length,
       selectedCount: selectedRows.size,
@@ -701,7 +701,7 @@ export function ScheduleGrid() {
   );
 
   const commitRows = useCallback(
-    (merged: ScheduleRow[], touchedKeys: ReadonlySet<string>) => {
+    (merged: TableRow[], touchedKeys: ReadonlySet<string>) => {
       lastSerialized.current = JSON.stringify(merged);
       editingUntil.current = Date.now() + 3000;
       setRows(merged);
@@ -767,7 +767,7 @@ export function ScheduleGrid() {
   }, [applyHistory]);
 
   const onRowsChange = useCallback(
-    (next: ScheduleRow[], data: RowsChangeData<ScheduleRow>) => {
+    (next: TableRow[], data: RowsChangeData<TableRow>) => {
       const edits = isApplyingHistory.current
         ? []
         : collectEdits(filteredRows, next, data.column.key, data.indexes, editableKeys);
@@ -788,7 +788,7 @@ export function ScheduleGrid() {
   );
 
   const onCellKeyDown = useCallback(
-    (_args: CellKeyDownArgs<ScheduleRow>, event: CellKeyboardEvent) => {
+    (_args: CellKeyDownArgs<TableRow>, event: CellKeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return;
       const key = event.key.toLowerCase();
       if (key === 'z' && !event.shiftKey) {
@@ -803,7 +803,7 @@ export function ScheduleGrid() {
   );
 
   const onCellCopy = useCallback(
-    (args: CellCopyArgs<ScheduleRow>, event: React.ClipboardEvent) => {
+    (args: CellCopyArgs<TableRow>, event: React.ClipboardEvent) => {
       if (window.getSelection()?.isCollapsed === false) return;
       const { row, column } = args;
       if (
@@ -846,7 +846,7 @@ export function ScheduleGrid() {
     [columnDefs],
   );
 
-  const columns = useMemo<Column<ScheduleRow>[]>(
+  const columns = useMemo<Column<TableRow>[]>(
     () => [
       {
         key: '__rowNum__',
@@ -872,7 +872,7 @@ export function ScheduleGrid() {
         frozen: true,
         sortable: false,
         resizable: false,
-        renderHeaderCell: ({ tabIndex }: RenderHeaderCellProps<ScheduleRow>) => (
+        renderHeaderCell: ({ tabIndex }: RenderHeaderCellProps<TableRow>) => (
           <SelectAllHeader tabIndex={tabIndex} />
         ),
         renderCell: ({ row, rowIdx, tabIndex }) => (
@@ -889,12 +889,12 @@ export function ScheduleGrid() {
   );
 
   const handleAddRow = async () => {
-    const res = await fetch('/api/schedule/rows', {
+    const res = await fetch('/api/table/rows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sheet: activeSheetId }),
     });
-    const data = (await res.json()) as { ok?: boolean; rows?: ScheduleRow[] };
+    const data = (await res.json()) as { ok?: boolean; rows?: TableRow[] };
     if (data.ok && data.rows) {
       editingUntil.current = Date.now() + 3000;
       lastSerialized.current = JSON.stringify(data.rows);
@@ -904,12 +904,12 @@ export function ScheduleGrid() {
 
   const handleDeleteRows = async () => {
     if (selectedRows.size === 0) return;
-    const res = await fetch('/api/schedule/rows', {
+    const res = await fetch('/api/table/rows', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sheet: activeSheetId, row_keys: [...selectedRows] }),
     });
-    const data = (await res.json()) as { ok?: boolean; rows?: ScheduleRow[] };
+    const data = (await res.json()) as { ok?: boolean; rows?: TableRow[] };
     if (!data.ok || !data.rows) return;
     resetSheetUiState();
     editingUntil.current = Date.now() + 3000;
@@ -920,15 +920,15 @@ export function ScheduleGrid() {
   const handleAddColumn = async () => {
     const name = window.prompt(t('sched.newColumnName'));
     if (!name?.trim()) return;
-    const res = await fetch('/api/schedule/columns', {
+    const res = await fetch('/api/table/columns', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sheet: activeSheetId, name: name.trim() }),
     });
     const data = (await res.json()) as {
       ok?: boolean;
-      columns?: ScheduleColumnDef[];
-      rows?: ScheduleRow[];
+      columns?: TableColumnDef[];
+      rows?: TableRow[];
     };
     if (!data.ok) return;
     if (data.columns) setColumnDefs(data.columns);
@@ -946,15 +946,15 @@ export function ScheduleGrid() {
       window.alert(t('sched.columnNotDeletable'));
       return;
     }
-    const res = await fetch('/api/schedule/columns', {
+    const res = await fetch('/api/table/columns', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sheet: activeSheetId, key: selectedColumnKey }),
     });
     const data = (await res.json()) as {
       ok?: boolean;
-      columns?: ScheduleColumnDef[];
-      rows?: ScheduleRow[];
+      columns?: TableColumnDef[];
+      rows?: TableRow[];
     };
     if (!data.ok) return;
     if (data.columns) setColumnDefs(data.columns);
@@ -984,7 +984,7 @@ export function ScheduleGrid() {
     sheets.find((s) => s.id === activeSheetId)?.name ?? activeSheetId;
 
   const handleExportExcel = () => {
-    exportScheduleToExcel(activeSheetName, columnDefs, rows);
+    exportTableToExcel(activeSheetName, columnDefs, rows);
   };
 
   const handleImportClick = () => {
@@ -995,11 +995,11 @@ export function ScheduleGrid() {
     if (!window.confirm(t('sched.confirmImport'))) return;
     setImporting(true);
     try {
-      const { rows: importedRows, newColumnNames } = await parseScheduleExcelFile(
+      const { rows: importedRows, newColumnNames } = await parseTableExcelFile(
         file,
         columnDefs,
       );
-      const res = await fetch('/api/schedule/import', {
+      const res = await fetch('/api/table/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1011,8 +1011,8 @@ export function ScheduleGrid() {
       const data = (await res.json()) as {
         ok?: boolean;
         message?: string;
-        columns?: ScheduleColumnDef[];
-        rows?: ScheduleRow[];
+        columns?: TableColumnDef[];
+        rows?: TableRow[];
       };
       if (!data.ok) {
         window.alert(data.message ?? t('sched.importFailed'));
@@ -1186,7 +1186,7 @@ export function ScheduleGrid() {
           <RowSelectionContext.Provider value={rowSelectionCtx}>
             <ColumnSelectionContext.Provider value={columnSelectionCtx}>
               <DataGrid
-                className="schedule-grid rdg-light min-h-0 flex-1 text-sm"
+                className="table-grid rdg-light min-h-0 flex-1 text-sm"
                 style={{ blockSize: '100%' }}
                 aria-label={t('sched.ariaGrid')}
                 columns={columns}
@@ -1204,7 +1204,7 @@ export function ScheduleGrid() {
               />
             </ColumnSelectionContext.Provider>
           </RowSelectionContext.Provider>
-          <ScheduleGridFooter totals={totals} />
+          <TableGridFooter totals={totals} />
         </div>
       )}
     </div>

@@ -34,7 +34,7 @@ export type McpServer = {
 export type Automation = {
   id: string;
   name: string;
-  kind: 'schedule' | 'event';
+  kind: 'cron' | 'event';
   agentId: string;
   prompt: string;
   enabled: boolean;
@@ -184,7 +184,7 @@ export const settingsApi = {
     apiFetch<{ runs: AutomationRun[] }>(`/api/automations/${id}/runs`),
   createAutomation: (body: {
     name: string;
-    kind: 'schedule' | 'event';
+    kind: 'cron' | 'event';
     agentId?: string;
     prompt: string;
     cron?: string;

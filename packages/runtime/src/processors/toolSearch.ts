@@ -25,7 +25,7 @@ export function selectTools(
 
   const picked = scored.filter((s) => s.score > 0).slice(0, topN).map((s) => s.id);
   // If nothing matched, fall back to a small safe default set.
-  const base = picked.length > 0 ? picked : (['file_read', 'list_dir', 'grep'] as BuiltinToolId[]);
+  const base = picked.length > 0 ? picked : (['web_fetch', 'todo_write'] as BuiltinToolId[]);
 
   return Array.from(new Set([...alwaysOn, ...base])).filter((id) => available.includes(id));
 }

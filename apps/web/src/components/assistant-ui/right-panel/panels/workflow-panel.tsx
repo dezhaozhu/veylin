@@ -29,8 +29,8 @@ type NodeKind =
   | 'http_request'
   | 'knowledge_retrieval'
   | 'run_agent'
-  | 'dataset_read'
-  | 'dataset_write'
+  | 'table_read'
+  | 'table_write'
   | 'end';
 
 type Category = 'trigger' | 'logic' | 'transform' | 'integration' | 'ai' | 'data' | 'output';
@@ -44,8 +44,8 @@ const NODE_META: Record<NodeKind, { label: string; category: Category; color: st
   http_request: { label: 'wf.node.http_request', category: 'integration', color: '#7c3aed' },
   knowledge_retrieval: { label: 'wf.node.knowledge_retrieval', category: 'ai', color: '#db2777' },
   run_agent: { label: 'wf.node.run_agent', category: 'ai', color: '#db2777' },
-  dataset_read: { label: 'wf.node.dataset_read', category: 'data', color: '#2563eb' },
-  dataset_write: { label: 'wf.node.dataset_write', category: 'data', color: '#2563eb' },
+  table_read: { label: 'wf.node.table_read', category: 'data', color: '#2563eb' },
+  table_write: { label: 'wf.node.table_write', category: 'data', color: '#2563eb' },
   end: { label: 'wf.node.end', category: 'output', color: '#475569' },
 };
 
@@ -115,9 +115,9 @@ function defaultData(kind: NodeKind): Record<string, unknown> {
       return { query: '' };
     case 'run_agent':
       return { prompt: '', agentId: 'veylin' };
-    case 'dataset_read':
+    case 'table_read':
       return { sheetId: 'main' };
-    case 'dataset_write':
+    case 'table_write':
       return { sheetId: 'main', rowKey: '', patch: {} };
     case 'end':
       return { outputs: [] };
@@ -1047,14 +1047,14 @@ function NodeForm({
         </>
       );
 
-    case 'dataset_read':
+    case 'table_read':
       return (
         <Labeled label="Sheet ID">
           <input className={inputCls} value={selData('sheetId', 'main')} onChange={(e) => patchSelected({ sheetId: e.target.value })} />
         </Labeled>
       );
 
-    case 'dataset_write': {
+    case 'table_write': {
       const patch = selData<Record<string, string>>('patch', {});
       const patchJson = JSON.stringify(patch, null, 0);
       return (

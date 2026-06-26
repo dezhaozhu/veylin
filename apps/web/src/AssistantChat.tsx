@@ -31,6 +31,10 @@ import { AskUserQuestionToolUI } from '@/components/assistant-ui/ask-user-questi
 import { WebFetchToolUI } from '@/components/assistant-ui/web-fetch';
 import { ReadOpenPageToolUI } from '@/components/assistant-ui/read-open-page';
 import { TodoWriteToolUI } from '@/components/assistant-ui/todo-write';
+import {
+  SetWorkingMemoryToolUI,
+  UpdateWorkingMemoryToolUI,
+} from '@/components/assistant-ui/working-memory-tools';
 import { ToolSearchToolUI } from '@/components/assistant-ui/tool-search';
 import { TaskToolUI, TaskContinueToolUI } from '@/components/assistant-ui/task-tool';
 import { KnowledgeSearchToolUI } from '@/components/assistant-ui/knowledge-search';
@@ -209,6 +213,8 @@ export function AssistantChat() {
         <HandoffRenderers />
         <AskUserQuestionToolUI />
         <TodoWriteToolUI />
+        <UpdateWorkingMemoryToolUI />
+        <SetWorkingMemoryToolUI />
         <ToolSearchToolUI />
         <TaskToolUI />
         <TaskContinueToolUI />

@@ -3,7 +3,7 @@ import {
   getAutomationRow,
   insertAutomation,
   insertAutomationRun,
-  listAllScheduledAutomationRows,
+  listAllCronAutomationRows,
   listAutomationRows,
   listAutomationRunRows,
   listEventAutomationRows,
@@ -52,8 +52,8 @@ export async function listAutomations(tenantId: string, userId?: string): Promis
   return rows.map(rowToAutomation);
 }
 
-export async function listAllScheduledAutomations(): Promise<Automation[]> {
-  const rows = await listAllScheduledAutomationRows();
+export async function listAllCronAutomations(): Promise<Automation[]> {
+  const rows = await listAllCronAutomationRows();
   return rows.map(rowToAutomation);
 }
 
@@ -115,7 +115,7 @@ export async function deleteAutomation(tenantId: string, id: string): Promise<bo
 }
 
 export async function touchAutomationLastRun(automationId: string): Promise<void> {
-  const rows = await listAllScheduledAutomationRows();
+  const rows = await listAllCronAutomationRows();
   const hit = rows.find((r) => r.id === automationId);
   if (!hit) return;
   await updateAutomationRow(hit.tenantId, automationId, {

@@ -1,3 +1,12 @@
+import {
+  getCatalogModel,
+  getDefaultCatalogModel,
+  loadModelCatalog,
+} from './model-catalog';
+
+export { loadModelCatalog, listModelCatalogPublic, getDefaultCatalogModel } from './model-catalog';
+export type { ModelCatalogEntry } from './model-catalog';
+
 /** Catalog model id selected in chat (built-in or custom). */
 export type ModelKey = string;
 
@@ -40,6 +49,7 @@ export function isModelProviderConfigured(overrides: RuntimeModelOverrides): boo
 }
 
 export function isRuntimeModelConfigured(): boolean {
+  if (loadModelCatalog().length > 0) return true;
   return isModelProviderConfigured(runtimeOverrides);
 }
 
@@ -68,8 +78,35 @@ function applyOpenAICompatibleOverrides(config: ModelConfig): ModelConfig {
   };
 }
 
-/** Resolve LLM config for any catalog model id using the shared provider settings. */
+function configFromCatalog(catalogId: ModelKey): ModelConfig | undefined {
+  const entry =
+    getCatalogModel(catalogId) ??
+    (catalogId === DEFAULT_MODEL ? getDefaultCatalogModel() : undefined);
+  if (!entry) return undefined;
+  return {
+    providerId: entry.id,
+    modelId: entry.modelId,
+    url: entry.url,
+    apiKey: entry.apiKey,
+  };
+}
+
+/** Resolve LLM config for any catalog model id using local catalog or shared provider settings. */
 export function getModelConfig(catalogId: ModelKey = DEFAULT_MODEL): ModelConfig {
+  const fromCatalog = configFromCatalog(catalogId);
+  if (fromCatalog) return fromCatalog;
+
+  const fallbackId = catalogId !== DEFAULT_MODEL ? catalogId : undefined;
+  const fromSlug = fallbackId ? getCatalogModel(fallbackId) : undefined;
+  if (fromSlug) {
+    return {
+      providerId: fromSlug.id,
+      modelId: fromSlug.modelId,
+      url: fromSlug.url,
+      apiKey: fromSlug.apiKey,
+    };
+  }
+
   return applyOpenAICompatibleOverrides(defaultEnvConfig(catalogId));
 }
 

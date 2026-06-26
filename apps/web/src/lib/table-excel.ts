@@ -1,13 +1,13 @@
 import * as XLSX from 'xlsx';
 import i18n from '@/i18n';
 
-type ScheduleColumnDef = {
+type TableColumnDef = {
   key: string;
   name: string;
   type: string;
 };
 
-type ScheduleRow = Record<string, string | number>;
+type TableRow = Record<string, string | number>;
 
 const STATUS_VALUES = ['normal', 'tight', 'overdue'] as const;
 
@@ -30,7 +30,7 @@ function statusDisplayLabel(value: string): string {
 }
 
 function cellDisplayValue(
-  col: ScheduleColumnDef,
+  col: TableColumnDef,
   value: string | number | undefined,
 ): string | number {
   if (value === undefined || value === '') return '';
@@ -40,7 +40,7 @@ function cellDisplayValue(
   return value;
 }
 
-function parseCellValue(col: ScheduleColumnDef, raw: unknown): string | number {
+function parseCellValue(col: TableColumnDef, raw: unknown): string | number {
   if (raw === undefined || raw === null || raw === '') return '';
   if (col.type === 'number') {
     const n = Number(raw);
@@ -54,14 +54,14 @@ function parseCellValue(col: ScheduleColumnDef, raw: unknown): string | number {
 }
 
 function sanitizeFilename(name: string): string {
-  return name.replace(/[\\/:*?"<>|]/g, '_').trim() || 'schedule';
+  return name.replace(/[\\/:*?"<>|]/g, '_').trim() || 'table';
 }
 
 /** Export current sheet columns + rows to an .xlsx download. */
-export function exportScheduleToExcel(
+export function exportTableToExcel(
   sheetName: string,
-  columns: ScheduleColumnDef[],
-  rows: ScheduleRow[],
+  columns: TableColumnDef[],
+  rows: TableRow[],
 ): void {
   const headers = columns.map((c) => c.name);
   const body = rows.map((row) =>
@@ -73,8 +73,8 @@ export function exportScheduleToExcel(
   XLSX.writeFile(wb, `${sanitizeFilename(sheetName)}.xlsx`);
 }
 
-export type ParsedScheduleImport = {
-  rows: ScheduleRow[];
+export type ParsedTableImport = {
+  rows: TableRow[];
   newColumnNames: string[];
 };
 
@@ -82,10 +82,10 @@ export type ParsedScheduleImport = {
  * Parse an uploaded Excel file into row patches keyed by column key.
  * Headers match column `name` or `key`; unknown headers become new columns.
  */
-export async function parseScheduleExcelFile(
+export async function parseTableExcelFile(
   file: File,
-  columns: ScheduleColumnDef[],
-): Promise<ParsedScheduleImport> {
+  columns: TableColumnDef[],
+): Promise<ParsedTableImport> {
   const buffer = await file.arrayBuffer();
   const wb = XLSX.read(buffer, { type: 'array' });
   const sheetName = wb.SheetNames[0];
@@ -105,7 +105,7 @@ export async function parseScheduleExcelFile(
     row.some((cell) => String(cell ?? '').trim() !== ''),
   );
 
-  const columnByHeader = new Map<string, ScheduleColumnDef>();
+  const columnByHeader = new Map<string, TableColumnDef>();
   const newColumnNames: string[] = [];
 
   for (const header of headerRow) {
@@ -125,8 +125,8 @@ export async function parseScheduleExcelFile(
     }
   }
 
-  const rows: ScheduleRow[] = dataRows.map((cells) => {
-    const row: ScheduleRow = { order_no: '' };
+  const rows: TableRow[] = dataRows.map((cells) => {
+    const row: TableRow = { order_no: '' };
     headerRow.forEach((header, idx) => {
       if (!header) return;
       const col = columnByHeader.get(header);

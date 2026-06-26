@@ -32,8 +32,8 @@ Rules:
 - Prefer industrial scenarios: schedule data, knowledge retrieval, agent prompts, HTTP to MES/ERP.
 - run_agent.data: { "prompt": "...", "agentId": "veylin" }
 - knowledge_retrieval.data: { "query": "{{ ... }}" }
-- dataset_read.data: { "sheetId": "main" }
-- dataset_write.data: { "sheetId": "main", "rowKey": "...", "patch": {} }
+- table_read.data: { "sheetId": "main" }
+- table_write.data: { "sheetId": "main", "rowKey": "...", "patch": {} }
 - if_else.data: { "cases": [{ "caseId": "c1", "logicalOperator": "and", "conditions": [{ "left": "{{ n1.field }}", "operator": "contains", "right": "value" }] }] }
 - end.data: { "outputs": [{ "name": "result", "value": "{{ lastNode.text }}" }] }
 - Keep workflows practical: 3–8 nodes unless the user asks for more.`;

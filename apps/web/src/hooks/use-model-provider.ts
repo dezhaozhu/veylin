@@ -4,6 +4,7 @@ import {
   fetchModelProviderSettings,
   MODEL_PROVIDER_CHANGE_EVENT,
 } from '@/lib/model-availability';
+import { isServerModelCatalogActive } from '@/hooks/use-server-model-catalog';
 import { upsertCatalogModel } from '@/lib/model-settings';
 import type { ModelProviderSettings } from '@/hooks/settings/api';
 
@@ -21,7 +22,7 @@ export function useModelProvider() {
   const refresh = useCallback(async () => {
     try {
       const next = await fetchModelProviderSettings();
-      if (next.configured && next.modelName.trim()) {
+      if (!isServerModelCatalogActive() && next.configured && next.modelName.trim()) {
         upsertCatalogModel(next.modelName);
       }
       setProvider(next);
@@ -40,7 +41,11 @@ export function useModelProvider() {
     const onChange = (e: Event) => {
       const detail = (e as CustomEvent<ModelProviderSettings>).detail;
       if (detail && 'configured' in detail) {
-        if (detail.configured && detail.modelName.trim()) {
+        if (
+          !isServerModelCatalogActive() &&
+          detail.configured &&
+          detail.modelName.trim()
+        ) {
           upsertCatalogModel(detail.modelName);
         }
         setProvider(detail);
