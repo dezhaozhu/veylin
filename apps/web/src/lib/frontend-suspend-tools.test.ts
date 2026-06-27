@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { UIMessage } from 'ai';
+import { lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
 import {
   hasAskUserAnswers,
   isAwaitingFrontendToolPart,
@@ -17,6 +18,23 @@ describe('frontend-suspend-tools', () => {
         type: 'tool-ask_user_question',
         state: 'output-available',
         output: { answers: {} },
+      }),
+      true,
+    );
+  });
+
+  it('does not suspend while tool args are still streaming', () => {
+    assert.equal(
+      isAwaitingFrontendToolPart({
+        type: 'tool-ask_user_question',
+        state: 'input-streaming',
+      }),
+      false,
+    );
+    assert.equal(
+      isAwaitingFrontendToolPart({
+        type: 'tool-ask_user_question',
+        state: 'input-available',
       }),
       true,
     );
@@ -44,6 +62,30 @@ describe('frontend-suspend-tools', () => {
       state: 'input-available',
     } as never;
     assert.equal(shouldAutoSendChat({ messages }), false);
+  });
+
+  it('auto-continues after provider-executed ask_user_question is answered on the client', () => {
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          { type: 'text', text: 'Let me ask you a few questions.' },
+          {
+            type: 'tool-ask_user_question',
+            state: 'output-available',
+            providerExecuted: true,
+            output: {
+              answers: { 'Pick one?': 'A' },
+              questions: [{ question: 'Pick one?', header: 'Pick', options: [{ label: 'A' }] }],
+            },
+          },
+        ],
+      },
+    ] as UIMessage[];
+
+    assert.equal(shouldAutoSendChat({ messages }), true);
+    assert.equal(lastAssistantMessageIsCompleteWithToolCalls({ messages }), false);
   });
 
   it('trims assistant text after a pending frontend tool', () => {

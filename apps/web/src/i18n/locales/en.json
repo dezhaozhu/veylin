@@ -105,6 +105,9 @@
   "ask": {
     "answered": "Answered",
     "selectToContinue": "Select an option to continue",
+    "lookBelow": "Choose an option in the panel above the input box.",
+    "invalidFormat": "Invalid question format. Retry or reply with your choice in chat.",
+    "stopped": "Generation stopped. Send a new message to continue.",
     "submit": "Submit",
     "loading": "Loading questions…",
     "panelTitle": "Questions",
@@ -422,9 +425,9 @@
     "offlineTitle": "You are offline",
     "offlineBody": "Waiting for the network to come back…",
     "reconnectingTitle": "Reconnecting",
-    "reconnectingMsg": "{{reason}} · attempt {{attempt}}, elapsed {{elapsed}}s, retrying in {{seconds}}s",
+    "reconnectingMsg": "{{reason}} · elapsed {{elapsed}}s, retrying in {{seconds}}s",
     "postRetryTitle": "Retrying",
-    "postRetryMsg": "{{reason}} · attempt {{attempt}}/{{max}}, retrying in {{seconds}}s"
+    "postRetryMsg": "{{reason}} · retrying in {{seconds}}s"
   },
   "chatError": {
     "rateLimited": { "title": "Rate limited", "detail": "Too many requests. Please wait a moment and try again." },
@@ -470,7 +473,7 @@
     "importFailed": "Import failed",
     "importEmpty": "No data rows found in the file (first row should be headers, with at least one data row below)",
     "importSuccess": "Imported {{count}} row(s)",
-    "exportSuccess": "Exported {{filename}}",
+    "exportSuccess": "Exported to {{path}}",
     "loading": "Loading table data…",
     "loadError": "Failed to load table data: {{error}}",
     "deleteSheet": "Delete sheet {{name}}",
@@ -501,7 +504,8 @@
       "pending": "Pending",
       "unknown": "Unknown"
     },
-    "confirmDelete": "Delete \"{{filename}}\"? Related chunks and graph data will be removed.",
+    "embeddingPreparing": "The embedding model is not ready yet; the server is downloading it automatically (first run needs network). Chat works; knowledge search needs the download to finish.",
+    "embeddingDownloading": "Downloading embedding model ({{progress}}%)…",
     "enterQuery": "Please enter a question or keyword to search",
     "title": "Knowledge Base",
     "subtitle": "Local document retrieval, citation tracking and knowledge graph",
@@ -549,8 +553,9 @@
       "embeddingDesc": "Downloaded from the official Hugging Face repo for chunk vectorization; without it, only full-text search is used.",
       "rerankerTitle": "Search reranking (Cross-Encoder)",
       "rerankerDesc": "Downloaded from the official Hugging Face repo to re-rank hits; basic search works without it.",
-      "enableReranker": "Enable reranking",
-      "enabledHint": "Reranking is on — search and knowledge_search in chat will use the reranker.",
+    "enableReranker": "Enable reranking",
+    "enabledHint": "Reranking is on — search and knowledge_search in chat will use the reranker.",
+    "disabledHint": "Reranking is off — the model stays on disk and can be re-enabled anytime.",
       "hfEndpoint": "Download source: {{endpoint}}"
     }
   },
@@ -651,6 +656,37 @@
       "errorHandling": "Error handling",
       "errorAbort": "Abort flow on error",
       "errorBranch": "Take error branch (red handle)"
+    },
+    "run": {
+      "history": "Run history",
+      "status": {
+        "queued": "Queued",
+        "running": "Running",
+        "done": "Done",
+        "failed": "Failed"
+      },
+      "tab": {
+        "result": "Result",
+        "tracing": "Tracing",
+        "variables": "Variables"
+      },
+      "selectRun": "Select a run to inspect details",
+      "failed": "Workflow failed",
+      "inProgress": "Workflow is still running…",
+      "inProgressStep": "Running: {{step}}",
+      "finalText": "Output text",
+      "finalOutput": "Final output",
+      "rawJson": "Raw JSON",
+      "noFinalOutput": "No final output yet (connect an Output node and wait for completion)",
+      "nodeOutput": "Node output",
+      "pickStep": "Click a step on the left to view node output",
+      "noVariables": "No node outputs in this run",
+      "noOutput": "No output",
+      "emptyOutput": "(empty)",
+      "copy": "Copy",
+      "lastRun": "Last run",
+      "notExecuted": "This node did not run in the selected execution",
+      "insertVar": "Insert upstream variable"
     }
   },
   "splash": {

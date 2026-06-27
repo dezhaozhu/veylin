@@ -1,17 +1,20 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { embedMany } from 'ai';
-import { fastembed } from '@mastra/fastembed';
+import {
+  LOCAL_EMBEDDING_HF_MODEL_ID,
+  LOCAL_EMBEDDING_ONNX_FILE,
+  embeddingModelDir,
+  ensureDataDir,
+  isEmbeddingModelReady,
+} from '@veylin/db';
+import { generateLocalEmbeddings, resetLocalFastembedRuntime } from '@veylin/runtime';
 import { buildHfResolveUrl, resolveHuggingfaceEndpoint } from './hf-endpoint';
 import { downloadFile } from './hf-download';
 
-/** Official Hugging Face model repo. */
-export const EMBEDDING_HF_MODEL_ID = 'BAAI/bge-small-en-v1.5';
-export const EMBEDDING_CACHE_KEY = 'fast-bge-small-en-v1.5';
+export { LOCAL_EMBEDDING_HF_MODEL_ID as EMBEDDING_HF_MODEL_ID } from '@veylin/db';
 
 const EMBEDDING_FILES: Array<{ remote: string; local: string }> = [
-  { remote: 'onnx/model.onnx', local: 'model_optimized.onnx' },
+  { remote: 'onnx/model.onnx', local: LOCAL_EMBEDDING_ONNX_FILE },
   { remote: 'config.json', local: 'config.json' },
   { remote: 'tokenizer.json', local: 'tokenizer.json' },
   { remote: 'tokenizer_config.json', local: 'tokenizer_config.json' },
@@ -42,6 +45,13 @@ export type EmbeddingStatus = {
   hfEndpoint: string | null;
 };
 
+type StoredEmbeddingSettings = {
+  installedAt?: string | null;
+  lastError?: string | null;
+};
+
+const SETTINGS_FILE = 'embedding-settings.json';
+
 let downloadState: EmbeddingDownloadState = {
   phase: 'idle',
   progress: 0,
@@ -51,16 +61,29 @@ let downloadState: EmbeddingDownloadState = {
 let downloadPromise: Promise<void> | null = null;
 let lastHfEndpoint: string | null = null;
 
-export function embeddingCacheDir(): string {
-  return join(homedir(), '.cache', 'mastra', 'fastembed-models');
+function settingsPath(): string {
+  return join(ensureDataDir(), SETTINGS_FILE);
 }
 
-export function embeddingModelDir(): string {
-  return join(embeddingCacheDir(), EMBEDDING_CACHE_KEY);
+function readSettings(): StoredEmbeddingSettings {
+  const path = settingsPath();
+  if (!existsSync(path)) {
+    return { installedAt: null, lastError: null };
+  }
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as Partial<StoredEmbeddingSettings>;
+    return {
+      installedAt: typeof raw.installedAt === 'string' ? raw.installedAt : null,
+      lastError: typeof raw.lastError === 'string' ? raw.lastError : null,
+    };
+  } catch {
+    return { installedAt: null, lastError: null };
+  }
 }
 
-export function isEmbeddingModelInstalled(): boolean {
-  return existsSync(join(embeddingModelDir(), 'model_optimized.onnx'));
+function writeSettings(settings: StoredEmbeddingSettings): void {
+  mkdirSync(ensureDataDir(), { recursive: true });
+  writeFileSync(settingsPath(), `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
 }
 
 function updateDownloadState(patch: Partial<EmbeddingDownloadState>): void {
@@ -68,7 +91,27 @@ function updateDownloadState(patch: Partial<EmbeddingDownloadState>): void {
 }
 
 export async function getEmbeddingStatus(): Promise<EmbeddingStatus> {
-  const installed = downloadState.phase === 'downloading' ? false : isEmbeddingModelInstalled();
+  const settings = readSettings();
+  let installedAt = settings.installedAt ?? null;
+  let lastError = settings.lastError ?? downloadState.error ?? null;
+  let installed = false;
+
+  if (downloadState.phase === 'downloading') {
+    installed = false;
+  } else {
+    installed = isEmbeddingModelReady();
+    if (installed) {
+      if (!installedAt) {
+        installedAt = new Date().toISOString();
+        writeSettings({ installedAt, lastError: null });
+      }
+      lastError = null;
+    } else if (installedAt) {
+      installedAt = null;
+      writeSettings({ installedAt: null, lastError });
+    }
+  }
+
   const phase =
     downloadState.phase === 'downloading'
       ? 'downloading'
@@ -82,15 +125,15 @@ export async function getEmbeddingStatus(): Promise<EmbeddingStatus> {
     id: 'embedding',
     kind: 'embedding',
     required: true,
-    modelId: EMBEDDING_HF_MODEL_ID,
+    modelId: LOCAL_EMBEDDING_HF_MODEL_ID,
     installed,
     download: {
       ...downloadState,
       phase,
       progress: phase === 'ready' ? 100 : downloadState.progress,
     },
-    installedAt: null,
-    lastError: downloadState.error ?? null,
+    installedAt: installed ? installedAt : null,
+    lastError,
     hfEndpoint: lastHfEndpoint,
   };
 }
@@ -99,7 +142,12 @@ export function startEmbeddingDownload(): { ok: boolean; message?: string } {
   if (downloadPromise) {
     return { ok: true, message: 'already downloading' };
   }
-  if (isEmbeddingModelInstalled()) {
+  if (isEmbeddingModelReady()) {
+    const settings = readSettings();
+    writeSettings({
+      installedAt: settings.installedAt ?? new Date().toISOString(),
+      lastError: null,
+    });
     updateDownloadState({ phase: 'ready', progress: 100, message: 'ready', error: null });
     return { ok: true, message: 'already installed' };
   }
@@ -125,7 +173,7 @@ export function startEmbeddingDownload(): { ok: boolean; message?: string } {
       for (let index = 0; index < EMBEDDING_FILES.length; index++) {
         const entry = EMBEDDING_FILES[index]!;
         const dest = join(modelDir, entry.local);
-        const url = buildHfResolveUrl(endpoint, EMBEDDING_HF_MODEL_ID, entry.remote);
+        const url = buildHfResolveUrl(endpoint, LOCAL_EMBEDDING_HF_MODEL_ID, entry.remote);
         const baseProgress = Math.round((index / totalFiles) * 100);
 
         updateDownloadState({ message: entry.remote, progress: baseProgress });
@@ -138,25 +186,30 @@ export function startEmbeddingDownload(): { ok: boolean; message?: string } {
         });
       }
 
-      if (!isEmbeddingModelInstalled()) {
+      if (!isEmbeddingModelReady()) {
         throw new Error('Embedding model files missing after download');
       }
 
       writeFileSync(
         join(modelDir, '.hf-source.json'),
-        `${JSON.stringify({ modelId: EMBEDDING_HF_MODEL_ID, endpoint }, null, 2)}\n`,
+        `${JSON.stringify({ modelId: LOCAL_EMBEDDING_HF_MODEL_ID, endpoint }, null, 2)}\n`,
         'utf8',
       );
+
+      const installedAt = new Date().toISOString();
+      writeSettings({ installedAt, lastError: null });
+      resetLocalFastembedRuntime();
 
       updateDownloadState({
         phase: 'ready',
         progress: 100,
         message: 'ready',
         error: null,
-        finishedAt: new Date().toISOString(),
+        finishedAt: installedAt,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      writeSettings({ ...readSettings(), installedAt: null, lastError: message });
       updateDownloadState({
         phase: 'error',
         progress: 0,
@@ -172,12 +225,28 @@ export function startEmbeddingDownload(): { ok: boolean; message?: string } {
   return { ok: true };
 }
 
+/** Kick off background download when the required embedding model is missing or incomplete. */
+export function ensureEmbeddingModelOnStartup(): void {
+  if (isEmbeddingModelReady()) return;
+  const result = startEmbeddingDownload();
+  if (result.ok) {
+    console.info(
+      '[embedding] required model missing or incomplete — auto-download started (VEYLIN_DATA_DIR=%s)',
+      ensureDataDir(),
+    );
+  } else if (result.message) {
+    console.warn('[embedding] auto-download not started:', result.message);
+  }
+}
+
 export async function removeEmbeddingModel(): Promise<EmbeddingStatus> {
   if (downloadPromise) {
     throw new Error('Cannot remove embedding model while downloading');
   }
   const modelDir = embeddingModelDir();
   if (existsSync(modelDir)) rmSync(modelDir, { recursive: true, force: true });
+  resetLocalFastembedRuntime();
+  writeSettings({ installedAt: null, lastError: null });
   updateDownloadState({
     phase: 'idle',
     progress: 0,
@@ -190,10 +259,9 @@ export async function removeEmbeddingModel(): Promise<EmbeddingStatus> {
 }
 
 export async function embedTextsIfInstalled(values: string[]): Promise<number[][] | null> {
-  if (!isEmbeddingModelInstalled()) return null;
+  if (!isEmbeddingModelReady()) return null;
   try {
-    const { embeddings } = await embedMany({ model: fastembed, values });
-    return embeddings;
+    return await generateLocalEmbeddings(values);
   } catch (err) {
     console.warn('[rag] embedding unavailable:', err);
     return null;
@@ -202,9 +270,13 @@ export async function embedTextsIfInstalled(values: string[]): Promise<number[][
 
 export const __test__ = {
   EMBEDDING_FILES,
+  readSettings,
+  writeSettings,
+  settingsPath,
   resetForTest: () => {
     downloadState = { phase: 'idle', progress: 0, message: '', error: null };
     downloadPromise = null;
     lastHfEndpoint = null;
+    resetLocalFastembedRuntime();
   },
 };

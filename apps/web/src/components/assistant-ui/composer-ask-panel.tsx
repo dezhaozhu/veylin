@@ -1,5 +1,5 @@
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
-import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import {
   type AskQuestion,
   type AskUserResult,
 } from '@/lib/ask-user-question-session';
+import { waitForFrontendToolStop } from '@/lib/frontend-suspend-tools';
 
 const OTHER = '__other__';
 
@@ -52,11 +53,13 @@ function hasStepAnswer(selected: string[], other: string): boolean {
 
 export function ComposerAskPanel() {
   const { t } = useTranslation();
+  const panelRef = useRef<HTMLDivElement>(null);
   const session = useSyncExternalStore(subscribeAskUserSession, getAskUserSession, () => null);
   const [collapsed, setCollapsed] = useState(false);
   const [step, setStep] = useState(0);
   const [picks, setPicks] = useState<Record<number, string[]>>({});
   const [others, setOthers] = useState<Record<number, string>>({});
+  const [submitting, setSubmitting] = useState(false);
 
   const questions = session?.questions ?? [];
   const total = questions.length;
@@ -68,7 +71,10 @@ export function ComposerAskPanel() {
       setPicks({});
       setOthers({});
       setCollapsed(false);
+      setSubmitting(false);
+      return;
     }
+    panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [session?.toolCallId, session]);
 
   const pick = useCallback((qi: number, label: string, multi: boolean) => {
@@ -85,17 +91,24 @@ export function ComposerAskPanel() {
   }, []);
 
   const submit = useCallback(
-    (result: AskUserResult) => {
-      session?.addResult(result);
+    async (result: AskUserResult) => {
+      if (!session || submitting) return;
+      setSubmitting(true);
+      try {
+        await waitForFrontendToolStop(session.toolCallId);
+        session.addResult(result);
+      } finally {
+        setSubmitting(false);
+      }
     },
-    [session],
+    [session, submitting],
   );
 
   const skipAll = useCallback(() => {
     if (!session) return;
     const answers: Record<string, string> = {};
     for (const q of session.questions) answers[q.question] = '(skipped)';
-    submit({ questions: session.questions, answers });
+    void submit({ questions: session.questions, answers });
   }, [session, submit]);
 
   const goNext = useCallback(() => {
@@ -104,7 +117,7 @@ export function ComposerAskPanel() {
       setStep((s) => s + 1);
       return;
     }
-    submit(buildResult(session.questions, picks, others));
+    void submit(buildResult(session.questions, picks, others));
   }, [session, step, total, picks, others, submit]);
 
   const goPrev = useCallback(() => {
@@ -128,10 +141,16 @@ export function ComposerAskPanel() {
 
   return (
     <div
-      className="border-border/70 bg-card/95 mb-2 w-full overflow-hidden rounded-2xl border shadow-[0_14px_40px_-28px_rgba(15,23,42,0.45)]"
+      ref={panelRef}
+      className="border-border/70 bg-card/95 ring-primary/30 mb-2 w-full overflow-hidden rounded-2xl border shadow-[0_14px_40px_-28px_rgba(15,23,42,0.45)] ring-2"
       onKeyDown={onKeyDown}
     >
-      <div className="flex items-center justify-between gap-3 px-4 pt-3 pb-1">
+      <div
+        className={cn(
+          'flex items-center justify-between gap-3 px-4',
+          collapsed ? 'py-2.5' : 'pt-3 pb-1',
+        )}
+      >
         <span className="text-muted-foreground text-sm font-medium">{t('ask.panelTitle')}</span>
         <div className="text-muted-foreground flex items-center gap-1 text-sm">
           <Button
@@ -167,7 +186,7 @@ export function ComposerAskPanel() {
             onClick={() => setCollapsed((v) => !v)}
             aria-label={collapsed ? t('ask.expand') : t('ask.collapse')}
           >
-            <ChevronDownIcon className={cn('size-4 transition-transform', collapsed && '-rotate-90')} />
+            <ChevronDownIcon className={cn('size-4 transition-transform', collapsed && 'rotate-180')} />
           </Button>
         </div>
       </div>
@@ -244,14 +263,21 @@ export function ComposerAskPanel() {
             </div>
           </div>
           <div className="flex items-center justify-end gap-2 px-4 pb-3">
-            <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-sm" onClick={skipAll}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-sm"
+              disabled={submitting}
+              onClick={skipAll}
+            >
               {t('ask.skip')}
             </Button>
             <Button
               type="button"
               size="sm"
               className="h-8 gap-1.5 rounded-lg bg-amber-600 px-3 text-sm text-white hover:bg-amber-700"
-              disabled={!canNext}
+              disabled={!canNext || submitting}
               onClick={goNext}
             >
               {isLast ? t('ask.submit') : t('ask.next')}

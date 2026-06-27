@@ -20,6 +20,15 @@ import {
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { exportTableToExcel, parseTableExcelFile } from '@/lib/table-excel';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
@@ -556,6 +565,11 @@ export function TableGrid() {
   const isApplyingHistory = useRef(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
+  const [importConfirmOpen, setImportConfirmOpen] = useState(false);
+  const [addColumnOpen, setAddColumnOpen] = useState(false);
+  const [newColumnName, setNewColumnName] = useState('');
+  const [addingColumn, setAddingColumn] = useState(false);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(
     null,
   );
@@ -957,25 +971,37 @@ export function TableGrid() {
     setRows(data.rows);
   };
 
-  const handleAddColumn = async () => {
-    const name = window.prompt(t('table.newColumnName'));
-    if (!name?.trim()) return;
-    const res = await fetch('/api/table/columns', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: activeSheetId, name: name.trim() }),
-    });
-    const data = (await res.json()) as {
-      ok?: boolean;
-      columns?: TableColumnDef[];
-      rows?: TableRow[];
-    };
-    if (!data.ok) return;
-    if (data.columns) setColumnDefs(data.columns);
-    if (data.rows) {
-      editingUntil.current = Date.now() + 3000;
-      lastSerialized.current = JSON.stringify(data.rows);
-      setRows(data.rows);
+  const openAddColumnDialog = useCallback(() => {
+    setNewColumnName('');
+    setAddColumnOpen(true);
+  }, []);
+
+  const submitAddColumn = async () => {
+    const name = newColumnName.trim();
+    if (!name) return;
+    setAddingColumn(true);
+    try {
+      const res = await fetch('/api/table/columns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheet: activeSheetId, name }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        columns?: TableColumnDef[];
+        rows?: TableRow[];
+      };
+      if (!data.ok) return;
+      if (data.columns) setColumnDefs(data.columns);
+      if (data.rows) {
+        editingUntil.current = Date.now() + 3000;
+        lastSerialized.current = JSON.stringify(data.rows);
+        setRows(data.rows);
+      }
+      setAddColumnOpen(false);
+      setNewColumnName('');
+    } finally {
+      setAddingColumn(false);
     }
   };
 
@@ -983,7 +1009,7 @@ export function TableGrid() {
     if (!selectedColumnKey) return;
     const col = columnDefs.find((c) => c.key === selectedColumnKey);
     if (!col?.deletable) {
-      window.alert(t('table.columnNotDeletable'));
+      showToast(t('table.columnNotDeletable'), 'error');
       return;
     }
     const res = await fetch('/api/table/columns', {
@@ -1017,30 +1043,35 @@ export function TableGrid() {
 
   const handleColumnAction = () => {
     if (columnSelected) void handleDeleteColumn();
-    else void handleAddColumn();
+    else openAddColumnDialog();
   };
 
   const activeSheetName =
     sheets.find((s) => s.id === activeSheetId)?.name ?? activeSheetId;
 
   const handleExportExcel = () => {
-    try {
-      const filename = exportTableToExcel(activeSheetName, columnDefs, rows);
-      showToast(t('table.exportSuccess', { filename }), 'success');
-    } catch (e: unknown) {
-      showToast(e instanceof Error ? e.message : t('table.importFailed'), 'error');
-    }
+    void (async () => {
+      try {
+        const { path } = await exportTableToExcel(activeSheetName, columnDefs, rows);
+        showToast(t('table.exportSuccess', { path }), 'success');
+      } catch (e: unknown) {
+        showToast(e instanceof Error ? e.message : t('table.importFailed'), 'error');
+      }
+    })();
   };
 
-  const handleImportClick = () => {
-    importInputRef.current?.click();
+  const handleImportFileSelected = (file: File) => {
+    setPendingImportFile(file);
+    setImportConfirmOpen(true);
   };
+
+  const cancelImport = useCallback(() => {
+    setImportConfirmOpen(false);
+    setPendingImportFile(null);
+    resetImportInput();
+  }, [resetImportInput]);
 
   const handleImportFile = async (file: File) => {
-    if (!window.confirm(t('table.confirmImport'))) {
-      resetImportInput();
-      return;
-    }
     setImporting(true);
     try {
       const { rows: importedRows, columnNames } = await parseTableExcelFile(file);
@@ -1079,8 +1110,16 @@ export function TableGrid() {
       showToast(e instanceof Error ? e.message : t('table.importFailed'), 'error');
     } finally {
       setImporting(false);
+      setPendingImportFile(null);
       resetImportInput();
     }
+  };
+
+  const confirmImport = () => {
+    const file = pendingImportFile;
+    if (!file) return;
+    setImportConfirmOpen(false);
+    void handleImportFile(file);
   };
 
   const hasActiveFilters = filters.query.trim() !== '';
@@ -1099,7 +1138,7 @@ export function TableGrid() {
         <div
           role="status"
           className={cn(
-            'absolute bottom-3 left-1/2 z-50 -translate-x-1/2 rounded-md px-3 py-2 text-xs shadow-md',
+            'absolute bottom-3 left-1/2 z-50 max-w-[min(90vw,28rem)] -translate-x-1/2 rounded-md px-3 py-2 text-center text-xs shadow-md',
             toast.variant === 'success'
               ? 'bg-primary text-primary-foreground'
               : 'bg-destructive text-white',
@@ -1161,15 +1200,27 @@ export function TableGrid() {
           </Button>
           <span className="text-muted-foreground mx-1 hidden h-4 w-px bg-border sm:inline-block" />
           <Button
-            type="button"
+            asChild
             variant="outline"
             size="sm"
             className="h-7 gap-1 px-2 text-xs"
             disabled={importing}
-            onClick={handleImportClick}
           >
-            <Upload className="size-3" />
-            {importing ? t('table.importing') : t('table.import')}
+            <label className={cn(importing && 'pointer-events-none opacity-50')}>
+              <Upload className="size-3" />
+              {importing ? t('table.importing') : t('table.import')}
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                disabled={importing}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImportFileSelected(file);
+                }}
+              />
+            </label>
           </Button>
           <Button
             type="button"
@@ -1181,16 +1232,6 @@ export function TableGrid() {
             <Download className="size-3" />
             {t('table.export')}
           </Button>
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void handleImportFile(file);
-            }}
-          />
           <span className="text-muted-foreground mx-1 hidden h-4 w-px bg-border sm:inline-block" />
           <input
             type="search"
@@ -1245,7 +1286,7 @@ export function TableGrid() {
                 : t('table.noMatch')}
           </span>
           {columnDefs.length === 0 ? (
-            <Button type="button" variant="outline" size="sm" onClick={() => void handleAddColumn()}>
+            <Button type="button" variant="outline" size="sm" onClick={openAddColumnDialog}>
               {t('table.addFirstColumn')}
             </Button>
           ) : rows.length === 0 ? (
@@ -1280,6 +1321,73 @@ export function TableGrid() {
           <TableGridFooter totals={totals} />
         </div>
       )}
+
+      <Dialog
+        open={addColumnOpen}
+        onOpenChange={(open) => {
+          if (addingColumn) return;
+          setAddColumnOpen(open);
+          if (!open) setNewColumnName('');
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('table.addFirstColumn')}</DialogTitle>
+            <DialogDescription>{t('table.newColumnName')}</DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={newColumnName}
+            onChange={(e) => setNewColumnName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && newColumnName.trim()) void submitAddColumn();
+            }}
+            placeholder={t('table.newColumnName')}
+          />
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={addingColumn}
+              onClick={() => {
+                setAddColumnOpen(false);
+                setNewColumnName('');
+              }}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              type="button"
+              disabled={addingColumn || !newColumnName.trim()}
+              onClick={() => void submitAddColumn()}
+            >
+              {t('common.create')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={importConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) cancelImport();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('table.import')}</DialogTitle>
+            <DialogDescription>{t('table.confirmImport')}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={cancelImport}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="button" disabled={importing} onClick={confirmImport}>
+              {t('table.import')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

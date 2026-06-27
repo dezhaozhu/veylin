@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@veylin/db": "*",
     "@veylin/agent-package": "*",
     "@veylin/policy": "*",
     "@veylin/shared": "*",

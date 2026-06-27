@@ -39,9 +39,10 @@ function sampleChunksForGraph<T extends { text: string }>(chunks: T[]): T[] {
 async function llmExtractChunk(
   tenantId: string,
   text: string,
+  modelKey: string,
 ): Promise<{ entities: ExtractedEntity[]; edges: ExtractedEdge[] } | null> {
   await applyTenantModelSettings(tenantId);
-  const cfg = getModelConfig(DEFAULT_MODEL);
+  const cfg = getModelConfig(modelKey || DEFAULT_MODEL);
   if (!cfg.apiKey) return null;
   try {
     const res = await fetch(`${cfg.url.replace(/\/$/, '')}/chat/completions`, {
@@ -93,7 +94,9 @@ export async function extractAndStoreGraph(
   tenantId: string,
   documentId: string,
   chunks: Array<{ id: string; text: string }>,
+  options?: { model?: string },
 ): Promise<{ entities: number; edges: number }> {
+  const modelKey = options?.model?.trim() || DEFAULT_MODEL;
   const eligible = sampleChunksForGraph(
     chunks.filter((c) => c.text.trim().length >= MIN_CHUNK_CHARS),
   );
@@ -104,7 +107,7 @@ export async function extractAndStoreGraph(
   let edgeCount = 0;
 
   for (const chunk of eligible) {
-    const extracted = await llmExtractChunk(tenantId, chunk.text);
+    const extracted = await llmExtractChunk(tenantId, chunk.text, modelKey);
     if (!extracted) continue;
 
     const chunkEntityNames: string[] = [];

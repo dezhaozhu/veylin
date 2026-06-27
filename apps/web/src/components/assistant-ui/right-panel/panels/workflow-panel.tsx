@@ -11,6 +11,7 @@ import {
   type Connection,
   type Node,
   type Edge,
+  type NodeProps,
   Handle,
   Position,
 } from '@xyflow/react';
@@ -20,6 +21,18 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import type { PanelContentProps } from '../panel-types';
 import { cn } from '@/lib/utils';
+import { WorkflowRunPanel } from './workflow-run-panel';
+import { WorkflowJsonBlock } from './workflow-json-block';
+import { SettingsDeleteDialog } from '@/components/features/settings/settings-item-actions';
+import {
+  buildNodeRunStatusMap,
+  nextSequentialNodeId,
+  nodeDisplayLabel,
+  suggestedVarRefs,
+  upstreamNodeIds,
+  type NodeRunStatus,
+  type WorkflowRunView,
+} from './workflow-run-utils';
 
 type NodeKind =
   | 'start'
@@ -97,8 +110,7 @@ type WorkflowDetail = WorkflowSummary & {
   };
 };
 
-type RunLogEntry = { nodeId: string; kind: string; status: string; message: string; at: string };
-type WorkflowRun = { id: string; status: string; log: RunLogEntry[]; startedAt: string; finishedAt?: string | null };
+type NodeViewData = { label: string; kind: NodeKind; runStatus?: NodeRunStatus };
 
 function defaultData(kind: NodeKind): Record<string, unknown> {
   switch (kind) {
@@ -127,20 +139,30 @@ function defaultData(kind: NodeKind): Record<string, unknown> {
   }
 }
 
-function NodeView({ data }: { data: { label: string; kind: NodeKind } }) {
-  const meta = NODE_META[data.kind];
-  const isStart = data.kind === 'start';
-  const isEnd = data.kind === 'end';
-  const isBranch = data.kind === 'if_else';
-  const hasFail = data.kind === 'code' || data.kind === 'http_request';
+function NodeView({ id, data }: NodeProps) {
+  const d = data as NodeViewData;
+  const meta = NODE_META[d.kind];
+  const isStart = d.kind === 'start';
+  const isEnd = d.kind === 'end';
+  const isBranch = d.kind === 'if_else';
+  const hasFail = d.kind === 'code' || d.kind === 'http_request';
+  const runRing =
+    d.runStatus === 'ok'
+      ? 'ring-2 ring-green-500/50'
+      : d.runStatus === 'error'
+        ? 'ring-2 ring-red-500/50'
+        : d.runStatus === 'running'
+          ? 'ring-2 ring-amber-500/50 animate-pulse'
+          : '';
   return (
     <div
-      className="bg-background rounded border px-2 py-1 text-xs shadow-sm"
+      className={cn('bg-background rounded border px-2 py-1 text-xs shadow-sm', runRing)}
       style={{ borderLeft: `3px solid ${meta.color}`, minWidth: 96 }}
     >
       {!isStart ? <Handle type="target" position={Position.Left} className="!bg-muted-foreground" /> : null}
       <div className="text-muted-foreground text-[10px]">{i18n.t(meta.label)}</div>
-      <div className="font-medium">{data.label}</div>
+      <div className="font-medium">{d.label}</div>
+      <div className="text-muted-foreground font-mono text-[9px]">{id}</div>
       {isBranch ? (
         <>
           <Handle id="true" type="source" position={Position.Right} style={{ top: '35%' }} className="!bg-green-500" />
@@ -263,8 +285,11 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [showLogs, setShowLogs] = useState(false);
-  const [runs, setRuns] = useState<WorkflowRun[]>([]);
+  const [showLogs, setShowLogs] = useState(true);
+  const [runs, setRuns] = useState<WorkflowRunView[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedLogNodeId, setSelectedLogNodeId] = useState<string | null>(null);
+  const [pollFast, setPollFast] = useState(false);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -273,6 +298,12 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   const [isNewDraft, setIsNewDraft] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [workflowMenuOpen, setWorkflowMenuOpen] = useState(false);
+  const [deletePrompt, setDeletePrompt] = useState<
+    | { type: 'workflow'; id: string; name: string }
+    | { type: 'draft'; name: string }
+    | null
+  >(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const editingWorkflowId = isNewDraft ? undefined : (workflow?.id ?? workflowId);
 
@@ -282,7 +313,7 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
     setWorkflow(null);
     setNodes([
       {
-        id: crypto.randomUUID(),
+        id: 'n1',
         type: 'wf',
         position: { x: 80, y: 120 },
         data: { kind: 'start', label: i18n.t(NODE_META.start.label), ...defaultData('start') },
@@ -291,8 +322,10 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
     setEdges([]);
     setName(uniqueWorkflowName(list, `${i18n.t('wf.newFlow')} ${list.length + 1}`));
     setSelectedId(null);
-    setShowLogs(false);
+    setShowLogs(true);
     setRuns([]);
+    setSelectedRunId(null);
+    setSelectedLogNodeId(null);
     setError(null);
     updateState({ workflowId: undefined });
   }, [setNodes, setEdges, updateState, workflows]);
@@ -322,12 +355,42 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
     setEdges(toFlowEdges(wf.definition));
     setIsNewDraft(false);
     updateState({ workflowId: id });
+    void loadRuns(id).catch(() => undefined);
   }
 
-  async function loadRuns(id: string) {
-    const data = await fetchJson<{ runs: WorkflowRun[] }>(`/api/workflows/${id}/runs`);
-    setRuns(data.runs ?? []);
+  async function loadRuns(id: string, pickLatest = false) {
+    const data = await fetchJson<{ runs: WorkflowRunView[] }>(`/api/workflows/${id}/runs`);
+    const list = data.runs ?? [];
+    setRuns(list);
+    if (list.length === 0) {
+      setSelectedRunId(null);
+      return list;
+    }
+    if (pickLatest) {
+      setSelectedRunId(list[0]!.id);
+    } else {
+      setSelectedRunId((current) => {
+        if (!current || !list.some((r) => r.id === current)) return list[0]!.id;
+        return current;
+      });
+    }
+    const active = list.some((r) => r.status === 'running' || r.status === 'queued');
+    setPollFast(active);
+    return list;
   }
+
+  const selectedRun = useMemo(
+    () => runs.find((r) => r.id === selectedRunId) ?? runs[0] ?? null,
+    [runs, selectedRunId],
+  );
+
+  const nodeLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const n of nodes) {
+      map.set(n.id, String((n.data as { label?: string }).label ?? ''));
+    }
+    return map;
+  }, [nodes]);
 
   useEffect(() => {
     void loadWorkflowList(6).catch(() => {
@@ -352,12 +415,29 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   }, [workflowId]);
 
   useEffect(() => {
-    if (!workflowId || !showLogs) return;
+    if (!workflowId) return;
+    if (!showLogs && !pollFast) return;
     const poll = () => loadRuns(workflowId).catch(() => undefined);
     void poll();
-    const t = setInterval(() => void poll(), 3000);
-    return () => clearInterval(t);
-  }, [workflowId, showLogs]);
+    const ms = pollFast ? 1200 : 2500;
+    const timer = setInterval(() => void poll(), ms);
+    return () => clearInterval(timer);
+  }, [workflowId, showLogs, pollFast]);
+
+  useEffect(() => {
+    const statusMap = buildNodeRunStatusMap(
+      selectedRun,
+      nodes.map((n) => n.id),
+    );
+    setNodes((nds) =>
+      nds.map((n) => {
+        const next = statusMap.get(n.id);
+        const prev = (n.data as NodeViewData).runStatus;
+        if (prev === next) return n;
+        return { ...n, data: { ...n.data, runStatus: next } };
+      }),
+    );
+  }, [selectedRun, nodes.length, setNodes]);
 
   const onConnect = useCallback(
     (connection: Connection) =>
@@ -374,7 +454,7 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   );
 
   function addNode(kind: NodeKind) {
-    const id = crypto.randomUUID();
+    const id = nextSequentialNodeId(nodes.map((n) => n.id));
     setNodes((nds) => [
       ...nds,
       {
@@ -443,7 +523,8 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
     try {
       await fetchJson(`/api/workflows/${id}/run`, { method: 'POST' });
       setShowLogs(true);
-      await loadRuns(id);
+      setPollFast(true);
+      await loadRuns(id, true);
       setError(null);
     } catch (err) {
       setError(String(err));
@@ -466,31 +547,43 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   }
 
   function discardDraft() {
-    if (!window.confirm(t('wf.confirmDiscard', { name: currentDraftLabel }))) return;
     setWorkflowMenuOpen(false);
-    if (workflows.length > 0) {
-      void loadWorkflow(workflows[0]!.id).catch((err) => setError(String(err)));
-      return;
-    }
-    startNewWorkflow([]);
+    setDeletePrompt({ type: 'draft', name: currentDraftLabel });
   }
 
-  async function deleteWorkflowById(id: string, workflowName: string) {
-    if (!window.confirm(t('wf.confirmDelete', { name: workflowName }))) return;
+  async function confirmWorkflowDelete() {
+    if (!deletePrompt) return;
+    setDeleteBusy(true);
     try {
-      await fetchJson(`/api/workflows/${id}`, { method: 'DELETE' });
-      const list = await loadWorkflowList();
-      if (editingWorkflowId === id) {
-        if (list.length > 0) {
-          void loadWorkflow(list[0]!.id).catch((err) => setError(String(err)));
+      if (deletePrompt.type === 'draft') {
+        if (workflows.length > 0) {
+          await loadWorkflow(workflows[0]!.id);
         } else {
-          startNewWorkflow(list);
+          startNewWorkflow([]);
+        }
+      } else {
+        await fetchJson(`/api/workflows/${deletePrompt.id}`, { method: 'DELETE' });
+        const list = await loadWorkflowList();
+        if (editingWorkflowId === deletePrompt.id) {
+          if (list.length > 0) {
+            await loadWorkflow(list[0]!.id);
+          } else {
+            startNewWorkflow(list);
+          }
         }
       }
+      setDeletePrompt(null);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeleteBusy(false);
     }
+  }
+
+  function requestDeleteWorkflow(id: string, workflowName: string) {
+    setWorkflowMenuOpen(false);
+    setDeletePrompt({ type: 'workflow', id, name: workflowName });
   }
 
   const workflowSwitcherLabel = isNewDraft
@@ -546,7 +639,10 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
                         type="button"
                         className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded p-1"
                         title={t('wf.discardDraft')}
+                        data-no-window-drag
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
+                          e.preventDefault();
                           e.stopPropagation();
                           discardDraft();
                         }}
@@ -583,9 +679,12 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
                             type="button"
                             className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded p-1"
                             title={t('wf.delete')}
+                            data-no-window-drag
+                            onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => {
+                              e.preventDefault();
                               e.stopPropagation();
-                              void deleteWorkflowById(w.id, w.name);
+                              requestDeleteWorkflow(w.id, w.name);
                             }}
                           >
                             <Trash2 className="size-3.5" />
@@ -702,7 +801,12 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
             nodeTypes={nodeTypes}
             fitView
             proOptions={{ hideAttribution: true }}
-            onNodeClick={(_, node) => setSelectedId(node.id)}
+            onNodeClick={(_, node) => {
+              setSelectedId(node.id);
+              if (selectedRun?.log.some((e) => e.nodeId === node.id)) {
+                setSelectedLogNodeId(node.id);
+              }
+            }}
             onPaneClick={() => setSelectedId(null)}
           >
             <Background />
@@ -712,7 +816,7 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
         </div>
 
         {selectedNode && selKind ? (
-          <div className="border-border w-60 shrink-0 overflow-auto border-l p-2 text-xs">
+          <div className="border-border w-64 shrink-0 overflow-auto border-l p-2 text-xs">
             <div className="mb-2 flex items-center justify-between">
               <span className="font-medium">{t(NODE_META[selKind].label)}</span>
               <button
@@ -728,6 +832,8 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
               </button>
             </div>
 
+            <p className="text-muted-foreground mb-2 font-mono text-[10px]">ID: {selectedId}</p>
+
             <label className="mb-2 block">
               <span className="text-muted-foreground">{t('wf.label')}</span>
               <input
@@ -737,44 +843,55 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
               />
             </label>
 
-            <NodeForm kind={selKind} selData={selData} patchSelected={patchSelected} />
+            {selectedRun && selectedId ? (
+              <NodeLastRun
+                run={selectedRun}
+                nodeId={selectedId}
+                nodeLabel={nodeDisplayLabel(selectedId, nodeLabels.get(selectedId))}
+              />
+            ) : null}
+
+            <NodeForm
+              kind={selKind}
+              nodeId={selectedId!}
+              selData={selData}
+              patchSelected={patchSelected}
+              nodes={nodes}
+              edges={edges}
+              selectedRun={selectedRun}
+            />
           </div>
         ) : null}
       </div>
 
       {showLogs ? (
-        <div className="border-border max-h-44 overflow-auto border-t p-2 text-xs">
-          {runs.length === 0 ? (
-            <div className="text-muted-foreground">{t('wf.noRuns')}</div>
-          ) : (
-            runs.map((run) => (
-              <div key={run.id} className="border-border mb-2 border-b pb-2 last:border-0">
-                <div className="font-medium">
-                  <span
-                    className={
-                      run.status === 'done'
-                        ? 'text-green-600'
-                        : run.status === 'failed'
-                          ? 'text-destructive'
-                          : 'text-muted-foreground'
-                    }
-                  >
-                    {run.status}
-                  </span>{' '}
-                  · {new Date(run.startedAt).toLocaleString()}
-                </div>
-                <ul className="text-muted-foreground mt-1 space-y-0.5">
-                  {(run.log ?? []).map((entry, i) => (
-                    <li key={`${run.id}-${i}`}>
-                      [{entry.status}] {entry.kind}: {entry.message}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))
-          )}
-        </div>
+        <WorkflowRunPanel
+          runs={runs}
+          selectedRunId={selectedRunId}
+          onSelectRun={setSelectedRunId}
+          selectedLogNodeId={selectedLogNodeId}
+          onSelectLogNode={(nodeId) => {
+            setSelectedLogNodeId(nodeId);
+            if (nodeId) setSelectedId(nodeId);
+          }}
+          nodeLabels={nodeLabels}
+        />
       ) : null}
+
+      <SettingsDeleteDialog
+        open={deletePrompt !== null}
+        onOpenChange={(open) => !open && !deleteBusy && setDeletePrompt(null)}
+        title={deletePrompt?.type === 'draft' ? t('wf.discardDraft') : t('wf.delete')}
+        description={
+          deletePrompt?.type === 'draft'
+            ? t('wf.confirmDiscard', { name: deletePrompt.name })
+            : deletePrompt
+              ? t('wf.confirmDelete', { name: deletePrompt.name })
+              : ''
+        }
+        onConfirm={() => void confirmWorkflowDelete()}
+        busy={deleteBusy}
+      />
     </div>
   );
 }
@@ -790,19 +907,130 @@ function Labeled({ label, children }: { label: string; children: ReactNode }) {
 
 const inputCls = 'bg-background border-border w-full rounded border px-1.5 py-1';
 
-function NodeForm({
-  kind,
-  selData,
-  patchSelected,
+function NodeLastRun({
+  run,
+  nodeId,
+  nodeLabel,
 }: {
-  kind: NodeKind;
-  selData: <T>(key: string, fallback: T) => T;
-  patchSelected: (patch: Record<string, unknown>) => void;
+  run: WorkflowRunView;
+  nodeId: string;
+  nodeLabel: string;
 }) {
   const { t } = useTranslation();
+  const entry = run.log.find((e) => e.nodeId === nodeId);
+  if (!entry) {
+    return (
+      <div className="border-border mb-3 rounded border p-2">
+        <p className="text-muted-foreground text-[10px] font-medium">{t('wf.run.lastRun')}</p>
+        <p className="text-muted-foreground mt-1 text-[11px]">{t('wf.run.notExecuted')}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="border-border mb-3 rounded border p-2">
+      <p className="text-muted-foreground mb-1 text-[10px] font-medium">{t('wf.run.lastRun')}</p>
+      <p className="mb-1 text-[11px]">
+        <span className={entry.status === 'ok' ? 'text-green-600' : 'text-destructive'}>
+          [{entry.status}]
+        </span>{' '}
+        {nodeLabel}
+      </p>
+      <WorkflowJsonBlock value={entry.output} maxHeight="max-h-28" />
+    </div>
+  );
+}
+
+function UpstreamVarPicker({
+  targetNodeId,
+  nodes,
+  edges,
+  selectedRun,
+  onInsert,
+}: {
+  targetNodeId: string;
+  nodes: Node[];
+  edges: Edge[];
+  selectedRun: WorkflowRunView | null;
+  onInsert: (ref: string) => void;
+}) {
+  const { t } = useTranslation();
+  const upstream = upstreamNodeIds(targetNodeId, edges);
+  if (upstream.length === 0) return null;
+
+  return (
+    <div className="border-border mb-2 rounded border p-1.5">
+      <div className="text-muted-foreground mb-1 text-[10px]">{t('wf.run.insertVar')}</div>
+      {upstream.map((id) => {
+        const node = nodes.find((n) => n.id === id);
+        const kind = String((node?.data as { kind?: NodeKind })?.kind ?? '');
+        const label = nodeDisplayLabel(id, String((node?.data as { label?: string })?.label ?? ''));
+        const logEntry = selectedRun?.log.find((e) => e.nodeId === id && e.status === 'ok');
+        const refs = suggestedVarRefs(id, kind, logEntry?.output);
+        return (
+          <div key={id} className="mb-1.5">
+            <div className="text-[10px] font-medium">{label}</div>
+            <div className="flex flex-wrap gap-0.5">
+              {refs.slice(0, 8).map((ref) => (
+                <button
+                  key={ref}
+                  type="button"
+                  className="bg-muted hover:bg-muted/80 rounded px-1 py-0.5 font-mono text-[9px]"
+                  onClick={() => onInsert(ref)}
+                >
+                  {ref}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function NodeForm({
+  kind,
+  nodeId,
+  selData,
+  patchSelected,
+  nodes,
+  edges,
+  selectedRun,
+}: {
+  kind: NodeKind;
+  nodeId: string;
+  selData: <T>(key: string, fallback: T) => T;
+  patchSelected: (patch: Record<string, unknown>) => void;
+  nodes: Node[];
+  edges: Edge[];
+  selectedRun: WorkflowRunView | null;
+}) {
+  const { t } = useTranslation();
+
+  function renderVarPicker(onInsert: (ref: string) => void) {
+    return (
+      <UpstreamVarPicker
+        targetNodeId={nodeId}
+        nodes={nodes}
+        edges={edges}
+        selectedRun={selectedRun}
+        onInsert={onInsert}
+      />
+    );
+  }
+
+  function appendVar(field: string, ref: string) {
+    const current = String(selData(field, '') ?? '');
+    patchSelected({ [field]: current ? `${current} ${ref}` : ref });
+  }
+
   switch (kind) {
     case 'start':
-      return <p className="text-muted-foreground text-[11px]">{t('wf.form.startHint', { ref: '{{ thisNodeId.field }}' })}</p>;
+      return (
+        <p className="text-muted-foreground text-[11px]">
+          {t('wf.form.startHint', { ref: `{{ ${nodeId}.field }}` })}
+        </p>
+      );
 
     case 'if_else': {
       const cases = selData<Array<{ caseId: string; logicalOperator: string; conditions: Condition[] }>>('cases', []);
@@ -811,6 +1039,13 @@ function NodeForm({
         patchSelected({ cases: [{ ...c, logicalOperator: logical, conditions: conds }] });
       return (
         <>
+          {renderVarPicker((ref) => {
+            const next = [...c.conditions];
+            const idx = Math.max(0, next.length - 1);
+            const cond = next[idx] ?? { left: '', operator: 'is', right: '' };
+            next[idx] = { ...cond, left: cond.left ? `${cond.left} ${ref}` : ref };
+            update(next);
+          })}
           <Labeled label={t('wf.form.conditionCombo')}>
             <select className={inputCls} value={c.logicalOperator} onChange={(e) => update(c.conditions, e.target.value)}>
               <option value="and">{t('wf.form.matchAll')}</option>
@@ -882,6 +1117,17 @@ function NodeForm({
       const update = (next: Field[]) => patchSelected({ [key]: next });
       return (
         <>
+          {renderVarPicker((ref) => {
+            if (fields.length === 0) {
+              update([{ name: 'result', value: ref }]);
+              return;
+            }
+            const i = fields.length - 1;
+            const row = fields[i]!;
+            const next = [...fields];
+            next[i] = { ...row, value: row.value ? `${row.value} ${ref}` : ref };
+            update(next);
+          })}
           {fields.map((f, i) => (
             <div key={i} className="border-border mb-2 rounded border p-1.5">
               <input
@@ -919,9 +1165,12 @@ function NodeForm({
 
     case 'template':
       return (
-        <Labeled label={t('wf.form.templateLabel')}>
-          <textarea className={inputCls} rows={5} value={selData('template', '')} onChange={(e) => patchSelected({ template: e.target.value })} />
-        </Labeled>
+        <>
+          {renderVarPicker((ref) => appendVar('template', ref))}
+          <Labeled label={t('wf.form.templateLabel')}>
+            <textarea className={inputCls} rows={5} value={selData('template', '')} onChange={(e) => patchSelected({ template: e.target.value })} />
+          </Labeled>
+        </>
       );
 
     case 'code': {
@@ -1031,14 +1280,18 @@ function NodeForm({
 
     case 'knowledge_retrieval':
       return (
-        <Labeled label={t('wf.form.query')}>
-          <textarea className={inputCls} rows={3} value={selData('query', '')} onChange={(e) => patchSelected({ query: e.target.value })} />
-        </Labeled>
+        <>
+          {renderVarPicker((ref) => appendVar('query', ref))}
+          <Labeled label={t('wf.form.query')}>
+            <textarea className={inputCls} rows={3} value={selData('query', '')} onChange={(e) => patchSelected({ query: e.target.value })} />
+          </Labeled>
+        </>
       );
 
     case 'run_agent':
       return (
         <>
+          {renderVarPicker((ref) => appendVar('prompt', ref))}
           <Labeled label="Agent ID">
             <input className={inputCls} value={selData('agentId', DEFAULT_AGENT_ID)} onChange={(e) => patchSelected({ agentId: e.target.value })} />
           </Labeled>

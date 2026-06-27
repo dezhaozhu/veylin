@@ -215,3 +215,11 @@ export async function getWorkflowRunRow(runId: string): Promise<WorkflowRunRow |
   const row = await selectById<Record<string, unknown>>(getDb(), 'workflow_run', runId);
   return row ? mapWorkflowRun(row) : null;
 }
+
+export async function listIncompleteWorkflowRunRows(): Promise<WorkflowRunRow[]> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    "SELECT * FROM workflow_run WHERE status = 'running' OR status = 'queued'",
+  );
+  return rows.map(mapWorkflowRun);
+}

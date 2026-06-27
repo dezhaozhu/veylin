@@ -59,6 +59,25 @@ const annotationSchema = z.object({
   notes: z.string().optional(),
 });
 
+/** Client-completed tools suspend until the chat run is stopped (user answered on UI). */
+function awaitClientToolCompletion(ctx: { requestContext?: { get: (key: string) => unknown } } | undefined): Promise<never> {
+  const signal = ctx?.requestContext?.get('runAbortSignal') as AbortSignal | undefined;
+  return new Promise((_resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    if (!signal) return;
+    signal.addEventListener(
+      'abort',
+      () => {
+        reject(new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true },
+    );
+  });
+}
+
 /**
  * Ask the user structured multiple-choice questions (the agent AskUserQuestionTool).
  * Completed on the client; the server blocks this execute until the run is aborted.
@@ -76,8 +95,8 @@ export const askUserQuestion = createTool({
     answers: z.record(z.string(), z.string()),
     annotations: z.record(z.string(), annotationSchema).optional(),
   }),
-  execute: async () => {
-    return await new Promise<never>(() => {});
+  execute: async (_input, ctx) => {
+    await awaitClientToolCompletion(ctx);
   },
 });
 
@@ -114,7 +133,7 @@ export const readOpenPage = createTool({
     truncated: z.boolean().optional(),
     error: z.string().optional(),
   }),
-  execute: async () => {
-    return await new Promise<never>(() => {});
+  execute: async (_input, ctx) => {
+    await awaitClientToolCompletion(ctx);
   },
 });

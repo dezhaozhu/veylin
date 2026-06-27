@@ -78,7 +78,11 @@ impl Sidecar {
         match Command::new("npm")
             .args(["run", "-w", "@veylin/server", "start"])
             .current_dir(&root)
-            .env("VEYLIN_DATA_DIR", &data_dir)
+            .env("VEYLIN_REPO_ROOT", root.to_string_lossy().as_ref())
+            .env(
+                "VEYLIN_DATA_DIR",
+                root.join("data").to_string_lossy().as_ref(),
+            )
             .env("VEYLIN_DESKTOP_AUTH", "1")
             .env("VEYLIN_REQUIRE_USER_MODEL_SETTINGS", "1")
             .env(

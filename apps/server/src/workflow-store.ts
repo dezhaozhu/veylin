@@ -5,12 +5,13 @@ import {
   insertWorkflowRun,
   listAllCronWorkflowRows,
   listEventWorkflowRows,
+  listIncompleteWorkflowRunRows,
   listWorkflowRows,
   listWorkflowRunRows,
   updateWorkflowRow,
   updateWorkflowRunRow,
 } from '@veylin/db';
-import type { Workflow, WorkflowInput, WorkflowRun, WorkflowRunLogEntry } from '@veylin/shared';
+import { deriveFinalOutput, type Workflow, type WorkflowInput, type WorkflowRun, type WorkflowRunLogEntry } from '@veylin/shared';
 
 export class WorkflowNameConflictError extends Error {
   constructor(name: string) {
@@ -55,15 +56,17 @@ function rowToWorkflow(row: NonNullable<Awaited<ReturnType<typeof getWorkflowRow
 }
 
 function rowToRun(row: Awaited<ReturnType<typeof insertWorkflowRun>>): WorkflowRun {
+  const log = (row.log as WorkflowRunLogEntry[]) ?? [];
   return {
     id: row.id,
     workflowId: row.workflowId,
     tenantId: row.tenantId,
     status: row.status,
-    log: (row.log as WorkflowRunLogEntry[]) ?? [],
+    log,
     eventContext: row.eventContext ?? {},
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
+    finalOutput: deriveFinalOutput(log),
   };
 }
 
@@ -150,6 +153,33 @@ export async function updateWorkflowRun(
 ) {
   const row = await updateWorkflowRunRow(runId, patch);
   return row ? rowToRun(row) : null;
+}
+
+const RUN_INTERRUPTED_MESSAGE =
+  'Run interrupted (server restarted or the worker stopped before completion)';
+
+export async function sweepInterruptedWorkflowRuns(): Promise<number> {
+  const rows = await listIncompleteWorkflowRunRows();
+  if (rows.length === 0) return 0;
+  const finishedAt = new Date().toISOString();
+  for (const row of rows) {
+    const log = (row.log as WorkflowRunLogEntry[]) ?? [];
+    await updateWorkflowRunRow(row.id, {
+      status: 'failed',
+      finishedAt,
+      log: [
+        ...log,
+        {
+          nodeId: '_',
+          kind: 'start',
+          status: 'error',
+          message: RUN_INTERRUPTED_MESSAGE,
+          at: finishedAt,
+        },
+      ],
+    });
+  }
+  return rows.length;
 }
 
 export async function listWorkflowRuns(

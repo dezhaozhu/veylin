@@ -150,6 +150,15 @@ function StartupError({ message, onRetry }: { message: string; onRetry: () => vo
   );
 }
 
+function StartupLoading() {
+  const { t } = useTranslation();
+  return (
+    <div className="bg-background text-foreground flex min-h-dvh items-center justify-center p-8">
+      <p className="text-muted-foreground text-sm">{t('splash.startingService')}</p>
+    </div>
+  );
+}
+
 function StartupGate() {
   const [ready, setReady] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
@@ -163,7 +172,6 @@ function StartupGate() {
       .then(() => {
         if (!signal.cancelled) {
           setReady(true);
-          removeSplash();
         }
       })
       .catch((err) => {
@@ -178,6 +186,14 @@ function StartupGate() {
     };
   }, [attempt]);
 
+  useEffect(() => {
+    if (!ready) return;
+    const id = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => removeSplash());
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [ready]);
+
   if (startupError) {
     removeSplash();
     return <StartupError message={startupError} onRetry={() => setAttempt((value) => value + 1)} />;
@@ -191,7 +207,7 @@ function StartupGate() {
     );
   }
 
-  return null;
+  return <StartupLoading />;
 }
 
 const root = document.getElementById('root');

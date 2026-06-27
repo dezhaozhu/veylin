@@ -148,10 +148,12 @@ import {
   updateWorkflow,
   deleteWorkflow,
   listWorkflowRuns,
+  sweepInterruptedWorkflowRuns,
   listEventWorkflows,
   WorkflowNameConflictError,
 } from './workflow-store';
 import { runWorkflowJob, dispatchWorkflow } from './workflow-runner';
+import { ensureEmbeddingModelOnStartup, getEmbeddingStatus } from './embedding-service';
 import { generateWorkflowFromPrompt } from './workflow-generate';
 import { buildWorkflowTools } from './workflow-tools';
 import {
@@ -248,9 +250,16 @@ function isForbiddenError(err: unknown): boolean {
 
 async function main() {
   await connectDb();
+  const interruptedRuns = await sweepInterruptedWorkflowRuns();
+  if (interruptedRuns > 0) {
+    console.info(`[workflow] marked ${interruptedRuns} interrupted run(s) as failed`);
+  }
   await initResumableChatStreams();
   await initTableStore();
   await ensureDevTenant();
+
+  console.info('[veylin] VEYLIN_DATA_DIR=%s', DATA_DIR);
+  ensureEmbeddingModelOnStartup();
 
   let mcp: MCPClient | null = null;
   let mcpToolsets: Record<string, unknown> = {};
@@ -348,7 +357,16 @@ async function main() {
     });
   }
 
-  app.get('/health', async () => ({ ok: true }));
+  app.get('/health', async () => {
+    const embedding = await getEmbeddingStatus();
+    return {
+      ok: true,
+      embedding: {
+        ready: embedding.installed,
+        phase: embedding.download.phase,
+      },
+    };
+  });
 
   // Agent picker source for the UI.
   app.get('/api/agents', async () => ({ agents: runtime.listAgents() }));
@@ -1218,13 +1236,10 @@ async function main() {
   app.delete('/api/threads/:threadId', async (req, reply) => {
     const { threadId } = req.params as { threadId: string };
     const ctx = await resolveContext(req.headers);
-    try {
-      await requireThreadOwnership(threadId, ctx);
-    } catch (err) {
-      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
-      throw err;
+    const row = await resolveThreadForRead(threadId, ctx);
+    if (row) {
+      await deleteThreadState(threadId);
     }
-    await deleteThreadState(threadId);
     return { ok: true };
   });
 
@@ -1367,6 +1382,7 @@ async function main() {
     };
 
     await touchThreadActivity(threadId);
+    await stopChatStream({ threadId }).catch(() => undefined);
     await restoreTodosFromHistoryIfEmpty(threadId, messages as never);
 
     let threadRowState = threadRow;
@@ -1544,15 +1560,17 @@ async function main() {
               ),
               ...(taskToolset.table ? { table: taskToolset.table } : {}),
             };
+    const streamId = crypto.randomUUID();
+    const runAbort = createRunAbortController(streamId);
+    requestContext.set('runAbortSignal', runAbort.signal);
+
     const stream = await agent.stream(agentMessages as never, {
       memory: { thread: threadId, resource: ctx.userId },
       requestContext,
       toolsets: activeToolsets,
     } as never);
 
-    const streamId = crypto.randomUUID();
     await bindActiveStream(threadId, streamId);
-    const runAbort = createRunAbortController(streamId);
     const cancelPoll = setInterval(() => {
       void isStreamCancelled(streamId)
         .then((cancelled) => {
@@ -1825,13 +1843,20 @@ async function main() {
 
   app.post('/api/rag/documents', async (req, reply) => {
     const ctx = await resolveContext(req.headers);
-    const body = req.body as { filename: string; text: string; mimeType?: string };
+    const body = req.body as { filename: string; text: string; mimeType?: string; model?: string };
     const textBytes = Buffer.byteLength(body.text ?? '', 'utf8');
     if (textBytes > RAG_UPLOAD_MAX_BYTES) {
       reply.code(413);
       return { ok: false, message: `document text exceeds ${RAG_UPLOAD_MAX_BYTES} byte upload limit` };
     }
-    const result = await ingestDocumentText(ctx.tenantId, body.filename, body.text, body.mimeType);
+    await applyTenantModelSettings(ctx.tenantId);
+    const result = await ingestDocumentText(
+      ctx.tenantId,
+      body.filename,
+      body.text,
+      body.mimeType,
+      { model: body.model?.trim() || 'default' },
+    );
     return { ok: true, ...result };
   });
 

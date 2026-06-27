@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import i18n from '@/i18n';
-import { POST_MAX_RETRIES } from '@/lib/transport-reconnect';
 
 export type NetworkBannerKind =
   | 'offline'
@@ -84,7 +83,6 @@ export const useNetworkReconnectStore = create<NetworkReconnectStore>((set, get)
       elapsedSec,
       message: i18n.t('reconnect.reconnectingMsg', {
         reason: reasonLabel(reason),
-        attempt,
         elapsed: elapsedSec,
         seconds,
       }),
@@ -99,8 +97,6 @@ export const useNetworkReconnectStore = create<NetworkReconnectStore>((set, get)
       elapsedSec: 0,
       message: i18n.t('reconnect.postRetryMsg', {
         reason: reasonLabel(reason),
-        attempt,
-        max: POST_MAX_RETRIES,
         seconds,
       }),
     });

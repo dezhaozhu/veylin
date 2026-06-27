@@ -190,7 +190,13 @@ async function resilientChatPost(
   let accumulator = '';
 
   const fetchPost = () =>
-    postChatWithRetry(() => baseFetch(input, init), {
+    postChatWithRetry(
+      (attemptSignal) =>
+        baseFetch(input, {
+          ...init,
+          signal: attemptSignal,
+        }),
+      {
       signal,
       onRetry: ({ attempt, delayMs, reason }) => {
         banner.setPostRetrying({ attempt, delayMs, reason });

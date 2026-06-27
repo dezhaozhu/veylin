@@ -62,6 +62,7 @@ export async function ingestDocumentText(
   filename: string,
   text: string,
   mimeType?: string,
+  options?: { model?: string },
 ): Promise<{ documentId: string; chunks: number; graphEntities: number; graphEdges: number }> {
   const doc = await insertDocument(tenantId, {
     filename,
@@ -88,7 +89,9 @@ export async function ingestDocumentText(
     let graphEntities = 0;
     let graphEdges = 0;
     try {
-      const graph = await extractAndStoreGraph(tenantId, doc.id, storedChunks);
+      const graph = await extractAndStoreGraph(tenantId, doc.id, storedChunks, {
+        model: options?.model,
+      });
       graphEntities = graph.entities;
       graphEdges = graph.edges;
     } catch (graphErr) {

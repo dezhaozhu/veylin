@@ -6,16 +6,19 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const port = process.env.PORT ?? '8787';
 const healthUrl = `http://127.0.0.1:${port}/health`;
-const dataDir =
-  process.env.VEYLIN_DATA_DIR ??
-  resolve(homedir(), 'Library/Application Support/com.veylin.app');
+function resolveDevDataDir() {
+  const raw = process.env.VEYLIN_DATA_DIR?.trim();
+  if (!raw) return resolve(repoRoot, 'data');
+  return isAbsolute(raw) ? raw : resolve(repoRoot, raw);
+}
+
+const dataDir = resolveDevDataDir();
 const catalogPath = resolve(repoRoot, 'data/models.local.json');
 const distRoot = resolve(repoRoot, 'apps/server/dist/sidecar');
 
@@ -56,6 +59,13 @@ async function waitForHealth(timeoutMs = 60_000) {
   throw new Error(`sidecar did not become ready on :${port}`);
 }
 
+function sidecarBundleReady() {
+  return (
+    existsSync(resolve(distRoot, 'server.mjs')) &&
+    existsSync(resolve(distRoot, 'node_modules/surrealdb/package.json'))
+  );
+}
+
 async function main() {
   const entry = sidecarEntry();
   if (!existsSync(entry)) {
@@ -74,18 +84,36 @@ async function main() {
     return;
   }
 
+  const serverEnv = {
+    ...process.env,
+    VEYLIN_REPO_ROOT: repoRoot,
+    VEYLIN_DATA_DIR: dataDir,
+    VEYLIN_DESKTOP_AUTH: '1',
+    VEYLIN_REQUIRE_USER_MODEL_SETTINGS: '1',
+    VEYLIN_MODEL_CATALOG_PATH: catalogPath,
+    PORT: port,
+  };
+
+  if (!sidecarBundleReady()) {
+    const serverRoot = resolve(repoRoot, 'apps/server');
+    console.log(`[ensure-server] bundled sidecar incomplete — starting tsx server on :${port}...`);
+    const child = spawn('npx', ['tsx', 'src/server.ts'], {
+      cwd: serverRoot,
+      env: serverEnv,
+      stdio: 'ignore',
+      detached: true,
+    });
+    child.unref();
+    await waitForHealth();
+    console.log(`[ensure-server] tsx server ready on :${port}`);
+    return;
+  }
+
   const node = sidecarNode();
   console.log(`[ensure-server] starting sidecar on :${port} (${entry})...`);
   const child = spawn(node, [entry], {
     cwd: dirname(entry),
-    env: {
-      ...process.env,
-      VEYLIN_DATA_DIR: dataDir,
-      VEYLIN_DESKTOP_AUTH: '1',
-      VEYLIN_REQUIRE_USER_MODEL_SETTINGS: '1',
-      VEYLIN_MODEL_CATALOG_PATH: catalogPath,
-      PORT: port,
-    },
+    env: serverEnv,
     stdio: 'ignore',
     detached: true,
   });

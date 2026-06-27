@@ -5,6 +5,7 @@ import {
   ThreadListItemMorePrimitive,
   ThreadListItemPrimitive,
   ThreadListPrimitive,
+  useAui,
   useAuiState,
 } from "@assistant-ui/react";
 import {
@@ -275,6 +276,24 @@ const ThreadListItem: FC = () => {
 
 const ThreadListItemMore: FC = () => {
   const { t } = useTranslation();
+  const aui = useAui();
+
+  const handleArchive = useCallback(() => {
+    try {
+      aui.threadListItem().archive();
+    } catch (err) {
+      console.error('[thread-list] archive failed:', err);
+    }
+  }, [aui]);
+
+  const handleDelete = useCallback(() => {
+    try {
+      aui.threadListItem().delete();
+    } catch (err) {
+      console.error('[thread-list] delete failed:', err);
+    }
+  }, [aui]);
+
   return (
     <div className="flex w-6 shrink-0 justify-center opacity-0 transition-opacity group-hover:opacity-100 group-data-active:opacity-100 has-[[data-state=open]]:opacity-100">
       <ThreadListItemMorePrimitive.Root>
@@ -294,18 +313,20 @@ const ThreadListItemMore: FC = () => {
         sideOffset={6}
         className="aui-thread-list-item-more-content bg-popover/95 text-popover-foreground data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:animate-out data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 min-w-[8rem] overflow-hidden rounded-xl border p-1.5 shadow-lg backdrop-blur-sm"
       >
-        <ThreadListItemPrimitive.Archive asChild>
-          <ThreadListItemMorePrimitive.Item className="aui-thread-list-item-more-item hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none">
-            <ArchiveIcon className="size-4" />
-            {t('threadList.archive')}
-          </ThreadListItemMorePrimitive.Item>
-        </ThreadListItemPrimitive.Archive>
-        <ThreadListItemPrimitive.Delete asChild>
-          <ThreadListItemMorePrimitive.Item className="aui-thread-list-item-more-item text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none">
-            <TrashIcon className="size-4" />
-            {t('threadList.delete')}
-          </ThreadListItemMorePrimitive.Item>
-        </ThreadListItemPrimitive.Delete>
+        <ThreadListItemMorePrimitive.Item
+          className="aui-thread-list-item-more-item hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
+          onSelect={handleArchive}
+        >
+          <ArchiveIcon className="size-4" />
+          {t('threadList.archive')}
+        </ThreadListItemMorePrimitive.Item>
+        <ThreadListItemMorePrimitive.Item
+          className="aui-thread-list-item-more-item text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
+          onSelect={handleDelete}
+        >
+          <TrashIcon className="size-4" />
+          {t('threadList.delete')}
+        </ThreadListItemMorePrimitive.Item>
       </ThreadListItemMorePrimitive.Content>
       </ThreadListItemMorePrimitive.Root>
     </div>

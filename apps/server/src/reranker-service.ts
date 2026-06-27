@@ -1,9 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ensureDataDir } from '@veylin/db';
+import {
+  LOCAL_RERANKER_HF_MODEL_ID,
+  ensureDataDir,
+  isRerankerModelOnDisk,
+  rerankerCacheDir,
+} from '@veylin/db';
 import { applyTransformersHfEndpoint } from './hf-endpoint';
 
-export const DEFAULT_RERANKER_MODEL = 'Xenova/ms-marco-MiniLM-L-6-v2';
+export { LOCAL_RERANKER_HF_MODEL_ID as DEFAULT_RERANKER_MODEL } from '@veylin/db';
 
 export type RerankerDownloadPhase = 'idle' | 'downloading' | 'ready' | 'error';
 
@@ -70,12 +75,8 @@ function settingsPath(): string {
   return join(ensureDataDir(), SETTINGS_FILE);
 }
 
-export function rerankerCacheDir(): string {
-  return join(ensureDataDir(), 'hf-reranker-cache');
-}
-
 function resolveModelId(): string {
-  return process.env.RAG_RERANKER_MODEL?.trim() || DEFAULT_RERANKER_MODEL;
+  return process.env.RAG_RERANKER_MODEL?.trim() || LOCAL_RERANKER_HF_MODEL_ID;
 }
 
 function readSettings(): StoredRerankerSettings {
@@ -123,20 +124,6 @@ export function createStepProgressCallback(
   };
 }
 
-function isRerankerModelOnDisk(modelId: string): boolean {
-  const hubDir = join(rerankerCacheDir(), `models--${modelId.replace(/\//g, '--')}`);
-  const snapshotsDir = join(hubDir, 'snapshots');
-  if (!existsSync(snapshotsDir)) return false;
-  for (const snapshot of readdirSync(snapshotsDir)) {
-    const onnxCandidates = [
-      join(snapshotsDir, snapshot, 'onnx', 'model.onnx'),
-      join(snapshotsDir, snapshot, 'model.onnx'),
-    ];
-    if (onnxCandidates.some((path) => existsSync(path))) return true;
-  }
-  return false;
-}
-
 async function probeModelInstalled(modelId: string): Promise<boolean> {
   return isRerankerModelOnDisk(modelId);
 }
@@ -173,19 +160,22 @@ function clearRuntime(): void {
 export async function getRerankerStatus(): Promise<RerankerStatus> {
   const settings = readSettings();
   const modelId = resolveModelId();
+  let installedAt = settings.installedAt ?? null;
   let installed = false;
 
   if (downloadState.phase === 'downloading') {
     installed = false;
-  } else if (settings.installedAt) {
-    installed = await probeModelInstalled(modelId);
-    if (!installed && settings.installedAt) {
-      writeSettings({ ...settings, installedAt: null, enabled: false });
-    }
   } else {
     installed = await probeModelInstalled(modelId);
     if (installed) {
-      writeSettings({ ...settings, installedAt: new Date().toISOString(), lastError: null });
+      if (!installedAt) {
+        installedAt = new Date().toISOString();
+        writeSettings({ ...settings, installedAt, lastError: null, enabled: true });
+        settings.enabled = true;
+      }
+    } else if (installedAt) {
+      installedAt = null;
+      writeSettings({ ...settings, installedAt: null, enabled: false });
     }
   }
 
@@ -208,7 +198,7 @@ export async function getRerankerStatus(): Promise<RerankerStatus> {
       phase: effectivePhase,
       progress: effectivePhase === 'ready' ? 100 : downloadState.progress,
     },
-    installedAt: installed ? settings.installedAt ?? null : null,
+    installedAt: installed ? installedAt : null,
     lastError: settings.lastError ?? null,
     hfEndpoint: lastHfEndpoint,
   };
@@ -273,11 +263,13 @@ export function startRerankerDownload(): { ok: boolean; message?: string } {
       runtime = { tokenizer, model } as RerankRuntime;
       runtimeModelId = modelId;
 
+      const installedAt = new Date().toISOString();
       writeSettings({
         ...settings,
         modelId,
-        installedAt: new Date().toISOString(),
+        installedAt,
         lastError: null,
+        enabled: true,
       });
 
       updateDownloadState({
@@ -285,7 +277,7 @@ export function startRerankerDownload(): { ok: boolean; message?: string } {
         progress: 100,
         message: 'ready',
         error: null,
-        finishedAt: new Date().toISOString(),
+        finishedAt: installedAt,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -29,11 +29,11 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/health': {
-        target: process.env.VITE_API_URL ?? 'http://localhost:8787',
+        target: process.env.VITE_API_URL ?? 'http://127.0.0.1:8787',
         changeOrigin: true,
       },
       '/api': {
-        target: process.env.VITE_API_URL ?? 'http://localhost:8787',
+        target: process.env.VITE_API_URL ?? 'http://127.0.0.1:8787',
         changeOrigin: true,
       },
     },

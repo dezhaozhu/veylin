@@ -1,5 +1,6 @@
 import type { Memory } from '@mastra/memory';
 import {
+  ensureMastraThread,
   mastraMessagesToUi,
   replaceThreadMessages,
   type ThreadIdentity,
@@ -66,6 +67,7 @@ export async function syncThreadMessagesFromClient(opts: {
   clientMessages: UiMessage[];
   forceReplace?: boolean;
 }): Promise<boolean> {
+  await ensureMastraThread(opts.memory, opts.identity);
   const recalled = await opts.memory.recall({
     threadId: opts.identity.threadId,
     resourceId: opts.identity.resourceId,

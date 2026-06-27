@@ -24,6 +24,7 @@ function NetworkReconnectStatus() {
 
   if (!kind || !isInlineReconnectKind(kind)) return null;
 
+  let line = title ?? '';
   if (kind === 'reconnecting' || kind === 'post_retrying') {
     const max = kind === 'post_retrying' ? POST_MAX_RETRIES : 5;
     const label =
@@ -31,38 +32,23 @@ function NetworkReconnectStatus() {
       (kind === 'post_retrying'
         ? t('reconnect.postRetryTitle')
         : t('reconnect.reconnectingTitle'));
-    return (
-      <div
-        role="status"
-        className="text-muted-foreground fade-in animate-in text-sm duration-200"
-      >
-        {label} ({attempt}/{max})
-        {message ? (
-          <span className="text-muted-foreground/80 mt-0.5 block text-xs">{message}</span>
-        ) : null}
-      </div>
-    );
+    line = `${label} (${attempt}/${max})`;
+  } else if (message) {
+    line = line ? `${line} · ${message}` : message;
   }
 
-  if (kind === 'offline') {
-    return (
-      <div role="status" className="text-muted-foreground text-sm">
-        {title}
-        {message ? ` · ${message}` : null}
-      </div>
-    );
-  }
+  if (!line) return null;
 
-  if (kind === 'connection_error') {
-    return (
-      <div role="alert" className="text-destructive text-sm">
-        {title}
-        {message ? ` · ${message}` : null}
-      </div>
-    );
-  }
+  const className =
+    kind === 'connection_error'
+      ? 'text-destructive text-sm'
+      : 'text-muted-foreground fade-in animate-in text-sm duration-200';
 
-  return null;
+  return (
+    <div role={kind === 'connection_error' ? 'alert' : 'status'} className={className}>
+      {line}
+    </div>
+  );
 }
 
 /** Reconnect status on the next line of the active assistant reply. */

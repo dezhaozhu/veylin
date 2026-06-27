@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 import i18n from '@/i18n';
+import { isTauri } from '@/lib/tauri-web-view';
 
 type TableColumnDef = {
   key: string;
@@ -66,12 +67,26 @@ function inferColumnType(name: string): string {
   return 'text';
 }
 
-/** Export current sheet columns + rows to an .xlsx download. Returns the filename used. */
-export function exportTableToExcel(
+export type ExcelExportResult = {
+  filename: string;
+  path: string;
+};
+
+async function resolveExcelExportPath(filename: string): Promise<string> {
+  if (isTauri()) {
+    const { downloadDir, join } = await import('@tauri-apps/api/path');
+    const dir = await downloadDir();
+    if (dir) return join(dir, filename);
+  }
+  return filename;
+}
+
+/** Export current sheet columns + rows to an .xlsx download. */
+export async function exportTableToExcel(
   sheetName: string,
   columns: TableColumnDef[],
   rows: TableRow[],
-): string {
+): Promise<ExcelExportResult> {
   const headers = columns.map((c) => c.name);
   const body = rows.map((row) =>
     columns.map((col) => cellDisplayValue(col, row[col.key])),
@@ -81,7 +96,8 @@ export function exportTableToExcel(
   XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
   const filename = `${sanitizeFilename(sheetName)}.xlsx`;
   XLSX.writeFile(wb, filename);
-  return filename;
+  const path = await resolveExcelExportPath(filename);
+  return { filename, path };
 }
 
 export type ParsedTableImport = {

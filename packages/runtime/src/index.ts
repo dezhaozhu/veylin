@@ -20,6 +20,12 @@ export {
   type SubagentType,
 } from './subagent-presets';
 export { buildMemory } from './memory';
+export {
+  generateLocalEmbeddings,
+  isLocalFastembedInstalled,
+  localFastembed,
+  resetLocalFastembedRuntime,
+} from './fastembed-local';
 export { buildStorage, buildObservability } from './storage';
 export {
   getModelConfig,

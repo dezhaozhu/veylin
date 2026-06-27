@@ -105,6 +105,9 @@
   "ask": {
     "answered": "已回答",
     "selectToContinue": "请选择以继续",
+    "lookBelow": "在下方输入框上方选择选项。",
+    "invalidFormat": "问题格式无效，请重试或换一条消息说明你的选择。",
+    "stopped": "生成已停止，请重新发送消息以继续。",
     "submit": "提交",
     "loading": "正在加载问题…",
     "panelTitle": "问题",
@@ -422,9 +425,9 @@
     "offlineTitle": "网络已断开",
     "offlineBody": "正在等待网络恢复…",
     "reconnectingTitle": "正在重连",
-    "reconnectingMsg": "{{reason}} · 第 {{attempt}} 次，已用时 {{elapsed}} 秒，{{seconds}} 秒后重试",
+    "reconnectingMsg": "{{reason}} · 已用时 {{elapsed}} 秒，{{seconds}} 秒后重试",
     "postRetryTitle": "正在重试",
-    "postRetryMsg": "{{reason}} · 第 {{attempt}}/{{max}} 次，{{seconds}} 秒后重试"
+    "postRetryMsg": "{{reason}} · {{seconds}} 秒后重试"
   },
   "chatError": {
     "rateLimited": { "title": "请求过于频繁", "detail": "请求太多，请稍候再试。" },
@@ -470,7 +473,7 @@
     "importFailed": "导入失败",
     "importEmpty": "文件中没有可导入的数据行（请确认首行为列标题，且至少有一行数据）",
     "importSuccess": "已导入 {{count}} 行",
-    "exportSuccess": "已导出 {{filename}}",
+    "exportSuccess": "已导出 {{path}}",
     "loading": "加载表格数据…",
     "loadError": "表格数据加载失败：{{error}}",
     "deleteSheet": "删除工作表 {{name}}",
@@ -501,7 +504,8 @@
       "pending": "待索引",
       "unknown": "未知"
     },
-    "confirmDelete": "删除「{{filename}}」？相关切片与图谱数据会一并移除。",
+    "embeddingPreparing": "语义向量模型尚未就绪，服务正在自动下载（首次需联网）。聊天可用，知识检索需等下载完成。",
+    "embeddingDownloading": "正在下载语义向量模型（{{progress}}%）…",
     "enterQuery": "请输入要检索的问题或关键词",
     "title": "知识库",
     "subtitle": "本地文档检索、引用追踪和知识图谱",
@@ -549,8 +553,9 @@
       "embeddingDesc": "从 Hugging Face 官方仓库下载，用于文档向量化与语义检索；未安装时仅支持全文检索。",
       "rerankerTitle": "检索精排（Cross-Encoder）",
       "rerankerDesc": "从 Hugging Face 官方仓库下载，对检索结果二次排序；不安装不影响基础检索。",
-      "enableReranker": "启用精排",
-      "enabledHint": "精排已启用，检索与对话中的 knowledge_search 会使用精排结果。",
+    "enableReranker": "启用精排",
+    "enabledHint": "精排已启用，检索与对话中的 knowledge_search 会使用精排结果。",
+    "disabledHint": "精排已关闭，仍保留模型文件，需要时可重新开启。",
       "hfEndpoint": "下载源：{{endpoint}}"
     }
   },
@@ -651,6 +656,37 @@
       "errorHandling": "错误处理",
       "errorAbort": "出错则终止流程",
       "errorBranch": "走 error 分支（红色句柄）"
+    },
+    "run": {
+      "history": "运行历史",
+      "status": {
+        "queued": "排队中",
+        "running": "运行中",
+        "done": "已完成",
+        "failed": "失败"
+      },
+      "tab": {
+        "result": "最终结果",
+        "tracing": "追踪",
+        "variables": "变量"
+      },
+      "selectRun": "选择一次运行查看详情",
+      "failed": "流程执行失败",
+      "inProgress": "流程仍在运行，请稍候…",
+      "inProgressStep": "正在执行：{{step}}",
+      "finalText": "输出文本",
+      "finalOutput": "最终输出",
+      "rawJson": "原始 JSON",
+      "noFinalOutput": "暂无最终输出（请确认已连接「输出」节点并完成运行）",
+      "nodeOutput": "节点输出",
+      "pickStep": "点击左侧步骤查看该节点输出",
+      "noVariables": "本次运行尚无节点输出",
+      "noOutput": "无输出数据",
+      "emptyOutput": "（空）",
+      "copy": "复制",
+      "lastRun": "上次运行",
+      "notExecuted": "该节点在本次运行中尚未执行",
+      "insertVar": "插入上游变量"
     }
   },
   "splash": {

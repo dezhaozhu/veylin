@@ -1,4 +1,5 @@
 /** AI SDK v6 UIMessage (minimal shape we receive from assistant-ui). */
+import { convertToModelMessages, type UIMessage } from 'ai';
 import { getCatalogModel } from '@veylin/runtime';
 import {
   decodeDataUrlToUtf8,
@@ -220,17 +221,56 @@ async function fileParts(msg: UiMessage, vision: boolean): Promise<ContentPart[]
   return out;
 }
 
+const FRONTEND_SUSPEND_TOOL_PART_TYPES = new Set([
+  'tool-ask_user_question',
+  'tool-read_open_page',
+]);
+
+function messageHasModelToolParts(messages: UiMessage[]): boolean {
+  return messages.some((m) =>
+    m.parts?.some((p) => {
+      const type = (p as { type?: string }).type;
+      return (
+        typeof type === 'string' &&
+        type.startsWith('tool-') &&
+        !FRONTEND_SUSPEND_TOOL_PART_TYPES.has(type)
+      );
+    }),
+  );
+}
+
+function messageHasFrontendSuspendToolParts(message: UiMessage): boolean {
+  return Boolean(
+    message.parts?.some((p) => {
+      const type = (p as { type?: string }).type;
+      return typeof type === 'string' && FRONTEND_SUSPEND_TOOL_PART_TYPES.has(type);
+    }),
+  );
+}
+
 /**
  * Convert UIMessages to Mastra agent.stream input. Text-only messages stay as a
  * string; messages carrying images/PDFs become a multimodal content array.
- * `vision` indicates whether the selected model accepts image content, which
- * decides whether PDFs are rendered to page images (dual-channel) or extracted
- * to text only.
+ * When model-executed tool UI parts are present, use AI SDK conversion so tool
+ * results reach the model on client-completed tool continuations. Frontend
+ * suspend tools (ask_user_question/read_open_page) are user-side context, so
+ * convert them to plain text via textOfMessage instead of emitting provider
+ * tool protocol blocks.
  */
 export async function toAgentMessages(
   messages: UiMessage[],
   vision = false,
-): Promise<{ role: string; content: string | ContentPart[] }[]> {
+): Promise<{ role: string; content: string | ContentPart[] | unknown }[]> {
+  if (messageHasModelToolParts(messages)) {
+    const modelMessages = await convertToModelMessages(messages as UIMessage[], {
+      ignoreIncompleteToolCalls: true,
+    });
+    return modelMessages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+  }
+
   const converted = await Promise.all(
     messages.map(async (m) => {
       const text = textOfMessage(m);
@@ -239,9 +279,15 @@ export async function toAgentMessages(
         const parts: ContentPart[] = [];
         if (text) parts.push({ type: 'text', text });
         parts.push(...files);
-        return { role: m.role, content: parts as string | ContentPart[] };
+        return {
+          role: messageHasFrontendSuspendToolParts(m) ? 'user' : m.role,
+          content: parts as string | ContentPart[],
+        };
       }
-      return { role: m.role, content: text as string | ContentPart[] };
+      return {
+        role: messageHasFrontendSuspendToolParts(m) ? 'user' : m.role,
+        content: text as string | ContentPart[],
+      };
     }),
   );
   return converted.filter((m) =>

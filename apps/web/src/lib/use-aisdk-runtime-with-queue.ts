@@ -52,9 +52,11 @@ import { getChatSettings, setChatSettings } from "./chat-settings";
 import { setForceReplaceNextChat } from "./chat-force-replace-ref";
 import { stripAllPendingSkillTokens } from "./pending-skill-text";
 import { requestChatStop } from "./chat-stop";
+import { useNetworkReconnectStore } from "./network-reconnect-store";
 import {
   findFirstAwaitingFrontendToolIndex,
   pendingFrontendToolCallId,
+  registerFrontendToolStop,
   trimAssistantAfterAwaitingTool,
 } from "./frontend-suspend-tools";
 import {
@@ -353,11 +355,12 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       stoppedFrontendToolIdsRef.current.add(toolCallId);
       chatHelpers.stop();
       const threadId = getThreadId?.() ?? chatHelpers.id;
-      if (threadId) {
-        void requestChatStop(threadId).catch((err) => {
-          console.warn("[chat] frontend tool stop failed", err);
-        });
-      }
+      const stopPromise = threadId
+        ? requestChatStop(threadId).catch((err) => {
+            console.warn("[chat] frontend tool stop failed", err);
+          })
+        : Promise.resolve();
+      registerFrontendToolStop(toolCallId, stopPromise);
     }
 
     const trimmed = trimAssistantAfterAwaitingTool(chatHelpers.messages);
@@ -553,6 +556,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       isError,
       modelContent,
     }) => {
+      useNetworkReconnectStore.getState().clearReconnecting();
       const options = { metadata: lastRunConfigRef.current };
       if (isError) {
         chatHelpers.addToolOutput({

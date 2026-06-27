@@ -161,9 +161,28 @@ export const workflowRunSchema = z.object({
   eventContext: z.record(z.string(), z.unknown()).default({}),
   startedAt: z.string(),
   finishedAt: z.string().nullable().optional(),
+  /** Derived from the end node (or last ok step) for Result panels. */
+  finalOutput: z.unknown().optional(),
 });
 
 export type WorkflowRun = z.infer<typeof workflowRunSchema>;
+
+/** Pick workflow Result output from a run log (Dify-style). */
+export function deriveFinalOutput(log: WorkflowRunLogEntry[]): unknown {
+  for (let i = log.length - 1; i >= 0; i--) {
+    const entry = log[i]!;
+    if (entry.kind === 'end' && entry.status === 'ok' && entry.output !== undefined) {
+      return entry.output;
+    }
+  }
+  for (let i = log.length - 1; i >= 0; i--) {
+    const entry = log[i]!;
+    if (entry.status === 'ok' && entry.output !== undefined) {
+      return entry.output;
+    }
+  }
+  return undefined;
+}
 
 /** Node metadata for UI palettes (label + category). */
 export interface WorkflowNodeMeta {

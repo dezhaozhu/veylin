@@ -23,6 +23,21 @@ export interface ThreadIdentity {
   resourceId: string;
 }
 
+/** Mastra LibSQL requires a thread row before recall when semantic recall is off. */
+export async function ensureMastraThread(
+  memory: Memory,
+  identity: ThreadIdentity,
+): Promise<void> {
+  if (!memory.getThreadById || !memory.createThread) return;
+  const thread = await memory.getThreadById({ threadId: identity.threadId });
+  if (!thread) {
+    await memory.createThread({
+      threadId: identity.threadId,
+      resourceId: identity.resourceId,
+    });
+  }
+}
+
 function partText(parts: unknown[] | undefined): string {
   if (!parts) return '';
   return parts
@@ -81,6 +96,7 @@ export async function replaceThreadMessages(
   identity: ThreadIdentity,
   messages: UiMessage[],
 ): Promise<void> {
+  await ensureMastraThread(memory, identity);
   const recalled = await memory.recall({ threadId: identity.threadId, perPage: false });
   const existing = recalled.messages ?? [];
   if (existing.length > 0) {

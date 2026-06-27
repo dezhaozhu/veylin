@@ -23,8 +23,9 @@ import { Input } from '@/components/ui/input';
 import { SettingsDeleteDialog } from '@/components/features/settings/settings-item-actions';
 import { cn } from '@/lib/utils';
 import { extractTextFromFile, RAG_UPLOAD_ACCEPT } from '@/lib/extract-file-text';
+import { getChatSettings } from '@/lib/chat-settings';
 import type { PanelContentProps } from '../panel-types';
-import { RagLocalModelsCard } from './rag-local-models-card';
+import { RagLocalModelsCard, type RagLocalModelsCardHandle } from './rag-local-models-card';
 
 type Reference = {
   refIndex: number;
@@ -54,6 +55,13 @@ type GraphNode = {
   documentId?: string | null;
 };
 type GraphEdge = { source: string; target: string; relation: string; documentId?: string | null };
+type LocalModelsRefreshResult = {
+  models?: Array<{
+    id: string;
+    installed: boolean;
+    download: { phase: string; progress: number };
+  }>;
+} | null;
 
 type Tab = 'search' | 'documents' | 'graph' | 'citations';
 
@@ -188,11 +196,17 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
   const graphRef = useRef<HTMLDivElement>(null);
   const graphSigRef = useRef<string>('');
   const fitTimerRef = useRef<number | undefined>(undefined);
+  const localModelsRef = useRef<RagLocalModelsCardHandle>(null);
   const [uploading, setUploading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; filename: string } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [embeddingNotice, setEmbeddingNotice] = useState<{
+    phase: string;
+    progress: number;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [queryError, setQueryError] = useState<string | null>(null);
 
   const fitGraphView = useCallback(() => {
     const fg = graphFgRef.current;
@@ -238,14 +252,26 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
       const refsUrl = threadId
         ? `/api/rag/references?threadId=${encodeURIComponent(threadId)}`
         : '/api/rag/references';
-      const [refs, docs, kg] = await withRetry(
-        () => Promise.all([
-          fetchJson<{ query?: string | null; references: Reference[]; at?: number | null }>(refsUrl),
-          fetchJson<{ documents: DocumentRow[] }>('/api/rag/documents'),
-          fetchJson<{ entities: GraphNode[]; edges: GraphEdge[] }>('/api/kg'),
-        ]),
+      const [refs, docs, kg, localModels] = await withRetry(
+        () =>
+          Promise.all([
+            fetchJson<{ query?: string | null; references: Reference[]; at?: number | null }>(refsUrl),
+            fetchJson<{ documents: DocumentRow[] }>('/api/rag/documents'),
+            fetchJson<{ entities: GraphNode[]; edges: GraphEdge[] }>('/api/kg'),
+            localModelsRef.current?.refresh() ?? Promise.resolve(null),
+          ]),
         attempts,
       );
+      const localModelStatus = localModels as LocalModelsRefreshResult;
+      const embedding = localModelStatus?.models?.find((m) => m.id === 'embedding');
+      if (embedding && (!embedding.installed || embedding.download.phase === 'downloading')) {
+        setEmbeddingNotice({
+          phase: embedding.download.phase,
+          progress: embedding.download.progress,
+        });
+      } else {
+        setEmbeddingNotice(null);
+      }
       setAgentCitations({
         query: refs.query ?? null,
         references: refs.references ?? [],
@@ -391,6 +417,7 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
             filename: file.name,
             mimeType,
             text,
+            model: getChatSettings().model || 'default',
           }),
         });
         if ((result.graphEntities ?? 0) > 0) addedGraph = true;
@@ -423,10 +450,11 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
   async function runSearch() {
     const value = query.trim();
     if (!value) {
-      setError(t('rag.enterQuery'));
+      setQueryError(t('rag.enterQuery'));
       return;
     }
     setSearching(true);
+    setQueryError(null);
     setError(null);
     try {
       const result = await fetchJson<{ references: Reference[] }>('/api/rag/search', {
@@ -492,27 +520,39 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
           </div>
         </div>
 
-        <div className="mt-3 flex gap-2">
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void runSearch();
-            }}
-            placeholder={t('rag.searchPlaceholder')}
-            className="h-8 text-xs"
-            disabled={searching}
-          />
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 px-3 text-xs"
-            disabled={searching}
-            onClick={() => void runSearch()}
-          >
-            {searching ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
-            {t('rag.search')}
-          </Button>
+        <div className="mt-3">
+          <div className="flex gap-2">
+            <Input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (queryError) setQueryError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void runSearch();
+              }}
+              placeholder={t('rag.searchPlaceholder')}
+              className={cn('h-8 text-xs', queryError && 'border-destructive')}
+              disabled={searching}
+              aria-invalid={queryError ? true : undefined}
+              aria-describedby={queryError ? 'rag-query-error' : undefined}
+            />
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 px-3 text-xs"
+              disabled={searching}
+              onClick={() => void runSearch()}
+            >
+              {searching ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+              {t('rag.search')}
+            </Button>
+          </div>
+          {queryError ? (
+            <p id="rag-query-error" className="text-destructive mt-1 px-0.5 text-[11px]">
+              {queryError}
+            </p>
+          ) : null}
         </div>
 
         <div className="mt-3 grid grid-cols-3 gap-2">
@@ -547,6 +587,14 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
         </div>
       </div>
 
+      {embeddingNotice ? (
+        <div className="border-amber-500/25 bg-amber-500/10 text-amber-900 dark:text-amber-200 mx-3 mt-3 rounded-lg border px-3 py-2 text-xs">
+          {embeddingNotice.phase === 'downloading'
+            ? t('rag.embeddingDownloading', { progress: embeddingNotice.progress })
+            : t('rag.embeddingPreparing')}
+        </div>
+      ) : null}
+
       {error ? (
         <div className="border-destructive/20 bg-destructive/10 text-destructive mx-3 mt-3 rounded-lg border px-3 py-2 text-xs">
           {error}
@@ -555,7 +603,7 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
 
       <div className={cn('min-h-0 flex-1', tab === 'graph' ? 'flex flex-col overflow-hidden' : 'overflow-auto')}>
         <div className={cn('px-3 pt-3', tab === 'graph' ? 'shrink-0' : '')}>
-          <RagLocalModelsCard />
+          <RagLocalModelsCard ref={localModelsRef} />
         </div>
         <div className={cn(tab === 'graph' ? 'min-h-0 flex-1 overflow-hidden p-3 pt-0' : 'p-3 pt-2')}>
         {tab === 'search' ? (

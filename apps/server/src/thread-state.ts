@@ -96,6 +96,7 @@ export function isSidebarChatThreadId(threadId: string): boolean {
   if (threadId.startsWith('task-')) return false;
   if (threadId.startsWith('subagent-')) return false;
   if (threadId.startsWith('cron-')) return false;
+  if (threadId.startsWith('wf-')) return false;
   return true;
 }
 

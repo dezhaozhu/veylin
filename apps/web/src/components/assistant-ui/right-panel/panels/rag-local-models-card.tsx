@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, CircleAlert, Download, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react';
+import { CheckCircle2, CircleAlert, Download, Loader2, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { SettingsSwitch } from '@/components/features/settings/settings-switch';
-import { cn } from '@/lib/utils';
 import { apiUrl } from '@/lib/api-base';
 
 type DownloadPhase = 'idle' | 'downloading' | 'ready' | 'error';
 
-type LocalModel = {
+export type LocalModel = {
   id: 'embedding' | 'reranker';
   kind: 'embedding' | 'reranker';
   required: boolean;
@@ -91,11 +90,15 @@ function ModelRow({
     }
   }
 
-  async function onRemove() {
-    setBusy('remove');
+  async function onToggleEnabled(enabled: boolean) {
+    setBusy('toggle');
     setRowError(null);
     try {
-      const res = await fetch(apiUrl(`/api/rag/local-models/${model.id}`), { method: 'DELETE' });
+      const res = await fetch(apiUrl(`/api/rag/local-models/${model.id}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
       if (!res.ok || body.ok === false) {
         throw new Error(body.message || `HTTP ${res.status}`);
@@ -108,15 +111,11 @@ function ModelRow({
     }
   }
 
-  async function onToggleEnabled(enabled: boolean) {
-    setBusy('toggle');
+  async function onRemove() {
+    setBusy('remove');
     setRowError(null);
     try {
-      const res = await fetch(apiUrl('/api/rag/local-models/reranker'), {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      });
+      const res = await fetch(apiUrl(`/api/rag/local-models/${model.id}`), { method: 'DELETE' });
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
       if (!res.ok || body.ok === false) {
         throw new Error(body.message || `HTTP ${res.status}`);
@@ -152,16 +151,16 @@ function ModelRow({
           <div className="text-muted-foreground mt-0.5 text-[11px] leading-relaxed">{t(descKey)}</div>
           <div className="text-muted-foreground mt-1 truncate font-mono text-[10px]">{model.modelId}</div>
         </div>
-        {model.id === 'reranker' && showReady ? (
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="text-muted-foreground text-[11px]">{t('rag.localModels.enableReranker')}</span>
-            <SettingsSwitch
-              checked={Boolean(model.enabled)}
-              onChange={(on) => void onToggleEnabled(on)}
-              label={t('rag.localModels.enableReranker')}
-              className={busy === 'toggle' ? 'opacity-60' : undefined}
-            />
-          </div>
+        {showReady && model.id === 'reranker' ? (
+          <SettingsSwitch
+            checked={model.enabled === true}
+            onChange={(on) => {
+              if (busy === 'toggle') return;
+              void onToggleEnabled(on);
+            }}
+            label={t('rag.localModels.enableReranker')}
+            className={busy === 'toggle' ? 'pointer-events-none shrink-0 opacity-60' : 'shrink-0'}
+          />
         ) : null}
       </div>
 
@@ -239,25 +238,26 @@ function ModelRow({
         </div>
       ) : null}
 
-      {model.id === 'reranker' && showReady && model.enabled ? (
-        <div className={cn('text-muted-foreground mt-2 text-[10px]')}>{t('rag.localModels.enabledHint')}</div>
-      ) : null}
-
       {rowError ? <div className="text-destructive mt-2 text-[11px]">{rowError}</div> : null}
     </div>
   );
 }
 
-export function RagLocalModelsCard() {
+export type RagLocalModelsCardHandle = {
+  refresh: () => Promise<unknown>;
+};
+
+export const RagLocalModelsCard = forwardRef<RagLocalModelsCardHandle>(function RagLocalModelsCard(
+  _props,
+  ref,
+) {
   const { t } = useTranslation();
   const [models, setModels] = useState<LocalModel[]>([]);
   const [hfEndpoint, setHfEndpoint] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setRefreshing(true);
     try {
       const next = await fetchLocalModels();
       setModels(next.models);
@@ -270,10 +270,10 @@ export function RagLocalModelsCard() {
       setActionError(err instanceof Error ? err.message : String(err));
       setLoading(false);
       return null;
-    } finally {
-      setRefreshing(false);
     }
   }, []);
+
+  useImperativeHandle(ref, () => ({ refresh }), [refresh]);
 
   useEffect(() => {
     void refresh();
@@ -303,25 +303,14 @@ export function RagLocalModelsCard() {
 
   return (
     <div className="border-border bg-muted/20 rounded-xl border px-3 py-2.5">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-xs font-medium">{t('rag.localModels.title')}</div>
-          <div className="text-muted-foreground mt-0.5 text-[11px] leading-relaxed">{t('rag.localModels.subtitle')}</div>
-          {hfEndpoint ? (
-            <div className="text-muted-foreground mt-1 font-mono text-[10px]">
-              {t('rag.localModels.hfEndpoint', { endpoint: hfEndpoint })}
-            </div>
-          ) : null}
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          title={t('rag.refresh')}
-          onClick={() => void refresh()}
-        >
-          <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
-        </Button>
+      <div>
+        <div className="text-xs font-medium">{t('rag.localModels.title')}</div>
+        <div className="text-muted-foreground mt-0.5 text-[11px] leading-relaxed">{t('rag.localModels.subtitle')}</div>
+        {hfEndpoint ? (
+          <div className="text-muted-foreground mt-1 font-mono text-[10px]">
+            {t('rag.localModels.hfEndpoint', { endpoint: hfEndpoint })}
+          </div>
+        ) : null}
       </div>
       {actionError ? (
         <div className="border-destructive/20 bg-destructive/10 text-destructive mt-2 rounded-md border px-2 py-1.5 text-[11px]">
@@ -335,4 +324,4 @@ export function RagLocalModelsCard() {
       </div>
     </div>
   );
-}
+});

@@ -9,6 +9,7 @@ import type { AgentDefinition } from '@veylin/shared';
 import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { defaultPolicy, planModePolicy, type PolicyConfig } from '@veylin/policy';
 import { buildMemory } from './memory';
+import { buildStorage } from './storage';
 import { buildAgent } from './agents';
 import { SUBAGENT_PRESETS, presetToDefinition } from './subagent-presets';
 
@@ -132,6 +133,7 @@ export async function createRuntime(
   const libsqlUrl = resolved.libsqlUrl ?? `file:${join(resolved.dataDir, 'mastra-memory.db')}`;
 
   const memory = buildMemory(libsqlUrl);
+  const storage = buildStorage(libsqlUrl);
   const agentsDir = resolved.agentsDir;
   const definitions = await loadDefinitionsFromAgentsDir(agentsDir);
   const agentById = new Map<string, Agent>();
@@ -155,6 +157,7 @@ export async function createRuntime(
 
   const mastra = new Mastra({
     agents: Object.fromEntries(agentById),
+    storage,
     logger: new PinoLogger({ name: 'veylin', level: 'info' }),
   });
 

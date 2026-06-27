@@ -10,7 +10,8 @@
   },
   "scripts": {
     "migrate": "tsx src/migrate.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@surrealdb/node": "^1.0.0-beta.3",
