@@ -166,6 +166,7 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS frozen ON table_column TYPE option<bool>`,
   `DEFINE FIELD IF NOT EXISTS deletable ON table_column TYPE bool DEFAULT true`,
   `DEFINE FIELD IF NOT EXISTS position ON table_column TYPE int DEFAULT 0`,
+  `DEFINE FIELD IF NOT EXISTS status_options ON table_column TYPE option<array<string>>`,
 
   `DEFINE TABLE IF NOT EXISTS table_row SCHEMAFULL`,
   `DEFINE FIELD IF NOT EXISTS sheet_id ON table_row TYPE string`,
@@ -195,8 +196,24 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS id ON entity TYPE string`,
   `DEFINE FIELD IF NOT EXISTS tenant_id ON entity TYPE string`,
   `DEFINE FIELD IF NOT EXISTS name ON entity TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name_key ON entity TYPE string DEFAULT ''`,
   `DEFINE FIELD IF NOT EXISTS type ON entity TYPE string DEFAULT 'concept'`,
+  `DEFINE FIELD IF NOT EXISTS description ON entity TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS document_id ON entity TYPE option<string>`,
+
+  `DEFINE TABLE IF NOT EXISTS chunk_entity SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS chunk_id ON chunk_entity TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS entity_id ON chunk_entity TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON chunk_entity TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS document_id ON chunk_entity TYPE string`,
+
+  `DEFINE TABLE IF NOT EXISTS agent_citation SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON agent_citation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON agent_citation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS thread_id ON agent_citation TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS query ON agent_citation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS references ON agent_citation FLEXIBLE TYPE array`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON agent_citation TYPE datetime DEFAULT time::now()`,
 
   `DEFINE TABLE IF NOT EXISTS relates SCHEMAFULL TYPE RELATION`,
   `DEFINE FIELD IF NOT EXISTS id ON relates TYPE string`,
@@ -231,38 +248,6 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS finished_at ON workflow_run TYPE option<datetime>`,
 ];
 
-/** Legacy webhook model (token URL) → OpenHands model (source + whsec secret). */
-const WEBHOOK_LEGACY_FIELDS = ['token', 'source_type', 'url'] as const;
-
-async function migrateWebhookEndpoints(db: Surreal): Promise<void> {
-  for (const field of WEBHOOK_LEGACY_FIELDS) {
-    try {
-      await db.query(`REMOVE FIELD IF EXISTS ${field} ON TABLE webhook_endpoint`);
-    } catch {
-      // Table may not exist on a fresh install.
-    }
-  }
-
-  const dataSteps = [
-    `UPDATE webhook_endpoint SET secret = secret ?? token WHERE (secret IS NONE OR secret = '') AND token IS NOT NONE`,
-    `UPDATE webhook_endpoint SET source = source ?? source_type ?? 'custom' WHERE source IS NONE OR source = ''`,
-    `UPDATE webhook_endpoint SET name = name ?? source ?? 'Webhook' WHERE name IS NONE OR name = ''`,
-    `UPDATE webhook_endpoint SET event_key_expr = event_key_expr ?? 'type' WHERE event_key_expr IS NONE OR event_key_expr = ''`,
-    `UPDATE webhook_endpoint SET signature_header = 'X-Hub-Signature-256' WHERE (signature_header IS NONE OR signature_header = '') AND source = 'github'`,
-    `UPDATE webhook_endpoint SET signature_header = 'X-Signature-256' WHERE signature_header IS NONE OR signature_header = ''`,
-    `UPDATE webhook_endpoint UNSET token, source_type, url`,
-    `DELETE webhook_endpoint WHERE secret IS NONE OR secret = '' OR source IS NONE OR source = ''`,
-  ];
-
-  for (const sql of dataSteps) {
-    try {
-      await db.query(sql);
-    } catch {
-      // Best-effort: field names differ across legacy DB versions.
-    }
-  }
-}
-
 export async function initSchema(db: Surreal): Promise<void> {
   for (const sql of SCHEMA_STATEMENTS) {
     try {
@@ -276,58 +261,5 @@ export async function initSchema(db: Surreal): Promise<void> {
         { cause: err },
       );
     }
-  }
-
-  await migrateWebhookEndpoints(db);
-  await migrateLegacyNaming(db);
-}
-
-/** One-time fixes: cron trigger kind + table workflow node kinds. */
-async function migrateLegacyNaming(db: Surreal): Promise<void> {
-  for (const sql of [
-    `UPDATE automation SET kind = 'cron' WHERE kind = 'schedule'`,
-    `UPDATE workflow SET kind = 'cron' WHERE kind = 'schedule'`,
-  ]) {
-    try {
-      await db.query(sql);
-    } catch {
-      // Table may not exist on a fresh install.
-    }
-  }
-
-  try {
-    const result = await db.query('SELECT * FROM workflow');
-    const rows = result?.[0];
-    if (!Array.isArray(rows)) return;
-    for (const row of rows) {
-      const def = (row as { definition?: { nodes?: { kind?: string }[]; edges?: unknown[] } }).definition;
-      if (!def?.nodes?.length) continue;
-      let changed = false;
-      const nodes = def.nodes.map((n) => {
-        if (n.kind === 'dataset_read') {
-          changed = true;
-          return { ...n, kind: 'table_read' };
-        }
-        if (n.kind === 'dataset_write') {
-          changed = true;
-          return { ...n, kind: 'table_write' };
-        }
-        return n;
-      });
-      if (!changed) continue;
-      const rawId = (row as { id?: unknown }).id;
-      const id =
-        rawId && typeof rawId === 'object' && rawId !== null && 'id' in rawId
-          ? String((rawId as { id: unknown }).id)
-          : String(rawId ?? '').split(':').pop() ?? '';
-      if (!id) continue;
-      await db.query('UPDATE type::thing($table, $id) SET definition = $definition', {
-        table: 'workflow',
-        id,
-        definition: { ...def, nodes },
-      });
-    }
-  } catch {
-    // Best-effort for legacy workflow definitions.
   }
 }

@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
+    "@huggingface/transformers": "^3.8.1",
     "@mastra/ai-sdk": "^1.5.0",
     "@mastra/fastembed": "^1.2.0",
     "@mastra/mcp": "^1.11.0",

@@ -72,6 +72,8 @@ export interface PanelTabsApi {
   updateState: (id: string, patch: Record<string, unknown>) => void;
   /** Focus a web tab and show it in the docked browser (for @ context). */
   focusWebTab: (id: string) => Promise<void>;
+  /** Open/focus the knowledge panel and highlight a citation excerpt. */
+  focusRagCitation: (focus: { refIndex?: number; chunkId?: string }) => void;
 }
 
 /** Right-panel tab store. Use via PanelTabsProvider / usePanelTabs(). */
@@ -150,6 +152,26 @@ export function usePanelTabsState(): PanelTabsApi {
     [state.tabs, state.activeId, commit],
   );
 
+  const focusRagCitation = useCallback(
+    (focus: { refIndex?: number; chunkId?: string }) => {
+      const existing = state.tabs.find((t) => t.kind === 'rag');
+      const ragFocus = { ...focus, at: Date.now() };
+      if (existing) {
+        const tabs = state.tabs.map((t) =>
+          t.id === existing.id
+            ? { ...t, state: { ...t.state, ragFocus, ragSubTab: 'citations' } }
+            : t,
+        );
+        commit({ tabs, activeId: existing.id });
+        return;
+      }
+      const tab = createTab('rag');
+      tab.state = { ragFocus, ragSubTab: 'citations' };
+      commit({ tabs: [...state.tabs, tab], activeId: tab.id });
+    },
+    [state.tabs, commit],
+  );
+
   return {
     tabs: state.tabs,
     activeId: state.activeId,
@@ -159,5 +181,6 @@ export function usePanelTabsState(): PanelTabsApi {
     activate,
     updateState,
     focusWebTab,
+    focusRagCitation,
   };
 }

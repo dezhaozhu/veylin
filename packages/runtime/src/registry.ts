@@ -6,24 +6,26 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { loadAgentDefinition, loadSkillsDir, type Skill } from '@veylin/agent-package';
 import type { AgentDefinition } from '@veylin/shared';
+import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { defaultPolicy, planModePolicy, type PolicyConfig } from '@veylin/policy';
 import { buildMemory } from './memory';
 import { buildAgent } from './agents';
 import { SUBAGENT_PRESETS, presetToDefinition } from './subagent-presets';
 
-export const DEFAULT_AGENT_ID = 'veylin';
+export { DEFAULT_AGENT_ID };
 
 const DEFAULT_AGENT: AgentDefinition = {
   id: DEFAULT_AGENT_ID,
-  name: 'Veylin',
-  description: 'General industrial operations assistant.',
-  model: 'deepseek',
+  name: 'Assistant',
+  description: 'General-purpose assistant for research, documents, workflows, and automation.',
+  model: 'default',
   instructions:
-    'You are an industrial operations assistant supporting factory production, ' +
-    'scheduling, and equipment workflows. Apply the general guidance above to this ' +
-    'domain: reason about work orders, schedules, and operational risk, and treat ' +
-    'production-data or schedule changes as high-stakes actions that warrant a plan ' +
-    'and approval before execution.',
+    'You are the user\'s primary assistant. Help with questions, document analysis, ' +
+    'structured data in tables, knowledge-base search, web research, and multi-step ' +
+    'workflows. Adapt to the user\'s domain from their messages and working memory — ' +
+    'do not assume manufacturing, software development, or any single industry unless ' +
+    'the user clearly works in that context. Treat data changes and external automations ' +
+    'as high-stakes: explain impact and use planning or approval when appropriate.',
   skills: [],
   tools: [],
   disallowedTools: [],
@@ -31,6 +33,7 @@ const DEFAULT_AGENT: AgentDefinition = {
   approvalRequired: [],
   subAgents: [],
   schedules: [],
+  optional: false,
   fullToolset: true,
 };
 
@@ -96,6 +99,9 @@ export async function loadAgentsFromDir(dir: string): Promise<LoadedAgent[]> {
     const yamlPath = join(dir, entry.name, 'agent.yaml');
     try {
       const definition = await loadAgentDefinition(yamlPath);
+      if (definition.optional && process.env.VEYLIN_LOAD_OPTIONAL_AGENTS !== '1') {
+        continue;
+      }
       const skills = await loadSkillsDir(join(dir, entry.name, 'skills'));
       loaded.push({ definition, skills });
     } catch {

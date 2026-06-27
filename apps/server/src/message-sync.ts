@@ -1,4 +1,5 @@
 import type { Memory } from '@mastra/memory';
+import { filterPersistableUiMessageParts } from '@veylin/shared';
 import type { TodoItem } from '@veylin/tools';
 
 export type UiMessage = {
@@ -44,12 +45,13 @@ export function uiMessagesToMastra(
 }> {
   const now = Date.now();
   return messages.map((m, i) => {
-    const parts =
+    const rawParts =
       m.parts && m.parts.length > 0
         ? m.parts
         : m.content
           ? [{ type: 'text', text: m.content }]
           : [{ type: 'text', text: '' }];
+    const parts = filterPersistableUiMessageParts(rawParts);
     return {
       id: m.id ?? crypto.randomUUID(),
       role: m.role,
@@ -68,7 +70,7 @@ export function mastraMessagesToUi(
   return messages.map((m) => ({
     id: m.id,
     role: m.role ?? 'assistant',
-    parts: m.content?.parts ?? [],
+    parts: filterPersistableUiMessageParts(m.content?.parts ?? []),
     content: partText(m.content?.parts),
   }));
 }

@@ -36,6 +36,7 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --animate-spin: spin 1.75s linear infinite;
 }
 
 :root {

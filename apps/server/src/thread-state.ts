@@ -1,3 +1,4 @@
+import { DEFAULT_WORKING_MEMORY_TEMPLATE } from '@veylin/shared';
 import type { Memory } from '@mastra/memory';
 import type { TodoItem } from '@veylin/tools';
 import {
@@ -17,14 +18,7 @@ import {
   type UiMessage,
 } from './message-sync';
 
-const WM_TEMPLATE = `# Operator & Site Context
-- Operator:
-- Site / Line:
-- Active Work Order:
-- Constraints / Safety Notes:
-- Open Decisions:
-- Activated Skills:
-`;
+const WM_TEMPLATE = DEFAULT_WORKING_MEMORY_TEMPLATE;
 
 export interface ThreadStateRow {
   threadId: string;

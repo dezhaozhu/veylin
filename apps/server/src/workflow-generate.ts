@@ -1,5 +1,6 @@
 import { DEFAULT_MODEL, getModelConfig } from '@veylin/runtime';
 import {
+  DEFAULT_AGENT_ID,
   WORKFLOW_NODE_META,
   workflowDefinitionSchema,
   type WorkflowDefinition,
@@ -16,7 +17,7 @@ const NODE_CATALOG = WORKFLOW_NODE_META.map(
   (n) => `- ${n.kind}: ${n.label} (${n.category})`,
 ).join('\n');
 
-const SYSTEM_PROMPT = `You design executable workflow DAGs for an industrial agent platform.
+const SYSTEM_PROMPT = `You design executable workflow DAGs for a general-purpose agent automation platform.
 Return strict JSON only: {"name":"...","definition":{"nodes":[...],"edges":[...]}}.
 
 Node kinds (use exactly these kind strings):
@@ -29,8 +30,8 @@ Rules:
 - Node ids must be unique short strings (n1, n2, ...).
 - Edge ids: e1, e2, ...
 - Position nodes in a left-to-right layout (x increases ~160 per step, y varies for branches).
-- Prefer industrial scenarios: schedule data, knowledge retrieval, agent prompts, HTTP to MES/ERP.
-- run_agent.data: { "prompt": "...", "agentId": "veylin" }
+- Prefer practical automations: document retrieval, knowledge search, agent prompts, HTTP integrations, table read/write.
+- run_agent.data: { "prompt": "...", "agentId": "${DEFAULT_AGENT_ID}" }
 - knowledge_retrieval.data: { "query": "{{ ... }}" }
 - table_read.data: { "sheetId": "main" }
 - table_write.data: { "sheetId": "main", "rowKey": "...", "patch": {} }

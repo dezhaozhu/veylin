@@ -111,8 +111,3 @@ export function buildTaskManagementTools(boss: QueuePort) {
     task_stop: taskStop,
   };
 }
-
-/** @deprecated Use buildTaskManagementTools */
-export function buildTaskTools(boss: QueuePort) {
-  return buildTaskManagementTools(boss);
-}

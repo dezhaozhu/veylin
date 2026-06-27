@@ -1,4 +1,4 @@
-import { getModelConfig, type ModelKey } from './models';
+import { getModelConfig, DEFAULT_MODEL, type ModelKey } from './models';
 import type { Summarizer } from './processors/contextCompression';
 
 /**
@@ -18,8 +18,8 @@ export const COMPACTION_SYSTEM_PROMPT = [
   "What the user is ultimately trying to achieve, including explicit constraints and preferences.",
   '## Key facts & decisions',
   'Concrete facts established, choices made, and conventions agreed on (with the reasoning).',
-  '## Files & data touched',
-  'Files, paths, schedule sheets/rows, or other artifacts read or modified, with their role.',
+  '## Artifacts & data touched',
+  'Documents, table rows, URLs, or other artifacts read or modified, with their role.',
   '## Errors & fixes',
   'Problems hit and how they were resolved (or that they are still open).',
   '## Open questions',
@@ -36,7 +36,7 @@ export const COMPACTION_SYSTEM_PROMPT = [
  * when the model has no API key so compaction silently falls back to the
  * deterministic tier.
  */
-export function buildSummarizer(modelKey: ModelKey = 'deepseek'): Summarizer | undefined {
+export function buildSummarizer(modelKey: ModelKey = DEFAULT_MODEL): Summarizer | undefined {
   const cfg = getModelConfig(modelKey);
   if (!cfg.apiKey) return undefined;
 

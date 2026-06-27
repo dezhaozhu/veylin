@@ -1,20 +1,15 @@
 import type { ModelProviderSettings } from '@/hooks/settings/api';
 import { listConfiguredModels } from '@/lib/model-availability';
 
-type RawModelProviderSettings = Partial<ModelProviderSettings> & {
-  modelAvailability?: { deepseek?: boolean; zenmux?: boolean };
-};
+type RawModelProviderSettings = Partial<ModelProviderSettings>;
 
 function resolveConfigured(raw: RawModelProviderSettings): boolean {
   if (typeof raw.configured === 'boolean') return raw.configured;
-  const legacy = raw.modelAvailability;
-  if (legacy) return Boolean(legacy.deepseek || legacy.zenmux);
   return Boolean(
     raw.hasApiKey && raw.modelName?.trim() && raw.requestUrl?.trim(),
   );
 }
 
-/** Normalize API model settings (current server format only). */
 export function normalizeModelProviderSettings(
   raw: RawModelProviderSettings,
 ): ModelProviderSettings {

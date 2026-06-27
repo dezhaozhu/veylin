@@ -1,4 +1,5 @@
 import { useAuiState } from '@assistant-ui/react';
+import { useTranslation } from 'react-i18next';
 import { POST_MAX_RETRIES } from '@/lib/transport-reconnect';
 import {
   useNetworkReconnectStore,
@@ -15,6 +16,7 @@ function isInlineReconnectKind(kind: NetworkBannerKind): boolean {
 }
 
 function NetworkReconnectStatus() {
+  const { t } = useTranslation();
   const kind = useNetworkReconnectStore((s) => s.kind);
   const attempt = useNetworkReconnectStore((s) => s.reconnectAttempt);
   const title = useNetworkReconnectStore((s) => s.title);
@@ -24,12 +26,20 @@ function NetworkReconnectStatus() {
 
   if (kind === 'reconnecting' || kind === 'post_retrying') {
     const max = kind === 'post_retrying' ? POST_MAX_RETRIES : 5;
+    const label =
+      title ||
+      (kind === 'post_retrying'
+        ? t('reconnect.postRetryTitle')
+        : t('reconnect.reconnectingTitle'));
     return (
       <div
         role="status"
         className="text-muted-foreground fade-in animate-in text-sm duration-200"
       >
-        Reconnecting... {attempt}/{max}
+        {label} ({attempt}/{max})
+        {message ? (
+          <span className="text-muted-foreground/80 mt-0.5 block text-xs">{message}</span>
+        ) : null}
       </div>
     );
   }

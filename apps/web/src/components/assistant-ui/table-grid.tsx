@@ -22,14 +22,14 @@ import i18n from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { exportTableToExcel, parseTableExcelFile } from '@/lib/table-excel';
+import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 
-type TableRowStatus = 'normal' | 'tight' | 'overdue';
 type TableColumnType = 'text' | 'number' | 'status';
 
-type TableRow = Record<string, string | number> & { order_no: string; row_id?: string };
+type TableRow = Record<string, string | number> & { row_id?: string };
 
 function rowKey(row: TableRow): string {
-  return String(row.row_id ?? row.order_no);
+  return String(row.row_id ?? '');
 }
 
 interface TableColumnDef {
@@ -39,6 +39,7 @@ interface TableColumnDef {
   type: TableColumnType;
   frozen?: boolean;
   deletable: boolean;
+  statusOptions?: string[];
 }
 
 interface TableSheet {
@@ -56,11 +57,34 @@ type FilterState = {
   query: string;
 };
 
-const STATUS_META: Record<TableRowStatus, { labelKey: string; className: string }> = {
-  normal: { labelKey: 'sched.status.normal', className: 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300' },
-  tight: { labelKey: 'sched.status.tight', className: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' },
-  overdue: { labelKey: 'sched.status.overdue', className: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300' },
+const STATUS_STYLE: Record<string, string> = {
+  open: 'bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-300',
+  in_progress: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+  done: 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300',
+  normal: 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300',
+  tight: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+  overdue: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300',
 };
+
+function statusClass(value: string): string {
+  return STATUS_STYLE[value] ?? 'bg-muted text-muted-foreground';
+}
+
+function humanizeStatus(value: string): string {
+  return value.replace(/_/g, ' ');
+}
+
+function resolveStatusOptions(def: TableColumnDef, rows: TableRow[]): string[] {
+  const seen = new Set<string>();
+  for (const opt of def.statusOptions?.length ? def.statusOptions : DEFAULT_TABLE_STATUS_OPTIONS) {
+    seen.add(opt);
+  }
+  for (const row of rows) {
+    const v = String(row[def.key] ?? '').trim();
+    if (v) seen.add(v);
+  }
+  return [...seen];
+}
 
 const EMPTY_FILTERS: FilterState = { query: '' };
 const HISTORY_LIMIT = 20;
@@ -82,18 +106,10 @@ type SchedulePayload = {
   rows?: TableRow[];
 };
 
-const DEFAULT_EMPTY_COLUMNS: TableColumnDef[] = [
-  { key: 'order_no', name: 'Order No.', width: 100, type: 'text', frozen: true, deletable: false },
-  { key: 'product', name: 'Product', width: 130, type: 'text', deletable: true },
-  { key: 'qty', name: 'Qty', width: 72, type: 'number', deletable: true },
-  { key: 'planned_start', name: 'Planned Start', width: 140, type: 'text', deletable: true },
-  { key: 'planned_end', name: 'Planned End', width: 140, type: 'text', deletable: true },
-  { key: 'resource', name: 'Resource', width: 140, type: 'text', deletable: true },
-  { key: 'status', name: 'Status', width: 80, type: 'status', deletable: true },
-];
+const DEFAULT_EMPTY_COLUMNS: TableColumnDef[] = [];
 
 const DEFAULT_EMPTY_SHEETS: TableSheet[] = [
-  { id: 'main', name: 'Main Plan', builtin: true },
+  { id: 'main', name: 'Sheet 1', builtin: true },
 ];
 
 function emptySchedulePayload(sheetId: string): SchedulePayload {
@@ -112,12 +128,12 @@ function sleep(ms: number): Promise<void> {
 async function readJsonResponse<T>(res: Response): Promise<T> {
   const text = await res.text();
   if (!text.trim()) {
-    throw new Error(i18n.t('sched.noResponse', { status: res.status }));
+    throw new Error(i18n.t('table.noResponse', { status: res.status }));
   }
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new Error(i18n.t('sched.invalidResponse', { status: res.status }));
+    throw new Error(i18n.t('table.invalidResponse', { status: res.status }));
   }
 }
 
@@ -239,8 +255,8 @@ function TableGridFooter({ totals }: { totals: TableGridTotals }) {
       aria-live="polite"
       aria-atomic="true"
     >
-      <span className="text-foreground font-medium">{t('sched.footerTotal', { count: totals.rowCount })}</span>
-      {totals.selectedCount > 0 ? <span>{t('sched.footerSelected', { count: totals.selectedCount })}</span> : null}
+      <span className="text-foreground font-medium">{t('table.footerTotal', { count: totals.rowCount })}</span>
+      {totals.selectedCount > 0 ? <span>{t('table.footerSelected', { count: totals.selectedCount })}</span> : null}
     </div>
   );
 }
@@ -291,7 +307,7 @@ const SelectableColumnHeader = memo(function SelectableColumnHeader({
       <button
         type="button"
         tabIndex={-1}
-        aria-label={t('sched.sortBy', { name })}
+        aria-label={t('table.sortBy', { name })}
         className="text-muted-foreground hover:text-foreground shrink-0 rounded p-0.5"
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => {
@@ -332,7 +348,7 @@ function SelectAllHeader({ tabIndex }: { tabIndex: number }) {
   return (
     <input
       type="checkbox"
-      aria-label={t('sched.selectAll')}
+      aria-label={t('table.selectAll')}
       tabIndex={tabIndex}
       checked={allSelected}
       ref={(el) => {
@@ -359,7 +375,7 @@ function SelectRowCell({
   return (
     <input
       type="checkbox"
-      aria-label={t('sched.selectRow')}
+      aria-label={t('table.selectRow')}
       tabIndex={tabIndex}
       checked={checked}
       onMouseDown={stopCellMouseDown}
@@ -373,20 +389,25 @@ function SelectRowCell({
 function StatusBadge({ status }: { status: string }) {
   const { t } = useTranslation();
   if (!status) return null;
-  const meta = STATUS_META[status as TableRowStatus] ?? STATUS_META.normal;
   return (
     <span
       className={cn(
         'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-        meta.className,
+        statusClass(status),
       )}
     >
-      {t(meta.labelKey)}
+      {t(`table.status.${status}`, { defaultValue: humanizeStatus(status) })}
     </span>
   );
 }
 
-function StatusEditor({ row, column, onRowChange, onClose }: RenderEditCellProps<TableRow>) {
+function StatusEditor({
+  row,
+  column,
+  onRowChange,
+  onClose,
+  options,
+}: RenderEditCellProps<TableRow> & { options: string[] }) {
   const { t } = useTranslation();
   const value = row[column.key] === undefined ? '' : String(row[column.key]);
   return (
@@ -398,9 +419,11 @@ function StatusEditor({ row, column, onRowChange, onClose }: RenderEditCellProps
       onBlur={() => onClose(true)}
     >
       <option value=""> </option>
-      <option value="normal">{t('sched.status.normal')}</option>
-      <option value="tight">{t('sched.status.tight')}</option>
-      <option value="overdue">{t('sched.status.overdue')}</option>
+      {options.map((opt) => (
+        <option key={opt} value={opt}>
+          {t(`table.status.${opt}`, { defaultValue: humanizeStatus(opt) })}
+        </option>
+      ))}
     </select>
   );
 }
@@ -443,7 +466,7 @@ function cellDisplayValue(row: TableRow, key: string): string {
   return String(value);
 }
 
-function buildDataColumn(def: TableColumnDef): Column<TableRow> {
+function buildDataColumn(def: TableColumnDef, rows: TableRow[]): Column<TableRow> {
   const headerCell = ({ tabIndex, sortDirection }: RenderHeaderCellProps<TableRow>) => (
     <SelectableColumnHeader
       columnKey={def.key}
@@ -473,6 +496,7 @@ function buildDataColumn(def: TableColumnDef): Column<TableRow> {
     };
   }
   if (def.type === 'status') {
+    const options = resolveStatusOptions(def, rows);
     return {
       ...base,
       renderCell: ({ row }: RenderCellProps<TableRow>) => (
@@ -480,7 +504,7 @@ function buildDataColumn(def: TableColumnDef): Column<TableRow> {
           <StatusBadge status={String(row[def.key] ?? '')} />
         </div>
       ),
-      renderEditCell: StatusEditor,
+      renderEditCell: (props) => <StatusEditor {...props} options={options} />,
     };
   }
   return {
@@ -532,6 +556,23 @@ export function TableGrid() {
   const isApplyingHistory = useRef(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
+  const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  const showToast = useCallback((message: string, variant: 'success' | 'error') => {
+    setToast({ message, variant });
+  }, []);
+
+  const resetImportInput = useCallback(() => {
+    if (importInputRef.current) importInputRef.current.value = '';
+  }, []);
 
   const columnKeys = useMemo(() => new Set(columnDefs.map((c) => c.key)), [columnDefs]);
   const editableKeys = useMemo(
@@ -808,8 +849,7 @@ export function TableGrid() {
       const { row, column } = args;
       if (
         column.key === SELECT_COLUMN_KEY ||
-        column.key === '__rowNum__' ||
-        column.key === 'order_no'
+        column.key === '__rowNum__'
       ) {
         return;
       }
@@ -842,8 +882,8 @@ export function TableGrid() {
   );
 
   const dataColumns = useMemo(
-    () => columnDefs.map((def) => buildDataColumn(def)),
-    [columnDefs],
+    () => columnDefs.map((def) => buildDataColumn(def, filteredRows)),
+    [columnDefs, filteredRows],
   );
 
   const columns = useMemo<Column<TableRow>[]>(
@@ -918,7 +958,7 @@ export function TableGrid() {
   };
 
   const handleAddColumn = async () => {
-    const name = window.prompt(t('sched.newColumnName'));
+    const name = window.prompt(t('table.newColumnName'));
     if (!name?.trim()) return;
     const res = await fetch('/api/table/columns', {
       method: 'POST',
@@ -943,7 +983,7 @@ export function TableGrid() {
     if (!selectedColumnKey) return;
     const col = columnDefs.find((c) => c.key === selectedColumnKey);
     if (!col?.deletable) {
-      window.alert(t('sched.columnNotDeletable'));
+      window.alert(t('table.columnNotDeletable'));
       return;
     }
     const res = await fetch('/api/table/columns', {
@@ -984,7 +1024,12 @@ export function TableGrid() {
     sheets.find((s) => s.id === activeSheetId)?.name ?? activeSheetId;
 
   const handleExportExcel = () => {
-    exportTableToExcel(activeSheetName, columnDefs, rows);
+    try {
+      const filename = exportTableToExcel(activeSheetName, columnDefs, rows);
+      showToast(t('table.exportSuccess', { filename }), 'success');
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : t('table.importFailed'), 'error');
+    }
   };
 
   const handleImportClick = () => {
@@ -992,20 +1037,24 @@ export function TableGrid() {
   };
 
   const handleImportFile = async (file: File) => {
-    if (!window.confirm(t('sched.confirmImport'))) return;
+    if (!window.confirm(t('table.confirmImport'))) {
+      resetImportInput();
+      return;
+    }
     setImporting(true);
     try {
-      const { rows: importedRows, newColumnNames } = await parseTableExcelFile(
-        file,
-        columnDefs,
-      );
+      const { rows: importedRows, columnNames } = await parseTableExcelFile(file);
+      if (columnNames.length === 0 || importedRows.length === 0) {
+        showToast(t('table.importEmpty'), 'error');
+        return;
+      }
       const res = await fetch('/api/table/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sheet: activeSheetId,
+          column_names: columnNames,
           rows: importedRows,
-          new_column_names: newColumnNames,
         }),
       });
       const data = (await res.json()) as {
@@ -1014,8 +1063,8 @@ export function TableGrid() {
         columns?: TableColumnDef[];
         rows?: TableRow[];
       };
-      if (!data.ok) {
-        window.alert(data.message ?? t('sched.importFailed'));
+      if (!res.ok || !data.ok) {
+        showToast(data.message ?? t('table.importFailed'), 'error');
         return;
       }
       resetSheetUiState();
@@ -1025,11 +1074,12 @@ export function TableGrid() {
         lastSerialized.current = JSON.stringify(data.rows);
         setRows(data.rows);
       }
+      showToast(t('table.importSuccess', { count: data.rows?.length ?? importedRows.length }), 'success');
     } catch (e: unknown) {
-      window.alert(e instanceof Error ? e.message : t('sched.importFailed'));
+      showToast(e instanceof Error ? e.message : t('table.importFailed'), 'error');
     } finally {
       setImporting(false);
-      if (importInputRef.current) importInputRef.current.value = '';
+      resetImportInput();
     }
   };
 
@@ -1038,13 +1088,26 @@ export function TableGrid() {
   if (loading && rows.length === 0 && columnDefs.length === 0) {
     return (
       <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
-        {t('sched.loading')}
+        {t('table.loading')}
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="relative flex h-full min-h-0 flex-col">
+      {toast ? (
+        <div
+          role="status"
+          className={cn(
+            'absolute bottom-3 left-1/2 z-50 -translate-x-1/2 rounded-md px-3 py-2 text-xs shadow-md',
+            toast.variant === 'success'
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-destructive text-white',
+          )}
+        >
+          {toast.message}
+        </div>
+      ) : null}
       {/* Sheet tabs — top */}
       <div className="border-border flex shrink-0 items-center gap-1 overflow-x-auto border-b px-2 py-1.5">
         {sheets.map((sheet) => {
@@ -1083,8 +1146,8 @@ export function TableGrid() {
           >
             {rowActionDelete ? <Minus className="size-3" /> : <Plus className="size-3" />}
             {rowActionDelete && selectedRows.size > 1
-              ? t('sched.rowsN', { count: selectedRows.size })
-              : t('sched.rows')}
+              ? t('table.rowsN', { count: selectedRows.size })
+              : t('table.rows')}
           </Button>
           <Button
             type="button"
@@ -1094,7 +1157,7 @@ export function TableGrid() {
             onClick={handleColumnAction}
           >
             {columnSelected ? <Minus className="size-3" /> : <Plus className="size-3" />}
-            {t('sched.columns')}
+            {t('table.columns')}
           </Button>
           <span className="text-muted-foreground mx-1 hidden h-4 w-px bg-border sm:inline-block" />
           <Button
@@ -1106,7 +1169,7 @@ export function TableGrid() {
             onClick={handleImportClick}
           >
             <Upload className="size-3" />
-            {importing ? t('sched.importing') : t('sched.import')}
+            {importing ? t('table.importing') : t('table.import')}
           </Button>
           <Button
             type="button"
@@ -1116,7 +1179,7 @@ export function TableGrid() {
             onClick={handleExportExcel}
           >
             <Download className="size-3" />
-            {t('sched.export')}
+            {t('table.export')}
           </Button>
           <input
             ref={importInputRef}
@@ -1131,7 +1194,7 @@ export function TableGrid() {
           <span className="text-muted-foreground mx-1 hidden h-4 w-px bg-border sm:inline-block" />
           <input
             type="search"
-            placeholder={t('sched.filterPlaceholder')}
+            placeholder={t('table.filterPlaceholder')}
             value={filters.query}
             onChange={(e) => setFilters({ query: e.target.value })}
             className="bg-background border-input h-7 min-w-[8rem] flex-1 rounded-md border px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
@@ -1142,7 +1205,7 @@ export function TableGrid() {
               className="text-muted-foreground hover:text-foreground text-xs underline"
               onClick={() => setFilters(EMPTY_FILTERS)}
             >
-              {t('sched.clear')}
+              {t('table.clear')}
             </button>
           ) : null}
           <div className="ml-auto flex items-center gap-1">
@@ -1151,7 +1214,7 @@ export function TableGrid() {
               variant="ghost"
               size="icon"
               className="size-7"
-              aria-label={t('sched.undo')}
+              aria-label={t('table.undo')}
               disabled={undoStack.length === 0}
               onClick={handleUndo}
             >
@@ -1162,7 +1225,7 @@ export function TableGrid() {
               variant="ghost"
               size="icon"
               className="size-7"
-              aria-label={t('sched.redo')}
+              aria-label={t('table.redo')}
               disabled={redoStack.length === 0}
               onClick={handleRedo}
             >
@@ -1174,10 +1237,20 @@ export function TableGrid() {
 
       {filteredRows.length === 0 ? (
         <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-sm">
-          <span>{rows.length === 0 ? t('sched.noData') : t('sched.noMatch')}</span>
-          {rows.length === 0 ? (
+          <span>
+            {columnDefs.length === 0
+              ? t('table.noColumns')
+              : rows.length === 0
+                ? t('table.noData')
+                : t('table.noMatch')}
+          </span>
+          {columnDefs.length === 0 ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => void handleAddColumn()}>
+              {t('table.addFirstColumn')}
+            </Button>
+          ) : rows.length === 0 ? (
             <Button type="button" variant="outline" size="sm" onClick={() => void handleAddRow()}>
-              {t('sched.addFirstRow')}
+              {t('table.addFirstRow')}
             </Button>
           ) : null}
         </div>
@@ -1188,7 +1261,7 @@ export function TableGrid() {
               <DataGrid
                 className="table-grid rdg-light min-h-0 flex-1 text-sm"
                 style={{ blockSize: '100%' }}
-                aria-label={t('sched.ariaGrid')}
+                aria-label={t('table.ariaGrid')}
                 columns={columns}
                 rows={filteredRows}
                 onRowsChange={onRowsChange}

@@ -105,7 +105,16 @@
   "ask": {
     "answered": "已回答",
     "selectToContinue": "请选择以继续",
-    "submit": "提交"
+    "submit": "提交",
+    "loading": "正在加载问题…",
+    "panelTitle": "问题",
+    "stepOf": "{{current}} of {{total}}",
+    "next": "下一题",
+    "previous": "上一题",
+    "skip": "跳过",
+    "otherPlaceholder": "Other…",
+    "collapse": "收起",
+    "expand": "展开"
   },
   "citations": {
     "copySnippet": "复制片段",
@@ -184,10 +193,10 @@
       "deleting": "正在删除…",
       "providerSection": "模型供应商",
       "modelName": "模型名称",
-      "modelNamePlaceholder": "deepseek-v4-flash",
+      "modelNamePlaceholder": "gpt-4o-mini",
       "modelNameHint": "OpenAI 兼容接口中的 model 参数，一般无需修改。",
       "requestUrl": "请求地址",
-      "requestUrlPlaceholder": "https://api.deepseek.com/v1",
+      "requestUrlPlaceholder": "https://api.openai.com/v1",
       "requestUrlHint": "OpenAI 兼容 API 的 Base URL，需包含 /v1。",
       "apiKey": "API Key",
       "apiKeyPlaceholder": "请输入 API Key",
@@ -243,13 +252,13 @@
       "editorDescription": "规则会在触发条件匹配时添加到系统提示词前面。",
       "namePlaceholder": "例如：safety-checklist",
       "contentHint": "注入系统提示词的指令文本。",
-      "contentPlaceholder": "提出变更前，始终先检查排产冲突…",
+      "contentPlaceholder": "提出变更前，始终先核对相关数据与约束…",
       "trigger": "触发方式",
       "triggerAlways": "始终",
       "triggerKeyword": "关键词",
       "keywords": "关键词",
       "keywordsHint": "用逗号分隔；用户消息出现任一关键词时生效。",
-      "keywordsPlaceholder": "排产, 风险, 逾期",
+      "keywordsPlaceholder": "数据, 风险, 审核",
       "allRules": "全部规则",
       "ruleKind": "用户规则",
       "toggle": "启用/停用 {{name}}",
@@ -436,7 +445,7 @@
     "retryLater": "请稍后重试。",
     "connectFailed": { "title": "连接失败" }
   },
-  "sched": {
+  "table": {
     "noResponse": "后端无响应 ({{status}})",
     "invalidResponse": "响应无效 ({{status}})",
     "footerTotal": "合计 {{count}}",
@@ -444,7 +453,14 @@
     "sortBy": "按 {{name}} 排序",
     "selectAll": "全选",
     "selectRow": "选择行",
-    "status": { "normal": "正常", "tight": "紧张", "overdue": "逾期" },
+    "status": {
+      "open": "待处理",
+      "in_progress": "进行中",
+      "done": "已完成",
+      "normal": "正常",
+      "tight": "紧张",
+      "overdue": "逾期"
+    },
     "loadFailedGeneric": "表格数据加载失败",
     "newSheetName": "新工作表名称",
     "confirmDeleteSheet": "删除该工作表？此操作不可恢复。",
@@ -452,6 +468,9 @@
     "columnNotDeletable": "该列不可删除。",
     "confirmImport": "导入将替换当前数据，是否继续？",
     "importFailed": "导入失败",
+    "importEmpty": "文件中没有可导入的数据行（请确认首行为列标题，且至少有一行数据）",
+    "importSuccess": "已导入 {{count}} 行",
+    "exportSuccess": "已导出 {{filename}}",
     "loading": "加载表格数据…",
     "loadError": "表格数据加载失败：{{error}}",
     "deleteSheet": "删除工作表 {{name}}",
@@ -467,6 +486,8 @@
     "undo": "撤销",
     "redo": "恢复",
     "noData": "暂无数据",
+    "noColumns": "暂无列，请先添加列或导入文件",
+    "addFirstColumn": "添加列",
     "noMatch": "无匹配数据",
     "addFirstRow": "添加第一行",
     "ariaGrid": "数据表格"
@@ -487,7 +508,7 @@
     "refresh": "刷新",
     "uploading": "上传中",
     "upload": "上传",
-    "searchPlaceholder": "直接搜索知识库，例如：哪些工单存在延期风险？",
+    "searchPlaceholder": "搜索知识库，例如：文档中的核心概念有哪些？",
     "search": "搜索",
     "stat": { "documents": "文档", "entities": "实体", "edges": "关系" },
     "tab": { "search": "检索", "documents": "文档", "graph": "图谱", "citations": "引用" },
@@ -500,13 +521,38 @@
     "graphStats": "图谱统计",
     "entityTypes": "实体类型",
     "selectedEntity": "选中实体",
-    "citationsEmptyTitle": "暂无引用记录",
-    "citationsEmptyDesc": "Agent 调用 knowledge_search 或你在上方直接搜索后，会在这里保留最近引用。",
+    "entitySourceChunks": "相关原文片段",
+    "loadingEntityChunks": "加载关联片段…",
+    "citationsEmptyTitle": "暂无对话引用",
+    "citationsEmptyDesc": "当 Agent 在对话中调用 knowledge_search 检索知识库后，这里会显示本次检索用到的片段与查询词。手动检索请查看「检索」标签。",
+    "citationsQueryLabel": "对话中的检索问题",
+    "citationsSnippetCount": "本次引用 {{count}} 条片段",
     "docsEmptyTitle": "还没有文档",
     "docsEmptyDesc": "点击右上角上传 TXT、Markdown、CSV、JSON、日志等文本文件，系统会自动切片、嵌入和抽取图谱。",
     "docsSummary": "{{ready}} 个已索引，{{failed}} 个失败",
     "delete": "删除",
-    "copyReference": "复制引用"
+    "copyReference": "复制引用",
+    "localModels": {
+      "loading": "加载本地模型状态…",
+      "title": "本地模型",
+      "subtitle": "以下模型需单独下载到本机；未安装时不会自动拉取。",
+      "required": "检索依赖",
+      "optional": "可选增强",
+      "download": "下载模型",
+      "remove": "删除模型",
+      "extracting": "正在解压…",
+      "statusNotInstalled": "未安装",
+      "statusDownloading": "下载中 {{progress}}%",
+      "statusReady": "已就绪",
+      "statusFailed": "下载失败",
+      "embeddingTitle": "语义向量（Embedding）",
+      "embeddingDesc": "从 Hugging Face 官方仓库下载，用于文档向量化与语义检索；未安装时仅支持全文检索。",
+      "rerankerTitle": "检索精排（Cross-Encoder）",
+      "rerankerDesc": "从 Hugging Face 官方仓库下载，对检索结果二次排序；不安装不影响基础检索。",
+      "enableReranker": "启用精排",
+      "enabledHint": "精排已启用，检索与对话中的 knowledge_search 会使用精排结果。",
+      "hfEndpoint": "下载源：{{endpoint}}"
+    }
   },
   "wf": {
     "backendUnavailable": "后端服务不可用 ({{status}})，请确认 server 已在 :8787 运行",
@@ -606,5 +652,16 @@
       "errorAbort": "出错则终止流程",
       "errorBranch": "走 error 分支（红色句柄）"
     }
+  },
+  "splash": {
+    "uiLoadFailed": "界面加载失败：{{message}}",
+    "startingService": "正在启动本地服务…",
+    "startingServiceProgress": "正在启动本地服务… ({{count}})",
+    "serviceNotReady": "本地服务暂未就绪：{{message}}",
+    "retry": "重试",
+    "uiLoadFailedTitle": "界面加载失败",
+    "reload": "重新加载",
+    "serviceNotReadyTitle": "本地服务暂未就绪",
+    "desktopHint": "桌面端请用 <code>npm run -w @veylin/desktop dev</code> 启动；仅 Web 开发请确认 8787 端口上的 server 已运行。"
   }
 }

@@ -30,7 +30,7 @@ describe('context-usage historical thread messages', () => {
     const tokens = tokenCountWithEstimation(messages);
     assert.ok(tokens > 0, 'expected non-zero token estimate from content[] messages');
 
-    const snapshot = computeContextUsageSnapshot(tokens, 'deepseek', null);
+    const snapshot = computeContextUsageSnapshot(tokens, 'default', null);
     assert.ok(snapshot.usedPercent > 0, 'expected visible ring percent for non-empty history');
     assert.ok(snapshot.estimatedTokens > 0);
   });

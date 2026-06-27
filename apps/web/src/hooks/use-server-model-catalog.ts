@@ -5,14 +5,6 @@ import { setModelSettings, type ModelCatalogEntry } from '@/lib/model-settings';
 import { notifyModelProviderChange } from '@/lib/model-availability';
 import type { ModelProviderSettings } from '@/hooks/settings/api';
 
-const LEGACY_MODEL_IDS = new Set([
-  'deepseek-v3-2',
-  'deepseek-chat',
-  'compass-1',
-  'deepseek',
-  'zenmux',
-]);
-
 type CatalogResponse = {
   models: Array<{ id: string; label: string; default?: boolean }>;
   defaultId: string | null;
@@ -39,7 +31,7 @@ function applyServerCatalog(data: CatalogResponse): ModelCatalogEntry[] {
 
   const defaultId = data.defaultId ?? models[0]!.id;
   const active = getChatSettings().model;
-  if (!active || LEGACY_MODEL_IDS.has(active) || !models.some((m) => m.id === active)) {
+  if (!active || !models.some((m) => m.id === active)) {
     setChatSettings({ model: defaultId });
   }
 

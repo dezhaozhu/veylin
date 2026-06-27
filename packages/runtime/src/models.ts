@@ -4,7 +4,13 @@ import {
   loadModelCatalog,
 } from './model-catalog';
 
-export { loadModelCatalog, listModelCatalogPublic, getDefaultCatalogModel } from './model-catalog';
+export {
+  loadModelCatalog,
+  listModelCatalogPublic,
+  getDefaultCatalogModel,
+  getCatalogModel,
+  normalizeOpenAICompatibleUrl,
+} from './model-catalog';
 export type { ModelCatalogEntry } from './model-catalog';
 
 /** Catalog model id selected in chat (built-in or custom). */
@@ -56,13 +62,9 @@ export function isRuntimeModelConfigured(): boolean {
 function defaultEnvConfig(catalogId: string): ModelConfig {
   return {
     providerId: catalogId,
-    modelId: process.env.VEYLIN_MODEL ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-flash',
-    url: process.env.VEYLIN_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1',
-    apiKey:
-      process.env.VEYLIN_API_KEY ??
-      process.env.DEEPSEEK_API_KEY ??
-      process.env.ZENMUX_API_KEY ??
-      '',
+    modelId: process.env.VEYLIN_MODEL?.trim() ?? '',
+    url: process.env.VEYLIN_BASE_URL?.trim() ?? '',
+    apiKey: process.env.VEYLIN_API_KEY?.trim() ?? '',
   };
 }
 

@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { insertTask, updateTaskRow, getTaskRow } from '@veylin/db';
+import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import {
   SUBAGENT_TYPES,
   formatPresetListing,
@@ -82,7 +83,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
       const tenantId = ctxValue(ctx, 'tenantId') ?? devTenantFallback();
       const userId = ctxValue(ctx, 'userId') ?? tenantId;
       const parentThreadId = ctxValue(ctx, 'threadId');
-      const parentAgentId = ctxValue(ctx, 'parentAgentId') ?? 'veylin';
+      const parentAgentId = ctxValue(ctx, 'parentAgentId') ?? DEFAULT_AGENT_ID;
 
       const target = resolveDispatchTarget(runtime, parentAgentId, {
         subagent_type: input.subagent_type,

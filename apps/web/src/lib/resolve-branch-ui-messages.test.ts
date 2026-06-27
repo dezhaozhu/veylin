@@ -3,10 +3,7 @@ import { describe, it } from 'node:test';
 import type { ThreadMessage } from '@assistant-ui/core';
 import { bindExternalStoreMessage } from '@assistant-ui/core';
 import type { UIMessage } from 'ai';
-import {
-  getActiveBranchThreadMessages,
-  resolveThreadMessagesToUi,
-} from './resolve-branch-ui-messages';
+import { resolveThreadMessagesToUi } from './resolve-branch-ui-messages';
 
 const assistant = (id: string, text: string): ThreadMessage =>
   ({
@@ -53,25 +50,7 @@ describe('resolveThreadMessagesToUi', () => {
     ]);
   });
 
-  it('getActiveBranchThreadMessages follows head to root', () => {
-    const user = assistant('u1', 'hi');
-    (user as { role: string }).role = 'user';
-    const a1 = assistant('a1', 'branch one');
-    const a2 = assistant('a2', 'branch two');
-
-    const exported = {
-      headId: 'a1',
-      messages: [
-        { message: user, parentId: null },
-        { message: a1, parentId: 'u1' },
-        { message: a2, parentId: 'u1' },
-      ],
-    };
-
-    assert.deepEqual(getActiveBranchThreadMessages(exported), [user, a1]);
-  });
-
-  it('resolves unbound sibling branch via reconstruction + cache', () => {
+  it('reconstructs cached assistant messages from thread content', () => {
     const user = assistant('u1', '你好');
     (user as { role: string }).role = 'user';
     const a1 = assistant('a1', 'first answer');

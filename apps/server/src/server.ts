@@ -171,13 +171,13 @@ import {
   updateModelSettings,
   clearModelSettings,
 } from './model-settings-store';
-import { customSkillInputSchema, ruleInputSchema, mcpServerInputSchema, automationInputSchema, workflowInputSchema, webhookCreateInputSchema, webhookUpdateInputSchema } from '@veylin/shared';
+import { customSkillInputSchema, ruleInputSchema, mcpServerInputSchema, automationInputSchema, workflowInputSchema, webhookCreateInputSchema, webhookUpdateInputSchema, modelProviderSettingsPatchSchema } from '@veylin/shared';
 import { z } from 'zod';
 import {
   buildKnowledgeSearchTool,
   buildKnowledgeContextBlock,
   ingestDocumentText,
-  getLastKnowledgeReferences,
+  getAgentCitations,
   listKnowledgeDocuments,
   removeKnowledgeDocument,
   searchKnowledge,
@@ -185,9 +185,16 @@ import {
 import { extractPdfText } from './extract-pdf-text';
 import { RAG_UPLOAD_MAX_BYTES } from './rag-limits';
 import {
+  getLocalModelsStatus,
+  downloadLocalModel,
+  removeLocalModel,
+  updateLocalModel,
+} from './local-models-service';
+import {
   connectDb,
   ensureDataDir,
   listGraphForTenant,
+  getChunksForEntity,
   listTasksByParentThread,
   getTaskRow,
   updateTaskRow,
@@ -374,11 +381,7 @@ async function main() {
 
   app.put('/api/model-settings', async (req) => {
     const ctx = await resolveContext(req.headers);
-    const body = (req.body ?? {}) as {
-      modelName?: string;
-      requestUrl?: string;
-      apiKey?: string;
-    };
+    const body = modelProviderSettingsPatchSchema.parse(req.body ?? {});
     return { settings: await updateModelSettings(ctx.tenantId, body) };
   });
 
@@ -1093,6 +1096,7 @@ async function main() {
     const body = (req.body ?? {}) as {
       sheet?: string;
       rows?: TableRowPatch[];
+      column_names?: string[];
       new_column_names?: string[];
     };
     const sheetId = resolveTableSheetId(body.sheet);
@@ -1100,11 +1104,11 @@ async function main() {
       reply.code(400);
       return { ok: false, message: 'rows is required' };
     }
-    const result = importTableSheet(
-      sheetId,
-      body.rows,
-      body.new_column_names ?? [],
-    );
+    const columnNames =
+      body.column_names ??
+      body.new_column_names ??
+      [];
+    const result = importTableSheet(sheetId, columnNames, body.rows);
     if (!result) {
       reply.code(400);
       return { ok: false, message: 'Import failed' };
@@ -1311,7 +1315,7 @@ async function main() {
         memory: runtime.memory,
         identity,
         clientMessages: uiMessages,
-        branchEdit: true,
+        forceReplace: true,
       });
 
       return {
@@ -1469,7 +1473,7 @@ async function main() {
       memory: runtime.memory,
       identity,
       clientMessages: messages as never,
-      branchEdit: body.branchEdit,
+      forceReplace: body.forceReplace,
     });
 
     // Per-agent MCP: only expose declared servers; none when undeclared.
@@ -1682,7 +1686,7 @@ async function main() {
     await applyTenantModelSettings(ctx.tenantId);
     const body = req.body as { runId: string; approved: boolean; answer?: string[] };
     await refreshAgentPackages(runtime);
-    const agent = requireAgent(runtime, 'veylin') as unknown as {
+    const agent = requireAgent(runtime, DEFAULT_AGENT_ID) as unknown as {
       resume?: (runId: string, data: unknown) => Promise<unknown>;
     };
     await recordAudit({
@@ -1844,7 +1848,14 @@ async function main() {
 
   app.get('/api/rag/references', async (req) => {
     const ctx = await resolveContext(req.headers);
-    return { references: getLastKnowledgeReferences(ctx.tenantId) };
+    const { threadId } = req.query as { threadId?: string };
+    const record = await getAgentCitations(ctx.tenantId, threadId ?? null);
+    return {
+      query: record?.query ?? null,
+      references: record?.references ?? [],
+      at: record?.at ?? null,
+      threadId: record?.threadId ?? null,
+    };
   });
 
   app.post('/api/rag/search', async (req, reply) => {
@@ -1859,15 +1870,91 @@ async function main() {
     return { ok: true, ...result };
   });
 
+  app.get('/api/rag/local-models', async () => getLocalModelsStatus());
+
+  app.post('/api/rag/local-models/:id/download', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (id !== 'embedding' && id !== 'reranker') {
+      reply.code(404);
+      return { ok: false, message: 'unknown model' };
+    }
+    const result = downloadLocalModel(id as 'embedding' | 'reranker');
+    if (!result.ok) {
+      reply.code(400);
+      return { ok: false, message: result.message };
+    }
+    return { ok: true, ...(await getLocalModelsStatus()) };
+  });
+
+  app.delete('/api/rag/local-models/:id', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (id !== 'embedding' && id !== 'reranker') {
+      reply.code(404);
+      return { ok: false, message: 'unknown model' };
+    }
+    try {
+      await removeLocalModel(id as 'embedding' | 'reranker');
+      return { ok: true, ...(await getLocalModelsStatus()) };
+    } catch (err) {
+      reply.code(400);
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  app.put('/api/rag/local-models/:id', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (id !== 'embedding' && id !== 'reranker') {
+      reply.code(404);
+      return { ok: false, message: 'unknown model' };
+    }
+    const body = (req.body ?? {}) as { enabled?: boolean };
+    try {
+      const status = await updateLocalModel(id as 'embedding' | 'reranker', body);
+      return { ok: true, ...status };
+    } catch (err) {
+      reply.code(400);
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   app.get('/api/kg', async (req) => {
     const ctx = await resolveContext(req.headers);
-    const graph = await listGraphForTenant(ctx.tenantId);
+    const { documentId } = req.query as { documentId?: string };
+    const graph = await listGraphForTenant(ctx.tenantId, {
+      documentId: documentId?.trim() || undefined,
+    });
     return {
-      entities: graph.entities.map((e) => ({ id: e.id, name: e.name, type: e.type })),
+      entities: graph.entities.map((e) => ({
+        id: e.id,
+        name: e.name,
+        type: e.type,
+        description: e.description ?? null,
+        documentId: e.documentId ?? null,
+      })),
       edges: graph.edges.map((e) => ({
         source: e.fromEntityId,
         target: e.toEntityId,
         relation: e.relation,
+      })),
+    };
+  });
+
+  app.get('/api/kg/entities/:entityId/chunks', async (req, reply) => {
+    const ctx = await resolveContext(req.headers);
+    const { entityId } = req.params as { entityId: string };
+    const chunks = await getChunksForEntity(ctx.tenantId, entityId, 8);
+    if (chunks.length === 0) {
+      reply.code(404);
+      return { ok: false, chunks: [] };
+    }
+    return {
+      ok: true,
+      chunks: chunks.map((c) => ({
+        chunkId: c.id,
+        documentId: c.documentId,
+        source: c.source,
+        text: c.text,
+        offset: c.offset,
       })),
     };
   });

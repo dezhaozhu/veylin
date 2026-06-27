@@ -1,7 +1,7 @@
 # Contributing to Veylin
 
 Thanks for your interest in contributing! Veylin is an open-source, self-hosted
-industrial AI agent. Bug reports, feature ideas, docs, and pull requests are all
+AI agent platform. Bug reports, feature ideas, docs, and pull requests are all
 welcome.
 
 ## Development setup

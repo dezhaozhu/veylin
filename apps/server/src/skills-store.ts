@@ -7,6 +7,7 @@ import {
   upsertTenantSettings,
 } from '@veylin/db';
 import type { CustomSkillInput, SkillListItem } from '@veylin/shared';
+import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { dirname } from 'node:path';
 import type { Runtime } from '@veylin/runtime';
 import { refreshAgentPackages } from './agent-packages-sync';
@@ -112,7 +113,7 @@ export async function resolveSkillContent(
   if (!hit) return null;
   if (hit.content) return hit.content;
 
-  const loaded = runtime.definitions.get(agentId ?? 'veylin');
+  const loaded = runtime.definitions.get(agentId ?? DEFAULT_AGENT_ID);
   const fileSkill = loaded?.skills.find((s) => s.name === name);
   if (!fileSkill?.content) return null;
   const baseDir = dirname(fileSkill.path);

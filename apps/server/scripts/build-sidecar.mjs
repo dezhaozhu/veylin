@@ -37,6 +37,7 @@ const EXTERNALS = [
   'surrealdb',
   '@napi-rs/canvas',
   '@mastra/fastembed',
+  '@huggingface/transformers',
   'onnxruntime-node',
   '@libsql/client',
   'libsql',
@@ -332,11 +333,12 @@ await build({
 
 writeFileSync(join(outDir, 'package.json'), JSON.stringify({ type: 'module', name: 'veylin-server-sidecar' }, null, 2));
 
-const examplesSrc = join(repoRoot, 'examples');
-const examplesDest = join(outDir, 'examples');
+const examplesSrc = join(repoRoot, 'examples', 'veylin');
+const examplesDest = join(outDir, 'examples', 'veylin');
 if (existsSync(examplesSrc)) {
+  mkdirSync(join(outDir, 'examples'), { recursive: true });
   cpSync(examplesSrc, examplesDest, { recursive: true });
-  console.log('[build-sidecar] copied examples/ for bundled agent skills');
+  console.log('[build-sidecar] copied examples/veylin default agent pack');
 }
 
 // Bundled stdio MCP servers removed; remote MCP is configured per tenant.

@@ -1,6 +1,7 @@
 import { useAuiState } from '@assistant-ui/store';
+import { parseTaskNotification } from '@veylin/shared';
 import type { FC } from 'react';
-import { SubagentUserMessageBody, tryParseSubagentUserText } from '@/components/assistant-ui/task-notification-card';
+import { SubagentUserMessageBody } from '@/components/assistant-ui/task-notification-card';
 
 /** User bubble text only — hides internal data parts (e.g. pending skill marker). */
 export const UserMessageText: FC = () => {
@@ -12,7 +13,7 @@ export const UserMessageText: FC = () => {
   );
 
   if (!text) return null;
-  if (tryParseSubagentUserText(text)) {
+  if (parseTaskNotification(text)) {
     return <SubagentUserMessageBody text={text} />;
   }
   return <>{text}</>;

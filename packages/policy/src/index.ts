@@ -15,7 +15,7 @@ export const policyConfigSchema = z.object({
 
 export type PolicyConfig = z.infer<typeof policyConfigSchema>;
 
-/** Conservative industrial default: read freely, network with approval, mutations with approval. */
+/** Conservative default: read freely, network with approval, mutations with approval. */
 export const defaultPolicy: PolicyConfig = {
   byRisk: { safe: 'allow', caution: 'approve', dangerous: 'approve' },
   toolOverrides: {},

@@ -105,7 +105,16 @@
   "ask": {
     "answered": "Answered",
     "selectToContinue": "Select an option to continue",
-    "submit": "Submit"
+    "submit": "Submit",
+    "loading": "Loading questions…",
+    "panelTitle": "Questions",
+    "stepOf": "{{current}} of {{total}}",
+    "next": "Next",
+    "previous": "Previous",
+    "skip": "Skip",
+    "otherPlaceholder": "Other…",
+    "collapse": "Collapse",
+    "expand": "Expand"
   },
   "citations": {
     "copySnippet": "Copy snippet",
@@ -184,10 +193,10 @@
       "deleting": "Deleting…",
       "providerSection": "Model provider",
       "modelName": "Model name",
-      "modelNamePlaceholder": "deepseek-v4-flash",
+      "modelNamePlaceholder": "gpt-4o-mini",
       "modelNameHint": "The model parameter for OpenAI-compatible APIs. Usually no change needed.",
       "requestUrl": "Request URL",
-      "requestUrlPlaceholder": "https://api.deepseek.com/v1",
+      "requestUrlPlaceholder": "https://api.openai.com/v1",
       "requestUrlHint": "OpenAI-compatible API base URL, including /v1.",
       "apiKey": "API Key",
       "apiKeyPlaceholder": "Enter your API key",
@@ -243,13 +252,13 @@
       "editorDescription": "Rules are prepended to the system prompt when their trigger matches.",
       "namePlaceholder": "e.g. safety-checklist",
       "contentHint": "Instruction text injected into the system prompt.",
-      "contentPlaceholder": "Always verify schedule conflicts before proposing changes…",
+      "contentPlaceholder": "Always verify relevant data and constraints before proposing changes…",
       "trigger": "Trigger",
       "triggerAlways": "Always",
       "triggerKeyword": "Keyword",
       "keywords": "Keywords",
       "keywordsHint": "Comma-separated; rule applies when any keyword appears in the user message.",
-      "keywordsPlaceholder": "schedule, risk, overdue",
+      "keywordsPlaceholder": "data, risk, review",
       "allRules": "All rules",
       "ruleKind": "User rule",
       "toggle": "Toggle {{name}}",
@@ -436,7 +445,7 @@
     "retryLater": "Please try again later.",
     "connectFailed": { "title": "Connection failed" }
   },
-  "sched": {
+  "table": {
     "noResponse": "No response from server ({{status}})",
     "invalidResponse": "Invalid response ({{status}})",
     "footerTotal": "Total {{count}}",
@@ -444,7 +453,14 @@
     "sortBy": "Sort by {{name}}",
     "selectAll": "Select all",
     "selectRow": "Select row",
-    "status": { "normal": "Normal", "tight": "Tight", "overdue": "Overdue" },
+    "status": {
+      "open": "Open",
+      "in_progress": "In progress",
+      "done": "Done",
+      "normal": "Normal",
+      "tight": "Tight",
+      "overdue": "Overdue"
+    },
     "loadFailedGeneric": "Failed to load table data",
     "newSheetName": "New sheet name",
     "confirmDeleteSheet": "Delete this sheet? This cannot be undone.",
@@ -452,6 +468,9 @@
     "columnNotDeletable": "This column cannot be deleted.",
     "confirmImport": "Importing will replace current data. Continue?",
     "importFailed": "Import failed",
+    "importEmpty": "No data rows found in the file (first row should be headers, with at least one data row below)",
+    "importSuccess": "Imported {{count}} row(s)",
+    "exportSuccess": "Exported {{filename}}",
     "loading": "Loading table data…",
     "loadError": "Failed to load table data: {{error}}",
     "deleteSheet": "Delete sheet {{name}}",
@@ -467,6 +486,8 @@
     "undo": "Undo",
     "redo": "Redo",
     "noData": "No data",
+    "noColumns": "No columns yet — add columns or import a file",
+    "addFirstColumn": "Add column",
     "noMatch": "No matching data",
     "addFirstRow": "Add first row",
     "ariaGrid": "Table grid"
@@ -487,7 +508,7 @@
     "refresh": "Refresh",
     "uploading": "Uploading",
     "upload": "Upload",
-    "searchPlaceholder": "Search the knowledge base, e.g. which orders are at risk of delay?",
+    "searchPlaceholder": "Search the knowledge base, e.g. what are the key concepts in this document?",
     "search": "Search",
     "stat": { "documents": "Documents", "entities": "Entities", "edges": "Relations" },
     "tab": { "search": "Search", "documents": "Documents", "graph": "Graph", "citations": "Citations" },
@@ -500,13 +521,38 @@
     "graphStats": "Graph stats",
     "entityTypes": "Entity types",
     "selectedEntity": "Selected entity",
-    "citationsEmptyTitle": "No citation history",
-    "citationsEmptyDesc": "Recent references appear here after the agent calls knowledge_search or you search above.",
+    "entitySourceChunks": "Source excerpts",
+    "loadingEntityChunks": "Loading linked excerpts…",
+    "citationsEmptyTitle": "No conversation citations",
+    "citationsEmptyDesc": "When the agent calls knowledge_search during chat, the query and excerpts used appear here. Use the Search tab for manual lookups.",
+    "citationsQueryLabel": "Query from conversation",
+    "citationsSnippetCount": "{{count}} excerpt(s) cited",
     "docsEmptyTitle": "No documents yet",
     "docsEmptyDesc": "Click upload at the top right to add TXT, Markdown, CSV, JSON, log and other text files; they will be chunked, embedded and graphed automatically.",
     "docsSummary": "{{ready}} indexed, {{failed}} failed",
     "delete": "Delete",
-    "copyReference": "Copy reference"
+    "copyReference": "Copy reference",
+    "localModels": {
+      "loading": "Loading local models…",
+      "title": "Local models",
+      "subtitle": "These models must be downloaded manually; they are never fetched automatically.",
+      "required": "Required for search",
+      "optional": "Optional",
+      "download": "Download model",
+      "remove": "Remove model",
+      "extracting": "Extracting…",
+      "statusNotInstalled": "Not installed",
+      "statusDownloading": "Downloading {{progress}}%",
+      "statusReady": "Ready",
+      "statusFailed": "Download failed",
+      "embeddingTitle": "Semantic embedding",
+      "embeddingDesc": "Downloaded from the official Hugging Face repo for chunk vectorization; without it, only full-text search is used.",
+      "rerankerTitle": "Search reranking (Cross-Encoder)",
+      "rerankerDesc": "Downloaded from the official Hugging Face repo to re-rank hits; basic search works without it.",
+      "enableReranker": "Enable reranking",
+      "enabledHint": "Reranking is on — search and knowledge_search in chat will use the reranker.",
+      "hfEndpoint": "Download source: {{endpoint}}"
+    }
   },
   "wf": {
     "backendUnavailable": "Backend unavailable ({{status}}). Please ensure the server is running on :8787",
@@ -606,5 +652,16 @@
       "errorAbort": "Abort flow on error",
       "errorBranch": "Take error branch (red handle)"
     }
+  },
+  "splash": {
+    "uiLoadFailed": "UI failed to load: {{message}}",
+    "startingService": "Starting local service…",
+    "startingServiceProgress": "Starting local service… ({{count}})",
+    "serviceNotReady": "Local service is not ready: {{message}}",
+    "retry": "Retry",
+    "uiLoadFailedTitle": "UI failed to load",
+    "reload": "Reload",
+    "serviceNotReadyTitle": "Local service is not ready",
+    "desktopHint": "For desktop, run <code>npm run -w @veylin/desktop dev</code>; for web-only dev, ensure the server is running on port 8787."
   }
 }

@@ -1,24 +1,27 @@
 import * as XLSX from 'xlsx';
+import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 import i18n from '@/i18n';
 
 type TableColumnDef = {
   key: string;
   name: string;
   type: string;
+  statusOptions?: string[];
 };
 
 type TableRow = Record<string, string | number>;
 
-const STATUS_VALUES = ['normal', 'tight', 'overdue'] as const;
+function resolveStatusOptions(col: TableColumnDef): string[] {
+  if (col.statusOptions?.length) return col.statusOptions;
+  return [...DEFAULT_TABLE_STATUS_OPTIONS];
+}
 
-// Recognize raw status values, their localized labels (current + all bundled
-// locales) so imported sheets in any language map back to canonical values.
-function buildStatusLabelToValue(): Record<string, string> {
+function buildStatusLabelToValue(col: TableColumnDef): Record<string, string> {
   const map: Record<string, string> = {};
-  for (const value of STATUS_VALUES) {
+  for (const value of resolveStatusOptions(col)) {
     map[value] = value;
     for (const lng of ['en', 'zh-CN']) {
-      const label = i18n.t(`sched.status.${value}`, { lng });
+      const label = i18n.t(`table.status.${value}`, { lng });
       if (label) map[label.trim()] = value;
     }
   }
@@ -26,7 +29,7 @@ function buildStatusLabelToValue(): Record<string, string> {
 }
 
 function statusDisplayLabel(value: string): string {
-  return i18n.t(`sched.status.${value}`, { defaultValue: value });
+  return i18n.t(`table.status.${value}`, { defaultValue: value });
 }
 
 function cellDisplayValue(
@@ -48,7 +51,7 @@ function parseCellValue(col: TableColumnDef, raw: unknown): string | number {
   }
   if (col.type === 'status') {
     const s = String(raw).trim();
-    return buildStatusLabelToValue()[s] ?? s;
+    return buildStatusLabelToValue(col)[s] ?? s;
   }
   return String(raw).trim();
 }
@@ -57,12 +60,18 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '_').trim() || 'table';
 }
 
-/** Export current sheet columns + rows to an .xlsx download. */
+function inferColumnType(name: string): string {
+  const lower = name.trim().toLowerCase();
+  if (lower === 'status' || lower === '状态') return 'status';
+  return 'text';
+}
+
+/** Export current sheet columns + rows to an .xlsx download. Returns the filename used. */
 export function exportTableToExcel(
   sheetName: string,
   columns: TableColumnDef[],
   rows: TableRow[],
-): void {
+): string {
   const headers = columns.map((c) => c.name);
   const body = rows.map((row) =>
     columns.map((col) => cellDisplayValue(col, row[col.key])),
@@ -70,26 +79,25 @@ export function exportTableToExcel(
   const ws = XLSX.utils.aoa_to_sheet([headers, ...body]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
-  XLSX.writeFile(wb, `${sanitizeFilename(sheetName)}.xlsx`);
+  const filename = `${sanitizeFilename(sheetName)}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  return filename;
 }
 
 export type ParsedTableImport = {
+  columnNames: string[];
   rows: TableRow[];
-  newColumnNames: string[];
 };
 
 /**
- * Parse an uploaded Excel file into row patches keyed by column key.
- * Headers match column `name` or `key`; unknown headers become new columns.
+ * Parse an uploaded Excel/CSV file. First row = column headers; following rows = data.
+ * Headers become the full column set on import (replacing any existing columns).
  */
-export async function parseTableExcelFile(
-  file: File,
-  columns: TableColumnDef[],
-): Promise<ParsedTableImport> {
+export async function parseTableExcelFile(file: File): Promise<ParsedTableImport> {
   const buffer = await file.arrayBuffer();
   const wb = XLSX.read(buffer, { type: 'array' });
   const sheetName = wb.SheetNames[0];
-  if (!sheetName) return { rows: [], newColumnNames: [] };
+  if (!sheetName) return { columnNames: [], rows: [] };
 
   const ws = wb.Sheets[sheetName]!;
   const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, {
@@ -98,43 +106,34 @@ export async function parseTableExcelFile(
     raw: false,
   }) as unknown[][];
 
-  if (matrix.length === 0) return { rows: [], newColumnNames: [] };
+  if (matrix.length === 0) return { columnNames: [], rows: [] };
 
   const headerRow = (matrix[0] ?? []).map((h) => String(h ?? '').trim());
+  const columnNames = headerRow.filter((h) => h !== '');
+  if (columnNames.length === 0) return { columnNames: [], rows: [] };
+
+  const columnDefs: TableColumnDef[] = columnNames.map((name) => ({
+    key: name,
+    name,
+    type: inferColumnType(name),
+    ...(inferColumnType(name) === 'status'
+      ? { statusOptions: [...DEFAULT_TABLE_STATUS_OPTIONS] }
+      : {}),
+  }));
+
   const dataRows = matrix.slice(1).filter((row) =>
     row.some((cell) => String(cell ?? '').trim() !== ''),
   );
 
-  const columnByHeader = new Map<string, TableColumnDef>();
-  const newColumnNames: string[] = [];
-
-  for (const header of headerRow) {
-    if (!header) continue;
-    const found =
-      columns.find((c) => c.name === header) ??
-      columns.find((c) => c.key === header);
-    if (found) {
-      columnByHeader.set(header, found);
-    } else {
-      newColumnNames.push(header);
-      columnByHeader.set(header, {
-        key: header,
-        name: header,
-        type: 'text',
-      });
-    }
-  }
-
   const rows: TableRow[] = dataRows.map((cells) => {
-    const row: TableRow = { order_no: '' };
-    headerRow.forEach((header, idx) => {
-      if (!header) return;
-      const col = columnByHeader.get(header);
+    const row: TableRow = {};
+    columnNames.forEach((header, idx) => {
+      const col = columnDefs[idx];
       if (!col) return;
-      row[col.key] = parseCellValue(col, cells[idx]);
+      row[header] = parseCellValue(col, cells[idx]);
     });
     return row;
   });
 
-  return { rows, newColumnNames };
+  return { columnNames, rows };
 }

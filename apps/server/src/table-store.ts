@@ -12,8 +12,8 @@ import {
   replaceTableRows,
   upsertTableSheet,
 } from '@veylin/db';
+import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 
-export type TableRowStatus = 'normal' | 'tight' | 'overdue';
 export type TableColumnType = 'text' | 'number' | 'status';
 
 export interface TableColumnDef {
@@ -23,6 +23,7 @@ export interface TableColumnDef {
   type: TableColumnType;
   frozen?: boolean;
   deletable: boolean;
+  statusOptions?: string[];
 }
 
 export interface TableSheetMeta {
@@ -31,26 +32,27 @@ export interface TableSheetMeta {
   builtin: boolean;
 }
 
-export type TableRowData = Record<string, string | number> & { order_no: string };
+export type TableRowData = Record<string, string | number> & { row_id: string };
 
 export type TableRowPatch = Record<string, string | number>;
 
 export const DEFAULT_TABLE_SHEET = 'main';
 
-const VALID_STATUS: ReadonlySet<string> = new Set<TableRowStatus>(['normal', 'tight', 'overdue']);
+/** New sheets start with no preset columns — user adds columns as needed. */
+const DEFAULT_COLUMNS: TableColumnDef[] = [];
 
-const DEFAULT_COLUMNS: TableColumnDef[] = [
-  { key: 'order_no', name: 'Order No.', width: 100, type: 'text', frozen: true, deletable: false },
-  { key: 'product', name: 'Product', width: 130, type: 'text', deletable: true },
-  { key: 'qty', name: 'Qty', width: 72, type: 'number', deletable: true },
-  { key: 'planned_start', name: 'Planned Start', width: 140, type: 'text', deletable: true },
-  { key: 'planned_end', name: 'Planned End', width: 140, type: 'text', deletable: true },
-  { key: 'resource', name: 'Resource', width: 140, type: 'text', deletable: true },
-  { key: 'status', name: 'Status', width: 80, type: 'status', deletable: true },
-];
+const LEGACY_COLUMN_KEYS = [
+  'order_no',
+  'product',
+  'qty',
+  'planned_start',
+  'planned_end',
+  'resource',
+  'status',
+] as const;
 
 const BUILTIN_SHEETS: TableSheetMeta[] = [
-  { id: 'main', name: 'Main Plan', builtin: true },
+  { id: 'main', name: 'Sheet 1', builtin: true },
 ];
 
 interface SheetState {
@@ -64,14 +66,52 @@ function cloneColumns(): TableColumnDef[] {
 }
 
 function tableRowKey(row: TableRowData): string {
-  return String(row.row_id ?? row.order_no);
+  return String(row.row_id);
 }
 
 function emptyRow(): TableRowData {
   return {
     row_id: `row_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-    order_no: '',
   };
+}
+
+function isLegacyDefaultColumns(columns: TableColumnDef[]): boolean {
+  if (columns.length !== LEGACY_COLUMN_KEYS.length) return false;
+  return columns.every((c, i) => c.key === LEGACY_COLUMN_KEYS[i]);
+}
+
+function sheetHasNoCellData(sheet: SheetState): boolean {
+  if (sheet.rows.length === 0) return true;
+  return sheet.rows.every((row) =>
+    sheet.columns.every((col) => {
+      const v = row[col.key];
+      return v === undefined || v === null || v === '';
+    }),
+  );
+}
+
+/** Drop unused legacy preset columns when the sheet is still empty. */
+function migrateLegacyEmptySheet(sheet: SheetState): boolean {
+  if (!isLegacyDefaultColumns(sheet.columns) || !sheetHasNoCellData(sheet)) return false;
+  sheet.columns = [];
+  sheet.rows = [];
+  if (sheet.meta.builtin && sheet.meta.name === 'Main Plan') {
+    sheet.meta.name = 'Sheet 1';
+  }
+  return true;
+}
+
+function defaultStatusOptionsForColumn(col: TableColumnDef, applyDefaults: boolean): string[] | undefined {
+  if (col.type !== 'status') return undefined;
+  if (col.statusOptions?.length) return col.statusOptions;
+  if (!applyDefaults) return undefined;
+  return [...DEFAULT_TABLE_STATUS_OPTIONS];
+}
+
+function normalizeStatusColumn(col: TableColumnDef, applyDefaults = false): TableColumnDef {
+  if (col.type !== 'status') return col;
+  const statusOptions = defaultStatusOptionsForColumn(col, applyDefaults);
+  return statusOptions ? { ...col, statusOptions } : col;
 }
 
 function buildInitialStore(): Map<string, SheetState> {
@@ -104,6 +144,7 @@ async function persistSheet(sheetId: string): Promise<void> {
       frozen: c.frozen,
       deletable: c.deletable,
       position: i,
+      statusOptions: c.statusOptions,
     })),
   );
   await replaceTableRows(
@@ -144,14 +185,17 @@ export async function initTableStore(): Promise<void> {
       const rows = await listTableRowsDb(meta.id);
       next.set(meta.id, {
         meta,
-        columns: columns.map((c) => ({
-          key: c.key,
-          name: c.name,
-          width: c.width,
-          type: c.type as TableColumnType,
-          frozen: c.frozen,
-          deletable: c.deletable,
-        })),
+        columns: columns.map((c) =>
+          normalizeStatusColumn({
+            key: c.key,
+            name: c.name,
+            width: c.width,
+            type: c.type as TableColumnType,
+            frozen: c.frozen,
+            deletable: c.deletable,
+            statusOptions: c.statusOptions,
+          }),
+        ),
         rows: rows.map((r) => ({ ...r.data } as TableRowData)),
       });
     }
@@ -162,6 +206,11 @@ export async function initTableStore(): Promise<void> {
       sheetStore.set(DEFAULT_TABLE_SHEET, main);
       await persistSheet(DEFAULT_TABLE_SHEET);
     }
+    let migrated = false;
+    for (const sheet of sheetStore.values()) {
+      if (migrateLegacyEmptySheet(sheet)) migrated = true;
+    }
+    if (migrated) await persistAll();
   }
   tableHydrated = true;
 }
@@ -185,14 +234,17 @@ function slugifyColumnKey(name: string, columns: TableColumnDef[]): string {
   return key;
 }
 
+function isAllowedStatusValue(value: string, col: TableColumnDef): boolean {
+  if (!col.statusOptions?.length) return value.length > 0;
+  return col.statusOptions.includes(value);
+}
+
 function sanitizePatch(
   patch: TableRowPatch,
   columns: TableColumnDef[],
 ): TableRowPatch {
   const out: TableRowPatch = {};
-  if (patch.order_no != null) out.order_no = String(patch.order_no);
   for (const col of columns) {
-    if (col.key === 'order_no') continue;
     const raw = patch[col.key];
     if (raw === undefined) continue;
     if (col.type === 'number') {
@@ -207,7 +259,8 @@ function sanitizePatch(
         out[col.key] = '';
         continue;
       }
-      if (VALID_STATUS.has(String(raw))) out[col.key] = String(raw);
+      const value = String(raw).trim();
+      if (isAllowedStatusValue(value, col)) out[col.key] = value;
     } else {
       out[col.key] = String(raw);
     }
@@ -234,9 +287,9 @@ export function listTableRows(sheetId: string = DEFAULT_TABLE_SHEET): TableRowDa
   return sheet ? sheet.rows.map((r) => ({ ...r })) : [];
 }
 
-export function getTableRow(orderNo: string, sheetId: string = DEFAULT_TABLE_SHEET) {
+export function getTableRow(rowKey: string, sheetId: string = DEFAULT_TABLE_SHEET) {
   const sheet = getSheet(resolveTableSheetId(sheetId));
-  const found = sheet?.rows.find((r) => r.order_no === orderNo);
+  const found = sheet?.rows.find((r) => tableRowKey(r) === rowKey);
   return found ? { ...found } : undefined;
 }
 
@@ -320,13 +373,14 @@ export function addTableColumn(sheetId: string, name: string): TableColumnDef | 
   const sheet = getSheet(resolveTableSheetId(sheetId));
   const trimmed = name.trim();
   if (!sheet || !trimmed) return null;
-  const col: TableColumnDef = {
+  const type = inferColumnType(trimmed);
+  const col: TableColumnDef = normalizeStatusColumn({
     key: slugifyColumnKey(trimmed, sheet.columns),
     name: trimmed,
     width: 110,
-    type: 'text',
+    type,
     deletable: true,
-  };
+  }, true);
   sheet.columns.push(col);
   tablePersist(resolveTableSheetId(sheetId));
   return { ...col };
@@ -345,31 +399,63 @@ export function deleteTableColumn(sheetId: string, columnKey: string): boolean {
   return true;
 }
 
-/** Replace sheet rows from an Excel import; optionally add columns by display name. */
+function normalizeImportedRow(
+  raw: TableRowPatch,
+  columns: TableColumnDef[],
+): TableRowPatch {
+  const out: TableRowPatch = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (k === 'row_id') continue;
+    const col =
+      columns.find((c) => c.key === k) ?? columns.find((c) => c.name === k);
+    if (col) out[col.key] = v;
+  }
+  return out;
+}
+
+function inferColumnType(name: string): TableColumnType {
+  const lower = name.trim().toLowerCase();
+  if (lower === 'status' || lower === '状态') return 'status';
+  return 'text';
+}
+
+function buildColumnsFromNames(names: string[]): TableColumnDef[] {
+  const columns: TableColumnDef[] = [];
+  for (const rawName of names) {
+    const name = rawName.trim();
+    if (!name) continue;
+    columns.push(
+      normalizeStatusColumn({
+        key: slugifyColumnKey(name, columns),
+        name,
+        width: 110,
+        type: inferColumnType(name),
+        deletable: true,
+      }, true),
+    );
+  }
+  return columns;
+}
+
+/** Replace sheet columns and rows from an Excel import. */
 export function importTableSheet(
   sheetId: string,
+  columnNames: string[],
   importedRows: TableRowPatch[],
-  newColumnNames: string[] = [],
 ): { columns: TableColumnDef[]; rows: TableRowData[] } | null {
   const resolved = resolveTableSheetId(sheetId);
   const sheet = getSheet(resolved);
   if (!sheet) return null;
 
-  for (const name of newColumnNames) {
-    const trimmed = name.trim();
-    if (!trimmed) continue;
-    const exists = sheet.columns.some(
-      (c) => c.name === trimmed || c.key === trimmed,
-    );
-    if (!exists) addTableColumn(resolved, trimmed);
-  }
-
   const fresh = getSheet(resolved);
   if (!fresh) return null;
 
+  fresh.columns = buildColumnsFromNames(columnNames);
+
   fresh.rows = importedRows.map((raw) => {
     const base = emptyRow();
-    const clean = sanitizePatch(raw, fresh.columns);
+    const mapped = normalizeImportedRow(raw, fresh.columns);
+    const clean = sanitizePatch(mapped, fresh.columns);
     return { ...base, ...clean };
   });
 

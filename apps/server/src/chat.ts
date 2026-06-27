@@ -1,4 +1,5 @@
 /** AI SDK v6 UIMessage (minimal shape we receive from assistant-ui). */
+import { getCatalogModel } from '@veylin/runtime';
 import {
   decodeDataUrlToUtf8,
   isBinaryAttachment,
@@ -38,8 +39,8 @@ type ChatBody = {
   mcpEnabled?: Record<string, boolean>;
   /** Skill to auto-activate when sending the next message. */
   pendingSkill?: string;
-  /** Set when user edits/regenerates to truncate server-side memory. */
-  branchEdit?: boolean;
+  /** Force client snapshot to replace server memory (e.g. compaction). */
+  forceReplace?: boolean;
   /** Browser page attached via @ mention (desktop web view). */
   attachedBrowser?: { tabId: string; url: string; title: string };
   /** UI locale from react-i18next (en | zh-CN). */
@@ -52,8 +53,32 @@ export function textOfMessage(msg: UiMessage | undefined): string {
   if (typeof msg.content === 'string' && msg.content) return msg.content;
   return (
     msg.parts
-      ?.filter((p) => p.type === 'text' && p.text)
-      .map((p) => p.text)
+      ?.flatMap((p) => {
+        if (p.type === 'text' && p.text) return [p.text];
+        if (p.type === 'tool-ask_user_question') {
+          const output = (p as { output?: { answers?: Record<string, string> } }).output;
+          const answers = output?.answers;
+          if (!answers || Object.keys(answers).length === 0) return [];
+          const answersText = Object.entries(answers)
+            .map(([question, answer]) => `"${question}"="${answer}"`)
+            .join(', ');
+          return [
+            `User has answered your questions: ${answersText}. You can now continue with the user's answers in mind.`,
+          ];
+        }
+        if (p.type === 'tool-read_open_page') {
+          const output = (p as {
+            output?: { url?: string; title?: string; content?: string; error?: string };
+          }).output;
+          if (!output) return [];
+          if (output.error) return [`read_open_page failed: ${output.error}`];
+          const header = [output.title, output.url].filter(Boolean).join(' — ');
+          const body = output.content?.trim();
+          if (!header && !body) return [];
+          return [[header, body].filter(Boolean).join('\n')];
+        }
+        return [];
+      })
       .join('\n') ?? ''
   );
 }
@@ -73,12 +98,19 @@ function dataUrlToBuffer(url: string): Uint8Array | null {
   return Uint8Array.from(Buffer.from(url.slice(comma + 1), 'base64'));
 }
 
-/** Models whose providers accept image content (OpenAI-compatible vision). */
-const VISION_MODELS = new Set(
-  (process.env.VEYLIN_VISION_MODELS ?? 'zenmux').split(',').map((s) => s.trim()).filter(Boolean),
-);
+/** Catalog ids or `*` (from VEYLIN_VISION_MODELS) that accept image content. */
+function visionCatalogIds(): Set<string> {
+  const raw = process.env.VEYLIN_VISION_MODELS?.trim();
+  if (!raw) return new Set();
+  return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
+}
+
 export function modelSupportsImages(model: string | undefined): boolean {
-  return model != null && VISION_MODELS.has(model);
+  if (!model) return false;
+  const envIds = visionCatalogIds();
+  if (envIds.has('*')) return true;
+  if (envIds.has(model)) return true;
+  return getCatalogModel(model)?.vision === true;
 }
 
 const PDF_MAX_PAGES = Number(process.env.VEYLIN_PDF_MAX_PAGES ?? 10);

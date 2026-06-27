@@ -1,12 +1,12 @@
 import vm from 'node:vm';
 import type { Runtime } from '@veylin/runtime';
 import {
-  normalizeWorkflowNodeKind,
   type WorkflowCase,
   type WorkflowEdge,
   type WorkflowNode,
   type WorkflowNodeKind,
   type WorkflowRunLogEntry,
+  DEFAULT_AGENT_ID,
 } from '@veylin/shared';
 import type { WorkflowJob, QueuePort } from './queue';
 import { WORKFLOW_QUEUE } from './queue';
@@ -177,7 +177,7 @@ async function executeNode(
     case 'run_agent': {
       const prompt = interpolate(String(data.prompt ?? ''), ctx);
       if (!prompt.trim()) throw new Error('run_agent requires prompt');
-      const agentId = String(data.agentId ?? 'veylin');
+      const agentId = String(data.agentId ?? DEFAULT_AGENT_ID);
       const threadId = `wf-${crypto.randomUUID()}`;
       await ensureThreadState({ threadId, tenantId, resourceId: userId });
       await setThreadTitle(threadId, `[Workflow] ${workflowName}`);
@@ -307,10 +307,7 @@ export async function runWorkflowJob(runtime: Runtime, job: WorkflowJob): Promis
 
   const { nodes, edges } = workflow.definition;
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
-  const roots = nodes.filter((n) => {
-    const k = normalizeWorkflowNodeKind(n.kind);
-    return k === 'start';
-  });
+  const roots = nodes.filter((n) => n.kind === 'start');
   const startNodes = roots.length > 0 ? roots : nodes.filter((n) => !edges.some((e) => e.target === n.id));
 
   if (startNodes.length === 0) {
@@ -337,7 +334,7 @@ export async function runWorkflowJob(runtime: Runtime, job: WorkflowJob): Promis
       const node = queue.shift()!;
       if (visited.has(node.id)) continue;
       visited.add(node.id);
-      const kind = normalizeWorkflowNodeKind(node.kind);
+      const kind = node.kind as WorkflowNodeKind;
 
       try {
         const { output, outcome } = await runNode(

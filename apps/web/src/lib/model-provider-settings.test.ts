@@ -6,28 +6,27 @@ describe('normalizeModelProviderSettings', () => {
   it('passes through the current API shape', () => {
     assert.deepEqual(
       normalizeModelProviderSettings({
-        modelName: 'deepseek-v4-flash',
-        requestUrl: 'https://api.deepseek.com/v1',
+        modelName: 'gpt-4o-mini',
+        requestUrl: 'https://api.example.com/v1',
         hasApiKey: true,
         configured: true,
       }),
       {
-        modelName: 'deepseek-v4-flash',
-        requestUrl: 'https://api.deepseek.com/v1',
+        modelName: 'gpt-4o-mini',
+        requestUrl: 'https://api.example.com/v1',
         hasApiKey: true,
         configured: true,
       },
     );
   });
 
-  it('maps legacy modelAvailability flags to configured', () => {
+  it('derives configured from api key + endpoint metadata', () => {
     assert.deepEqual(
       normalizeModelProviderSettings({
         modelName: 'gpt-4o',
         requestUrl: 'https://api.openai.com/v1',
         hasApiKey: true,
-        modelAvailability: { deepseek: true, zenmux: false },
-      } as never),
+      }),
       {
         modelName: 'gpt-4o',
         requestUrl: 'https://api.openai.com/v1',
@@ -37,18 +36,16 @@ describe('normalizeModelProviderSettings', () => {
     );
   });
 
-  it('does not treat legacy flags as configured without api key metadata', () => {
+  it('is not configured without complete provider metadata', () => {
     assert.deepEqual(
       normalizeModelProviderSettings({
-        openaiApiKeyEnabled: true,
-        hasOpenaiApiKey: true,
-        overrideOpenAIBaseUrl: true,
-        openaiBaseUrl: 'https://api.deepseek.com/v1',
-      } as never),
+        modelName: 'gpt-4o',
+        hasApiKey: true,
+      }),
       {
-        modelName: '',
+        modelName: 'gpt-4o',
         requestUrl: '',
-        hasApiKey: false,
+        hasApiKey: true,
         configured: false,
       },
     );

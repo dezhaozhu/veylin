@@ -180,13 +180,6 @@ export function createInProcQueue(): QueuePort {
   return port;
 }
 
-/** @deprecated Use createInProcQueue; kept for import compatibility. */
-export async function createQueue(_connectionString?: string): Promise<QueuePort> {
-  const q = createInProcQueue();
-  await q.start();
-  return q;
-}
-
 export async function registerWorkers(
   boss: QueuePort,
   handler: (job: SubagentJob) => Promise<void>,

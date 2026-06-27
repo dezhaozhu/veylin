@@ -9,12 +9,8 @@ import { z } from 'zod';
  *   AI       → run_agent / knowledge_retrieval
  *   Data     → table_read / table_write
  *   Output   → end
- *
- * Legacy kinds (trigger/condition/knowledge_search/output)
- * remain accepted for backward compatibility and are normalized by the runner.
  */
 export const workflowNodeKindSchema = z.enum([
-  // v2
   'start',
   'if_else',
   'set',
@@ -26,11 +22,6 @@ export const workflowNodeKindSchema = z.enum([
   'table_read',
   'table_write',
   'end',
-  // legacy aliases
-  'trigger',
-  'condition',
-  'knowledge_search',
-  'output',
 ]);
 
 export type WorkflowNodeKind = z.infer<typeof workflowNodeKindSchema>;
@@ -173,26 +164,6 @@ export const workflowRunSchema = z.object({
 });
 
 export type WorkflowRun = z.infer<typeof workflowRunSchema>;
-
-/** Normalize legacy node kinds → v2 kinds. */
-export function normalizeWorkflowNodeKind(kind: string): WorkflowNodeKind {
-  switch (kind) {
-    case 'trigger':
-      return 'start';
-    case 'condition':
-      return 'if_else';
-    case 'knowledge_search':
-      return 'knowledge_retrieval';
-    case 'dataset_read':
-      return 'table_read';
-    case 'dataset_write':
-      return 'table_write';
-    case 'output':
-      return 'end';
-    default:
-      return kind as WorkflowNodeKind;
-  }
-}
 
 /** Node metadata for UI palettes (label + category). */
 export interface WorkflowNodeMeta {

@@ -2,7 +2,7 @@
 
 English · [简体中文](./README.zh-CN.md)
 
-> An open-source, **self-hosted industrial AI agent** desktop app. A complete tool-calling agent with **no-code automation**, a **permission- and privacy-first** design, and a unified, DIY **right-side panel** system — table, web, RAG, knowledge graph, and workflow.
+> An open-source, **self-hosted AI agent** desktop app. A complete tool-calling agent with **no-code automation**, a **permission- and privacy-first** design, and a unified, DIY **right-side panel** system — table, web, RAG, knowledge graph, and workflow.
 
 <p>
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
@@ -12,14 +12,14 @@ English · [简体中文](./README.zh-CN.md)
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933">
 </p>
 
-Veylin is a ground-up redesign of an industrial agent platform. It runs on a **single embedded SurrealDB engine** (documents + graph + vector + full-text), an agent runtime core, a thin Fastify BFF, and a Tauri + React client. Packaged as a desktop app it is **double-click to run**: the server ships as a sidecar binary with an embedded Node runtime, so end users need no separate Node / Docker / Postgres / Redis install.
+Veylin is a ground-up redesign of a general-purpose agent platform. It runs on a **single embedded SurrealDB engine** (documents + graph + vector + full-text), an agent runtime core, a thin Fastify BFF, and a Tauri + React client. Packaged as a desktop app it is **double-click to run**: the server ships as a sidecar binary with an embedded Node runtime, so end users need no separate Node / Docker / Postgres / Redis install.
 
 ## Why Veylin
 
 - **A complete agent** — built-in tool calling, plan mode, subagents, skills and memory; it carries a task through end to end.
 - **No code required** — visual workflow orchestration, scheduled and event-driven automation, and skill / rule / MCP configuration are all done in the UI.
 - **Permission- and privacy-first** — local-first, single-machine self-hosting; risky actions go through an approval gate; your data stays on your machine by default.
-- **Industrial, general-purpose** — not tied to one industry; the concrete domain role is injected via `agent.yaml`.
+- **Domain-agnostic** — not tied to one industry; the concrete role and instructions are injected via `agent.yaml` and skills.
 - **Between "hand-rolled" and "all-in-one"** — easy to DIY, yet works out of the box.
 - **Enterprise self-hosted** — zero external dependencies, runs fully offline.
 - **Unified, DIY right-side panels** — Table · Web · Knowledge (RAG) · Knowledge Graph · Workflow.
@@ -68,10 +68,10 @@ Tauri shell (apps/desktop)
 | Package | Responsibility |
 |---------|----------------|
 | `@veylin/shared` | Types, AG-UI event protocol, zod schemas |
-| `@veylin/db` | Embedded SurrealDB client + SurrealQL schema + business / schedule / RAG repositories |
+| `@veylin/db` | Embedded SurrealDB client + SurrealQL schema + business / table / RAG repositories |
 | `@veylin/runtime` | Runtime assembly: agents / network / processors / memory (LibSQL + fastembed) |
 | `@veylin/tools` | Built-in tools (shell / file / grep / glob / web / todo / skill) |
-| `@veylin/mcp-servers` | Industrial MCP servers written with the MCP TS SDK (compiled to `.mjs`, started by embedded Node) |
+| `@veylin/mcp-servers` | MCP servers written with the MCP TS SDK (compiled to `.mjs`, started by embedded Node) |
 | `@veylin/policy` | Permission / sandbox / approval policy, Plan Mode |
 | `@veylin/agent-package` | `agent.yaml` definitions + skills loader |
 | `@veylin/server` | Fastify BFF (incl. sidecar bundling script) |

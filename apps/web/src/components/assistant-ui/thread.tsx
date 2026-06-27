@@ -1,6 +1,6 @@
 import { UserMessageChipsRow, userMessageHasDisplayChips } from "@/components/assistant-ui/user-message-chips-row";
 import { UserMessageText } from "@/components/assistant-ui/user-message-text";
-import { MarkdownText } from "@/components/assistant-ui/markdown-text";
+import { AssistantMarkdownText, MarkdownText } from "@/components/assistant-ui/markdown-text";
 import {
   Reasoning,
   ReasoningGroupBlock,
@@ -15,6 +15,7 @@ import { ComposerMentionInput } from "@/components/assistant-ui/composer-mention
 import { ComposerModeChips } from "@/components/assistant-ui/composer-mode-chips";
 import { ComposerPlusMenu } from "@/components/assistant-ui/composer-plus-menu";
 import { ComposerStatusBar } from "@/components/assistant-ui/composer-status-bar";
+import { ComposerAskPanel } from "@/components/assistant-ui/composer-ask-panel";
 import {
   ComposerQueue,
   useComposerSubmitKeys,
@@ -36,7 +37,6 @@ import {
   ActionBarPrimitive,
   AuiIf,
   type AssistantState,
-  BranchPickerPrimitive,
   ComposerPrimitive,
   ErrorPrimitive,
   groupPartByType,
@@ -50,11 +50,8 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CheckIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   CopyIcon,
   PencilIcon,
-  RefreshCwIcon,
   SquareIcon,
 } from "lucide-react";
 import {
@@ -159,6 +156,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
           >
             <ThreadScrollToBottom />
             <ComposerStatusBar />
+            <ComposerAskPanel />
             <Composer />
           </ThreadPrimitive.ViewportFooter>
         </div>
@@ -370,7 +368,7 @@ const AssistantMessage: FC = () => {
                 );
               }
               case "text":
-                return <MarkdownText />;
+                return <AssistantMarkdownText />;
               case "reasoning":
                 return <Reasoning {...part} />;
               case "tool-call":
@@ -401,7 +399,6 @@ const AssistantMessage: FC = () => {
         data-slot="aui_assistant-message-footer"
         className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
       >
-        <BranchPicker />
         <AssistantActionBar />
       </div>
     </MessagePrimitive.Root>
@@ -429,11 +426,6 @@ const AssistantActionBar: FC = () => {
       className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in col-start-3 row-start-2 -ms-1 flex items-center gap-1 duration-200"
     >
       <MessageCopyButton />
-      <ActionBarPrimitive.Reload asChild>
-        <TooltipIconButton tooltip="Refresh">
-          <RefreshCwIcon />
-        </TooltipIconButton>
-      </ActionBarPrimitive.Reload>
       <MessageTimestamp className="ms-0.5" align="start" inline />
     </ActionBarPrimitive.Root>
   );
@@ -475,10 +467,6 @@ const UserMessage: FC = () => {
         </div>
       )}
 
-      <BranchPicker
-        data-slot="aui_user-branch-picker"
-        className="-me-1"
-      />
     </MessagePrimitive.Root>
   );
 };
@@ -557,35 +545,5 @@ const EditComposer: FC = () => {
         </div>
       </ComposerPrimitive.Root>
     </MessagePrimitive.Root>
-  );
-};
-
-const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
-  className,
-  ...rest
-}) => {
-  return (
-    <BranchPickerPrimitive.Root
-      hideWhenSingleBranch
-      className={cn(
-        "aui-branch-picker-root text-muted-foreground -ms-2 me-2 inline-flex items-center text-xs",
-        className,
-      )}
-      {...rest}
-    >
-      <BranchPickerPrimitive.Previous asChild>
-        <TooltipIconButton tooltip="Previous">
-          <ChevronLeftIcon />
-        </TooltipIconButton>
-      </BranchPickerPrimitive.Previous>
-      <span className="aui-branch-picker-state font-medium">
-        <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
-      </span>
-      <BranchPickerPrimitive.Next asChild>
-        <TooltipIconButton tooltip="Next">
-          <ChevronRightIcon />
-        </TooltipIconButton>
-      </BranchPickerPrimitive.Next>
-    </BranchPickerPrimitive.Root>
   );
 };

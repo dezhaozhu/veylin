@@ -1,4 +1,5 @@
 export type KnowledgeCitation = {
+  refIndex: number;
   chunkId: string;
   documentId: string;
   source: string;
@@ -15,7 +16,8 @@ function isKnowledgeReference(value: unknown): value is KnowledgeCitation {
     typeof r.documentId === 'string' &&
     typeof r.source === 'string' &&
     typeof r.text === 'string' &&
-    typeof r.offset === 'number'
+    typeof r.offset === 'number' &&
+    (typeof r.refIndex === 'number' || r.refIndex === undefined)
   );
 }
 
@@ -23,7 +25,12 @@ function referencesFromOutput(output: unknown): KnowledgeCitation[] {
   if (!output || typeof output !== 'object') return [];
   const refs = (output as { references?: unknown }).references;
   if (!Array.isArray(refs)) return [];
-  return refs.filter(isKnowledgeReference);
+  return refs
+    .filter(isKnowledgeReference)
+    .map((ref, index) => ({
+      ...ref,
+      refIndex: ref.refIndex ?? index + 1,
+    }));
 }
 
 function isCompletedToolPart(part: {
@@ -58,7 +65,7 @@ function outputFromPart(part: {
 export function extractKnowledgeCitations(parts: readonly unknown[] | undefined): KnowledgeCitation[] {
   if (!parts?.length) return [];
 
-  const bySource = new Map<string, KnowledgeCitation>();
+  const byChunk = new Map<string, KnowledgeCitation>();
 
   for (const raw of parts) {
     if (!raw || typeof raw !== 'object') continue;
@@ -75,12 +82,43 @@ export function extractKnowledgeCitations(parts: readonly unknown[] | undefined)
     if (!isCompletedToolPart(part)) continue;
 
     for (const ref of referencesFromOutput(outputFromPart(part))) {
-      const prev = bySource.get(ref.source);
+      const prev = byChunk.get(ref.chunkId);
       if (!prev || (ref.score ?? 0) > (prev.score ?? 0)) {
-        bySource.set(ref.source, ref);
+        byChunk.set(ref.chunkId, ref);
       }
     }
   }
 
-  return [...bySource.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  return [...byChunk.values()].sort((a, b) => a.refIndex - b.refIndex);
+}
+
+export function extractAssistantText(parts: readonly unknown[] | undefined): string {
+  if (!parts?.length) return '';
+  const chunks: string[] = [];
+  for (const raw of parts) {
+    if (!raw || typeof raw !== 'object') continue;
+    const part = raw as { type?: string; text?: string };
+    if (part.type === 'text' && part.text) chunks.push(part.text);
+  }
+  return chunks.join('\n');
+}
+
+export function filterCitationsUsedInAnswer(
+  citations: KnowledgeCitation[],
+  answerText: string,
+): KnowledgeCitation[] {
+  const used = new Set<number>();
+  for (const match of answerText.matchAll(/\[(\d{1,2})\]/g)) {
+    const index = Number(match[1]);
+    if (index > 0) used.add(index);
+  }
+  if (used.size === 0) return citations;
+  const filtered = citations.filter((c) => used.has(c.refIndex));
+  return filtered.length > 0 ? filtered : citations;
+}
+
+export function citationSnippetPreview(text: string, max = 96): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  if (oneLine.length <= max) return oneLine;
+  return `${oneLine.slice(0, max - 1)}…`;
 }

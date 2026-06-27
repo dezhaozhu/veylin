@@ -62,10 +62,14 @@ impl Sidecar {
             }
         }
 
-        // Dev fallback: npm workspace server from repo root.
-        let root = std::env::current_dir()
-            .ok()
-            .and_then(|p| p.ancestors().nth(3).map(|a| a.to_path_buf()));
+        // Dev fallback: npm workspace server from repo root (cwd is usually …/apps/desktop/src-tauri).
+        let mut root = std::env::current_dir().ok();
+        for ancestor in root.as_ref().into_iter().flat_map(|p| p.ancestors()) {
+            if ancestor.join("package.json").exists() && ancestor.join("apps").join("server").exists() {
+                root = Some(ancestor.to_path_buf());
+                break;
+            }
+        }
         let Some(root) = root else {
             eprintln!("[sidecar] no dev repo root found; set VEYLIN_SERVER_BIN or run via tauri dev");
             return;

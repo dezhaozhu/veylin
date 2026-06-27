@@ -11,9 +11,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import { cn } from '@/lib/utils';
 import {
+  citationSnippetPreview,
+  extractAssistantText,
   extractKnowledgeCitations,
+  filterCitationsUsedInAnswer,
   type KnowledgeCitation,
 } from '@/lib/knowledge-citations';
 
@@ -40,7 +44,7 @@ function CitationPreviewDialog({
   const active = citation;
 
   function copySnippet() {
-    const text = `${active.source} (offset ${active.offset})\n${active.text}`;
+    const text = `[${active.refIndex}] ${active.source} (offset ${active.offset})\n${active.text}`;
     void navigator.clipboard?.writeText(text);
   }
 
@@ -49,7 +53,7 @@ function CitationPreviewDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="truncate pr-6 text-base" title={active.source}>
-            {active.source}
+            [{active.refIndex}] {active.source}
           </DialogTitle>
           <DialogDescription>
             offset {active.offset}
@@ -72,14 +76,20 @@ function CitationPreviewDialog({
 
 export function MessageKnowledgeCitations() {
   const { t } = useTranslation();
+  const { focusRagCitation } = usePanelTabs();
   const parts = useAuiState((s) => s.message.parts);
-  const citations = useMemo(() => extractKnowledgeCitations(parts), [parts]);
+  const allCitations = useMemo(() => extractKnowledgeCitations(parts), [parts]);
+  const citations = useMemo(() => {
+    const answerText = extractAssistantText(parts);
+    return filterCitationsUsedInAnswer(allCitations, answerText);
+  }, [allCitations, parts]);
   const [preview, setPreview] = useState<KnowledgeCitation | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
   if (citations.length === 0) return null;
 
   function openPreview(citation: KnowledgeCitation) {
+    focusRagCitation({ refIndex: citation.refIndex, chunkId: citation.chunkId });
     setPreview(citation);
     setDialogOpen(true);
   }
@@ -91,19 +101,29 @@ export function MessageKnowledgeCitations() {
         className="border-border/60 mt-1 border-t pt-2.5"
       >
         <div className="text-foreground mb-1.5 text-sm">{t('citations.heading')}</div>
-        <ul className="flex flex-col gap-1">
+        <ul className="flex flex-col gap-2">
           {citations.map((citation) => (
-            <li key={`${citation.chunkId}-${citation.source}`}>
+            <li key={citation.chunkId}>
               <button
                 type="button"
                 className={cn(
-                  'text-primary hover:text-primary/80 inline-flex max-w-full min-w-0 items-center gap-1.5 text-left text-sm transition-colors hover:underline',
+                  'hover:bg-muted/50 w-full rounded-lg px-2 py-1.5 text-left transition-colors',
                 )}
-                title={citation.source}
+                title={citation.text}
                 onClick={() => openPreview(citation)}
               >
-                <FileText className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
-                <span className="truncate">{truncateFilename(citation.source)}</span>
+                <div className="text-primary inline-flex max-w-full min-w-0 items-center gap-1.5 text-sm hover:underline">
+                  <FileText className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
+                  <span className="truncate font-medium">
+                    [{citation.refIndex}] {truncateFilename(citation.source)}
+                  </span>
+                  <span className="text-muted-foreground shrink-0 text-xs">
+                    · offset {citation.offset}
+                  </span>
+                </div>
+                <div className="text-muted-foreground mt-0.5 line-clamp-2 pl-5 text-xs leading-relaxed">
+                  {citationSnippetPreview(citation.text)}
+                </div>
               </button>
             </li>
           ))}

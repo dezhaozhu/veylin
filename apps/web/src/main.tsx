@@ -1,14 +1,28 @@
 import { Component, StrictMode, useEffect, useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { createRoot } from 'react-dom/client';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { apiUrl, installApiFetchShim } from '@/lib/api-base';
 import { bootstrapModelCatalogFromServer } from '@/hooks/use-server-model-catalog';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
-import '@/i18n';
+import i18n from '@/i18n';
 import { App } from './App';
 import './index.css';
 
 installApiFetchShim();
+
+// Surface fatal module/load errors on the static splash (before React mounts).
+window.addEventListener('error', (event) => {
+  const message = event.error instanceof Error ? event.error.message : event.message;
+  if (!message) return;
+  setSplashHint(i18n.t('splash.uiLoadFailed', { message }));
+});
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  const message = reason instanceof Error ? reason.message : String(reason ?? '');
+  if (!message) return;
+  setSplashHint(i18n.t('splash.uiLoadFailed', { message }));
+});
 
 // Child web-views are native layers above the UI; clear any leftover instance on load
 // (e.g. Vite HMR) so the splash screen is not partially covered.
@@ -53,7 +67,7 @@ async function waitForApiReady(signal: { cancelled: boolean }): Promise<void> {
       }
     }
     if (i > 0 && i % 5 === 0) {
-      setSplashHint(`正在启动本地服务… (${i + 1})`);
+      setSplashHint(i18n.t('splash.startingServiceProgress', { count: i + 1 }));
     }
     await sleep(i < 20 ? 200 : 500);
   }
@@ -71,12 +85,14 @@ function setSplashError(message: string, onRetry: () => void): void {
   const hint = document.getElementById('splash-hint');
   if (!hint || hint.dataset.errorBound === '1') return;
   hint.dataset.errorBound = '1';
+  const serviceNotReady = i18n.t('splash.serviceNotReady', { message });
+  const retryLabel = i18n.t('splash.retry');
   hint.innerHTML =
-    `<span style="color:#f87171">本地服务暂未就绪：${message}</span>` +
-    ` · <button id="splash-retry" style="background:none;border:none;color:#a855f7;cursor:pointer;font:inherit;text-decoration:underline">重试</button>`;
+    `<span style="color:#f87171">${serviceNotReady}</span>` +
+    ` · <button id="splash-retry" style="background:none;border:none;color:#a855f7;cursor:pointer;font:inherit;text-decoration:underline">${retryLabel}</button>`;
   document.getElementById('splash-retry')?.addEventListener('click', () => {
     hint.dataset.errorBound = '';
-    hint.textContent = '正在启动本地服务…';
+    hint.textContent = i18n.t('splash.startingService');
     onRetry();
   });
 }
@@ -90,38 +106,45 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error
 
   render() {
     if (this.state.error) {
-      return (
-        <div className="bg-background text-foreground flex min-h-dvh flex-col items-center justify-center gap-3 p-8 text-center">
-          <p className="text-lg font-medium">界面加载失败</p>
-          <p className="text-muted-foreground max-w-md text-sm">{this.state.error.message}</p>
-          <button
-            type="button"
-            className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm"
-            onClick={() => window.location.reload()}
-          >
-            重新加载
-          </button>
-        </div>
-      );
+      return <AppErrorFallback error={this.state.error} />;
     }
     return this.props.children;
   }
 }
 
-function StartupError({ message, onRetry }: { message: string; onRetry: () => void }) {
+function AppErrorFallback({ error }: { error: Error }) {
+  const { t } = useTranslation();
   return (
     <div className="bg-background text-foreground flex min-h-dvh flex-col items-center justify-center gap-3 p-8 text-center">
-      <p className="text-lg font-medium">本地服务暂未就绪</p>
+      <p className="text-lg font-medium">{t('splash.uiLoadFailedTitle')}</p>
+      <p className="text-muted-foreground max-w-md text-sm">{error.message}</p>
+      <button
+        type="button"
+        className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm"
+        onClick={() => window.location.reload()}
+      >
+        {t('splash.reload')}
+      </button>
+    </div>
+  );
+}
+
+function StartupError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="bg-background text-foreground flex min-h-dvh flex-col items-center justify-center gap-3 p-8 text-center">
+      <p className="text-lg font-medium">{t('splash.serviceNotReadyTitle')}</p>
       <p className="text-muted-foreground max-w-md text-sm">{message}</p>
-      <p className="text-muted-foreground max-w-md text-xs">
-        桌面端请用 <code className="font-mono">npm run -w @veylin/desktop dev</code> 启动；仅 Web 开发请确认 8787 端口上的 server 已运行。
-      </p>
+      <p
+        className="text-muted-foreground max-w-md text-xs"
+        dangerouslySetInnerHTML={{ __html: t('splash.desktopHint') }}
+      />
       <button
         type="button"
         className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm"
         onClick={onRetry}
       >
-        重试
+        {t('splash.retry')}
       </button>
     </div>
   );
@@ -156,6 +179,7 @@ function StartupGate() {
   }, [attempt]);
 
   if (startupError) {
+    removeSplash();
     return <StartupError message={startupError} onRetry={() => setAttempt((value) => value + 1)} />;
   }
 

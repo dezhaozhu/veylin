@@ -1,24 +1,18 @@
-import { getModelConfig, buildSummarizer } from '@veylin/runtime';
+import { getModelConfig, buildSummarizer, DEFAULT_MODEL } from '@veylin/runtime';
 import type { Runtime } from '@veylin/runtime';
+import { DEFAULT_WORKING_MEMORY_TEMPLATE } from '@veylin/shared';
 import { updateThreadState } from '@veylin/db';
 import type { ThreadIdentity } from './message-sync';
 import { getThreadState } from './thread-state';
 
-const WM_TEMPLATE = `# Operator & Site Context
-- Operator:
-- Site / Line:
-- Active Work Order:
-- Constraints / Safety Notes:
-- Open Decisions:
-- Activated Skills:
-`;
+const WM_TEMPLATE = DEFAULT_WORKING_MEMORY_TEMPLATE;
 
 const DREAM_SYSTEM_PROMPT = [
   'You maintain a concise working-memory document for an ongoing agent conversation.',
   'Update the template sections with durable facts from the recent messages.',
   'Preserve the markdown structure and section headings. Be concise and factual.',
-  'Store only cross-session context: operator/site, standing constraints, open decisions, preferences.',
-  'Do NOT store transient task progress, tool output, code that can be re-read, or resolved one-off errors.',
+  'Store only cross-session context: user role, standing constraints, open decisions, preferences.',
+  'Do NOT store transient task progress, tool output, or resolved one-off errors.',
   'Return ONLY the updated document — no commentary.',
 ].join('\n');
 
@@ -49,9 +43,9 @@ function formatTranscript(messages: unknown[]): string {
 }
 
 async function dreamSummarize(currentMemory: string, transcript: string): Promise<string | null> {
-  const cfg = getModelConfig('deepseek');
+  const cfg = getModelConfig(DEFAULT_MODEL);
   if (!cfg.apiKey) {
-    const fallback = buildSummarizer('deepseek');
+    const fallback = buildSummarizer(DEFAULT_MODEL);
     if (!fallback) return null;
     return fallback(`Working memory:\n${currentMemory}\n\nConversation:\n${transcript}`);
   }

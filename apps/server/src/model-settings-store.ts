@@ -1,5 +1,10 @@
 import { getTenantSettingsRow, upsertTenantSettings } from '@veylin/db';
 import {
+  modelProviderSettingsPatchSchema,
+  modelProviderSettingsSchema,
+  type ModelProviderSettingsStored,
+} from '@veylin/shared';
+import {
   isModelProviderConfigured,
   setRuntimeModelOverrides,
 } from '@veylin/runtime';
@@ -17,52 +22,14 @@ export type ModelSettingsView = {
   configured: boolean;
 };
 
-type StoredModelSettings = {
-  modelName: string;
-  requestUrl: string;
-  apiKey: string;
-};
+const EMPTY_STORED: ModelProviderSettingsStored = modelProviderSettingsSchema.parse({});
 
-/** Legacy rows persisted before the modelName / requestUrl / apiKey schema. */
-type RawModelSettings = Partial<StoredModelSettings> & {
-  providerName?: string;
-  openaiApiKeyEnabled?: boolean;
-  openaiApiKey?: string;
-  overrideOpenAIBaseUrl?: boolean;
-  openaiBaseUrl?: string;
-};
-
-const EMPTY_STORED: StoredModelSettings = {
-  modelName: '',
-  requestUrl: '',
-  apiKey: '',
-};
-
-function normalize(raw: RawModelSettings | undefined): StoredModelSettings {
-  const source = raw ?? {};
-  const legacyApiKey =
-    source.openaiApiKeyEnabled === true && typeof source.openaiApiKey === 'string'
-      ? source.openaiApiKey
-      : '';
-  const legacyRequestUrl =
-    source.overrideOpenAIBaseUrl === true && typeof source.openaiBaseUrl === 'string'
-      ? source.openaiBaseUrl
-      : '';
-  const modelName =
-    typeof source.modelName === 'string'
-      ? source.modelName
-      : typeof source.providerName === 'string'
-        ? source.providerName
-        : '';
-
-  return {
-    modelName,
-    requestUrl: typeof source.requestUrl === 'string' ? source.requestUrl : legacyRequestUrl,
-    apiKey: typeof source.apiKey === 'string' ? source.apiKey : legacyApiKey,
-  };
+function normalize(raw: Partial<ModelProviderSettingsStored> | undefined): ModelProviderSettingsStored {
+  const parsed = modelProviderSettingsSchema.safeParse(raw ?? {});
+  return parsed.success ? parsed.data : { ...EMPTY_STORED };
 }
 
-function toView(settings: StoredModelSettings): ModelSettingsView {
+function toView(settings: ModelProviderSettingsStored): ModelSettingsView {
   return {
     modelName: settings.modelName,
     requestUrl: settings.requestUrl,
@@ -71,9 +38,9 @@ function toView(settings: StoredModelSettings): ModelSettingsView {
   };
 }
 
-async function loadStoredSettings(tenantId: string): Promise<StoredModelSettings> {
+async function loadStoredSettings(tenantId: string): Promise<ModelProviderSettingsStored> {
   const row = await getTenantSettingsRow(tenantId);
-  const raw = row?.modelSettings as RawModelSettings | undefined;
+  const raw = row?.modelSettings as Partial<ModelProviderSettingsStored> | undefined;
   return normalize(raw);
 }
 
@@ -92,13 +59,12 @@ export async function updateModelSettings(
   tenantId: string,
   patch: ModelSettingsInput,
 ): Promise<ModelSettingsView> {
+  const parsedPatch = modelProviderSettingsPatchSchema.safeParse(patch);
+  if (!parsedPatch.success) {
+    throw new Error('Invalid model settings payload');
+  }
   const existing = await loadStoredSettings(tenantId);
-  const next = normalize({
-    ...existing,
-    ...(patch.modelName !== undefined ? { modelName: patch.modelName } : {}),
-    ...(patch.requestUrl !== undefined ? { requestUrl: patch.requestUrl } : {}),
-    ...(patch.apiKey !== undefined ? { apiKey: patch.apiKey } : {}),
-  });
+  const next = normalize({ ...existing, ...parsedPatch.data });
   await upsertTenantSettings(tenantId, { modelSettings: next });
   applyModelSettingsToRuntime(next);
   return toView(next);
@@ -109,6 +75,6 @@ export async function applyTenantModelSettings(tenantId: string): Promise<void> 
   applyModelSettingsToRuntime(stored);
 }
 
-function applyModelSettingsToRuntime(settings: StoredModelSettings): void {
-  setRuntimeModelOverrides({ ...EMPTY_STORED, ...settings });
+function applyModelSettingsToRuntime(settings: ModelProviderSettingsStored): void {
+  setRuntimeModelOverrides({ ...settings });
 }

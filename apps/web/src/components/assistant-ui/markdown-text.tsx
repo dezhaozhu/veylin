@@ -14,7 +14,9 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { MermaidDiagram } from "@/components/assistant-ui/mermaid-diagram";
+import { CitationMarkdownLink } from "@/components/assistant-ui/citation-markdown-link";
 import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { remarkInlineCitations } from "@/lib/remark-inline-citations";
 import { cn } from "@/lib/utils";
 
 const MarkdownTextImpl = () => {
@@ -29,6 +31,19 @@ const MarkdownTextImpl = () => {
 };
 
 export const MarkdownText = memo(MarkdownTextImpl);
+
+const AssistantMarkdownTextImpl = () => {
+  return (
+    <MarkdownTextPrimitive
+      remarkPlugins={[remarkGfm, remarkInlineCitations]}
+      className="aui-md"
+      components={assistantComponents}
+      defer
+    />
+  );
+};
+
+export const AssistantMarkdownText = memo(AssistantMarkdownTextImpl);
 
 const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   const { isCopied, copyToClipboard } = useCopyToClipboard();
@@ -278,4 +293,28 @@ const defaultComponents = memoizeMarkdownComponents({
     );
   },
   CodeHeader,
+});
+
+const assistantComponents = memoizeMarkdownComponents({
+  ...defaultComponents,
+  a: ({ className, href, children, ...props }) => {
+    if (href?.startsWith("rag-citation://")) {
+      const refIndex = Number(href.slice("rag-citation://".length));
+      if (Number.isFinite(refIndex) && refIndex > 0) {
+        return <CitationMarkdownLink refIndex={refIndex}>{children}</CitationMarkdownLink>;
+      }
+    }
+    return (
+      <a
+        className={cn(
+          "aui-md-a text-primary hover:text-primary/80 underline underline-offset-2",
+          className,
+        )}
+        href={href}
+        {...props}
+      >
+        {children}
+      </a>
+    );
+  },
 });

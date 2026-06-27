@@ -39,6 +39,9 @@ export async function listTableColumns(sheetId: string): Promise<TableColumnRow[
     frozen: r.frozen != null ? Boolean(r.frozen) : undefined,
     deletable: Boolean(r.deletable ?? true),
     position: Number(r.position ?? 0),
+    statusOptions: Array.isArray(r.status_options)
+      ? (r.status_options as string[]).map(String)
+      : undefined,
   }));
 }
 
@@ -57,6 +60,7 @@ export async function replaceTableColumns(
       ...(col.frozen !== undefined ? { frozen: col.frozen } : {}),
       deletable: col.deletable,
       position: col.position,
+      ...(col.statusOptions?.length ? { status_options: col.statusOptions } : {}),
     });
   }
 }

@@ -1,9 +1,8 @@
 import type { TaskNotification } from '@veylin/shared';
-import { parseLegacySubagentWriteback, parseTaskNotification } from '@veylin/shared';
+import { parseTaskNotification } from '@veylin/shared';
 import { BotIcon, CheckCircle2Icon, XCircleIcon } from 'lucide-react';
 import { useState, type FC } from 'react';
 import { useTranslation } from 'react-i18next';
-import { cn } from '@/lib/utils';
 
 function statusIcon(status: TaskNotification['status']) {
   if (status === 'completed') return <CheckCircle2Icon className="size-3.5 text-emerald-600" />;
@@ -50,26 +49,8 @@ export function TaskNotificationCard({ notification }: { notification: TaskNotif
   );
 }
 
-export function tryParseSubagentUserText(text: string): TaskNotification | { legacy: true; label: string; body: string } | null {
-  const parsed = parseTaskNotification(text);
-  if (parsed) return parsed;
-  const legacy = parseLegacySubagentWriteback(text);
-  if (legacy) return { legacy: true, label: legacy.label, body: legacy.body };
-  return null;
-}
-
 export const SubagentUserMessageBody: FC<{ text: string }> = ({ text }) => {
-  const parsed = tryParseSubagentUserText(text);
+  const parsed = parseTaskNotification(text);
   if (!parsed) return <>{text}</>;
-  if ('legacy' in parsed) {
-    return (
-      <div className={cn('border-border/40 bg-muted/20 rounded border px-2 py-1.5 text-xs')}>
-        <span className="font-medium">[subagent:{parsed.label}]</span>
-        {parsed.body && (
-          <p className="text-muted-foreground mt-1 line-clamp-4 whitespace-pre-wrap">{parsed.body}</p>
-        )}
-      </div>
-    );
-  }
   return <TaskNotificationCard notification={parsed} />;
 };

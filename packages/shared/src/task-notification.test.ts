@@ -1,10 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  formatTaskNotification,
-  parseLegacySubagentWriteback,
-  parseTaskNotification,
-} from './task-notification';
+import { formatTaskNotification, parseTaskNotification } from './task-notification';
 
 describe('task-notification', () => {
   it('round-trips structured notifications', () => {
@@ -19,11 +15,5 @@ describe('task-notification', () => {
     const text = formatTaskNotification(original);
     const parsed = parseTaskNotification(text);
     assert.deepEqual(parsed, original);
-  });
-
-  it('parses legacy writeback', () => {
-    const legacy = parseLegacySubagentWriteback('[subagent:explore]\nFound files');
-    assert.equal(legacy?.label, 'explore');
-    assert.equal(legacy?.body, 'Found files');
   });
 });

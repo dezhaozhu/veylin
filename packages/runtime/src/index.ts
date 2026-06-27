@@ -30,6 +30,7 @@ export {
   listModelCatalogPublic,
   getDefaultCatalogModel,
   loadModelCatalog,
+  getCatalogModel,
   DEFAULT_MODEL,
   type ModelKey,
   type ModelConfig,

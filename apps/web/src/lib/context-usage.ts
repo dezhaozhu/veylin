@@ -81,9 +81,7 @@ function partToRoughText(part: unknown): string {
     case 'text':
     case 'reasoning':
       return typeof p.text === 'string' ? p.text : '';
-    case 'tool-call':
-    case 'tool-invocation':
-    case 'tool_use': {
+    case 'tool-call': {
       const toolName = p.toolName ?? p.name ?? '';
       const args =
         typeof p.argsText === 'string'
@@ -95,8 +93,7 @@ function partToRoughText(part: unknown): string {
               : '';
       return [toolName, args].filter(Boolean).join(' ');
     }
-    case 'tool-result':
-    case 'tool_result': {
+    case 'tool-result': {
       const content = p.result ?? p.output ?? p.text;
       if (typeof content === 'string') return content;
       if (content != null) return JSON.stringify(content);
@@ -110,6 +107,12 @@ function partToRoughText(part: unknown): string {
     case 'document':
       return ' '.repeat(2000);
     default:
+      if (typeof p.type === 'string' && p.type.startsWith('tool-')) {
+        const toolName = p.type.slice('tool-'.length);
+        const args = p.input != null ? JSON.stringify(p.input) : '';
+        const output = p.output != null ? JSON.stringify(p.output) : '';
+        return [toolName, args, output].filter(Boolean).join(' ');
+      }
       if (typeof p.text === 'string') return p.text;
       return JSON.stringify(p);
   }

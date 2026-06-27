@@ -11,11 +11,11 @@ import {
   CompositeAttachmentAdapter,
   SimpleImageAttachmentAdapter,
 } from '@assistant-ui/react';
-import { lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
+import { shouldAutoSendChat } from '@/lib/frontend-suspend-tools';
 import { FileAttachmentAdapter } from '@/lib/file-attachment-adapter';
 import { getChatSettings, setChatSettings } from '@/lib/chat-settings';
 import i18n, { resolveAppLanguage } from '@/i18n';
-import { consumeBranchEdit } from '@/lib/context-sync-ref';
+import { consumeForceReplaceNextChat } from '@/lib/chat-force-replace-ref';
 import { createResilientChatFetch } from '@/lib/create-resilient-chat-fetch';
 import { useNetworkConnectivity } from '@/lib/use-network-connectivity';
 import { useNetworkReconnectStore } from '@/lib/network-reconnect-store';
@@ -56,38 +56,6 @@ import {
   SidebarInset,
   SidebarProvider,
 } from '@/components/ui/sidebar';
-
-const FRONTEND_SUSPEND_TOOLS = ['ask_user_question', 'read_open_page'] as const;
-
-/** Do not auto-continue while a frontend-suspend tool awaits user/desktop action. */
-function sendAutomaticallyWhen({ messages }: { messages: UIMessage[] }) {
-  const last = messages.at(-1);
-  if (last?.role === 'assistant' && last.parts) {
-    for (const part of last.parts) {
-      const p = part as {
-        type?: string;
-        toolInvocation?: { toolName?: string; state?: string };
-        state?: string;
-      };
-      if (p.type === 'tool-invocation') {
-        const name = p.toolInvocation?.toolName;
-        if (
-          name &&
-          (FRONTEND_SUSPEND_TOOLS as readonly string[]).includes(name) &&
-          p.toolInvocation?.state !== 'result'
-        ) {
-          return false;
-        }
-      }
-      for (const toolName of FRONTEND_SUSPEND_TOOLS) {
-        if (p.type === `tool-${toolName}` && p.state !== 'output-available') {
-          return false;
-        }
-      }
-    }
-  }
-  return lastAssistantMessageIsCompleteWithToolCalls({ messages });
-}
 
 function ChatShell() {
   const aui = useAui();
@@ -152,7 +120,7 @@ export function AssistantChat() {
 
   const runtime = useVeylinChatRuntime({
     resume: true,
-    sendAutomaticallyWhen,
+    sendAutomaticallyWhen: shouldAutoSendChat,
     onError: (error) => {
       if (isAbortError(error) || isBenignChatError(error)) return;
       const formatted = formatChatError(error);
@@ -200,7 +168,7 @@ export function AssistantChat() {
           mcpEnabled: s.mcpEnabled,
           pendingSkill: s.pendingSkill ?? undefined,
           attachedBrowser: s.attachedBrowserTab ?? undefined,
-          branchEdit: consumeBranchEdit(),
+          forceReplace: consumeForceReplaceNextChat(),
           locale: resolveAppLanguage(i18n.resolvedLanguage ?? i18n.language),
         };
       },

@@ -181,6 +181,7 @@ export interface TableColumnRow {
   frozen?: boolean;
   deletable: boolean;
   position: number;
+  statusOptions?: string[];
 }
 
 export interface TableRowRecord {
@@ -214,8 +215,29 @@ export interface EntityRow {
   id: string;
   tenantId: string;
   name: string;
+  nameKey: string;
   type: string;
+  description?: string | null;
   documentId?: string | null;
+}
+
+export interface AgentCitationRow {
+  id: string;
+  tenantId: string;
+  threadId?: string | null;
+  query: string;
+  references: KnowledgeReference[];
+  createdAt?: string;
+}
+
+export interface KnowledgeReference {
+  refIndex: number;
+  chunkId: string;
+  documentId: string;
+  source: string;
+  text: string;
+  offset: number;
+  score?: number;
 }
 
 export interface RelatesRow {

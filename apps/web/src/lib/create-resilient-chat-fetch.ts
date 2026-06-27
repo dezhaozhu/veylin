@@ -122,6 +122,11 @@ async function reconnectingGetStream(
     try {
       const response = await baseFetch(input, init);
       if (response.status === 204) return response;
+      if (response.status === 404) {
+        resumableStorage.clear();
+        banner.clearTransientBanner();
+        return response;
+      }
       if (isPermanentHttpStatus(response.status)) return response;
       if (!response.ok) {
         await throwChatHttpError('stream_resume', response);
@@ -261,6 +266,10 @@ async function resilientChatPost(
           });
           await sleepMs(delayMs, signal);
           const resumed = await fetchResume();
+          if (resumed.status === 404) {
+            resumableStorage.clear();
+            banner.clearTransientBanner();
+          }
           if (!resumed.ok) {
             await throwChatHttpError('resume', resumed);
           }

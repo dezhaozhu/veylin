@@ -27,7 +27,6 @@ import {
   pickExternalStoreSharedOptions,
 } from "@assistant-ui/core";
 import type { ReadonlyJSONObject } from "assistant-stream/utils";
-import { sliceMessagesUntil } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/sliceMessagesUntil";
 import { toCreateMessage } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/toCreateMessage";
 import { vercelAttachmentAdapter } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/vercelAttachmentAdapter";
 import { AISDKMessageConverter } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/convertMessage";
@@ -37,6 +36,10 @@ import {
   aiSDKV6FormatAdapter,
 } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/adapters/aiSDKFormatAdapter";
 import {
+  sliceMessagesUntil,
+} from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/sliceMessagesUntil";
+import { sliceMessagesForLinearEdit } from "./slice-messages-for-linear-edit";
+import {
   useExternalHistory,
   toExportedMessageRepository,
 } from './use-external-history';
@@ -45,13 +48,16 @@ import { stampMessageWithSentAt } from "./message-timestamp";
 import { stampOutgoingUserMessage } from "./pending-skill-message";
 import { createMessageQueueWithDrafts } from "./create-message-queue-with-drafts";
 import { setComposerQueueRuntime } from "./composer-queue-runtime";
-import { setBranchEdit } from "./context-sync-ref";
-import { prepareThreadRewind } from "./prepare-thread-rewind";
 import { getChatSettings, setChatSettings } from "./chat-settings";
+import { setForceReplaceNextChat } from "./chat-force-replace-ref";
 import { stripAllPendingSkillTokens } from "./pending-skill-text";
 import { requestChatStop } from "./chat-stop";
 import {
-  getActiveBranchThreadMessages,
+  findFirstAwaitingFrontendToolIndex,
+  pendingFrontendToolCallId,
+  trimAssistantAfterAwaitingTool,
+} from "./frontend-suspend-tools";
+import {
   isThreadMessageInput,
   resolveThreadMessagesToUi,
 } from "./resolve-branch-ui-messages";
@@ -181,23 +187,12 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   const applyThreadMessagesToChat = (
     input: readonly UI_MESSAGE[] | readonly ThreadMessage[],
   ) => {
-    // Branch picker calls setMessages with bound UI messages only; onImport passes
-    // full ThreadMessage[]. Always resolve the active branch from the repository
-    // export when we are not given thread messages directly.
-    const threadMessages = isThreadMessageInput(input)
-      ? input
-      : getActiveBranchThreadMessages(runtimeRef.current.thread.export());
+    if (!isThreadMessageInput(input)) return;
 
     const uiMessages = resolveThreadMessagesToUi(
-      threadMessages,
+      input,
       messageCacheRef.current,
     );
-    if (uiMessages.length === 0 && threadMessages.length > 0) {
-      console.warn(
-        "[chat] branch switch could not resolve UI messages; keeping current chat state",
-      );
-      return;
-    }
     rememberUiMessages(uiMessages);
     chatHelpers.setMessages(uiMessages);
   };
@@ -344,6 +339,33 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     rememberUiMessages(chatHelpers.messages);
   }, [chatHelpers.messages]);
 
+  const stoppedFrontendToolIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const last = chatHelpers.messages.at(-1);
+    if (last?.role !== "assistant" || !last.parts?.length) return;
+
+    const pendingIndex = findFirstAwaitingFrontendToolIndex(last.parts);
+    if (pendingIndex < 0) return;
+
+    const pendingPart = last.parts[pendingIndex] as { toolCallId?: string; type?: string };
+    const toolCallId = pendingFrontendToolCallId(last, pendingIndex, pendingPart);
+    if (!stoppedFrontendToolIdsRef.current.has(toolCallId)) {
+      stoppedFrontendToolIdsRef.current.add(toolCallId);
+      chatHelpers.stop();
+      const threadId = getThreadId?.() ?? chatHelpers.id;
+      if (threadId) {
+        void requestChatStop(threadId).catch((err) => {
+          console.warn("[chat] frontend tool stop failed", err);
+        });
+      }
+    }
+
+    const trimmed = trimAssistantAfterAwaitingTool(chatHelpers.messages);
+    if (trimmed) {
+      chatHelpers.setMessages(trimmed as UI_MESSAGE[]);
+    }
+  }, [chatHelpers.messages, chatHelpers, getThreadId]);
+
   const stampedAssistantIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!isRunning) return;
@@ -466,31 +488,41 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     },
     onNew: handleNew,
     onEdit: async (message) => {
-      const createMessage = (
+      const createMessage = stripPendingSkillToken((
         customToCreateMessage ?? toCreateMessage
-      )<UI_MESSAGE>(message);
-
+      )<UI_MESSAGE>(message));
       const shouldRun = message.startRun ?? message.role === "user";
 
       if (!shouldRun) {
         chatHelpers.setMessages((current) => [
-          ...sliceMessagesUntil(current, message.parentId),
-          toUIMessage<UI_MESSAGE>(createMessage, message.role),
+          ...sliceMessagesForLinearEdit(current, message.sourceId, message.parentId),
+          toUIMessage<UI_MESSAGE>(
+            stampOutgoingUserMessage(createMessage),
+            message.role,
+          ),
         ]);
         return;
       }
 
-      await prepareThreadRewind(getThreadId?.(), {
-        isRunning,
-        stop: () => chatHelpers.stop(),
-      });
-      setBranchEdit(true);
+      const threadId = getThreadId?.();
+      if (threadId) {
+        try {
+          await requestChatStop(threadId);
+        } catch (err) {
+          console.warn("[chat] edit stop failed", err);
+        }
+      }
+      if (isRunning) chatHelpers.stop();
 
+      setForceReplaceNextChat(true);
       lastRunConfigRef.current = message.runConfig;
       await completePendingToolCalls();
-      chatHelpers.setMessages((current) =>
-        sliceMessagesUntil(current, message.parentId),
+      const sliced = sliceMessagesForLinearEdit(
+        chatHelpers.messages,
+        message.sourceId,
+        message.parentId,
       );
+      chatHelpers.setMessages(sliced);
       await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage), {
         metadata: message.runConfig,
       });
@@ -513,20 +545,6 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       chatHelpers.setMessages((current) =>
         current.filter((message) => !deleteIds.has(message.id)),
       );
-    },
-    onReload: async (parentId: string | null, config) => {
-      await prepareThreadRewind(getThreadId?.(), {
-        isRunning,
-        stop: () => chatHelpers.stop(),
-      });
-      setBranchEdit(true);
-
-      lastRunConfigRef.current = config.runConfig;
-      const newMessages = sliceMessagesUntil(chatHelpers.messages, parentId);
-      chatHelpers.setMessages(newMessages);
-
-      await chatHelpers.regenerate({ metadata: config.runConfig });
-      setChatSettings({ pendingSkill: null });
     },
     onAddToolResult: ({
       toolCallId,

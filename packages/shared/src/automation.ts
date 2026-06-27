@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFAULT_AGENT_ID } from './constants';
 
 export const automationKindSchema = z.enum(['cron', 'event']);
 /** Schedule automations use `cron`; event automations use a webhook source slug (e.g. `github`, `linear`). */
@@ -30,7 +31,7 @@ export type Automation = z.infer<typeof automationSchema>;
 export const automationInputSchema = z.object({
   name: z.string().min(1),
   kind: automationKindSchema,
-  agentId: z.string().default('veylin'),
+  agentId: z.string().default(DEFAULT_AGENT_ID),
   prompt: z.string().min(1),
   enabled: z.boolean().default(true),
   cron: z.string().optional(),

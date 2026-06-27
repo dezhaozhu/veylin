@@ -1,4 +1,5 @@
 import { createTool } from '@mastra/core/tools';
+import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { z } from 'zod';
 import type { QueuePort } from './queue';
 import {
@@ -30,7 +31,7 @@ export function buildAutomationTools(boss: QueuePort) {
     inputSchema: z.object({
       name: z.string(),
       kind: z.enum(['cron', 'event']).default('cron'),
-      agentId: z.string().default('veylin'),
+      agentId: z.string().default(DEFAULT_AGENT_ID),
       prompt: z.string(),
       cron: z.string().optional().describe('Cron expression for schedule kind'),
       timezone: z.string().default('UTC'),
@@ -46,7 +47,7 @@ export function buildAutomationTools(boss: QueuePort) {
       const row = await createAutomation(tenantId, userId, {
         name: input.name,
         kind: input.kind ?? 'cron',
-        agentId: input.agentId ?? 'veylin',
+        agentId: input.agentId ?? DEFAULT_AGENT_ID,
         prompt: input.prompt,
         enabled: input.enabled ?? true,
         cron: input.cron,

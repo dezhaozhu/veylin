@@ -27,9 +27,9 @@ function sharedPrefixLength(storedIds: string[], clientIds: string[]): number {
 export function shouldReplaceFromClient(
   stored: StoredMessage[],
   client: UiMessage[],
-  branchEdit?: boolean,
+  forceReplace?: boolean,
 ): boolean {
-  if (branchEdit) return true;
+  if (forceReplace) return true;
   if (client.length === 0) return false;
   if (stored.length === 0) return true;
   if (client.length < stored.length) return true;
@@ -64,7 +64,7 @@ export async function syncThreadMessagesFromClient(opts: {
   memory: Memory;
   identity: ThreadIdentity;
   clientMessages: UiMessage[];
-  branchEdit?: boolean;
+  forceReplace?: boolean;
 }): Promise<boolean> {
   const recalled = await opts.memory.recall({
     threadId: opts.identity.threadId,
@@ -73,7 +73,7 @@ export async function syncThreadMessagesFromClient(opts: {
   });
   const stored = recalled.messages ?? [];
 
-  if (!shouldReplaceFromClient(stored, opts.clientMessages, opts.branchEdit)) {
+  if (!shouldReplaceFromClient(stored, opts.clientMessages, opts.forceReplace)) {
     return false;
   }
 

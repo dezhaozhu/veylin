@@ -9,7 +9,7 @@ export const agentDefinitionSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().default(''),
-  model: z.enum(['deepseek', 'zenmux']).default('deepseek'),
+  model: z.string().default('default'),
   instructions: z.string(),
   skills: z.array(z.string()).default([]),
   tools: z.array(z.string()).default([]),
@@ -25,6 +25,8 @@ export const agentDefinitionSchema = z.object({
    * builtin tools (no tool_search discovery gating). Used by the main agent.
    */
   fullToolset: z.boolean().default(false),
+  /** Demo / vertical agent packs — not loaded unless VEYLIN_LOAD_OPTIONAL_AGENTS=1. */
+  optional: z.boolean().default(false),
   /** Optional cron schedules: run this agent automatically on a cron expression. */
   schedules: z
     .array(

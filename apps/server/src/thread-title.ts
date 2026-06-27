@@ -1,4 +1,4 @@
-import { getModelConfig, type ModelKey } from '@veylin/runtime';
+import { getModelConfig, DEFAULT_MODEL, type ModelKey } from '@veylin/runtime';
 
 const TITLE_MAX_LEN = 60;
 
@@ -37,7 +37,7 @@ export function firstUserText(messages: readonly unknown[]): string {
  */
 export async function generateThreadTitle(
   messages: readonly unknown[],
-  modelKey: ModelKey = 'deepseek',
+  modelKey: ModelKey = DEFAULT_MODEL,
 ): Promise<string> {
   const prompt = firstUserText(messages);
   if (!prompt) return 'New Chat';

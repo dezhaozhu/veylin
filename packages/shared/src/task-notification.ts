@@ -93,13 +93,6 @@ export function parseTaskNotification(text: string): TaskNotification | null {
   return notification;
 }
 
-/** Legacy writeback prefix `[subagent:label]` for backwards compatibility. */
-export function parseLegacySubagentWriteback(text: string): { label: string; body: string } | null {
-  const m = text.match(/^\[subagent:([^\]]+)\]\n?([\s\S]*)$/);
-  if (!m) return null;
-  return { label: m[1] ?? 'agent', body: m[2] ?? '' };
-}
-
 function escapeXml(s: string): string {
   return s
     .replace(/&/g, '&amp;')

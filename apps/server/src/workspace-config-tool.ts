@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { Runtime } from '@veylin/runtime';
+import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import type { QueuePort } from './queue';
 import {
   createCustomSkill,
@@ -104,7 +105,7 @@ export function buildWorkspaceConfigTool(opts: BuildWorkspaceConfigToolOptions) 
       resource: resourceSchema,
       action: actionSchema,
       id: z.string().optional().describe('Resource id (required for update/delete/trigger).'),
-      agentId: z.string().optional().describe('Agent scope for skill list (default veylin).'),
+      agentId: z.string().optional().describe(`Agent scope for skill list (default ${DEFAULT_AGENT_ID}).`),
       name: z.string().optional(),
       description: z.string().optional(),
       content: z.string().optional().describe('Skill body (SKILL.md-style).'),
@@ -164,7 +165,7 @@ async function runSkillAction(
   input: ConfigInput,
   opts: { tenantId: string; runtime: Runtime },
 ) {
-  const agentId = input.agentId ?? 'veylin';
+  const agentId = input.agentId ?? DEFAULT_AGENT_ID;
 
   if (input.action === 'list') {
     const rows = await listMergedSkills(opts.runtime, opts.tenantId, agentId);
@@ -370,7 +371,7 @@ async function runAutomationAction(
     const row = await createAutomation(opts.tenantId, opts.userId, {
       name: input.name,
       kind: input.kind ?? 'cron',
-      agentId: input.agentId ?? 'veylin',
+      agentId: input.agentId ?? DEFAULT_AGENT_ID,
       prompt: input.prompt,
       enabled: input.enabled ?? true,
       cron: input.cron,

@@ -5,4 +5,5 @@ export * from './types';
 export * from './repos';
 export * from './table-repos';
 export * from './rag-repos';
+export * from './vector-index';
 export * from './workflow-repos';

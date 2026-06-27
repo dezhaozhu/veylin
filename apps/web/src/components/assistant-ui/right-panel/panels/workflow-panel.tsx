@@ -15,6 +15,7 @@ import {
   Position,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import type { PanelContentProps } from '../panel-types';
@@ -114,7 +115,7 @@ function defaultData(kind: NodeKind): Record<string, unknown> {
     case 'knowledge_retrieval':
       return { query: '' };
     case 'run_agent':
-      return { prompt: '', agentId: 'veylin' };
+      return { prompt: '', agentId: DEFAULT_AGENT_ID };
     case 'table_read':
       return { sheetId: 'main' };
     case 'table_write':
@@ -1039,7 +1040,7 @@ function NodeForm({
       return (
         <>
           <Labeled label="Agent ID">
-            <input className={inputCls} value={selData('agentId', 'veylin')} onChange={(e) => patchSelected({ agentId: e.target.value })} />
+            <input className={inputCls} value={selData('agentId', DEFAULT_AGENT_ID)} onChange={(e) => patchSelected({ agentId: e.target.value })} />
           </Labeled>
           <Labeled label={t('wf.form.prompt')}>
             <textarea className={inputCls} rows={5} value={selData('prompt', '')} onChange={(e) => patchSelected({ prompt: e.target.value })} />

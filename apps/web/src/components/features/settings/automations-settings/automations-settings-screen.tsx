@@ -11,6 +11,7 @@ import {
   Workflow,
 } from 'lucide-react';
 import type { Automation, AutomationRun, WebhookEndpoint } from '@/hooks/settings/api';
+import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { settingsApi } from '@/hooks/settings/api';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import {
@@ -179,7 +180,7 @@ function AutomationCard({
 const EMPTY_FORM = {
   name: '',
   kind: 'cron' as 'cron' | 'event',
-  agentId: 'veylin',
+  agentId: DEFAULT_AGENT_ID,
   prompt: '',
   cron: '0 9 * * 1-5',
   timezone: 'UTC',
