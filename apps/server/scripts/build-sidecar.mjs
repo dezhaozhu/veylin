@@ -216,6 +216,31 @@ function pruneOnnxGpuProviders(onnxBinDir) {
   return removed;
 }
 
+/** Remove GPU ONNX Runtime provider libs from every nested onnxruntime-node copy. */
+function pruneAllOnnxGpuProviders(sidecarRoot) {
+  const nodeModules = join(sidecarRoot, 'node_modules');
+  if (!existsSync(nodeModules)) return 0;
+
+  const gpuProviderNames = [
+    'providers_cuda',
+    'providers_tensorrt',
+    'providers_openvino',
+    'providers_rocm',
+  ];
+  let removed = 0;
+
+  walkFiles(nodeModules, (file) => {
+    if (!file.includes('onnxruntime')) return;
+    const name = file.split(/[\\/]/).pop() ?? '';
+    if (gpuProviderNames.some((provider) => name.includes(provider))) {
+      rmSync(file, { force: true });
+      removed += 1;
+    }
+  });
+
+  return removed;
+}
+
 function stripSidecarArtifacts(sidecarRoot) {
   const dropDirs = new Set(['test', 'tests', '__tests__', 'benchmark', 'benchmarks', 'example', 'examples']);
   const nodeModules = join(sidecarRoot, 'node_modules');
@@ -285,6 +310,11 @@ function pruneSidecarForTarget(sidecarRoot, triple) {
     if (removedGpuProviders > 0) {
       console.log(`[build-sidecar] removed ${removedGpuProviders} ONNX Runtime GPU provider binaries`);
     }
+  }
+
+  const removedNestedGpu = pruneAllOnnxGpuProviders(sidecarRoot);
+  if (removedNestedGpu > 0) {
+    console.log(`[build-sidecar] removed ${removedNestedGpu} nested ONNX Runtime GPU provider binaries`);
   }
 
   for (const pkg of ['typescript', '@types']) {
