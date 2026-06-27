@@ -100,6 +100,7 @@ const NATIVE_PRUNE = {
       '@napi-rs': ['canvas', 'wasm-runtime', 'canvas-linux-arm64-gnu'],
       '@anush008': ['tokenizers', 'tokenizers-linux-arm64-gnu'],
       '@libsql': ['client', 'core', 'hrana-client', 'isomorphic-ws', 'linux-arm64-gnu'],
+      '@img': ['colour', 'sharp-linux-arm64', 'sharp-libvips-linux-arm64'],
     },
   },
   'x86_64-unknown-linux-gnu': {
@@ -110,6 +111,7 @@ const NATIVE_PRUNE = {
       '@napi-rs': ['canvas', 'wasm-runtime', 'canvas-linux-x64-gnu'],
       '@anush008': ['tokenizers', 'tokenizers-linux-x64-gnu'],
       '@libsql': ['client', 'core', 'hrana-client', 'isomorphic-ws', 'linux-x64-gnu'],
+      '@img': ['colour', 'sharp-linux-x64', 'sharp-libvips-linux-x64'],
     },
   },
   'x86_64-pc-windows-msvc': {
@@ -158,7 +160,7 @@ function pruneMuslSafetyNet(nodeModules, triple) {
     if (!scope.startsWith('@')) continue;
     const scopeDir = join(nodeModules, scope);
     for (const pkg of readdirSync(scopeDir)) {
-      if (pkg.includes('-musl')) {
+      if (pkg.includes('musl')) {
         rmSync(join(scopeDir, pkg), { recursive: true, force: true });
         console.log(`[build-sidecar] removed musl package ${scope}/${pkg}`);
       }
