@@ -433,6 +433,10 @@
     "rateLimited": { "title": "请求过于频繁", "detail": "请求太多，请稍候再试。" },
     "serverError": { "title": "服务器错误", "detail": "服务器出现问题，请稍后重试。" },
     "serviceBusy": { "title": "服务繁忙", "detail": "服务暂时不可用，请稍后重试。" },
+    "backendUnavailable": {
+      "title": "后端不可用",
+      "detail": "后端服务不可用 (HTTP {{status}})，请确认 server 已在 :8787 运行"
+    },
     "gatewayTimeout": { "title": "网关超时", "detail": "请求耗时过长，请重试。" },
     "requestFailed": { "title": "请求失败" },
     "requestFailedHttp": "请求失败 (HTTP {{status}})",

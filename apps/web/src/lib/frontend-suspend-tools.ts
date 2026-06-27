@@ -13,21 +13,6 @@ type ToolPart = {
   toolCallId?: string;
 };
 
-const frontendToolStopPromises = new Map<string, Promise<unknown>>();
-
-export function registerFrontendToolStop(toolCallId: string, promise: Promise<unknown>): void {
-  frontendToolStopPromises.set(toolCallId, promise);
-  void promise.finally(() => {
-    if (frontendToolStopPromises.get(toolCallId) === promise) {
-      frontendToolStopPromises.delete(toolCallId);
-    }
-  });
-}
-
-export async function waitForFrontendToolStop(toolCallId: string): Promise<void> {
-  await frontendToolStopPromises.get(toolCallId)?.catch(() => undefined);
-}
-
 export function getFrontendSuspendToolName(part: ToolPart): FrontendSuspendToolName | null {
   const type = part.type;
   if (!type?.startsWith('tool-')) return null;
@@ -74,6 +59,13 @@ export function findFirstAwaitingFrontendToolIndex(parts: unknown[] | undefined)
   return parts.findIndex(isAwaitingFrontendToolPart);
 }
 
+/** Last assistant message is blocked on a client-side suspend tool (e.g. ask_user_question). */
+export function isAwaitingFrontendToolAnswer(messages: UIMessage[]): boolean {
+  const last = messages.at(-1);
+  if (last?.role !== 'assistant' || !last.parts?.length) return false;
+  return findFirstAwaitingFrontendToolIndex(last.parts) >= 0;
+}
+
 function lastStepParts(message: UIMessage): unknown[] {
   const parts = message.parts ?? [];
   const lastStepStartIndex = parts.reduce((lastIndex, part, index) => {
@@ -88,21 +80,62 @@ function isToolPartComplete(part: unknown): boolean {
   return toolPart.state === 'output-available' || toolPart.state === 'output-error';
 }
 
+/** True when the model already produced a user-facing reply after the tool. */
+function hasAssistantReplyAfter(parts: unknown[], afterIndex: number): boolean {
+  for (let i = afterIndex + 1; i < parts.length; i += 1) {
+    const part = parts[i];
+    if (!part || typeof part !== 'object') continue;
+    const type = (part as { type?: string }).type;
+    if (type === 'step-start') continue;
+    if (type === 'text' && (part as { text?: string }).text?.trim()) return true;
+  }
+  return false;
+}
+
 /**
  * Server-started frontend tools set `providerExecuted`, which makes
  * `lastAssistantMessageIsCompleteWithToolCalls` ignore them. After the client
  * fills in answers we must still auto-continue the chat.
  */
-function frontendSuspendToolsReadyInStep(stepParts: unknown[]): boolean {
-  const frontendParts = stepParts.filter((part) =>
-    getFrontendSuspendToolName(part as ToolPart),
-  );
-  if (frontendParts.length === 0) return false;
-  return frontendParts.every((part) => {
-    const toolName = getFrontendSuspendToolName(part as ToolPart)!;
+function findLastCompletedFrontendSuspendToolIndex(parts: unknown[]): number {
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const part = parts[i];
+    const toolName = getFrontendSuspendToolName(part as ToolPart);
+    if (!toolName) continue;
+    if (!isToolPartComplete(part)) return -1;
     const p = part as ToolPart;
-    return isToolPartComplete(part) && hasFrontendToolOutput(toolName, p.output);
-  });
+    if (!hasFrontendToolOutput(toolName, p.output)) return -1;
+    return i;
+  }
+  return -1;
+}
+
+function messageNeedsFrontendSuspendContinuation(parts: unknown[]): boolean {
+  const toolIndex = findLastCompletedFrontendSuspendToolIndex(parts);
+  if (toolIndex < 0) return false;
+  return !hasAssistantReplyAfter(parts, toolIndex);
+}
+
+/** Server-executed tools (e.g. web_fetch) set providerExecuted; AI SDK ignores them in auto-send. */
+function findLastCompletedServerToolIndex(parts: unknown[]): number {
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const part = parts[i];
+    if (!isToolUIPart(part as never)) continue;
+    if (getFrontendSuspendToolName(part as ToolPart)) continue;
+    if (!isToolPartComplete(part)) return -1;
+    return i;
+  }
+  return -1;
+}
+
+/**
+ * Mastra may emit `step-start` for the next agent step while ending the stream.
+ * The completed server tool then sits in a prior step, so last-step-only checks miss it.
+ */
+function messageNeedsServerToolContinuation(parts: unknown[]): boolean {
+  const toolIndex = findLastCompletedServerToolIndex(parts);
+  if (toolIndex < 0) return false;
+  return !hasAssistantReplyAfter(parts, toolIndex);
 }
 
 /** Whether the chat runtime may auto-send the next model turn. */
@@ -128,7 +161,11 @@ export function shouldAutoSendChat({
       pendingClientTools.length === 0 ||
       pendingClientTools.every(isToolPartComplete);
 
-    if (frontendSuspendToolsReadyInStep(stepParts) && clientToolsReady) {
+    if (clientToolsReady && messageNeedsFrontendSuspendContinuation(last.parts)) {
+      return true;
+    }
+
+    if (clientToolsReady && messageNeedsServerToolContinuation(last.parts)) {
       return true;
     }
   }

@@ -1,11 +1,11 @@
 {
   "name": "@veylin/desktop",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "type": "module",
   "scripts": {
     "tauri": "tauri",
-    "dev": "node scripts/prep-dev.mjs && node scripts/ensure-sidecar.mjs && node scripts/ensure-server.mjs && VEYLIN_SKIP_SIDECAR=1 npm run tauri -- dev",
+    "dev": "node scripts/prep-dev.mjs && node scripts/ensure-sidecar.mjs && VEYLIN_SKIP_SIDECAR=1 node scripts/ensure-server.mjs && VEYLIN_SKIP_SIDECAR=1 npm run tauri -- dev",
     "build": "node scripts/build.mjs"
   },
   "devDependencies": {

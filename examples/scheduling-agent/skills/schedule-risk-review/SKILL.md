@@ -10,7 +10,7 @@
 
 1. 用 `table_list_sheets` 确认 sheet，再用 `table_get` 读取相关行。
 2. 对紧张/逾期项，分析瓶颈列（资源、计划起止、数量等）。
-3. 用 `todo_write` 列出建议的变更步骤；写表走 `table_set_cell` / `table_update_row`，删除类操作需审批。
+3. 用 `todo_write` 列出建议的变更步骤；写表走 `table_set_cell` / `table_update_row`。
 4. 给出结论：风险等级 + 关键原因 + 建议动作。
 
 ## 输出格式

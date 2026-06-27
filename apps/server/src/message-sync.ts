@@ -1,5 +1,5 @@
 import type { Memory } from '@mastra/memory';
-import { filterPersistableUiMessageParts } from '@veylin/shared';
+import { filterPersistableUiMessageParts, coerceSanitizableUiParts } from '@veylin/shared';
 import type { TodoItem } from '@veylin/tools';
 
 export type UiMessage = {
@@ -66,7 +66,7 @@ export function uiMessagesToMastra(
         : m.content
           ? [{ type: 'text', text: m.content }]
           : [{ type: 'text', text: '' }];
-    const parts = filterPersistableUiMessageParts(rawParts);
+    const parts = filterPersistableUiMessageParts(coerceSanitizableUiParts(rawParts));
     return {
       id: m.id ?? crypto.randomUUID(),
       role: m.role,
@@ -82,12 +82,18 @@ export function uiMessagesToMastra(
 export function mastraMessagesToUi(
   messages: Array<{ id?: string; role?: string; content?: { parts?: unknown[] } }>,
 ): UiMessage[] {
-  return messages.map((m) => ({
-    id: m.id,
-    role: m.role ?? 'assistant',
-    parts: filterPersistableUiMessageParts(m.content?.parts ?? []),
-    content: partText(m.content?.parts),
-  }));
+  const out: UiMessage[] = [];
+  for (const m of messages) {
+    const parts = filterPersistableUiMessageParts(coerceSanitizableUiParts(m.content?.parts ?? []));
+    if (parts.length === 0) continue;
+    out.push({
+      id: m.id,
+      role: m.role ?? 'assistant',
+      parts,
+      content: partText(parts),
+    });
+  }
+  return out;
 }
 
 /** Replace all messages in a Mastra thread with the given UI snapshot. */

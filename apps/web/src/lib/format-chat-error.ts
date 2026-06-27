@@ -23,8 +23,14 @@ function parseHttpChatError(raw: string): FormattedChatError | null {
   const byStatus: Record<number, { title: string; detail: string }> = {
     429: { title: ce('rateLimited.title'), detail: ce('rateLimited.detail') },
     500: { title: ce('serverError.title'), detail: ce('serverError.detail') },
-    502: { title: ce('serviceBusy.title'), detail: ce('serviceBusy.detail') },
-    503: { title: ce('serviceBusy.title'), detail: ce('serviceBusy.detail') },
+    502: {
+      title: ce('backendUnavailable.title'),
+      detail: ce('backendUnavailable.detail', { status: 502 }),
+    },
+    503: {
+      title: ce('backendUnavailable.title'),
+      detail: ce('backendUnavailable.detail', { status: 503 }),
+    },
     504: { title: ce('gatewayTimeout.title'), detail: ce('gatewayTimeout.detail') },
   };
 

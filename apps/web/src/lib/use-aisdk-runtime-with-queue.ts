@@ -55,10 +55,16 @@ import { requestChatStop } from "./chat-stop";
 import { useNetworkReconnectStore } from "./network-reconnect-store";
 import {
   findFirstAwaitingFrontendToolIndex,
+  FRONTEND_SUSPEND_TOOL_NAMES,
+  isAwaitingFrontendToolAnswer,
   pendingFrontendToolCallId,
-  registerFrontendToolStop,
   trimAssistantAfterAwaitingTool,
 } from "./frontend-suspend-tools";
+import {
+  createFrontendToolContinuationController,
+  requestFrontendToolContinuation,
+  tryContinueFrontendToolChat,
+} from "./frontend-tool-continuation";
 import {
   isThreadMessageInput,
   resolveThreadMessagesToUi,
@@ -202,10 +208,14 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   const hasExecutingTools = Object.values(toolStatuses).some(
     (s) => s?.type === "executing",
   );
+  const awaitingFrontendToolAnswer = isAwaitingFrontendToolAnswer(
+    chatHelpers.messages,
+  );
   const isRunning =
     chatHelpers.status === "submitted" ||
     chatHelpers.status === "streaming" ||
-    hasExecutingTools;
+    hasExecutingTools ||
+    awaitingFrontendToolAnswer;
 
   const messageTiming = useStreamingTiming(chatHelpers.messages, isRunning);
 
@@ -342,6 +352,35 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   }, [chatHelpers.messages]);
 
   const stoppedFrontendToolIdsRef = useRef<Set<string>>(new Set());
+  const frontendContinuationRef = useRef(createFrontendToolContinuationController());
+
+  const stopFrontendToolStream = (reason: string) => {
+    chatHelpersRef.current.stop();
+    const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
+    if (threadId) {
+      void requestChatStop(threadId).catch((err) => {
+        console.warn(`[chat] frontend tool ${reason} stop failed`, err);
+      });
+    }
+  };
+
+  const continueFrontendToolIfReady = () => {
+    void tryContinueFrontendToolChat({
+      controller: frontendContinuationRef.current,
+      getStatus: () => chatHelpersRef.current.status,
+      getMessages: () => chatHelpersRef.current.messages,
+      stopStream: () => stopFrontendToolStream("continue"),
+      sendMessage: () =>
+        chatHelpersRef.current.sendMessage(undefined, {
+          metadata: lastRunConfigRef.current,
+        }),
+    });
+  };
+
+  useEffect(() => {
+    continueFrontendToolIfReady();
+  }, [chatHelpers.status, chatHelpers.messages]);
+
   useEffect(() => {
     const last = chatHelpers.messages.at(-1);
     if (last?.role !== "assistant" || !last.parts?.length) return;
@@ -353,14 +392,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     const toolCallId = pendingFrontendToolCallId(last, pendingIndex, pendingPart);
     if (!stoppedFrontendToolIdsRef.current.has(toolCallId)) {
       stoppedFrontendToolIdsRef.current.add(toolCallId);
-      chatHelpers.stop();
-      const threadId = getThreadId?.() ?? chatHelpers.id;
-      const stopPromise = threadId
-        ? requestChatStop(threadId).catch((err) => {
-            console.warn("[chat] frontend tool stop failed", err);
-          })
-        : Promise.resolve();
-      registerFrontendToolStop(toolCallId, stopPromise);
+      stopFrontendToolStream("open");
     }
 
     const trimmed = trimAssistantAfterAwaitingTool(chatHelpers.messages);
@@ -558,27 +590,40 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     }) => {
       useNetworkReconnectStore.getState().clearReconnecting();
       const options = { metadata: lastRunConfigRef.current };
-      if (isError) {
-        chatHelpers.addToolOutput({
-          state: "output-error",
-          tool: toolName ?? toolCallId,
-          toolCallId,
-          errorText:
-            typeof result === "string" ? result : JSON.stringify(result),
-          options,
-        });
-      } else {
-        const output =
-          modelContent !== undefined
-            ? wrapModelContentEnvelope(result, modelContent)
-            : result;
-        chatHelpers.addToolResult({
-          tool: toolName,
-          toolCallId,
-          output,
-          options,
-        });
-      }
+      const isFrontendSuspend =
+        toolName != null &&
+        (FRONTEND_SUSPEND_TOOL_NAMES as readonly string[]).includes(toolName);
+
+      void (async () => {
+        if (isError) {
+          await chatHelpers.addToolOutput({
+            state: "output-error",
+            tool: toolName ?? toolCallId,
+            toolCallId,
+            errorText:
+              typeof result === "string" ? result : JSON.stringify(result),
+            options,
+          });
+        } else {
+          const output =
+            modelContent !== undefined
+              ? wrapModelContentEnvelope(result, modelContent)
+              : result;
+          await chatHelpers.addToolResult({
+            tool: toolName,
+            toolCallId,
+            output,
+            options,
+          });
+        }
+
+        if (!isFrontendSuspend) return;
+
+        requestFrontendToolContinuation(
+          frontendContinuationRef.current,
+          continueFrontendToolIfReady,
+        );
+      })();
     },
     onRespondToToolApproval: ({ approvalId, approved, reason }) => {
       void chatHelpers.addToolApprovalResponse({

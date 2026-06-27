@@ -13,7 +13,7 @@ import { RuntimeAdapterProvider } from '@assistant-ui/core/react';
 import { type AssistantClient, useAui } from '@assistant-ui/store';
 import { generateId, type UIMessage } from 'ai';
 import { extractSentAtFromParts, stampMessageWithSentAt } from '@/lib/message-timestamp';
-import { isObsoleteUiMessagePart } from '@veylin/shared';
+import { isObsoleteUiMessagePart, sanitizeUiMessagePartsForDisplay, coerceSanitizableUiParts } from '@veylin/shared';
 
 type StoredUiMessage = {
   id?: string;
@@ -68,7 +68,8 @@ export function storedMessageToUiMessage(msg: StoredUiMessage): UIMessage {
       : msg.content
         ? [{ type: 'text' as const, text: msg.content }]
         : [];
-  const parts = rawParts.map(normalizePart).filter((part) => {
+  const normalizedParts = coerceSanitizableUiParts(rawParts.map(normalizePart));
+  const parts = sanitizeUiMessagePartsForDisplay(normalizedParts).filter((part) => {
     if (!part || typeof part !== 'object') return false;
     if (isObsoleteUiMessagePart(part)) return false;
     const p = part as { type?: string; text?: string };

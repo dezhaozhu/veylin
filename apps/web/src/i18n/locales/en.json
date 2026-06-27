@@ -433,6 +433,10 @@
     "rateLimited": { "title": "Rate limited", "detail": "Too many requests. Please wait a moment and try again." },
     "serverError": { "title": "Server error", "detail": "The server ran into a problem. Please try again later." },
     "serviceBusy": { "title": "Service busy", "detail": "The service is temporarily unavailable. Please retry shortly." },
+    "backendUnavailable": {
+      "title": "Backend unavailable",
+      "detail": "Backend unavailable (HTTP {{status}}). Please ensure the server is running on :8787"
+    },
     "gatewayTimeout": { "title": "Gateway timeout", "detail": "The request took too long. Please try again." },
     "requestFailed": { "title": "Request failed" },
     "requestFailedHttp": "Request failed (HTTP {{status}})",

@@ -17,11 +17,6 @@ import {
 const rowSchema = z.record(z.string(), z.union([z.string(), z.number()]));
 const cellValueSchema = z.union([z.string(), z.number()]);
 
-function withApproval<T>(tool: T): T {
-  (tool as { requireApproval?: boolean }).requireApproval = true;
-  return tool;
-}
-
 /**
  * Generic spreadsheet/table tools backed by the multi-sheet grid store.
  */
@@ -134,27 +129,25 @@ export function buildTableTools() {
     },
   });
 
-  const tableDeleteRows = withApproval(
-    createTool({
-      id: 'table_delete_rows',
-      description: 'Delete rows by row_key values.',
-      inputSchema: z.object({
-        sheet: z.string().optional().describe('Sheet id. Defaults to main.'),
-        row_keys: z.array(z.string()).min(1).describe('Row ids or primary keys to delete.'),
-      }),
-      outputSchema: z.object({
-        ok: z.boolean(),
-        sheet: z.string(),
-        removed: z.number(),
-        message: z.string(),
-      }),
-      execute: async (input) => {
-        const sheet = resolveTableSheetId(input.sheet);
-        const removed = deleteTableRows(sheet, input.row_keys);
-        return { ok: removed > 0, sheet, removed, message: `Deleted ${removed} row(s)` };
-      },
+  const tableDeleteRows = createTool({
+    id: 'table_delete_rows',
+    description: 'Delete rows by row_key values.',
+    inputSchema: z.object({
+      sheet: z.string().optional().describe('Sheet id. Defaults to main.'),
+      row_keys: z.array(z.string()).min(1).describe('Row ids or primary keys to delete.'),
     }),
-  );
+    outputSchema: z.object({
+      ok: z.boolean(),
+      sheet: z.string(),
+      removed: z.number(),
+      message: z.string(),
+    }),
+    execute: async (input) => {
+      const sheet = resolveTableSheetId(input.sheet);
+      const removed = deleteTableRows(sheet, input.row_keys);
+      return { ok: removed > 0, sheet, removed, message: `Deleted ${removed} row(s)` };
+    },
+  });
 
   const tableAddColumn = createTool({
     id: 'table_add_column',
@@ -182,30 +175,28 @@ export function buildTableTools() {
     },
   });
 
-  const tableDeleteColumn = withApproval(
-    createTool({
-      id: 'table_delete_column',
-      description: 'Delete a column by its key. Frozen columns cannot be deleted.',
-      inputSchema: z.object({
-        sheet: z.string().optional().describe('Sheet id. Defaults to main.'),
-        column: z.string().describe('Column key to delete.'),
-      }),
-      outputSchema: z.object({
-        ok: z.boolean(),
-        sheet: z.string(),
-        message: z.string(),
-      }),
-      execute: async (input) => {
-        const sheet = resolveTableSheetId(input.sheet);
-        const ok = deleteTableColumn(sheet, input.column);
-        return {
-          ok,
-          sheet,
-          message: ok ? `Deleted column ${input.column}` : `Failed to delete column ${input.column}`,
-        };
-      },
+  const tableDeleteColumn = createTool({
+    id: 'table_delete_column',
+    description: 'Delete a column by its key. Frozen columns cannot be deleted.',
+    inputSchema: z.object({
+      sheet: z.string().optional().describe('Sheet id. Defaults to main.'),
+      column: z.string().describe('Column key to delete.'),
     }),
-  );
+    outputSchema: z.object({
+      ok: z.boolean(),
+      sheet: z.string(),
+      message: z.string(),
+    }),
+    execute: async (input) => {
+      const sheet = resolveTableSheetId(input.sheet);
+      const ok = deleteTableColumn(sheet, input.column);
+      return {
+        ok,
+        sheet,
+        message: ok ? `Deleted column ${input.column}` : `Failed to delete column ${input.column}`,
+      };
+    },
+  });
 
   const tableCreateSheet = createTool({
     id: 'table_create_sheet',
@@ -225,23 +216,21 @@ export function buildTableTools() {
     },
   });
 
-  const tableDeleteSheet = withApproval(
-    createTool({
-      id: 'table_delete_sheet',
-      description: 'Delete a sheet by id. At least one sheet must remain.',
-      inputSchema: z.object({
-        sheet: z.string().describe('Sheet id to delete.'),
-      }),
-      outputSchema: z.object({
-        ok: z.boolean(),
-        message: z.string(),
-      }),
-      execute: async (input) => {
-        const ok = await deleteTableSheet(input.sheet);
-        return { ok, message: ok ? `Deleted sheet ${input.sheet}` : 'Failed to delete sheet' };
-      },
+  const tableDeleteSheet = createTool({
+    id: 'table_delete_sheet',
+    description: 'Delete a sheet by id. At least one sheet must remain.',
+    inputSchema: z.object({
+      sheet: z.string().describe('Sheet id to delete.'),
     }),
-  );
+    outputSchema: z.object({
+      ok: z.boolean(),
+      message: z.string(),
+    }),
+    execute: async (input) => {
+      const ok = await deleteTableSheet(input.sheet);
+      return { ok, message: ok ? `Deleted sheet ${input.sheet}` : 'Failed to delete sheet' };
+    },
+  });
 
   const tableListSheets = createTool({
     id: 'table_list_sheets',

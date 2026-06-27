@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 /**
  * Ensure the BFF sidecar is listening before Tauri opens the webview.
- * Dev: always use apps/server/dist/sidecar (not stale target/debug copy).
- * Pair with VEYLIN_SKIP_SIDECAR=1 so Tauri does not spawn a second process on :8787.
+ * Desktop dev (VEYLIN_SKIP_SIDECAR=1): tsx + watchdog (current source, auto-restart).
+ * Production / bundled dev: apps/server/dist/sidecar.
  */
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(scriptDir, '../../..');
 const port = process.env.PORT ?? '8787';
 const healthUrl = `http://127.0.0.1:${port}/health`;
 function resolveDevDataDir() {
@@ -66,20 +67,24 @@ function sidecarBundleReady() {
   );
 }
 
-async function main() {
-  const entry = sidecarEntry();
-  if (!existsSync(entry)) {
-    throw new Error(`sidecar entry not found: ${entry} (run build:sidecar first)`);
-  }
+function useDevTsxServer() {
+  if (process.env.VEYLIN_USE_BUNDLED_SIDECAR === '1') return false;
+  return process.env.VEYLIN_SKIP_SIDECAR === '1';
+}
 
-  // After prep-dev kills :8787, probe should fail; if an old process survived, still start fresh
-  // when VEYLIN_SKIP_SIDECAR=1 (desktop dev — single sidecar from this script).
-  const skipTauriSidecar = process.env.VEYLIN_SKIP_SIDECAR === '1';
+function spawnDevServerWatchdog(serverEnv) {
+  const watchdog = resolve(scriptDir, 'run-server-dev.mjs');
+  console.log(`[ensure-server] starting dev server watchdog (tsx) on :${port}...`);
+  const child = spawn(process.execPath, [watchdog], {
+    env: serverEnv,
+    stdio: 'ignore',
+    detached: true,
+  });
+  child.unref();
+}
+
+async function main() {
   if (await probe()) {
-    if (skipTauriSidecar) {
-      console.log(`[ensure-server] sidecar already ready on :${port}`);
-      return;
-    }
     console.log(`[ensure-server] sidecar already ready on :${port}`);
     return;
   }
@@ -93,6 +98,18 @@ async function main() {
     VEYLIN_MODEL_CATALOG_PATH: catalogPath,
     PORT: port,
   };
+
+  if (useDevTsxServer()) {
+    spawnDevServerWatchdog(serverEnv);
+    await waitForHealth();
+    console.log(`[ensure-server] dev tsx server ready on :${port}`);
+    return;
+  }
+
+  const entry = sidecarEntry();
+  if (!existsSync(entry)) {
+    throw new Error(`sidecar entry not found: ${entry} (run build:sidecar first)`);
+  }
 
   if (!sidecarBundleReady()) {
     const serverRoot = resolve(repoRoot, 'apps/server');

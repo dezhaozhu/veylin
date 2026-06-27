@@ -41,14 +41,7 @@ export async function applyPromptToMarkdown(
     },
     body: JSON.stringify({
       model: cfg.modelId,
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You extract and summarize web page content per the user prompt. Be concise and factual.',
-        },
-        { role: 'user', content: userPrompt.slice(0, 120_000) },
-      ],
+      messages: [{ role: 'user', content: userPrompt.slice(0, 120_000) }],
       temperature: 0,
       max_tokens: 2048,
     }),

@@ -1,11 +1,11 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { runWebFetch } from './web-fetch/fetch-content';
-import { WEB_FETCH_DESCRIPTION } from './web-fetch/prompt';
+import { WEB_FETCH_AUTH_WARNING, WEB_FETCH_DESCRIPTION } from './web-fetch/prompt';
 
 export const webFetch = createTool({
   id: 'web_fetch',
-  description: WEB_FETCH_DESCRIPTION,
+  description: `${WEB_FETCH_AUTH_WARNING}\n${WEB_FETCH_DESCRIPTION}`,
   inputSchema: z.object({
     url: z.string().url().describe('The URL to fetch content from'),
     prompt: z

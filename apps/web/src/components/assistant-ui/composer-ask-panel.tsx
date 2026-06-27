@@ -10,8 +10,6 @@ import {
   type AskQuestion,
   type AskUserResult,
 } from '@/lib/ask-user-question-session';
-import { waitForFrontendToolStop } from '@/lib/frontend-suspend-tools';
-
 const OTHER = '__other__';
 
 function optionBody(opt: { label: string; description?: string }): string {
@@ -95,7 +93,7 @@ export function ComposerAskPanel() {
       if (!session || submitting) return;
       setSubmitting(true);
       try {
-        await waitForFrontendToolStop(session.toolCallId);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         session.addResult(result);
       } finally {
         setSubmitting(false);
