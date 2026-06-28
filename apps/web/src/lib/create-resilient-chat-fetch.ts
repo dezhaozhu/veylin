@@ -220,6 +220,10 @@ async function resilientChatPost(
       const response =
         reconnectAttempts > 0 && streamId ? await fetchResume() : await fetchPost();
 
+      if (response.ok) {
+        banner.clearTransientBanner();
+      }
+
       if (isPermanentHttpStatus(response.status)) return response;
 
       if (!isPostSuccess(response.status) && response.status !== 200) {

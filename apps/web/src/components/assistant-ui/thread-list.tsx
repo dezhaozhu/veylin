@@ -2,18 +2,15 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   AuiIf,
-  ThreadListItemMorePrimitive,
   ThreadListItemPrimitive,
   ThreadListPrimitive,
   useAui,
   useAuiState,
 } from "@assistant-ui/react";
 import {
-  ArchiveIcon,
   CheckIcon,
   LoaderIcon,
   MinusIcon,
-  MoreHorizontalIcon,
   PlusIcon,
   TrashIcon,
 } from "lucide-react";
@@ -24,8 +21,10 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FC,
+  type MouseEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { formatRelativeTimeShort } from "@/lib/format-relative-time";
@@ -267,68 +266,65 @@ const ThreadListItem: FC = () => {
         </span>
       </ThreadListItemPrimitive.Trigger>
       <div className="aui-thread-list-item-meta flex shrink-0 items-center gap-1 pe-1.5">
-        <ThreadListItemMore />
+        <ThreadListItemDelete />
         <ThreadListItemTime />
       </div>
     </ThreadListItemPrimitive.Root>
   );
 };
 
-const ThreadListItemMore: FC = () => {
+const ThreadListItemDelete: FC = () => {
   const { t } = useTranslation();
   const aui = useAui();
+  const threadId = useAuiState((s) => s.threadListItem.id);
+  const [deleting, setDeleting] = useState(false);
+  const deletingRef = useRef(false);
 
-  const handleArchive = useCallback(() => {
-    try {
-      aui.threadListItem().archive();
-    } catch (err) {
-      console.error('[thread-list] archive failed:', err);
-    }
-  }, [aui]);
+  const handleDelete = useCallback(
+    async (event: MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (deletingRef.current) return;
 
-  const handleDelete = useCallback(() => {
-    try {
-      aui.threadListItem().delete();
-    } catch (err) {
-      console.error('[thread-list] delete failed:', err);
-    }
-  }, [aui]);
+      deletingRef.current = true;
+      setDeleting(true);
+      try {
+        const runtime = aui
+          .threads()
+          .item({ id: threadId })
+          .__internal_getRuntime?.();
+        if (!runtime) {
+          throw new Error("thread list item runtime unavailable");
+        }
+        await runtime.delete();
+      } catch (err) {
+        console.error("[thread-list] delete failed:", err);
+      } finally {
+        deletingRef.current = false;
+        setDeleting(false);
+      }
+    },
+    [aui, threadId],
+  );
 
   return (
-    <div className="flex w-6 shrink-0 justify-center opacity-0 transition-opacity group-hover:opacity-100 group-data-active:opacity-100 has-[[data-state=open]]:opacity-100">
-      <ThreadListItemMorePrimitive.Root>
-        <ThreadListItemMorePrimitive.Trigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="aui-thread-list-item-more text-muted-foreground hover:text-foreground size-6 shrink-0 p-0 data-[state=open]:bg-accent"
-          >
-            <MoreHorizontalIcon className="size-3.5" />
-            <span className="sr-only">{t('threadList.moreOptions')}</span>
-          </Button>
-        </ThreadListItemMorePrimitive.Trigger>
-      <ThreadListItemMorePrimitive.Content
-        side="right"
-        align="start"
-        sideOffset={6}
-        className="aui-thread-list-item-more-content bg-popover/95 text-popover-foreground data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:animate-out data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 min-w-[8rem] overflow-hidden rounded-xl border p-1.5 shadow-lg backdrop-blur-sm"
+    <div className="relative z-10 flex w-6 shrink-0 justify-center opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        disabled={deleting}
+        className="aui-thread-list-item-delete text-muted-foreground hover:bg-destructive/10 hover:text-destructive size-6 shrink-0 p-0"
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={handleDelete}
       >
-        <ThreadListItemMorePrimitive.Item
-          className="aui-thread-list-item-more-item hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
-          onSelect={handleArchive}
-        >
-          <ArchiveIcon className="size-4" />
-          {t('threadList.archive')}
-        </ThreadListItemMorePrimitive.Item>
-        <ThreadListItemMorePrimitive.Item
-          className="aui-thread-list-item-more-item text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
-          onSelect={handleDelete}
-        >
-          <TrashIcon className="size-4" />
-          {t('threadList.delete')}
-        </ThreadListItemMorePrimitive.Item>
-      </ThreadListItemMorePrimitive.Content>
-      </ThreadListItemMorePrimitive.Root>
+        {deleting ? (
+          <LoaderIcon className="size-3.5 animate-spin" aria-hidden />
+        ) : (
+          <TrashIcon className="size-3.5" aria-hidden />
+        )}
+        <span className="sr-only">{t("threadList.delete")}</span>
+      </Button>
     </div>
   );
 };

@@ -9,6 +9,7 @@ import {
   type MentionTrigger,
 } from '@/components/assistant-ui/composer-mention/use-composer-mention';
 import { usePendingSkill } from '@/lib/use-composer-settings';
+import { isImeComposing } from '@/lib/composer-submit-keys';
 
 type ComposerMentionInputProps = React.ComponentProps<typeof ComposerPrimitive.Input>;
 
@@ -16,6 +17,7 @@ export const ComposerMentionInput: FC<ComposerMentionInputProps> = ({
   onChange,
   onKeyDown,
   className,
+  submitOnEnter: _submitOnEnter,
   ...props
 }) => {
   const [mentionTrigger, setMentionTrigger] = useState<MentionTrigger | null>(null);
@@ -66,6 +68,10 @@ export const ComposerMentionInput: FC<ComposerMentionInputProps> = ({
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (isImeComposing(event)) {
+        return;
+      }
+
       const menuActive = mentionTrigger ?? slashTrigger;
 
       if (menuActive) {
@@ -126,6 +132,7 @@ export const ComposerMentionInput: FC<ComposerMentionInputProps> = ({
     <>
       <ComposerPrimitive.Input
         {...props}
+        submitMode="none"
         className={className}
         ref={mergeRef}
         onChange={handleChange}

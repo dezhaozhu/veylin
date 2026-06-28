@@ -3,7 +3,12 @@ import { describe, it } from 'node:test';
 import type { UIMessage } from 'ai';
 import {
   createFrontendToolContinuationController,
+  markToolContinuationAttempt,
   requestFrontendToolContinuation,
+  resetFrontendToolContinuationController,
+  resetToolContinuationAttemptTracker,
+  createToolContinuationAttemptTracker,
+  toolContinuationFingerprint,
   tryContinueFrontendToolChat,
 } from './frontend-tool-continuation';
 
@@ -54,14 +59,8 @@ function answeredFirstRoundWithStepStart(): UIMessage[] {
   ] as UIMessage[];
 }
 
-async function flushMicrotasks(rounds = 4): Promise<void> {
-  for (let i = 0; i < rounds; i += 1) {
-    await new Promise<void>((resolve) => queueMicrotask(resolve));
-  }
-}
-
 describe('frontend-tool-continuation', () => {
-  it('first round: fast answer while streaming sends once stream becomes ready', async () => {
+  it('streaming: stops then sends immediately without waiting for ready', async () => {
     let status: 'streaming' | 'ready' = 'streaming';
     let stopCount = 0;
     let sendCount = 0;
@@ -75,6 +74,9 @@ describe('frontend-tool-continuation', () => {
       stopStream: () => {
         stopCount += 1;
       },
+      ensureStopped: async () => {
+        stopCount += 1;
+      },
       sendMessage: async () => {
         sendCount += 1;
       },
@@ -84,19 +86,15 @@ describe('frontend-tool-continuation', () => {
       void tryContinueFrontendToolChat(args);
     });
 
-    assert.equal(controller.pending, true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
     assert.equal(stopCount, 1);
-    assert.equal(sendCount, 0);
-
-    status = 'ready';
-    await tryContinueFrontendToolChat(args);
-    await flushMicrotasks();
-
     assert.equal(sendCount, 1);
     assert.equal(controller.pending, false);
+    assert.equal(controller.sendStarted, true);
   });
 
-  it('first round: abort settling asynchronously still continues via microtask retry', async () => {
+  it('streaming with async stop still sends once stop settles', async () => {
     let status: 'streaming' | 'ready' = 'streaming';
     let sendCount = 0;
     const controller = createFrontendToolContinuationController();
@@ -111,6 +109,10 @@ describe('frontend-tool-continuation', () => {
           status = 'ready';
         });
       },
+      ensureStopped: async () => {
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+        status = 'ready';
+      },
       sendMessage: async () => {
         sendCount += 1;
       },
@@ -120,31 +122,19 @@ describe('frontend-tool-continuation', () => {
       void tryContinueFrontendToolChat(args);
     });
 
-    await flushMicrotasks(8);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
     assert.equal(sendCount, 1);
     assert.equal(controller.pending, false);
   });
 
-  it('does not stop when continuation POST is already submitted', async () => {
+  it('submitted without prior stop defers to addToolResult auto-send', async () => {
     let stopCount = 0;
     let sendCount = 0;
     const controller = createFrontendToolContinuationController();
+    controller.pending = true;
     const messages = answeredFirstRoundAskMessage();
 
-    await tryContinueFrontendToolChat({
-      controller,
-      getStatus: () => 'submitted',
-      getMessages: () => messages,
-      stopStream: () => {
-        stopCount += 1;
-      },
-      sendMessage: async () => {
-        sendCount += 1;
-      },
-    });
-
-    controller.pending = true;
     await tryContinueFrontendToolChat({
       controller,
       getStatus: () => 'submitted',
@@ -162,7 +152,7 @@ describe('frontend-tool-continuation', () => {
     assert.equal(controller.pending, false);
   });
 
-  it('second round: ready status sends immediately without extra stop', async () => {
+  it('ready status sends immediately without extra stop', async () => {
     let stopCount = 0;
     let sendCount = 0;
     const controller = createFrontendToolContinuationController();
@@ -182,10 +172,129 @@ describe('frontend-tool-continuation', () => {
       });
     });
 
-    await flushMicrotasks();
-
     assert.equal(stopCount, 0);
     assert.equal(sendCount, 1);
     assert.equal(controller.pending, false);
+  });
+
+  it('does nothing without requestFrontendToolContinuation (pending=false)', async () => {
+    let sendCount = 0;
+    const controller = createFrontendToolContinuationController();
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-web_fetch',
+            toolCallId: 'wf-1',
+            state: 'output-available',
+            providerExecuted: true,
+            output: { result: 'headlines', code: 200, durationMs: 1200 },
+          },
+        ],
+      },
+    ] as UIMessage[];
+
+    await tryContinueFrontendToolChat({
+      controller,
+      getStatus: () => 'ready',
+      getMessages: () => messages,
+      stopStream: () => undefined,
+      sendMessage: async () => {
+        sendCount += 1;
+      },
+    });
+
+    assert.equal(sendCount, 0);
+  });
+
+  it('ready status continues after provider-executed web_fetch', async () => {
+    let sendCount = 0;
+    const controller = createFrontendToolContinuationController();
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-web_fetch',
+            toolCallId: 'wf-1',
+            state: 'output-available',
+            providerExecuted: true,
+            output: { result: 'AI news summary', code: 200, durationMs: 800 },
+          },
+        ],
+      },
+    ] as UIMessage[];
+
+    requestFrontendToolContinuation(controller, () => {
+      void tryContinueFrontendToolChat({
+        controller,
+        getStatus: () => 'ready',
+        getMessages: () => messages,
+        stopStream: () => undefined,
+        sendMessage: async () => {
+          sendCount += 1;
+        },
+      });
+    });
+
+    assert.equal(sendCount, 1);
+  });
+
+  it('resetFrontendToolContinuationController clears pending continuation', () => {
+    const controller = createFrontendToolContinuationController();
+    controller.pending = true;
+    controller.continuing = true;
+    controller.sendStarted = true;
+    resetFrontendToolContinuationController(controller);
+    assert.equal(controller.pending, false);
+    assert.equal(controller.continuing, false);
+    assert.equal(controller.sendStarted, false);
+  });
+
+  it('toolContinuationFingerprint changes when tool output arrives', () => {
+    const before = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-web_fetch',
+            toolCallId: 'wf-1',
+            state: 'input-available',
+            providerExecuted: true,
+          },
+        ],
+      },
+    ] as UIMessage[];
+    const after = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-web_fetch',
+            toolCallId: 'wf-1',
+            state: 'output-available',
+            providerExecuted: true,
+            output: { content: 'page' },
+          },
+        ],
+      },
+    ] as UIMessage[];
+
+    const fp1 = toolContinuationFingerprint(before);
+    const fp2 = toolContinuationFingerprint(after);
+    assert.notEqual(fp1, fp2);
+  });
+
+  it('markToolContinuationAttempt dedupes identical fingerprints', () => {
+    const tracker = createToolContinuationAttemptTracker();
+    assert.equal(markToolContinuationAttempt(tracker, 'a1|tool'), true);
+    assert.equal(markToolContinuationAttempt(tracker, 'a1|tool'), false);
+    resetToolContinuationAttemptTracker(tracker);
+    assert.equal(markToolContinuationAttempt(tracker, 'a1|tool'), true);
   });
 });

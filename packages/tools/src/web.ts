@@ -10,14 +10,15 @@ export const webFetch = createTool({
     url: z.string().url().describe('The URL to fetch content from'),
     prompt: z
       .string()
-      .describe('What to extract or analyze from the page (passed to a small model)'),
+      .optional()
+      .describe('Optional hint about what to look for in the page (you summarize after the tool returns)'),
   }),
   outputSchema: z.object({
     bytes: z.number().describe('Size of fetched content in bytes'),
     code: z.number().describe('HTTP status code'),
     codeText: z.string().describe('HTTP status text'),
-    result: z.string().describe('Processed result from applying the prompt to the content'),
-    durationMs: z.number().describe('Fetch + processing time in ms'),
+    content: z.string().describe('Page content as markdown for you to read and summarize'),
+    durationMs: z.number().describe('Fetch time in ms'),
     url: z.string().describe('The URL that was requested'),
   }),
   execute: async (input) => runWebFetch(input.url, input.prompt),

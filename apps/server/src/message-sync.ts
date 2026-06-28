@@ -1,5 +1,9 @@
 import type { Memory } from '@mastra/memory';
-import { filterPersistableUiMessageParts, coerceSanitizableUiParts } from '@veylin/shared';
+import {
+  filterPersistableUiMessageParts,
+  coerceSanitizableUiParts,
+  isInternalModelContinuationText,
+} from '@veylin/shared';
 import type { TodoItem } from '@veylin/tools';
 
 export type UiMessage = {
@@ -78,6 +82,40 @@ export function uiMessagesToMastra(
   });
 }
 
+function userMessageText(message: UiMessage): string {
+  return (message.content ?? partText(message.parts)).trim();
+}
+
+/**
+ * Mastra may append model-only continuation users during agent.stream memory writes.
+ * The client UI transcript is authoritative — drop those on recall.
+ */
+export function normalizeRecalledUiMessages(messages: UiMessage[]): UiMessage[] {
+  const out: UiMessage[] = [];
+  for (const message of messages) {
+    if (message.role === 'user') {
+      const text = userMessageText(message);
+      if (!text || isInternalModelContinuationText(text)) continue;
+
+      const prev = out.at(-1);
+      if (prev?.role === 'user' && userMessageText(prev) === text) continue;
+
+      const earlierIndex = out.findIndex(
+        (m) => m.role === 'user' && userMessageText(m) === text,
+      );
+      if (
+        earlierIndex >= 0 &&
+        out.slice(earlierIndex + 1).some((m) => m.role === 'assistant')
+      ) {
+        continue;
+      }
+    }
+
+    out.push(message);
+  }
+  return out;
+}
+
 /** Best-effort UI message reconstruction from Mastra recall. */
 export function mastraMessagesToUi(
   messages: Array<{ id?: string; role?: string; content?: { parts?: unknown[] } }>,
@@ -93,7 +131,7 @@ export function mastraMessagesToUi(
       content: partText(parts),
     });
   }
-  return out;
+  return normalizeRecalledUiMessages(out);
 }
 
 /** Replace all messages in a Mastra thread with the given UI snapshot. */

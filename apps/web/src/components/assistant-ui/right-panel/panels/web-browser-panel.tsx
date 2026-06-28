@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,10 @@ import {
 } from '@/lib/tauri-web-view';
 import { PANEL_TAB_MENU_CLOSED_EVENT } from '@/components/assistant-ui/right-panel/panel-events';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
+import {
+  hasAskUserSession,
+  subscribeAskUserSession,
+} from '@/lib/ask-user-question-session';
 import type { PanelContentProps } from '../panel-types';
 
 function titleFromUrl(url: string): string {
@@ -32,6 +36,11 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
   const [input, setInput] = useState(storedUrl);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const askOpen = useSyncExternalStore(
+    subscribeAskUserSession,
+    hasAskUserSession,
+    () => false,
+  );
   const viewportRef = useRef<HTMLDivElement>(null);
   const tabId = tab.id;
 
@@ -47,7 +56,7 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
   }, []);
 
   const syncBounds = useCallback(async () => {
-    if (view !== 'chat' || !storedUrl) return;
+    if (view !== 'chat' || askOpen || !storedUrl) return;
     const bounds = measureBounds();
     if (!bounds) return;
     try {
@@ -55,17 +64,17 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
     } catch {
       // The webview may not exist yet; opening a URL will create it with fresh bounds.
     }
-  }, [measureBounds, tabId, view, storedUrl]);
+  }, [askOpen, measureBounds, tabId, view, storedUrl]);
 
   const revealWebView = useCallback(async () => {
-    if (!isTauri() || !storedUrl) return;
+    if (!isTauri() || askOpen || !storedUrl) return;
     const bounds = measureBounds();
     if (!bounds) return;
     const shown = await showWebView(tabId, bounds);
     if (!shown) {
       await openWebView(tabId, storedUrl, bounds);
     }
-  }, [tabId, storedUrl, measureBounds]);
+  }, [askOpen, tabId, storedUrl, measureBounds]);
 
   const handleOpen = useCallback(async () => {
     const url = input.trim();
@@ -90,12 +99,20 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
   }, [storedUrl]);
 
   useEffect(() => {
-    if (!isTauri() || !storedUrl || view !== 'chat') return;
+    if (!isTauri() || !askOpen) return;
+    void hideWebView();
+    return subscribeAskUserSession(() => {
+      if (hasAskUserSession()) void hideWebView();
+    });
+  }, [askOpen]);
+
+  useEffect(() => {
+    if (!isTauri() || askOpen || !storedUrl || view !== 'chat') return;
     const frame = window.requestAnimationFrame(() => {
       void revealWebView();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [tabId, storedUrl, revealWebView, view]);
+  }, [askOpen, tabId, storedUrl, revealWebView, view]);
 
   useEffect(() => {
     if (!isTauri() || view === 'chat') return;
@@ -112,7 +129,7 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
     resizeObserver.observe(node);
     window.addEventListener('resize', syncBounds);
     const onMenuClosed = () => {
-      if (storedUrl && view === 'chat') void syncBounds();
+      if (storedUrl && view === 'chat' && !askOpen) void syncBounds();
     };
     window.addEventListener(PANEL_TAB_MENU_CLOSED_EVENT, onMenuClosed);
 
@@ -121,15 +138,15 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
       window.removeEventListener('resize', syncBounds);
       window.removeEventListener(PANEL_TAB_MENU_CLOSED_EVENT, onMenuClosed);
     };
-  }, [syncBounds, storedUrl, view]);
+  }, [askOpen, syncBounds, storedUrl, view]);
 
   useEffect(() => {
-    if (view !== 'chat') return;
+    if (view !== 'chat' || askOpen) return;
     const frame = window.requestAnimationFrame(() => {
       void syncBounds();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [view, syncBounds]);
+  }, [askOpen, view, syncBounds]);
 
   useEffect(() => {
     return () => {

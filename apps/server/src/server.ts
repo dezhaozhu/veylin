@@ -20,7 +20,7 @@ import {
 } from '@veylin/runtime';
 import { setThreadPlanMode } from '@veylin/tools';
 import { toNodeHandler } from 'better-auth/node';
-import { auth, isDesktopAuth } from './auth';
+import { auth, assertHostedAuthConfig, isDesktopAuth } from './auth';
 import {
   createInProcQueue,
   registerWorkers,
@@ -63,8 +63,10 @@ import {
 import {
   activateSkill,
   ensureThreadState,
+  ephemeralThreadState,
   getSkillMemoryBlock,
   getThreadState,
+  type ThreadStateRow,
   setPlanMode as setThreadPlanModeDb,
   setTodos as setThreadTodosDb,
   syncWorkingMemory,
@@ -79,9 +81,10 @@ import {
 } from './thread-state';
 import { buildReminderBlock } from './reminders';
 import { listThreadActivity } from './thread-activity';
-import { syncThreadMessagesFromClient } from './thread-sync';
+import { isMemoryStoreFailure, syncThreadMessagesFromClient } from './thread-sync';
+import { isDatastoreFailure, withDatastoreFallback } from './store-errors';
 import { generateThreadTitle } from './thread-title';
-import { mastraMessagesToUi } from './message-sync';
+import { mastraMessagesToUi, type UiMessage } from './message-sync';
 import { filterExternalToolsets } from './toolsets';
 import { ContextCompression, buildLocaleBlock, buildSummarizer, buildAgentOrchestrationBlock, buildCoordinatorOrchestrationBlock, isCoordinatorMode } from '@veylin/runtime';
 import {
@@ -97,7 +100,10 @@ import {
   resumeStreamResponse,
   stopChatStream,
   unregisterRunAbort,
+  waitForActiveChatDrain,
 } from './resumable-chat-stream';
+import { buildMcpHealthSnapshot, type McpHealthSnapshot } from './mcp-health';
+import { startupCheckpoint } from './startup-profiler';
 import { ensureDevTenant, resolveTenantForUser, DEV_TENANT_ID } from './tenant';
 import { refreshAgentPackages, requireAgent } from './agent-packages-sync';
 import {
@@ -194,7 +200,9 @@ import {
 } from './local-models-service';
 import {
   connectDb,
+  closeDb,
   ensureDataDir,
+  getDb,
   listGraphForTenant,
   getChunksForEntity,
   listTasksByParentThread,
@@ -205,6 +213,14 @@ import {
 
 const DATA_DIR = ensureDataDir();
 const PORT = Number(process.env.PORT ?? 8787);
+const LISTEN_HOST = process.env.HOST ?? '127.0.0.1';
+
+class UnauthorizedError extends Error {
+  constructor() {
+    super('unauthorized');
+    this.name = 'UnauthorizedError';
+  }
+}
 
 // Agent definitions (agent.yaml + skills). Dev: repo examples/; sidecar: copied beside server.mjs.
 function resolveAgentsDir(): string {
@@ -232,6 +248,9 @@ function indexMcpTools(toolsets: Record<string, unknown>): { id: string; descrip
 }
 
 async function resolveContext(headers: Record<string, string | string[] | undefined>) {
+  if (isDesktopAuth) {
+    return { userId: 'dev-user', tenantId: DEV_TENANT_ID, authed: false };
+  }
   try {
     const session = await auth.api.getSession({ headers: headers as never });
     if (session?.user) {
@@ -239,9 +258,9 @@ async function resolveContext(headers: Record<string, string | string[] | undefi
       return { userId: session.user.id, tenantId, authed: true };
     }
   } catch {
-    // fall through to dev context
+    throw new UnauthorizedError();
   }
-  return { userId: 'dev-user', tenantId: DEV_TENANT_ID, authed: false };
+  throw new UnauthorizedError();
 }
 
 function isForbiddenError(err: unknown): boolean {
@@ -249,7 +268,10 @@ function isForbiddenError(err: unknown): boolean {
 }
 
 async function main() {
+  assertHostedAuthConfig();
+  startupCheckpoint('boot_start');
   await connectDb();
+  startupCheckpoint('db_connected');
   const interruptedRuns = await sweepInterruptedWorkflowRuns();
   if (interruptedRuns > 0) {
     console.info(`[workflow] marked ${interruptedRuns} interrupted run(s) as failed`);
@@ -268,13 +290,31 @@ async function main() {
     string,
     { toolsets: Record<string, unknown>; index: { id: string; description: string }[] }
   >();
+  const mcpHealthByTenant = new Map<string, McpHealthSnapshot>();
   let taskToolset: Record<string, unknown> = {};
 
   async function rebuildMcp(tenantId: string) {
-    mcp = await createMcpClient(tenantId);
-    mcpToolsets = (await mcp.listToolsets().catch(() => ({}))) as Record<string, unknown>;
+    const activeNames = await listActiveMcpServerNames(tenantId);
+    let listError: string | undefined;
+    try {
+      mcp = await createMcpClient(tenantId);
+      try {
+        mcpToolsets = (await mcp.listToolsets()) as Record<string, unknown>;
+      } catch (err) {
+        listError = err instanceof Error ? err.message : String(err);
+        mcpToolsets = {};
+      }
+    } catch (err) {
+      listError = err instanceof Error ? err.message : String(err);
+      mcpToolsets = {};
+    }
     mcpToolIndex = indexMcpTools(mcpToolsets);
     mcpCacheByTenant.set(tenantId, { toolsets: mcpToolsets, index: mcpToolIndex });
+    const health = buildMcpHealthSnapshot(activeNames, mcpToolsets, listError);
+    mcpHealthByTenant.set(tenantId, health);
+    if (listError) {
+      console.warn(`[mcp] listToolsets failed for tenant ${tenantId}: ${listError}`);
+    }
   }
 
   async function ensureMcpForTenant(tenantId: string) {
@@ -290,6 +330,14 @@ async function main() {
   const app = Fastify({
     logger: true,
     bodyLimit: RAG_UPLOAD_MAX_BYTES,
+  });
+
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof UnauthorizedError) {
+      return reply.code(401).send({ ok: false, message: 'Unauthorized' });
+    }
+    app.log.error(err);
+    return reply.code(500).send({ ok: false, message: 'Internal server error' });
   });
 
   app.addHook('preParsing', async (request, _reply, payload) => {
@@ -357,10 +405,29 @@ async function main() {
     });
   }
 
-  app.get('/health', async () => {
+  app.get('/health', async (_req, reply) => {
     const embedding = await getEmbeddingStatus();
+    let dbReady = true;
+    try {
+      await getDb().query('RETURN 1');
+      await getDb().query('SELECT thread_id FROM thread_state LIMIT 1');
+    } catch (err) {
+      dbReady = false;
+      app.log.warn({ err }, 'database health probe failed');
+    }
+    if (!dbReady) {
+      return reply.status(503).send({
+        ok: false,
+        db: { ready: false },
+        embedding: {
+          ready: embedding.installed,
+          phase: embedding.download.phase,
+        },
+      });
+    }
     return {
       ok: true,
+      db: { ready: true },
       embedding: {
         ready: embedding.installed,
         phase: embedding.download.phase,
@@ -532,8 +599,15 @@ async function main() {
     const ctx = await resolveContext(req.headers);
     const remote = await listRemoteMcpServers(ctx.tenantId);
     const disabledMcp = await getDisabledMcpServers(ctx.tenantId);
+    const health = mcpHealthByTenant.get(ctx.tenantId);
     // Installed MCP is user-managed (remote); bundled stdio servers are opt-in via agent config only.
-    return { bundled: [], remote, disabledMcp };
+    return { bundled: [], remote, disabledMcp, health: health ?? null };
+  });
+
+  app.post('/api/mcp-servers/reconnect', async (req) => {
+    const ctx = await resolveContext(req.headers);
+    await rebuildMcp(ctx.tenantId);
+    return { ok: true, health: mcpHealthByTenant.get(ctx.tenantId) ?? null };
   });
 
   app.post('/api/mcp-servers/disabled', async (req) => {
@@ -1142,38 +1216,70 @@ async function main() {
   // Checkpoints removed — edit/compact rewind replaces manual snapshots.
 
   // Tasks: list/get for the UI task panel.
-  app.get('/api/tasks', async (req) => {
+  app.get('/api/tasks', async (req, reply) => {
     const ctx = await resolveContext(req.headers);
     const { threadId } = req.query as { threadId?: string };
     if (!threadId) return { tasks: [] };
-    const row = await resolveThreadForRead(threadId, ctx);
-    if (!row) return { tasks: [] };
-    const rows = await listTasksByParentThread(threadId);
-    return { tasks: rows };
+    try {
+      const row = await resolveThreadForRead(threadId, ctx);
+      if (!row) return { tasks: [] };
+      const rows = await listTasksByParentThread(threadId);
+      return { tasks: rows };
+    } catch (err) {
+      req.log.warn({ err, threadId }, 'tasks read failed');
+      if (isDatastoreFailure(err)) {
+        return reply.status(503).send({ tasks: [], error: 'datastore_unavailable' });
+      }
+      throw err;
+    }
   });
 
-  app.get('/api/todos', async (req) => {
+  app.get('/api/todos', async (req, reply) => {
     const ctx = await resolveContext(req.headers);
     const { threadId } = req.query as { threadId?: string };
     if (!threadId) return { todos: [] };
-    const row = await resolveThreadForRead(threadId, ctx);
-    return { todos: row?.todos ?? [] };
+    try {
+      const row = await resolveThreadForRead(threadId, ctx);
+      return { todos: row?.todos ?? [] };
+    } catch (err) {
+      req.log.warn({ err, threadId }, 'todos read failed');
+      if (isDatastoreFailure(err)) {
+        return reply.status(503).send({ todos: [], error: 'datastore_unavailable' });
+      }
+      throw err;
+    }
   });
 
-  app.get('/api/threads', async (req) => {
+  app.get('/api/threads', async (req, reply) => {
     const ctx = await resolveContext(req.headers);
-    const threads = await listThreadsForResource(
-      ctx.tenantId,
-      ctx.userId,
-      runtime.memory,
-    );
-    return { threads };
+    try {
+      const threads = await listThreadsForResource(
+        ctx.tenantId,
+        ctx.userId,
+        runtime.memory,
+      );
+      return { threads };
+    } catch (err) {
+      req.log.warn({ err }, 'thread list failed');
+      if (isDatastoreFailure(err)) {
+        return reply.status(503).send({ threads: [], error: 'datastore_unavailable' });
+      }
+      throw err;
+    }
   });
 
-  app.get('/api/threads/activity', async (req) => {
+  app.get('/api/threads/activity', async (req, reply) => {
     const ctx = await resolveContext(req.headers);
-    const activity = await listThreadActivity(ctx.tenantId, ctx.userId, runtime.memory);
-    return { activity };
+    try {
+      const activity = await listThreadActivity(ctx.tenantId, ctx.userId, runtime.memory);
+      return { activity };
+    } catch (err) {
+      req.log.warn({ err }, 'thread activity read failed');
+      if (isDatastoreFailure(err)) {
+        return reply.status(503).send({ activity: {}, error: 'datastore_unavailable' });
+      }
+      throw err;
+    }
   });
 
   app.get('/api/threads/:threadId', async (req, reply) => {
@@ -1238,7 +1344,7 @@ async function main() {
     const ctx = await resolveContext(req.headers);
     const row = await resolveThreadForRead(threadId, ctx);
     if (row) {
-      await deleteThreadState(threadId);
+      await deleteThreadState(threadId, runtime.memory);
     }
     return { ok: true };
   });
@@ -1252,19 +1358,61 @@ async function main() {
     return { state };
   });
 
-  app.get('/api/threads/:threadId/messages', async (req) => {
+  app.get('/api/threads/:threadId/messages', async (req, reply) => {
     const { threadId } = req.params as { threadId: string };
     const ctx = await resolveContext(req.headers);
     const row = await resolveThreadForRead(threadId, ctx);
     if (!row) {
       return { messages: [] };
     }
-    const recalled = await runtime.memory.recall({
+    try {
+      const recalled = await runtime.memory.recall({
+        threadId,
+        resourceId: row.resourceId,
+        perPage: false,
+      });
+      return { messages: mastraMessagesToUi(recalled.messages ?? []) };
+    } catch (err) {
+      req.log.warn({ err, threadId }, 'memory recall failed for thread messages');
+      if (isMemoryStoreFailure(err)) {
+        return { messages: [] };
+      }
+      return reply.status(500).send({ ok: false, error: 'memory_recall_failed' });
+    }
+  });
+
+  /** Client-authoritative transcript sync (claude-code style recordTranscript). */
+  app.post('/api/threads/:threadId/messages', async (req, reply) => {
+    const { threadId } = req.params as { threadId: string };
+    const body = (req.body ?? {}) as {
+      messages?: UiMessage[];
+      forceReplace?: boolean;
+    };
+    const clientMessages = body.messages ?? [];
+    if (clientMessages.length === 0) {
+      return reply.status(400).send({ ok: false, error: 'messages required' });
+    }
+
+    const ctx = await resolveContext(req.headers);
+    const row = await resolveThreadForRead(threadId, ctx);
+    if (!row) {
+      return reply.status(404).send({ ok: false, error: 'thread not found' });
+    }
+
+    const identity = {
       threadId,
+      tenantId: row.tenantId,
       resourceId: row.resourceId,
-      perPage: false,
+    };
+
+    const replaced = await syncThreadMessagesFromClient({
+      memory: runtime.memory,
+      identity,
+      clientMessages,
+      forceReplace: body.forceReplace ?? true,
     });
-    return { messages: mastraMessagesToUi(recalled.messages ?? []) };
+
+    return { ok: true, replaced };
   });
 
   app.get('/api/plan-mode', async (req) => {
@@ -1370,30 +1518,46 @@ async function main() {
     await ensureMcpForTenant(ctx.tenantId);
     const threadId = body.id ?? body.threadId ?? `thread-${ctx.userId}`;
     const agentId = body.agentId ?? DEFAULT_AGENT_ID;
-    const threadRow = await ensureThreadState({
+    const identity = {
       threadId,
       tenantId: ctx.tenantId,
       resourceId: ctx.userId,
-    });
-    const identity = {
-      threadId,
-      tenantId: threadRow.tenantId,
-      resourceId: threadRow.resourceId,
     };
 
-    await touchThreadActivity(threadId);
+    let threadRow: ThreadStateRow;
+    let threadStoreOk = true;
+    try {
+      threadRow = await ensureThreadState(identity);
+      await touchThreadActivity(threadId);
+    } catch (err) {
+      if (!isDatastoreFailure(err)) throw err;
+      threadStoreOk = false;
+      threadRow = ephemeralThreadState(identity);
+      app.log.warn({ err, threadId }, 'thread state store failed; continuing chat ephemerally');
+    }
     await stopChatStream({ threadId }).catch(() => undefined);
-    await restoreTodosFromHistoryIfEmpty(threadId, messages as never);
+    if (threadStoreOk) {
+      await withDatastoreFallback(
+        () => restoreTodosFromHistoryIfEmpty(threadId, messages as never),
+        undefined,
+      );
+    }
 
     let threadRowState = threadRow;
-    if (body.planMode === true) {
+    if (threadStoreOk && body.planMode === true) {
       await setThreadPlanModeDb(threadId, true);
       setThreadPlanMode(threadId, true);
       threadRowState = (await getThreadState(threadId)) ?? threadRow;
-    } else if (body.planMode === false) {
+    } else if (threadStoreOk && body.planMode === false) {
       await setThreadPlanModeDb(threadId, false);
       setThreadPlanMode(threadId, false);
       threadRowState = (await getThreadState(threadId)) ?? threadRow;
+    } else if (body.planMode === true) {
+      setThreadPlanMode(threadId, true);
+      threadRowState = { ...threadRow, planMode: true };
+    } else if (body.planMode === false) {
+      setThreadPlanMode(threadId, false);
+      threadRowState = { ...threadRow, planMode: false };
     }
 
     const planMode = body.planMode === true || (threadRowState?.planMode ?? false);
@@ -1412,12 +1576,18 @@ async function main() {
     const mcpAgentId = agentId;
     const declaredMcp = runtime.definitions.get(mcpAgentId)?.definition.mcpServers ?? [];
     const mcpEnabled = body.mcpEnabled as Record<string, boolean> | undefined;
-    const tenantActiveMcp = await listActiveMcpServerNames(ctx.tenantId, declaredMcp);
+    const tenantActiveMcp = await withDatastoreFallback(
+      () => listActiveMcpServerNames(ctx.tenantId, declaredMcp),
+      [] as string[],
+    );
     const activeMcp = tenantActiveMcp.filter(
       (server) => mcpEnabled == null || mcpEnabled[server] !== false,
     );
 
-    const mergedSkills = await listMergedSkills(runtime, ctx.tenantId, agentId);
+    const mergedSkills = await withDatastoreFallback(
+      () => listMergedSkills(runtime, ctx.tenantId, agentId),
+      [],
+    );
     const enabledSkillNames = mergedSkills.filter((s) => s.enabled).map((s) => s.name);
 
     await recordAudit({
@@ -1485,12 +1655,25 @@ async function main() {
 
     let skillBlock = getSkillMemoryBlock(threadRowState?.activatedSkills ?? {});
 
-    await syncThreadMessagesFromClient({
-      memory: runtime.memory,
-      identity,
-      clientMessages: messages as never,
-      forceReplace: body.forceReplace,
-    });
+    let useThreadMemory = threadStoreOk;
+    try {
+      await syncThreadMessagesFromClient({
+        memory: runtime.memory,
+        identity,
+        clientMessages: messages as never,
+        forceReplace: body.forceReplace,
+      });
+    } catch (err) {
+      if (isMemoryStoreFailure(err)) {
+        useThreadMemory = false;
+        app.log.warn(
+          { err, threadId },
+          'message sync failed (memory store); continuing chat without thread memory',
+        );
+      } else {
+        throw err;
+      }
+    }
 
     // Per-agent MCP: only expose declared servers; none when undeclared.
     const agentMcp =
@@ -1505,7 +1688,10 @@ async function main() {
     const effectiveModel = body.model ?? runtime.definitions.get(agentId)?.definition.model;
     let agentMessages = await toAgentMessages(messages, modelSupportsImages(effectiveModel));
 
-    const rules = await listRules(ctx.tenantId, ctx.userId, agentId);
+    const rules = await withDatastoreFallback(
+      () => listRules(ctx.tenantId, ctx.userId, agentId),
+      [],
+    );
     const rulesBlock = buildRulesMemoryBlock(rules, lastUserText(messages));
     const skillsCatalog = buildSkillsCatalogBlock(mergedSkills);
     const reminderBlock = buildReminderBlock({
@@ -1518,7 +1704,7 @@ async function main() {
     const knowledgeCapable =
       !planMode && runtime.definitions.get(agentId)?.definition.fullToolset === true;
     const knowledgeBlock = knowledgeCapable
-      ? await buildKnowledgeContextBlock(ctx.tenantId)
+      ? await withDatastoreFallback(() => buildKnowledgeContextBlock(ctx.tenantId), '')
       : '';
     const localeBlock = buildLocaleBlock(body.locale);
     const attachedBrowserBlock = buildAttachedBrowserBlock(body.attachedBrowser);
@@ -1565,7 +1751,8 @@ async function main() {
     requestContext.set('runAbortSignal', runAbort.signal);
 
     const stream = await agent.stream(agentMessages as never, {
-      memory: { thread: threadId, resource: ctx.userId },
+      maxSteps: 25,
+      ...(useThreadMemory ? { memory: { thread: threadId, resource: ctx.userId } } : {}),
       requestContext,
       toolsets: activeToolsets,
     } as never);
@@ -1665,10 +1852,18 @@ async function main() {
     const { threadId } = req.params as { threadId: string };
     const ctx = await resolveContext(req.headers);
     try {
-      await requireThreadOwnership(threadId, ctx);
+      const state = await getThreadState(threadId);
+      if (state) {
+        try {
+          await requireThreadOwnership(threadId, ctx);
+        } catch (err) {
+          if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
+          throw err;
+        }
+      }
     } catch (err) {
-      if (isForbiddenError(err)) return reply.status(403).send({ error: 'forbidden' });
-      throw err;
+      if (!isDatastoreFailure(err)) throw err;
+      req.log.warn({ err, threadId }, 'thread state read failed during stop; continuing');
     }
     const body = (req.body ?? {}) as { activeStreamId?: string };
     const result = await stopChatStream({
@@ -1984,8 +2179,27 @@ async function main() {
     };
   });
 
-  await app.listen({ port: PORT, host: '0.0.0.0' });
-  app.log.info(`veylin server on :${PORT}`);
+  await app.listen({ port: PORT, host: LISTEN_HOST });
+  startupCheckpoint('listen_ready');
+  app.log.info(`veylin server on ${LISTEN_HOST}:${PORT}`);
+
+  let shuttingDown = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    app.log.info(`Shutting down (${signal})…`);
+    try {
+      await queue.stop();
+      await waitForActiveChatDrain(Number(process.env.SHUTDOWN_DRAIN_MS ?? 30_000));
+      await closeDb();
+      await app.close();
+    } catch (err) {
+      app.log.error(err, 'graceful shutdown error');
+    }
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 }
 
 main().catch((err) => {

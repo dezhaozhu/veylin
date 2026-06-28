@@ -48,8 +48,10 @@ export function createServerThreadListAdapter(): RemoteThreadListAdapter {
       });
     },
 
-    async archive() {
-      // Archive not persisted yet; noop keeps sidebar UX working.
+    async archive(remoteId: string) {
+      await apiJson(`/api/threads/${encodeURIComponent(remoteId)}`, {
+        method: 'DELETE',
+      });
     },
 
     async unarchive() {},

@@ -45,6 +45,17 @@ function touchCancelled(streamId: string): void {
   cancelledStreams.set(streamId, Date.now() + STREAM_TTL_MS);
 }
 
+export function countActiveLocalRuns(): number {
+  return localRunAborts.size;
+}
+
+export async function waitForActiveChatDrain(timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (localRunAborts.size > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 export async function initResumableChatStreams(): Promise<void> {
   if (context) return;
   store = createInMemoryResumableStreamStore({

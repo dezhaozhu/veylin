@@ -1,16 +1,26 @@
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useAuiState } from '@assistant-ui/react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
-  getAskUserSession,
+  clearAskUserSession,
+  getAskUserSessionForThread,
   subscribeAskUserSession,
-  type AskQuestion,
   type AskUserResult,
 } from '@/lib/ask-user-question-session';
-const OTHER = '__other__';
+import { submitAskUserResult } from '@/lib/ask-user-submit-bridge';
+import {
+  allStepsAnswered,
+  ASK_OTHER_OPTION,
+  buildAskUserResult,
+  hasStepAnswer,
+} from '@/lib/composer-ask-panel-utils';
+import { hideWebView, isTauri } from '@/lib/tauri-web-view';
+
+const OTHER = ASK_OTHER_OPTION;
 
 function optionBody(opt: { label: string; description?: string }): string {
   const description = opt.description?.trim();
@@ -18,46 +28,26 @@ function optionBody(opt: { label: string; description?: string }): string {
   return opt.label;
 }
 
-function buildResult(
-  questions: AskQuestion[],
-  picks: Record<number, string[]>,
-  others: Record<number, string>,
-): AskUserResult {
-  const answers: Record<string, string> = {};
-  const annotations: Record<string, { preview?: string }> = {};
-
-  questions.forEach((q, qi) => {
-    const chosen = (picks[qi] ?? []).map((label) =>
-      label === OTHER ? (others[qi] || '').trim() || 'Other' : label,
-    );
-    answers[q.question] = chosen.join(', ') || '(no answer)';
-    for (const label of chosen) {
-      const opt = q.options.find((o) => o.label === label);
-      if (opt?.preview) {
-        annotations[q.question] = { preview: opt.preview };
-        break;
-      }
-    }
-  });
-
-  return { questions, answers, annotations };
-}
-
-function hasStepAnswer(selected: string[], other: string): boolean {
-  if (selected.length === 0) return false;
-  if (selected.includes(OTHER) && !other.trim()) return false;
-  return true;
-}
-
 export function ComposerAskPanel() {
   const { t } = useTranslation();
+  const threadId = useAuiState((s) => s.threadListItem.id);
   const panelRef = useRef<HTMLDivElement>(null);
-  const session = useSyncExternalStore(subscribeAskUserSession, getAskUserSession, () => null);
+  const activeToolCallIdRef = useRef<string | null>(null);
+  const session = useSyncExternalStore(
+    subscribeAskUserSession,
+    () => getAskUserSessionForThread(threadId),
+    () => null,
+  );
   const [collapsed, setCollapsed] = useState(false);
   const [step, setStep] = useState(0);
   const [picks, setPicks] = useState<Record<number, string[]>>({});
   const [others, setOthers] = useState<Record<number, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const picksRef = useRef(picks);
+  const othersRef = useRef(others);
+  picksRef.current = picks;
+  othersRef.current = others;
 
   const questions = session?.questions ?? [];
   const total = questions.length;
@@ -65,83 +55,154 @@ export function ComposerAskPanel() {
 
   useEffect(() => {
     if (!session) {
+      activeToolCallIdRef.current = null;
+      return;
+    }
+    if (isTauri()) void hideWebView();
+    if (activeToolCallIdRef.current !== session.toolCallId) {
+      activeToolCallIdRef.current = session.toolCallId;
       setStep(0);
       setPicks({});
       setOthers({});
       setCollapsed(false);
       setSubmitting(false);
-      return;
+      setSubmitError(null);
     }
     panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }, [session?.toolCallId, session]);
+  }, [session?.toolCallId]);
 
-  const pick = useCallback((qi: number, label: string, multi: boolean) => {
-    setPicks((prev) => {
-      const cur = prev[qi] ?? [];
-      if (multi) {
-        return {
-          ...prev,
-          [qi]: cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label],
-        };
+  const deliverResult = useCallback(
+    (result: AskUserResult): void => {
+      if (submitting) return;
+      const active = getAskUserSessionForThread(threadId);
+      if (!active) {
+        setSubmitError(t('ask.submitFailed'));
+        return;
       }
-      return { ...prev, [qi]: [label] };
-    });
-  }, []);
 
-  const submit = useCallback(
-    async (result: AskUserResult) => {
-      if (!session || submitting) return;
+      const { toolCallId, addResult } = active;
       setSubmitting(true);
-      try {
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-        session.addResult(result);
-      } finally {
-        setSubmitting(false);
-      }
+      setSubmitError(null);
+
+      void (async () => {
+        try {
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          let delivered = false;
+          try {
+            delivered = await submitAskUserResult(threadId, toolCallId, result);
+          } catch (err) {
+            console.warn('[ask] submitter failed, using session fallback', err);
+          }
+          if (!delivered) addResult(result);
+          clearAskUserSession(threadId, toolCallId);
+        } catch (err) {
+          console.error('[ask] submit failed', err);
+          setSubmitError(t('ask.submitFailed'));
+        } finally {
+          setSubmitting(false);
+        }
+      })();
     },
-    [session, submitting],
+    [submitting, threadId, t],
   );
 
   const skipAll = useCallback(() => {
-    if (!session) return;
+    const active = getAskUserSessionForThread(threadId);
+    if (!active) return;
     const answers: Record<string, string> = {};
-    for (const q of session.questions) answers[q.question] = '(skipped)';
-    void submit({ questions: session.questions, answers });
-  }, [session, submit]);
+    for (const q of active.questions) answers[q.question] = '(skipped)';
+    void deliverResult({ questions: active.questions, answers });
+  }, [deliverResult, threadId]);
 
   const goNext = useCallback(() => {
-    if (!session || total === 0) return;
-    if (step < total - 1) {
+    const active = getAskUserSessionForThread(threadId);
+    if (!active || active.questions.length === 0) {
+      setSubmitError(t('ask.submitFailed'));
+      return;
+    }
+    const currentPicks = picksRef.current;
+    const currentOthers = othersRef.current;
+    const count = active.questions.length;
+    if (step < count - 1) {
+      if (!hasStepAnswer(currentPicks[step] ?? [], currentOthers[step] ?? '')) return;
       setStep((s) => s + 1);
       return;
     }
-    void submit(buildResult(session.questions, picks, others));
-  }, [session, step, total, picks, others, submit]);
+    if (!allStepsAnswered(active.questions, currentPicks, currentOthers)) {
+      setSubmitError(t('ask.answerAllFirst'));
+      return;
+    }
+    deliverResult(buildAskUserResult(active.questions, currentPicks, currentOthers));
+  }, [step, deliverResult, threadId, t]);
 
   const goPrev = useCallback(() => {
     setStep((s) => Math.max(0, s - 1));
   }, []);
 
+  const pick = useCallback(
+    (qi: number, label: string, multi: boolean) => {
+      setPicks((prev) => {
+        const cur = prev[qi] ?? [];
+        const next = multi
+          ? {
+              ...prev,
+              [qi]: cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label],
+            }
+          : { ...prev, [qi]: [label] };
+        picksRef.current = next;
+        return next;
+      });
+      if (label !== OTHER) {
+        setOthers((prev) => {
+          if (!prev[qi]) return prev;
+          const next = { ...prev };
+          delete next[qi];
+          othersRef.current = next;
+          return next;
+        });
+      }
+    },
+    [],
+  );
+
   if (!session || total === 0 || !current) return null;
 
   const selected = picks[step] ?? [];
   const other = others[step] ?? '';
-  const canNext = hasStepAnswer(selected, other);
+  const stepReady = hasStepAnswer(selected, other);
   const isLast = step >= total - 1;
+  const canSubmit = isLast
+    ? allStepsAnswered(questions, picks, others)
+    : stepReady;
   const optionLetters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key === 'Enter' && canNext && !event.shiftKey) {
+    if (event.key === 'Enter' && canSubmit && !event.shiftKey) {
       event.preventDefault();
       goNext();
     }
   };
 
+  const onOptionPointerDown = (
+    event: PointerEvent,
+    qi: number,
+    label: string,
+    multi: boolean,
+  ) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    pick(qi, label, multi);
+  };
+
   return (
     <div
       ref={panelRef}
-      className="border-border/70 bg-card/95 ring-primary/30 mb-2 w-full overflow-hidden rounded-2xl border shadow-[0_14px_40px_-28px_rgba(15,23,42,0.45)] ring-2"
+      className="border-border/70 bg-card/95 ring-primary/30 pointer-events-auto relative z-[200] mb-2 w-full touch-manipulation overflow-visible rounded-2xl border shadow-[0_14px_40px_-28px_rgba(15,23,42,0.45)] ring-2"
       onKeyDown={onKeyDown}
+      onPointerDownCapture={() => {
+        if (isTauri()) void hideWebView();
+      }}
     >
       <div
         className={cn(
@@ -170,8 +231,11 @@ export function ComposerAskPanel() {
             variant="ghost"
             size="icon"
             className="size-7 rounded-full"
-            disabled={step >= total - 1}
-            onClick={() => setStep((s) => Math.min(total - 1, s + 1))}
+            disabled={step >= total - 1 || !stepReady}
+            onClick={() => {
+              if (!stepReady || step >= total - 1) return;
+              setStep((s) => Math.min(total - 1, s + 1));
+            }}
             aria-label={t('ask.next')}
           >
             <ChevronRightIcon className="size-4" />
@@ -201,11 +265,13 @@ export function ComposerAskPanel() {
                 const isSelected = selected.includes(opt.label);
                 return (
                   <button
-                    key={opt.label}
+                    key={`${step}-${oi}-${opt.label}`}
                     type="button"
-                    onClick={() => pick(step, opt.label, current.multiSelect ?? false)}
+                    onPointerDown={(event) =>
+                      onOptionPointerDown(event, step, opt.label, current.multiSelect ?? false)
+                    }
                     className={cn(
-                      'group flex items-start gap-3 rounded-md text-left text-sm transition-colors',
+                      'group flex cursor-pointer items-start gap-3 rounded-md text-left text-sm transition-colors',
                       isSelected
                         ? 'text-foreground'
                         : 'text-muted-foreground hover:text-foreground',
@@ -233,7 +299,9 @@ export function ComposerAskPanel() {
               >
                 <button
                   type="button"
-                  onClick={() => pick(step, OTHER, current.multiSelect ?? false)}
+                  onPointerDown={(event) =>
+                    onOptionPointerDown(event, step, OTHER, current.multiSelect ?? false)
+                  }
                   className={cn(
                     'bg-muted text-muted-foreground flex size-5 shrink-0 items-center justify-center rounded text-xs font-medium transition-colors',
                     selected.includes(OTHER)
@@ -249,37 +317,71 @@ export function ComposerAskPanel() {
                   placeholder={t('ask.otherPlaceholder')}
                   onChange={(e) => {
                     const text = e.target.value;
-                    setOthers((p) => ({ ...p, [step]: text }));
+                    setOthers((p) => {
+                      const next = { ...p, [step]: text };
+                      othersRef.current = next;
+                      return next;
+                    });
                     if (text.trim()) {
-                      setPicks((p) => ({ ...p, [step]: [OTHER] }));
+                      setPicks((p) => {
+                        const next = { ...p, [step]: [OTHER] };
+                        picksRef.current = next;
+                        return next;
+                      });
                     }
                   }}
-                  onFocus={() => pick(step, OTHER, current.multiSelect ?? false)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && canSubmit && isLast) {
+                      e.preventDefault();
+                      goNext();
+                    }
+                  }}
                   className="placeholder:text-muted-foreground w-full bg-transparent text-sm outline-none"
                 />
               </div>
             </div>
           </div>
-          <div className="flex items-center justify-end gap-2 px-4 pb-3">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 px-2 text-sm"
-              disabled={submitting}
-              onClick={skipAll}
-            >
-              {t('ask.skip')}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 gap-1.5 rounded-lg bg-amber-600 px-3 text-sm text-white hover:bg-amber-700"
-              disabled={!canNext || submitting}
-              onClick={goNext}
-            >
-              {isLast ? t('ask.submit') : t('ask.next')}
-            </Button>
+          <div className="relative z-[210] flex flex-col items-end gap-1 px-4 pb-3">
+            {submitError && (
+              <p className="text-destructive text-xs">{submitError}</p>
+            )}
+            {isLast && !canSubmit && !submitError && (
+              <p className="text-muted-foreground text-xs">{t('ask.answerAllFirst')}</p>
+            )}
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-sm"
+                disabled={submitting}
+                onPointerDown={(event) => {
+                  if (event.button !== 0 || submitting) return;
+                  event.preventDefault();
+                  skipAll();
+                }}
+              >
+                {t('ask.skip')}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="default"
+                className={cn(
+                  'h-8 gap-1.5 rounded-lg px-3 text-sm',
+                  canSubmit && !submitting && 'bg-amber-600 text-white hover:bg-amber-700',
+                )}
+                disabled={!canSubmit || submitting}
+                title={!canSubmit ? t('ask.answerAllFirst') : undefined}
+                onPointerDown={(event) => {
+                  if (event.button !== 0 || !canSubmit || submitting) return;
+                  event.preventDefault();
+                  goNext();
+                }}
+              >
+                {isLast ? t('ask.submit') : t('ask.next')}
+              </Button>
+            </div>
           </div>
         </>
       )}

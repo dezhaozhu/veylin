@@ -25,6 +25,7 @@ function NetworkReconnectStatus() {
   if (!kind || !isInlineReconnectKind(kind)) return null;
 
   let line = title ?? '';
+
   if (kind === 'reconnecting' || kind === 'post_retrying') {
     const max = kind === 'post_retrying' ? POST_MAX_RETRIES : 5;
     const label =
@@ -33,6 +34,7 @@ function NetworkReconnectStatus() {
         ? t('reconnect.postRetryTitle')
         : t('reconnect.reconnectingTitle'));
     line = `${label} (${attempt}/${max})`;
+    if (message) line = `${line} · ${message}`;
   } else if (message) {
     line = line ? `${line} · ${message}` : message;
   }

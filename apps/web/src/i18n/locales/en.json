@@ -116,6 +116,8 @@
     "previous": "Previous",
     "skip": "Skip",
     "otherPlaceholder": "Other…",
+    "answerAllFirst": "Answer every question before submitting",
+    "submitFailed": "Submit failed — retry or use Skip",
     "collapse": "Collapse",
     "expand": "Expand"
   },
@@ -150,7 +152,9 @@
     "settings": "Settings",
     "logOut": "Log out",
     "language": "Language",
-    "update": "Update"
+    "update": "Update",
+    "updateFailed": "Update failed",
+    "updateTo": "Update to {{version}}"
   },
   "common": {
     "cancel": "Cancel",
@@ -295,6 +299,12 @@
       "headersJsonError": "Headers must be valid JSON",
       "deleteFailed": "Failed to delete server: {{error}}",
       "addFailed": "Failed to add server: {{error}}",
+      "connectionFailed": "Some MCP servers failed to connect",
+      "connectionError": "{{name}}: {{error}}",
+      "reconnect": "Retry connections",
+      "reconnecting": "Reconnecting…",
+      "toolsCount": "{{count}} tools",
+      "disconnected": "Disconnected",
       "library": {
         "github": "Review PRs, triage issues, and post summaries from repository events.",
         "slack": "Send automation digests and alerts to channels your team already uses.",
@@ -422,6 +432,7 @@
     "serviceUnavailable": "Service unavailable ({{code}})",
     "streamEnded": "Stream ended unexpectedly",
     "disconnected": "Disconnected",
+    "networkUnreachable": "Cannot reach local service",
     "offlineTitle": "You are offline",
     "offlineBody": "Waiting for the network to come back…",
     "reconnectingTitle": "Reconnecting",
@@ -444,7 +455,7 @@
     "livenessTimeout": { "title": "Connection timed out", "detail": "No response from the server. Please check your network and retry." },
     "reconnectFailed": { "title": "Reconnect failed", "detail": "Could not restore the connection. Please retry." },
     "reconnectExhausted": "Reconnect time budget exhausted (10 minutes). Please try again later.",
-    "network": { "title": "Network issue", "detail": "A network problem occurred. Please check your connection." },
+    "network": { "title": "Network issue", "detail": "Cannot reach the local backend. Check that the service is running." },
     "busyRetry": { "title": "Service busy", "detail": "Please retry in a moment." },
     "unauthorized": { "title": "Unauthorized", "detail": "Your session is invalid or has expired. Please sign in again." },
     "modelNotConfigured": { "title": "Model not configured", "detail": "Open Settings -> Models and add your own API key before chatting." },
@@ -702,6 +713,8 @@
     "uiLoadFailedTitle": "UI failed to load",
     "reload": "Reload",
     "serviceNotReadyTitle": "Local service is not ready",
-    "desktopHint": "For desktop, run <code>npm run -w @veylin/desktop dev</code>; for web-only dev, ensure the server is running on port 8787."
+    "desktopHint": "For desktop, run <code>npm run -w @veylin/desktop dev</code>; for web-only dev, ensure the server is running on port 8787.",
+    "sidecarSpawnFailed": "Failed to start the local service",
+    "loadingApp": "Loading…"
   }
 }

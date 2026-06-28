@@ -49,6 +49,7 @@ function reasonLabel(reason: string): string {
   const t = i18n.t.bind(i18n);
   if (reason === 'liveness_timeout') return t('reconnect.livenessTimeout');
   if (reason === 'network_offline') return t('reconnect.networkOffline');
+  if (reason === 'network_unreachable') return t('reconnect.networkUnreachable');
   if (reason === 'stream_resume') return t('reconnect.streamResume');
   if (reason.startsWith('http_'))
     return t('reconnect.serviceUnavailable', { code: reason.replace('http_', '') });

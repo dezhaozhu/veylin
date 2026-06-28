@@ -113,6 +113,10 @@ export function buildAgent({
     name: definition.name,
     description: definition.description,
     instructions: buildInstructions(definition, skills),
+    defaultOptions: {
+      // Tool calls (web_fetch, etc.) need a follow-up model turn in the same run.
+      maxSteps: 25,
+    },
     model: ({ requestContext }: { requestContext?: { get(key: string): unknown } }) => {
       const requested = requestContext?.get('model') as ModelKey | undefined;
       return getModelConfig(requested ?? (definition.model as ModelKey));

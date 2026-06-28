@@ -19,8 +19,10 @@ import {
   useCallback,
   useMemo,
 } from "react";
+import type { UIMessage } from "ai";
 
 import { readPendingSkillFromMessage } from '@/lib/pending-skill-message';
+import { restorePendingAskUserSession } from '@/lib/restore-ask-user-session';
 
 function countFileParts(messages: ReadonlyArray<unknown>): number {
   return messages.reduce<number>((total, message) => {
@@ -148,6 +150,7 @@ export const useExternalHistory = <TMessage>(
 
           runtimeRef.current.thread.import(converted);
           onSetMessagesRef.current(serverMessages);
+          restorePendingAskUserSession(remoteId, serverMessages as UIMessage[]);
 
           historyIds.current = new Set(
             converted.messages.map((m) => m.message.id),

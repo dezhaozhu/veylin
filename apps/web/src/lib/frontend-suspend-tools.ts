@@ -13,6 +13,21 @@ type ToolPart = {
   toolCallId?: string;
 };
 
+const frontendToolStopPromises = new Map<string, Promise<unknown>>();
+
+export function registerFrontendToolStop(toolCallId: string, promise: Promise<unknown>): void {
+  frontendToolStopPromises.set(toolCallId, promise);
+  void promise.finally(() => {
+    if (frontendToolStopPromises.get(toolCallId) === promise) {
+      frontendToolStopPromises.delete(toolCallId);
+    }
+  });
+}
+
+export async function waitForFrontendToolStop(toolCallId: string): Promise<void> {
+  await frontendToolStopPromises.get(toolCallId);
+}
+
 export function getFrontendSuspendToolName(part: ToolPart): FrontendSuspendToolName | null {
   const type = part.type;
   if (!type?.startsWith('tool-')) return null;
@@ -138,11 +153,35 @@ function messageNeedsServerToolContinuation(parts: unknown[]): boolean {
   return !hasAssistantReplyAfter(parts, toolIndex);
 }
 
+/**
+ * Stream ended after a provider-executed tool call but before output arrived.
+ * Resume the agent loop so the server can finish the tool and summarize.
+ */
+function messageNeedsServerToolResume(parts: unknown[]): boolean {
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const part = parts[i];
+    if (!part || typeof part !== 'object') continue;
+    const type = (part as { type?: string }).type;
+    if (type === 'step-start') continue;
+    if (!isToolUIPart(part as never)) return false;
+    if (getFrontendSuspendToolName(part as ToolPart)) return false;
+    const p = part as ToolPart & { providerExecuted?: boolean };
+    if (p.providerExecuted && p.state === 'input-available') {
+      return !hasAssistantReplyAfter(parts, i);
+    }
+    return false;
+  }
+  return false;
+}
+
 /** Whether the chat runtime may auto-send the next model turn. */
 export function shouldAutoSendChat({
   messages,
+  status,
 }: {
   messages: UIMessage[];
+  /** When streaming/submitted, defer server-tool continuation until the active run settles. */
+  status?: string;
 }): boolean {
   const last = messages.at(-1);
   if (last?.role === 'assistant' && last.parts?.length) {
@@ -161,11 +200,22 @@ export function shouldAutoSendChat({
       pendingClientTools.length === 0 ||
       pendingClientTools.every(isToolPartComplete);
 
-    if (clientToolsReady && messageNeedsFrontendSuspendContinuation(last.parts)) {
-      return true;
+    if (!clientToolsReady) {
+      return false;
     }
 
-    if (clientToolsReady && messageNeedsServerToolContinuation(last.parts)) {
+    const needsFrontendSuspend = messageNeedsFrontendSuspendContinuation(last.parts);
+    const needsServerTool =
+      messageNeedsServerToolContinuation(last.parts) ||
+      messageNeedsServerToolResume(last.parts);
+
+    if (needsFrontendSuspend || needsServerTool) {
+      if (
+        needsServerTool &&
+        (status === 'streaming' || status === 'submitted')
+      ) {
+        return false;
+      }
       return true;
     }
   }

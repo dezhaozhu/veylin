@@ -32,6 +32,19 @@ export interface ThreadStateRow {
   updatedAt?: Date;
 }
 
+export function ephemeralThreadState(identity: ThreadIdentity): ThreadStateRow {
+  return {
+    threadId: identity.threadId,
+    tenantId: identity.tenantId,
+    resourceId: identity.resourceId,
+    planMode: false,
+    todos: [],
+    activatedSkills: {},
+    workingMemory: null,
+    title: null,
+  };
+}
+
 function toRow(r: Awaited<ReturnType<typeof getThreadStateRow>>): ThreadStateRow | null {
   if (!r) return null;
   return {
@@ -326,43 +339,33 @@ export type ThreadListEntry = {
 export async function listThreadsForResource(
   tenantId: string,
   resourceId: string,
-  memory?: Memory,
+  _memory?: Memory,
 ): Promise<ThreadListEntry[]> {
   const rows = (await listThreadStatesForResource(tenantId, resourceId)).filter((row) =>
     isSidebarChatThreadId(row.threadId),
   );
 
-  if (!memory) {
-    return rows.map((row) => ({
-      remoteId: row.threadId,
-      title: row.title ?? undefined,
-      lastMessageAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
-      status: 'regular' as const,
-    }));
-  }
-
-  const entries: ThreadListEntry[] = [];
-  for (const row of rows) {
-    const recalled = await memory.recall({
-      threadId: row.threadId,
-      resourceId: row.resourceId,
-      perPage: 1,
-    });
-    if ((recalled.messages?.length ?? 0) === 0) {
-      await deleteThreadState(row.threadId).catch(() => undefined);
-      continue;
-    }
-    entries.push({
-      remoteId: row.threadId,
-      title: row.title ?? undefined,
-      lastMessageAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
-      status: 'regular' as const,
-    });
-  }
-  return entries;
+  return rows.map((row) => ({
+    remoteId: row.threadId,
+    title: row.title ?? undefined,
+    lastMessageAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
+    status: 'regular' as const,
+  }));
 }
 
-export async function deleteThreadState(threadId: string): Promise<void> {
+export async function deleteThreadState(
+  threadId: string,
+  memory?: Memory,
+): Promise<void> {
+  if (memory) {
+    const recalled = await memory.recall({ threadId, perPage: false });
+    const messageIds = (recalled.messages ?? [])
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (messageIds.length > 0) {
+      await memory.deleteMessages(messageIds);
+    }
+  }
   await deleteThreadStateRow(threadId);
 }
 

@@ -42,11 +42,14 @@ function usePolling<T>(
   intervalMs: number,
   fallback: T,
 ): T {
-  const [value, setValue] = useState<T>(fallback);
+  const [state, setState] = useState<{ threadId: string | undefined; value: T }>(() => ({
+    threadId,
+    value: fallback,
+  }));
 
   useEffect(() => {
     if (!threadId) {
-      setValue(fallback);
+      setState({ threadId, value: fallback });
       return;
     }
     let cancelled = false;
@@ -54,7 +57,7 @@ function usePolling<T>(
       fetch(`${path}?threadId=${encodeURIComponent(threadId)}`)
         .then((r) => r.json())
         .then((d: unknown) => {
-          if (!cancelled) setValue(pick(d));
+          if (!cancelled) setState({ threadId, value: pick(d) });
         })
         .catch(() => undefined);
     };
@@ -67,7 +70,7 @@ function usePolling<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId, path, intervalMs]);
 
-  return value;
+  return state.threadId === threadId ? state.value : fallback;
 }
 
 /**

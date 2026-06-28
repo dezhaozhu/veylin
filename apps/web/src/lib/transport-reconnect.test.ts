@@ -20,7 +20,6 @@ test('isPermanentHttpStatus matches the agent PERMANENT_HTTP_CODES', () => {
 });
 
 test('shouldRetryPost follows the agent POST policy', () => {
-  assert.equal(shouldRetryPost(409), true);
   assert.equal(shouldRetryPost(429), true);
   assert.equal(shouldRetryPost(503), true);
   assert.equal(shouldRetryPost(400), false);
@@ -65,22 +64,6 @@ test('postChatWithRetry retries 503 then succeeds', async () => {
   assert.equal(calls, 2);
   assert.equal(isPostSuccess(response.status), true);
   assert.deepEqual(delays, [500]);
-});
-
-test('postChatWithRetry retries transient 409 then succeeds', async () => {
-  let calls = 0;
-
-  const response = await postChatWithRetry(
-    async (_signal) => {
-      calls += 1;
-      if (calls === 1) return new Response('thread busy', { status: 409 });
-      return new Response('ok', { status: 200 });
-    },
-    { sleep: async () => {} },
-  );
-
-  assert.equal(calls, 2);
-  assert.equal(isPostSuccess(response.status), true);
 });
 
 test('postChatWithRetry does not retry 401', async () => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { McpServer } from '@/hooks/settings/api';
+import type { McpServer, McpHealthSnapshot, McpServerHealth } from '@/hooks/settings/api';
 import { settingsApi } from '@/hooks/settings/api';
 import {
   PageHeader,
@@ -84,14 +84,23 @@ function McpIcon({ name, enabled }: { name: string; enabled: boolean }) {
 
 function InstalledRow({
   item,
+  health,
   onToggle,
   onDelete,
 }: {
   item: InstalledItem;
+  health?: McpServerHealth;
   onToggle: (enabled: boolean) => void;
   onDelete?: () => void;
 }) {
   const { t } = useTranslation();
+
+  const statusLine =
+    item.enabled && health
+      ? health.connected
+        ? t('customize.mcpPage.toolsCount', { count: health.toolCount })
+        : t('customize.mcpPage.disconnected')
+      : null;
 
   const menuItems = [
     {
@@ -109,7 +118,7 @@ function InstalledRow({
       title={item.name}
       subtitle={t('customize.mcpPage.serverLine', {
         transport: item.transport,
-        detail: item.detail,
+        detail: statusLine ? `${item.detail} · ${statusLine}` : item.detail,
       })}
       subtitleAction
       menuItems={menuItems}
@@ -122,6 +131,8 @@ export function McpSettingsScreen() {
   const [bundled, setBundled] = useState<string[]>([]);
   const [remote, setRemote] = useState<McpServer[]>([]);
   const [disabledMcp, setDisabledMcp] = useState<Set<string>>(new Set());
+  const [health, setHealth] = useState<McpHealthSnapshot | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'installed' | 'library'>('all');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -139,6 +150,17 @@ export function McpSettingsScreen() {
     setBundled(data.bundled);
     setRemote(data.remote);
     setDisabledMcp(new Set(data.disabledMcp ?? []));
+    setHealth(data.health);
+  }, []);
+
+  const reconnect = useCallback(async () => {
+    setReconnecting(true);
+    try {
+      const data = await settingsApi.reconnectMcpServers();
+      setHealth(data.health);
+    } finally {
+      setReconnecting(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -238,6 +260,18 @@ export function McpSettingsScreen() {
     setDialogOpen(true);
   };
 
+  const healthByName = useMemo(() => {
+    const map = new Map<string, McpServerHealth>();
+    for (const server of health?.servers ?? []) {
+      map.set(server.name, server);
+    }
+    return map;
+  }, [health]);
+
+  const hasConnectionIssues =
+    Boolean(health?.lastError) ||
+    (health?.servers ?? []).some((server) => !server.connected);
+
   return (
     <div className="mx-auto max-w-5xl">
       <PageHeader
@@ -254,6 +288,23 @@ export function McpSettingsScreen() {
           </PrimaryActionButton>
         }
       />
+
+      {(health?.lastError || hasConnectionIssues) && (
+        <div className="border-destructive/30 bg-destructive/5 mb-4 rounded-lg border px-4 py-3 text-sm">
+          <p className="text-destructive font-medium">{t('customize.mcpPage.connectionFailed')}</p>
+          {health?.lastError && (
+            <p className="text-muted-foreground mt-1 text-xs">{health.lastError}</p>
+          )}
+          <button
+            type="button"
+            className="text-primary mt-2 text-xs underline"
+            disabled={reconnecting}
+            onClick={() => void reconnect()}
+          >
+            {reconnecting ? t('customize.mcpPage.reconnecting') : t('customize.mcpPage.reconnect')}
+          </button>
+        </div>
+      )}
 
       <PageSearchBar
         value={query}
@@ -332,6 +383,7 @@ export function McpSettingsScreen() {
                 <InstalledRow
                   key={item.key}
                   item={item}
+                  health={healthByName.get(item.name)}
                   onToggle={(on) => void toggleInstalled(item, on)}
                   onDelete={item.source === 'remote' ? () => setDeleteTarget(item) : undefined}
                 />

@@ -15,6 +15,7 @@ import { useCallback, type FC, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getComposerQueueRuntime } from '@/lib/composer-queue-runtime';
 import {
+  isImeComposing,
   resolveEnterWhileRunning,
   shouldInterceptTabForQueue,
 } from '@/lib/composer-submit-keys';
@@ -147,7 +148,7 @@ export function useComposerSubmitKeys(): (e: KeyboardEvent) => void {
   const aui = useAui();
   return useCallback(
     (e: KeyboardEvent) => {
-      if (e.nativeEvent.isComposing) return;
+      if (isImeComposing(e)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       const thread = aui.thread().getState();
@@ -167,6 +168,14 @@ export function useComposerSubmitKeys(): (e: KeyboardEvent) => void {
       }
 
       if (e.key !== 'Enter' || e.shiftKey) return;
+
+      if (!keyState.isRunning) {
+        if (keyState.composerEmpty) return;
+        e.preventDefault();
+        e.stopPropagation();
+        aui.composer().send();
+        return;
+      }
 
       const enterAction = resolveEnterWhileRunning(keyState);
       if (enterAction === 'ignore') return;

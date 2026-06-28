@@ -34,9 +34,6 @@ export function isPermanentHttpStatus(status: number): boolean {
 
 /** 429 or 5xx — retry; other 4xx are permanent (the agent POST policy). */
 export function shouldRetryPost(status: number): boolean {
-  // A just-stopped frontend tool can race with the next /api/chat continuation.
-  // Treat the thread conflict as transient for chat POSTs.
-  if (status === 409) return true;
   if (status === 429) return true;
   if (status >= 500) return true;
   return false;
@@ -183,10 +180,13 @@ export async function postChatWithRetry(
       }
 
       const delayMs = getPostRetryDelay(attempt);
+      const msg = error instanceof Error ? error.message : '';
       options.onRetry?.({
         attempt,
         delayMs,
-        reason: error instanceof Error ? error.message : 'network_error',
+        reason: /fetch failed|Failed to fetch|ECONNREFUSED/i.test(msg)
+          ? 'network_unreachable'
+          : 'disconnected',
       });
       await sleep(delayMs, options.signal);
     } finally {

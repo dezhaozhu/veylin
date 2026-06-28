@@ -20,6 +20,7 @@ pub fn run() {
             web_view::read_web_view,
             web_view::resize_web_view,
             web_view::show_web_view,
+            sidecar::get_sidecar_status,
         ])
         .on_window_event(|window, event| {
             if window.label() != "main" {

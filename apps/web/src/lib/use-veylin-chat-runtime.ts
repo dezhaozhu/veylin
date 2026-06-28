@@ -14,6 +14,7 @@ import {
 import type { ChatTransport } from 'ai';
 import { useEffect, useMemo, useRef } from 'react';
 import { createServerThreadListAdapter } from './server-thread-list-adapter';
+import { isPersistableThreadId, syncThreadMessagesToServer } from './sync-thread-messages';
 import { useAISDKRuntimeWithQueue } from './use-aisdk-runtime-with-queue';
 import { resumableStorage } from './resumable-storage';
 import { isBenignChatError } from './format-chat-error';
@@ -51,6 +52,7 @@ function useChatThreadRuntime<UI_MESSAGE extends UIMessage = UIMessage>(
     onResume,
     joinStrategy,
     resume,
+    onFinish: userOnFinish,
     cloud: _cloud,
     ...chatOptions
   } = options ?? {};
@@ -69,6 +71,14 @@ function useChatThreadRuntime<UI_MESSAGE extends UIMessage = UIMessage>(
     id,
     transport,
     resume,
+    onFinish: (...args) => {
+      const event = args[0];
+      const threadId = remoteId ?? id;
+      if (isPersistableThreadId(threadId) && event && !event.isAbort && event.messages?.length) {
+        void syncThreadMessagesToServer(threadId, event.messages);
+      }
+      userOnFinish?.(...args);
+    },
   });
 
   const runtime = useAISDKRuntimeWithQueue(chat, {
@@ -106,17 +116,36 @@ function useChatThreadRuntime<UI_MESSAGE extends UIMessage = UIMessage>(
     }
 
     resumeFiredRef.current = true;
-    chat.resumeStream().catch((err: unknown) => {
-      if (isBenignChatError(err)) {
+    const threadId = remoteId ?? id;
+
+    void (async () => {
+      try {
+        const activityRes = await fetch('/api/threads/activity', {
+          credentials: 'include',
+        });
+        if (activityRes.ok) {
+          const data = (await activityRes.json()) as {
+            activity?: Record<string, { kind?: string }>;
+          };
+          if (data.activity?.[threadId]?.kind !== 'running') {
+            resumableStorage.clear();
+            useNetworkReconnectStore.getState().clearReconnecting();
+            return;
+          }
+        }
+        await chat.resumeStream();
+      } catch (err: unknown) {
+        if (isBenignChatError(err)) {
+          resumableStorage.clear();
+          useNetworkReconnectStore.getState().clearReconnecting();
+          return;
+        }
+        console.warn('[chat] resume failed; clearing stored stream id', err);
         resumableStorage.clear();
         useNetworkReconnectStore.getState().clearReconnecting();
-        return;
       }
-      console.warn('[chat] resume failed; clearing stored stream id', err);
-      resumableStorage.clear();
-      useNetworkReconnectStore.getState().clearReconnecting();
-    });
-  }, [chat, id]);
+    })();
+  }, [chat, id, remoteId]);
 
   return runtime;
 }

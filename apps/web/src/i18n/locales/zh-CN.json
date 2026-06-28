@@ -116,6 +116,8 @@
     "previous": "上一题",
     "skip": "跳过",
     "otherPlaceholder": "Other…",
+    "answerAllFirst": "请先完成每一题的选择",
+    "submitFailed": "提交失败，请重试或点「跳过」",
     "collapse": "收起",
     "expand": "展开"
   },
@@ -150,7 +152,9 @@
     "settings": "设置",
     "logOut": "退出登录",
     "language": "语言",
-    "update": "更新"
+    "update": "更新",
+    "updateFailed": "更新失败",
+    "updateTo": "更新到 {{version}}"
   },
   "common": {
     "cancel": "取消",
@@ -295,6 +299,12 @@
       "headersJsonError": "Headers 必须是合法 JSON",
       "deleteFailed": "删除服务失败：{{error}}",
       "addFailed": "添加服务失败：{{error}}",
+      "connectionFailed": "部分 MCP 服务连接失败",
+      "connectionError": "{{name}}：{{error}}",
+      "reconnect": "重试连接",
+      "reconnecting": "正在重连…",
+      "toolsCount": "{{count}} 个工具",
+      "disconnected": "未连接",
       "library": {
         "github": "审查 PR、整理 Issue，并根据仓库事件发布摘要。",
         "slack": "把自动化摘要和告警发送到团队正在使用的频道。",
@@ -422,6 +432,7 @@
     "serviceUnavailable": "服务不可用 ({{code}})",
     "streamEnded": "流意外结束",
     "disconnected": "连接已断开",
+    "networkUnreachable": "无法连接本地服务",
     "offlineTitle": "网络已断开",
     "offlineBody": "正在等待网络恢复…",
     "reconnectingTitle": "正在重连",
@@ -444,7 +455,7 @@
     "livenessTimeout": { "title": "连接超时", "detail": "服务器无响应，请检查网络后重试。" },
     "reconnectFailed": { "title": "重连失败", "detail": "无法恢复连接，请重试。" },
     "reconnectExhausted": "重连时间已用尽（10 分钟），请稍后重试。",
-    "network": { "title": "网络异常", "detail": "出现网络问题，请检查连接。" },
+    "network": { "title": "网络异常", "detail": "无法连接本地后端，请确认服务已在运行。" },
     "busyRetry": { "title": "服务繁忙", "detail": "请稍后重试。" },
     "unauthorized": { "title": "未授权", "detail": "会话无效或已过期，请重新登录。" },
     "modelNotConfigured": { "title": "模型未配置", "detail": "请先打开「设置 -> Models」并配置你自己的 API Key。" },
@@ -702,6 +713,8 @@
     "uiLoadFailedTitle": "界面加载失败",
     "reload": "重新加载",
     "serviceNotReadyTitle": "本地服务暂未就绪",
-    "desktopHint": "桌面端请用 <code>npm run -w @veylin/desktop dev</code> 启动；仅 Web 开发请确认 8787 端口上的 server 已运行。"
+    "desktopHint": "桌面端请用 <code>npm run -w @veylin/desktop dev</code> 启动；仅 Web 开发请确认 8787 端口上的 server 已运行。",
+    "sidecarSpawnFailed": "本地服务启动失败",
+    "loadingApp": "加载中…"
   }
 }

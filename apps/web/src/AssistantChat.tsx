@@ -1,8 +1,11 @@
+import { useEffect } from 'react';
 import {
   AssistantRuntimeProvider,
   AuiProvider,
   useAui,
 } from '@assistant-ui/react';
+import { bootstrapModelCatalogFromServer } from '@/hooks/use-server-model-catalog';
+import { startupCheckpoint } from '@/lib/startup-profiler';
 import {
   AssistantChatTransport,
 } from '@assistant-ui/react-ai-sdk';
@@ -11,7 +14,6 @@ import {
   CompositeAttachmentAdapter,
   SimpleImageAttachmentAdapter,
 } from '@assistant-ui/react';
-import { shouldAutoSendChat } from '@/lib/frontend-suspend-tools';
 import { FileAttachmentAdapter } from '@/lib/file-attachment-adapter';
 import { getChatSettings, setChatSettings } from '@/lib/chat-settings';
 import i18n, { resolveAppLanguage } from '@/i18n';
@@ -26,29 +28,20 @@ import {
   getResumeCursor,
 } from '@/lib/stream-resume-cursor';
 import { resumableStorage } from '@/lib/resumable-storage';
-import { HandoffRenderers } from '@/components/assistant-ui/handoff';
-import { AskUserQuestionToolUI } from '@/components/assistant-ui/ask-user-question';
-import { WebFetchToolUI } from '@/components/assistant-ui/web-fetch';
-import { ReadOpenPageToolUI } from '@/components/assistant-ui/read-open-page';
-import { TodoWriteToolUI } from '@/components/assistant-ui/todo-write';
 import {
-  SetWorkingMemoryToolUI,
-  UpdateWorkingMemoryToolUI,
-} from '@/components/assistant-ui/working-memory-tools';
-import { ToolSearchToolUI } from '@/components/assistant-ui/tool-search';
-import { TaskToolUI, TaskContinueToolUI } from '@/components/assistant-ui/task-tool';
-import { KnowledgeSearchToolUI } from '@/components/assistant-ui/knowledge-search';
+  LazyAssistantToolUIs,
+  LazyAutomateWorkspace,
+  LazyCustomizeWorkspace,
+  LazySettingsWorkspace,
+  LazyThreadRightSidebar,
+} from '@/components/assistant-ui/lazy-assistant-modules';
 import { ChatPanelRatioSync } from '@/components/assistant-ui/chat-panel-ratio-sync';
 import { Thread } from '@/components/assistant-ui/thread';
 import { ThreadHeaderToolbar } from '@/components/assistant-ui/thread-header-toolbar';
 import { ThreadListSidebar } from '@/components/assistant-ui/threadlist-sidebar';
-import { ThreadRightSidebar } from '@/components/assistant-ui/thread-right-sidebar';
 import { PanelTabsProvider } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import { SettingsPanelProvider, useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { WorkspaceNavigationProvider } from '@/hooks/use-workspace-navigation';
-import { CustomizeWorkspace } from '@/components/features/customize/customize-workspace';
-import { AutomateWorkspace } from '@/components/features/automate/automate-workspace';
-import { SettingsWorkspace } from '@/components/features/settings/settings-workspace';
 import { WorkspacePanelDragOverlay } from '@/components/features/workspace-panel-drag-overlay';
 import { cn } from '@/lib/utils';
 import {
@@ -83,24 +76,24 @@ function ChatShell() {
                     <Thread />
                   </div>
                 </SidebarInset>
-                <ThreadRightSidebar />
+                <LazyThreadRightSidebar />
               </div>
               {view === 'customize' && (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                   <WorkspacePanelDragOverlay />
-                  <CustomizeWorkspace />
+                  <LazyCustomizeWorkspace />
                 </div>
               )}
               {view === 'automate' && (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                   <WorkspacePanelDragOverlay />
-                  <AutomateWorkspace />
+                  <LazyAutomateWorkspace />
                 </div>
               )}
               {view === 'settings' && (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                   <WorkspacePanelDragOverlay />
-                  <SettingsWorkspace />
+                  <LazySettingsWorkspace />
                 </div>
               )}
             </div>
@@ -118,9 +111,14 @@ const resilientChatFetch = createResilientChatFetch();
 export function AssistantChat() {
   useNetworkConnectivity();
 
+  useEffect(() => {
+    void bootstrapModelCatalogFromServer().finally(() => startupCheckpoint('catalog_ready'));
+  }, []);
+
   const runtime = useVeylinChatRuntime({
     resume: true,
-    sendAutomaticallyWhen: shouldAutoSendChat,
+    // Tool continuation is orchestrated in useAISDKRuntimeWithQueue (single path, deduped).
+    sendAutomaticallyWhen: () => false,
     onError: (error) => {
       if (isAbortError(error) || isBenignChatError(error)) return;
       const formatted = formatChatError(error);
@@ -178,17 +176,7 @@ export function AssistantChat() {
   return (
     <SettingsPanelProvider>
       <AssistantRuntimeProvider runtime={runtime}>
-        <HandoffRenderers />
-        <AskUserQuestionToolUI />
-        <TodoWriteToolUI />
-        <UpdateWorkingMemoryToolUI />
-        <SetWorkingMemoryToolUI />
-        <ToolSearchToolUI />
-        <TaskToolUI />
-        <TaskContinueToolUI />
-        <KnowledgeSearchToolUI />
-        <WebFetchToolUI />
-        <ReadOpenPageToolUI />
+        <LazyAssistantToolUIs />
         <ChatShell />
       </AssistantRuntimeProvider>
     </SettingsPanelProvider>

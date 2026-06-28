@@ -31,6 +31,18 @@ export type McpServer = {
   enabled: boolean;
 };
 
+export type McpServerHealth = {
+  name: string;
+  connected: boolean;
+  toolCount: number;
+  lastError?: string;
+};
+
+export type McpHealthSnapshot = {
+  lastError?: string;
+  servers: McpServerHealth[];
+};
+
 export type Automation = {
   id: string;
   name: string;
@@ -160,9 +172,16 @@ export const settingsApi = {
   deleteRule: (id: string) => apiFetch(`/api/rules/${id}`, { method: 'DELETE' }),
 
   getMcpServers: () =>
-    apiFetch<{ bundled: string[]; remote: McpServer[]; disabledMcp: string[] }>(
-      '/api/mcp-servers',
-    ),
+    apiFetch<{
+      bundled: string[];
+      remote: McpServer[];
+      disabledMcp: string[];
+      health: McpHealthSnapshot | null;
+    }>('/api/mcp-servers'),
+  reconnectMcpServers: () =>
+    apiFetch<{ ok: boolean; health: McpHealthSnapshot | null }>('/api/mcp-servers/reconnect', {
+      method: 'POST',
+    }),
   saveDisabledMcp: (disabledMcp: string[]) =>
     apiFetch('/api/mcp-servers/disabled', {
       method: 'POST',

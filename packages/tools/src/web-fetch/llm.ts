@@ -52,5 +52,9 @@ export async function applyPromptToMarkdown(
     throw new Error(`web_fetch secondary model failed: ${res.status}`);
   }
   const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  return data.choices?.[0]?.message?.content?.trim() ?? 'No response from model';
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) {
+    return `[Secondary model returned empty; raw page excerpt below]\n\n${truncated.slice(0, 4000)}`;
+  }
+  return content;
 }

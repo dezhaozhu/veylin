@@ -25,19 +25,17 @@ ${guidelines}`;
 export const WEB_FETCH_AUTH_WARNING = `IMPORTANT: web_fetch WILL FAIL for authenticated or private URLs (no login cookies). For pages the user opened in the desktop web view (intranet, SSO, etc.), use read_open_page instead.`;
 
 export const WEB_FETCH_DESCRIPTION = `
-- Fetches and summarizes a **specific URL** the user provided or that already appears in context (citation link, prior message, open tab URL)
+- Fetches a **specific URL** the user provided or that already appears in context (citation link, prior message, open tab URL)
 - NOT a web search tool — do not use it to hunt for pages by topic; use \`knowledge_search\` for uploaded documents or ask the user for a URL
-- Takes a URL and a prompt: fetches the page, converts HTML to markdown, then applies the prompt with a small model
-- Returns the model's response about that page's content
+- Returns the page as markdown (truncated when very large). **You** read the returned content and summarize or answer the user in your next message
+- Optional \`prompt\` field is a focus hint prepended to the content — not a separate model call
 
 Usage notes:
   - If an MCP-provided web fetch tool is available, prefer that tool instead — it may have fewer restrictions
   - The URL must be a fully-formed valid URL you intend to read (not a search query)
   - Do not guess Wikipedia or blog URLs to "research" a topic unless the user gave that exact link
   - HTTP URLs will be automatically upgraded to HTTPS
-  - The prompt should describe what information you want to extract from the page
   - Read-only; does not modify files
-  - Results may be summarized when content is very large
   - 15-minute cache for repeated access to the same URL
   - On cross-host redirect, fetch again with the redirect URL provided in the tool result
 `.trim();

@@ -3,13 +3,21 @@ import { useTranslation } from 'react-i18next';
 import { createRoot } from 'react-dom/client';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { apiUrl, installApiFetchShim } from '@/lib/api-base';
-import { bootstrapModelCatalogFromServer } from '@/hooks/use-server-model-catalog';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
+import { installDesktopReloadShortcut } from '@/lib/desktop-reload-shortcut';
+import { fetchSidecarStatus } from '@/lib/sidecar-status';
+import { startupCheckpoint } from '@/lib/startup-profiler';
 import i18n from '@/i18n';
 import { App } from './App';
 import './index.css';
 
 installApiFetchShim();
+installDesktopReloadShortcut();
+startupCheckpoint('react_shell');
+
+if (import.meta.env.DEV) {
+  void import('./lib/dev-test-hooks').then((m) => m.installDevTestHooks());
+}
 
 // Surface fatal module/load errors on the static splash (before React mounts).
 window.addEventListener('error', (event) => {
@@ -35,11 +43,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function healthCheckUrls(): string[] {
-  const urls = [apiUrl('/health')];
-  if (isTauri()) {
-    urls.push('http://127.0.0.1:8787/health', 'http://localhost:8787/health');
-  }
-  return [...new Set(urls)];
+  return [apiUrl('/health')];
 }
 
 function setSplashHint(text: string): void {
@@ -50,17 +54,31 @@ function setSplashHint(text: string): void {
 }
 
 async function probeHealth(url: string): Promise<boolean> {
-  const res = await fetch(url, { cache: 'no-store' });
-  return res.ok;
+  const ac = new AbortController();
+  const timer = window.setTimeout(() => ac.abort(), 5_000);
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: ac.signal });
+    return res.ok;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 async function waitForApiReady(signal: { cancelled: boolean }): Promise<void> {
+  const sidecar = await fetchSidecarStatus();
+  if (sidecar && !sidecar.spawnOk) {
+    throw new Error(sidecar.error ?? i18n.t('splash.sidecarSpawnFailed'));
+  }
+
   let lastError: unknown;
   const urls = healthCheckUrls();
   for (let i = 0; i < 90 && !signal.cancelled; i++) {
     for (const url of urls) {
       try {
-        if (await probeHealth(url)) return;
+        if (await probeHealth(url)) {
+          startupCheckpoint('health_ok');
+          return;
+        }
         lastError = new Error(`HTTP error (${url})`);
       } catch (err) {
         lastError = err;
@@ -166,13 +184,12 @@ function StartupGate() {
 
   useEffect(() => {
     const signal = { cancelled: false };
+    const failsafe = window.setTimeout(() => removeSplash(), 15_000);
     setStartupError(null);
     void waitForApiReady(signal)
-      .then(() => bootstrapModelCatalogFromServer())
       .then(() => {
-        if (!signal.cancelled) {
-          setReady(true);
-        }
+        if (signal.cancelled) return;
+        setReady(true);
       })
       .catch((err) => {
         if (!signal.cancelled) {
@@ -183,13 +200,18 @@ function StartupGate() {
       });
     return () => {
       signal.cancelled = true;
+      window.clearTimeout(failsafe);
     };
   }, [attempt]);
 
   useEffect(() => {
     if (!ready) return;
+    startupCheckpoint('react_mount');
     const id = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => removeSplash());
+      window.requestAnimationFrame(() => {
+        removeSplash();
+        startupCheckpoint('assistant_ready');
+      });
     });
     return () => window.cancelAnimationFrame(id);
   }, [ready]);

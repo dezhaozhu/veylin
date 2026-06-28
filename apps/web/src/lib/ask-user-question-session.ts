@@ -18,21 +18,41 @@ export type AskUserResult = {
 };
 
 export type AskUserSession = {
+  threadId: string;
   toolCallId: string;
   questions: AskQuestion[];
   addResult: (result: AskUserResult) => void;
 };
 
-let session: AskUserSession | null = null;
+const sessions = new Map<string, AskUserSession>();
 const listeners = new Set<() => void>();
 
 export function setAskUserSession(next: AskUserSession | null): void {
-  session = next;
+  if (next) {
+    sessions.set(next.threadId, next);
+  }
   for (const listener of listeners) listener();
 }
 
 export function getAskUserSession(): AskUserSession | null {
-  return session;
+  return sessions.values().next().value ?? null;
+}
+
+export function hasAskUserSession(): boolean {
+  return sessions.size > 0;
+}
+
+export function getAskUserSessionForThread(threadId: string | undefined): AskUserSession | null {
+  if (!threadId) return null;
+  return sessions.get(threadId) ?? null;
+}
+
+export function clearAskUserSession(threadId: string, toolCallId?: string): void {
+  const current = sessions.get(threadId);
+  if (!current) return;
+  if (toolCallId && current.toolCallId !== toolCallId) return;
+  sessions.delete(threadId);
+  for (const listener of listeners) listener();
 }
 
 export function subscribeAskUserSession(listener: () => void): () => void {

@@ -1,93 +1,24 @@
-import { makeAssistantToolUI } from '@assistant-ui/react';
+import { makeAssistantToolUI, useAuiState } from '@assistant-ui/react';
 import { HelpCircleIcon } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { normalizeAskQuestions } from '@/lib/ask-user-question-normalize';
 import {
   hasAskUserAnswers,
+  clearAskUserSession,
+  getAskUserSessionForThread,
   setAskUserSession,
-  type AskQuestion,
   type AskUserResult,
 } from '@/lib/ask-user-question-session';
 
-interface Option {
-  label: string;
-  description?: string;
-  preview?: string;
-}
 interface Question {
   question: string;
   header: string;
-  options: Option[];
+  options: { label: string; description?: string; preview?: string }[];
   multiSelect?: boolean;
 }
 interface Args {
   questions: Question[];
-}
-
-type RawQuestion = Partial<Question> & {
-  prompt?: unknown;
-  text?: unknown;
-  choices?: unknown;
-};
-
-function normalizeQuestion(raw: RawQuestion | undefined): AskQuestion | null {
-  if (!raw) return null;
-
-  const questionText = (
-    typeof raw.question === 'string'
-      ? raw.question
-      : typeof raw.prompt === 'string'
-        ? raw.prompt
-        : typeof raw.text === 'string'
-          ? raw.text
-          : ''
-  ).trim();
-  if (!questionText) return null;
-
-  const header =
-    (typeof raw.header === 'string' ? raw.header.trim() : '') ||
-    questionText.slice(0, 12);
-
-  const rawOptions = Array.isArray(raw.options)
-    ? raw.options
-    : Array.isArray(raw.choices)
-      ? raw.choices
-      : [];
-
-  const options = rawOptions
-    .map((entry): Option | null => {
-      if (typeof entry === 'string') {
-        const label = entry.trim();
-        return label ? { label } : null;
-      }
-      if (!entry || typeof entry !== 'object') return null;
-      const o = entry as Record<string, unknown>;
-      const label = (
-        typeof o.label === 'string'
-          ? o.label
-          : typeof o.text === 'string'
-            ? o.text
-            : typeof o.value === 'string'
-              ? o.value
-              : ''
-      ).trim();
-      if (!label) return null;
-      return {
-        label,
-        description: typeof o.description === 'string' ? o.description : undefined,
-        preview: typeof o.preview === 'string' ? o.preview : undefined,
-      };
-    })
-    .filter((o): o is Option => o != null);
-
-  if (options.length === 0) return null;
-
-  return {
-    question: questionText,
-    header,
-    options,
-    multiSelect: raw.multiSelect ?? false,
-  };
 }
 
 export const AskUserQuestionToolUI = makeAssistantToolUI<Args, AskUserResult>({
@@ -95,26 +26,40 @@ export const AskUserQuestionToolUI = makeAssistantToolUI<Args, AskUserResult>({
   display: 'standalone',
   render: ({ args, addResult, result, toolCallId, status }) => {
     const { t } = useTranslation();
-    const rawQuestions = args?.questions ?? [];
-    const questions = rawQuestions
-      .map(normalizeQuestion)
-      .filter((q): q is AskQuestion => q != null);
+    const threadId = useAuiState((s) => s.threadListItem.id);
+    const questions = normalizeAskQuestions(args?.questions ?? []);
 
     const answered = hasAskUserAnswers(result);
     const awaiting = Boolean(addResult) && questions.length > 0 && !answered;
+    const addResultRef = useRef(addResult);
+    addResultRef.current = addResult;
+
+    const questionsKey = JSON.stringify(
+      questions.map((q) => ({
+        question: q.question,
+        options: q.options.map((o) => o.label),
+      })),
+    );
 
     useEffect(() => {
-      if (!awaiting || !addResult) {
-        setAskUserSession(null);
+      if (answered) {
+        clearAskUserSession(threadId, toolCallId);
         return;
       }
+      if (!awaiting || !addResult) return;
       setAskUserSession({
+        threadId,
         toolCallId,
         questions,
-        addResult,
+        addResult: (payload) => {
+          const fn = addResultRef.current;
+          if (!fn) {
+            throw new Error('ask_user_question addResult unavailable');
+          }
+          fn(payload);
+        },
       });
-      return () => setAskUserSession(null);
-    }, [awaiting, addResult, toolCallId, JSON.stringify(questions)]);
+    }, [awaiting, addResult, threadId, toolCallId, questionsKey]);
 
     if (!answered && questions.length === 0) {
       const stillStreaming = status.type === 'running';
@@ -141,10 +86,12 @@ export const AskUserQuestionToolUI = makeAssistantToolUI<Args, AskUserResult>({
     }
 
     if (!answered && questions.length > 0 && !addResult) {
+      const restored =
+        getAskUserSessionForThread(threadId)?.toolCallId === toolCallId;
       return (
         <div className="text-muted-foreground my-1 flex items-center gap-1.5 text-xs">
           <HelpCircleIcon className="size-3.5 shrink-0" />
-          {t('ask.stopped')}
+          {restored ? t('ask.selectToContinue') : t('ask.stopped')}
         </div>
       );
     }

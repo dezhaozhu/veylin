@@ -57,10 +57,17 @@ import {
 import {
   createContext,
   useContext,
+  useEffect,
+  useSyncExternalStore,
   type ComponentType,
   type FC,
   type PropsWithChildren,
 } from "react";
+import {
+  getAskUserSessionForThread,
+  subscribeAskUserSession,
+} from "@/lib/ask-user-question-session";
+import { hideWebView, isTauri } from "@/lib/tauri-web-view";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
@@ -110,6 +117,25 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
 
 const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
   const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
+  const threadId = useAuiState((s) => s.threadListItem.id);
+  const askOpen = useSyncExternalStore(
+    subscribeAskUserSession,
+    () => getAskUserSessionForThread(threadId) != null,
+    () => false,
+  );
+
+  useEffect(() => {
+    if (!isTauri() || !askOpen) return;
+    void hideWebView();
+    return subscribeAskUserSession(() => {
+      if (getAskUserSessionForThread(threadId) != null) void hideWebView();
+    });
+  }, [askOpen, threadId]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    void import('@/lib/dev-test-hooks').then((m) => m.registerDevThreadId(threadId));
+  }, [threadId]);
 
   return (
     <ThreadPrimitive.Root
@@ -149,15 +175,15 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
 
           <ThreadPrimitive.ViewportFooter
             className={cn(
-              "aui-thread-viewport-footer bg-background flex shrink-0 flex-col gap-4 overflow-visible pb-5 md:pb-6",
+              "aui-thread-viewport-footer bg-background flex shrink-0 flex-col-reverse gap-4 overflow-visible pb-5 md:pb-6",
               !isEmpty &&
                 "sticky bottom-0 mt-auto rounded-t-(--composer-radius)",
             )}
           >
             <ThreadScrollToBottom />
-            <ComposerStatusBar />
-            <ComposerAskPanel />
             <Composer />
+            <ComposerAskPanel />
+            <ComposerStatusBar />
           </ThreadPrimitive.ViewportFooter>
         </div>
       </ThreadPrimitive.Viewport>

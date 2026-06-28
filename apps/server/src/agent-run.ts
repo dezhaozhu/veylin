@@ -64,11 +64,19 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
   if (activeMcp.length > 0) {
     try {
       mcpClient = await createMcpClient(tenantId);
-      const all = (await mcpClient.listToolsets().catch(() => ({}))) as Record<string, unknown>;
-      mcpToolsets = Object.fromEntries(
-        Object.entries(all).filter(([server]) => activeMcp.includes(server)),
-      );
-    } catch {
+      try {
+        const all = (await mcpClient.listToolsets()) as Record<string, unknown>;
+        mcpToolsets = Object.fromEntries(
+          Object.entries(all).filter(([server]) => activeMcp.includes(server)),
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[mcp] listToolsets failed during agent run: ${message}`);
+        mcpToolsets = {};
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[mcp] client connect failed during agent run: ${message}`);
       mcpToolsets = {};
     }
   }

@@ -1,7 +1,6 @@
 import { urlCache, type CacheEntry } from './cache';
-import { applyPromptToMarkdown, MAX_MARKDOWN_LENGTH } from './llm';
+import { MAX_MARKDOWN_LENGTH } from './llm';
 import { htmlToMarkdown, isBinaryContentType } from './markdown';
-import { isPreapprovedUrl } from './preapproved';
 import {
   httpStatusText,
   isPermittedRedirect,
@@ -116,12 +115,15 @@ export async function getUrlMarkdownContent(
   return entry;
 }
 
-/** Full WebFetch pipeline: fetch → (optional LLM) → result string. */
-export async function runWebFetch(url: string, prompt: string): Promise<{
+/** Full WebFetch pipeline: fetch URL → markdown excerpt for the main model to read. */
+export async function runWebFetch(
+  url: string,
+  prompt?: string,
+): Promise<{
   bytes: number;
   code: number;
   codeText: string;
-  result: string;
+  content: string;
   durationMs: number;
   url: string;
 }> {
@@ -129,33 +131,35 @@ export async function runWebFetch(url: string, prompt: string): Promise<{
   const fetched = await getUrlMarkdownContent(url);
 
   if ('type' in fetched && fetched.type === 'redirect') {
-    const message = formatRedirectMessage(url, fetched, prompt);
+    const message = formatRedirectMessage(url, fetched, prompt ?? 'summarize this page');
     return {
       bytes: Buffer.byteLength(message),
       code: fetched.statusCode,
       codeText: httpStatusText(fetched.statusCode),
-      result: message,
+      content: message,
       durationMs: Date.now() - start,
       url,
     };
   }
 
   const page = fetched as FetchedContent;
-  const { content, bytes, code, codeText, contentType } = page;
-  const preapproved = isPreapprovedUrl(url);
+  const { content, bytes, code, codeText } = page;
 
-  let result: string;
-  if (preapproved && contentType.includes('text/markdown') && content.length < MAX_MARKDOWN_LENGTH) {
-    result = content;
-  } else {
-    result = await applyPromptToMarkdown(prompt, content, preapproved);
+  let excerpt =
+    content.length > MAX_MARKDOWN_LENGTH
+      ? `${content.slice(0, MAX_MARKDOWN_LENGTH)}\n\n[Content truncated due to length…]`
+      : content;
+
+  const focus = prompt?.trim();
+  if (focus) {
+    excerpt = `Focus: ${focus}\n\n---\n\n${excerpt}`;
   }
 
   return {
     bytes,
     code,
     codeText,
-    result,
+    content: excerpt,
     durationMs: Date.now() - start,
     url,
   };

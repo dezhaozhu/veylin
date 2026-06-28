@@ -7,8 +7,27 @@ import {
   type UiMessage,
 } from './message-sync';
 import { setTodos as setThreadTodosDb, todosFromMessageHistory } from './thread-state';
+import { isDatastoreFailure } from './store-errors';
 
 type StoredMessage = { id?: string; role?: string };
+
+const syncLocks = new Map<string, Promise<unknown>>();
+
+function withThreadSyncLock<T>(threadId: string, run: () => Promise<T>): Promise<T> {
+  const prev = syncLocks.get(threadId) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(run);
+  syncLocks.set(
+    threadId,
+    next.finally(() => {
+      if (syncLocks.get(threadId) === next) syncLocks.delete(threadId);
+    }),
+  );
+  return next;
+}
+
+export function isMemoryStoreFailure(err: unknown): boolean {
+  return isDatastoreFailure(err);
+}
 
 function messageIds(messages: Array<{ id?: string }>): string[] {
   return messages.map((m) => m.id).filter((id): id is string => Boolean(id));
@@ -67,26 +86,28 @@ export async function syncThreadMessagesFromClient(opts: {
   clientMessages: UiMessage[];
   forceReplace?: boolean;
 }): Promise<boolean> {
-  await ensureMastraThread(opts.memory, opts.identity);
-  const recalled = await opts.memory.recall({
-    threadId: opts.identity.threadId,
-    resourceId: opts.identity.resourceId,
-    perPage: false,
+  return withThreadSyncLock(opts.identity.threadId, async () => {
+    await ensureMastraThread(opts.memory, opts.identity);
+    const recalled = await opts.memory.recall({
+      threadId: opts.identity.threadId,
+      resourceId: opts.identity.resourceId,
+      perPage: false,
+    });
+    const stored = recalled.messages ?? [];
+
+    if (!shouldReplaceFromClient(stored, opts.clientMessages, opts.forceReplace)) {
+      return false;
+    }
+
+    await replaceThreadMessages(opts.memory, opts.identity, opts.clientMessages);
+
+    const todos = todosFromMessageHistory(opts.clientMessages);
+    if (todos != null) {
+      await setThreadTodosDb(opts.identity.threadId, todos);
+    }
+
+    return true;
   });
-  const stored = recalled.messages ?? [];
-
-  if (!shouldReplaceFromClient(stored, opts.clientMessages, opts.forceReplace)) {
-    return false;
-  }
-
-  await replaceThreadMessages(opts.memory, opts.identity, opts.clientMessages);
-
-  const todos = todosFromMessageHistory(opts.clientMessages);
-  if (todos != null) {
-    await setThreadTodosDb(opts.identity.threadId, todos);
-  }
-
-  return true;
 }
 
 export { mastraMessagesToUi };

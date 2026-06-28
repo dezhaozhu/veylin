@@ -6,8 +6,10 @@ import {
   hasAskUserAnswers,
   isAwaitingFrontendToolPart,
   isAwaitingFrontendToolAnswer,
+  registerFrontendToolStop,
   shouldAutoSendChat,
   trimAssistantAfterAwaitingTool,
+  waitForFrontendToolStop,
 } from './frontend-suspend-tools';
 
 describe('frontend-suspend-tools', () => {
@@ -176,6 +178,28 @@ describe('frontend-suspend-tools', () => {
     assert.equal(lastAssistantMessageIsCompleteWithToolCalls({ messages }), false);
   });
 
+  it('auto-continues when provider-executed web_fetch is stuck at input-available', () => {
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-web_fetch',
+            toolCallId: 'wf-1',
+            state: 'input-available',
+            providerExecuted: true,
+            input: { url: 'https://example.com', prompt: 'summarize' },
+          },
+        ],
+      },
+    ] as UIMessage[];
+
+    assert.equal(shouldAutoSendChat({ messages }), true);
+    assert.equal(shouldAutoSendChat({ messages, status: 'streaming' }), false);
+    assert.equal(shouldAutoSendChat({ messages, status: 'submitted' }), false);
+  });
+
   it('does not auto-continue when provider tools end with assistant text', () => {
     const messages = [
       {
@@ -315,6 +339,26 @@ describe('frontend-suspend-tools', () => {
 
     assert.equal(shouldAutoSendChat({ messages }), false);
     assert.equal(isAwaitingFrontendToolAnswer(messages), true);
+  });
+
+  it('waitForFrontendToolStop resolves after the registered stop promise', async () => {
+    let resolveStop!: () => void;
+    const stopPromise = new Promise<void>((resolve) => {
+      resolveStop = resolve;
+    });
+    registerFrontendToolStop('ask-1', stopPromise);
+
+    let settled = false;
+    const waiting = waitForFrontendToolStop('ask-1').then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    assert.equal(settled, false);
+
+    resolveStop();
+    await waiting;
+    assert.equal(settled, true);
   });
 
 });
