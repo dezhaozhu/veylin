@@ -60,6 +60,7 @@ import {
   isAwaitingFrontendToolAnswer,
   pendingFrontendToolCallId,
   registerFrontendToolStop,
+  registerStreamStop,
   shouldAutoSendChat,
   trimAssistantAfterAwaitingTool,
 } from "./frontend-suspend-tools";
@@ -72,6 +73,7 @@ import {
   resetToolContinuationAttemptTracker,
   toolContinuationFingerprint,
   tryContinueFrontendToolChat,
+  unmarkToolContinuationAttempt,
 } from "./frontend-tool-continuation";
 import { registerAskUserResultSubmitter } from "./ask-user-submit-bridge";
 import {
@@ -373,6 +375,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   const clearToolContinuationSuppression = () => {
     suppressedForAssistantIdRef.current = null;
     resetToolContinuationAttemptTracker(toolContinuationAttemptRef.current);
+    resetFrontendToolContinuationController(frontendContinuationRef.current);
   };
 
   const isToolContinuationSuppressed = (messages: UI_MESSAGE[]) => {
@@ -396,20 +399,23 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
 
   const interruptChatRun = () => {
     suppressToolContinuation();
-    useNetworkReconnectStore.getState().clearReconnecting();
-    resumableStorage.clear();
+    useNetworkReconnectStore.getState().clearBanner();
+    const streamId = resumableStorage.getStreamId();
     chatHelpersRef.current.stop();
     setToolStatuses({});
     finalizeInterruptedAssistant();
     const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
     if (threadId) {
-      void requestChatStop(threadId).catch((err) => {
+      void requestChatStop(threadId, { activeStreamId: streamId }).catch((err) => {
         console.warn("[chat] interrupt stop failed", err);
       });
+    } else {
+      resumableStorage.clear();
     }
   };
 
   const stopFrontendToolStream = (reason: string, toolCallIds?: string | string[]) => {
+    useNetworkReconnectStore.getState().clearReconnecting();
     chatHelpersRef.current.stop();
     const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
     if (!threadId) return;
@@ -428,9 +434,12 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     chatHelpersRef.current.stop();
     const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
     if (!threadId) return;
-    await requestChatStop(threadId).catch((err) => {
+    const streamId = resumableStorage.getStreamId();
+    const stopPromise = requestChatStop(threadId, { activeStreamId: streamId }).catch((err) => {
       console.warn("[chat] frontend tool ensure stop failed", err);
     });
+    registerStreamStop(stopPromise);
+    await stopPromise;
   };
 
   const continueFrontendToolIfReady = () => {
@@ -450,6 +459,37 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     });
   };
 
+  const scheduleToolContinuationIfNeeded = () => {
+    const messages = chatHelpersRef.current.messages;
+    const status = chatHelpersRef.current.status;
+    if (status !== "ready") return;
+    if (isToolContinuationSuppressed(messages)) return;
+    if (!shouldAutoSendChat({ messages, status: "ready" })) return;
+
+    const fingerprint = toolContinuationFingerprint(messages);
+    if (!fingerprint) return;
+    if (
+      !markToolContinuationAttempt(
+        toolContinuationAttemptRef.current,
+        fingerprint,
+      )
+    ) {
+      return;
+    }
+
+    if (
+      !requestFrontendToolContinuation(
+        frontendContinuationRef.current,
+        continueFrontendToolIfReady,
+      )
+    ) {
+      unmarkToolContinuationAttempt(
+        toolContinuationAttemptRef.current,
+        fingerprint,
+      );
+    }
+  };
+
   const applyToolResult = useCallback(
     async ({
       toolCallId,
@@ -464,6 +504,10 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       isError?: boolean;
       modelContent?: Parameters<typeof wrapModelContentEnvelope>[1];
     }) => {
+      if (isToolContinuationSuppressed(chatHelpersRef.current.messages)) {
+        return;
+      }
+
       useNetworkReconnectStore.getState().clearReconnecting();
       const options = { metadata: lastRunConfigRef.current };
       const isFrontendSuspend = (
@@ -495,12 +539,18 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
 
       if (!isFrontendSuspend) return;
 
+      if (isToolContinuationSuppressed(chatHelpersRef.current.messages)) {
+        return;
+      }
+
       const status = chatHelpersRef.current.status;
       if (status === "streaming" || status === "submitted") {
         requestFrontendToolContinuation(
           frontendContinuationRef.current,
           continueFrontendToolIfReady,
         );
+      } else if (status === "ready") {
+        scheduleToolContinuationIfNeeded();
       }
     },
     [],
@@ -526,24 +576,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       frontendContinuationRef.current.sendStarted = false;
     }
 
-    const messages = chatHelpers.messages;
-    const status = chatHelpers.status;
-    if (status !== "ready") return;
-    if (isToolContinuationSuppressed(messages)) return;
-    if (!shouldAutoSendChat({ messages, status: "ready" })) return;
-
-    const fingerprint = toolContinuationFingerprint(messages);
-    if (
-      !fingerprint ||
-      !markToolContinuationAttempt(toolContinuationAttemptRef.current, fingerprint)
-    ) {
-      return;
-    }
-
-    requestFrontendToolContinuation(
-      frontendContinuationRef.current,
-      continueFrontendToolIfReady,
-    );
+    scheduleToolContinuationIfNeeded();
   }, [chatHelpers.status, chatHelpers.messages]);
 
   useEffect(() => {

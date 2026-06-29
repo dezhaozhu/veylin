@@ -27,14 +27,17 @@ function NetworkReconnectStatus() {
   let line = title ?? '';
 
   if (kind === 'reconnecting' || kind === 'post_retrying') {
-    const max = kind === 'post_retrying' ? POST_MAX_RETRIES : 5;
     const label =
       title ||
       (kind === 'post_retrying'
         ? t('reconnect.postRetryTitle')
         : t('reconnect.reconnectingTitle'));
-    line = `${label} (${attempt}/${max})`;
-    if (message) line = `${line} · ${message}`;
+    if (kind === 'post_retrying') {
+      line = `${label} (${attempt}/${POST_MAX_RETRIES})`;
+      if (message) line = `${line} · ${message}`;
+    } else {
+      line = message ? `${label} · ${message}` : label;
+    }
   } else if (message) {
     line = line ? `${line} · ${message}` : message;
   }

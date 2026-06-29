@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { probeVeylinHealth } from './health-probe.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '../../..');
@@ -24,12 +25,7 @@ const catalogPath = resolve(repoRoot, 'data/models.local.json');
 const distRoot = resolve(repoRoot, 'apps/server/dist/sidecar');
 
 async function probe() {
-  try {
-    const res = await fetch(healthUrl, { cache: 'no-store' });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return probeVeylinHealth(healthUrl);
 }
 
 function sidecarNode() {

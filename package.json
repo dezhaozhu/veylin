@@ -6,13 +6,13 @@
   "description": "Veylin — an open-source, self-hosted AI agent desktop app. Complete tool-calling agent, no-code automation, permission/privacy-first, with unified DIY right-side panels (table, web, RAG, knowledge graph, workflow). Embedded SurrealDB, no external services.",
   "license": "MIT",
   "author": "Veylin contributors",
-  "homepage": "https://github.com/veylin-ai/veylin#readme",
+  "homepage": "https://github.com/dezhaozhu/veylin#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/veylin-ai/veylin.git"
+    "url": "git+https://github.com/dezhaozhu/veylin.git"
   },
   "bugs": {
-    "url": "https://github.com/veylin-ai/veylin/issues"
+    "url": "https://github.com/dezhaozhu/veylin/issues"
   },
   "keywords": [
     "ai-agent",

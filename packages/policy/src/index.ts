@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { RiskLevel } from '@veylin/shared';
-import { toolRisk, type BuiltinToolId } from '@veylin/tools';
+import { toolRisk, type BuiltinToolId, metaToolRisk } from '@veylin/tools';
 
 export type PolicyDecision = 'allow' | 'approve' | 'deny';
 
@@ -37,7 +37,11 @@ export const planModePolicy: PolicyConfig = {
 };
 
 export function riskOf(toolId: string): RiskLevel {
-  return (toolRisk as Record<string, RiskLevel>)[toolId] ?? 'caution';
+  return (
+    (toolRisk as Record<string, RiskLevel>)[toolId] ??
+    metaToolRisk[toolId] ??
+    'caution'
+  );
 }
 
 export function evaluateTool(toolId: string, policy: PolicyConfig): PolicyDecision {

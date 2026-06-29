@@ -21,7 +21,10 @@ export const webFetch = createTool({
     durationMs: z.number().describe('Fetch time in ms'),
     url: z.string().describe('The URL that was requested'),
   }),
-  execute: async (input) => runWebFetch(input.url, input.prompt),
+  execute: async (input, ctx) => {
+    const runSignal = ctx?.requestContext?.get('runAbortSignal') as AbortSignal | undefined;
+    return runWebFetch(input.url, input.prompt, runSignal);
+  },
 });
 
 export { clearWebFetchCache } from './web-fetch/cache';

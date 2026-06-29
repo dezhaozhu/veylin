@@ -26,12 +26,18 @@ export type BuiltinToolId = keyof typeof builtinTools;
 
 /** Risk classification consumed by @veylin/policy and the tool-search processor. */
 export const toolRisk: Record<BuiltinToolId, RiskLevel> = {
-  web_fetch: 'safe',
+  web_fetch: 'caution',
   todo_write: 'safe',
   ask_user_question: 'safe',
-  read_open_page: 'safe',
+  read_open_page: 'caution',
   enter_plan_mode: 'safe',
   exit_plan_mode: 'safe',
+};
+
+/** Meta tools not in builtinTools but evaluated by policy. */
+export const metaToolRisk: Record<string, RiskLevel> = {
+  tool_search: 'safe',
+  skill: 'safe',
 };
 
 /** Short keyword hints used by the dynamic tool-search processor. */

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { createRoot } from 'react-dom/client';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { apiUrl, installApiFetchShim } from '@/lib/api-base';
+import { probeVeylinHealth } from '@/lib/health-probe';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import { installDesktopReloadShortcut } from '@/lib/desktop-reload-shortcut';
 import { fetchSidecarStatus } from '@/lib/sidecar-status';
@@ -57,29 +58,28 @@ async function probeHealth(url: string): Promise<boolean> {
   const ac = new AbortController();
   const timer = window.setTimeout(() => ac.abort(), 5_000);
   try {
-    const res = await fetch(url, { cache: 'no-store', signal: ac.signal });
-    return res.ok;
+    return await probeVeylinHealth(url, { signal: ac.signal });
   } finally {
     window.clearTimeout(timer);
   }
 }
 
 async function waitForApiReady(signal: { cancelled: boolean }): Promise<void> {
-  const sidecar = await fetchSidecarStatus();
-  if (sidecar && !sidecar.spawnOk) {
-    throw new Error(sidecar.error ?? i18n.t('splash.sidecarSpawnFailed'));
-  }
-
   let lastError: unknown;
   const urls = healthCheckUrls();
   for (let i = 0; i < 90 && !signal.cancelled; i++) {
+    const sidecar = await fetchSidecarStatus();
+    if (sidecar && !sidecar.spawnOk) {
+      throw new Error(sidecar.error ?? i18n.t('splash.sidecarSpawnFailed'));
+    }
+
     for (const url of urls) {
       try {
         if (await probeHealth(url)) {
           startupCheckpoint('health_ok');
           return;
         }
-        lastError = new Error(`HTTP error (${url})`);
+        lastError = new Error(`Veylin health check failed (${url})`);
       } catch (err) {
         lastError = err;
       }
@@ -184,7 +184,7 @@ function StartupGate() {
 
   useEffect(() => {
     const signal = { cancelled: false };
-    const failsafe = window.setTimeout(() => removeSplash(), 15_000);
+    const failsafe = window.setTimeout(() => removeSplash(), 45_000);
     setStartupError(null);
     void waitForApiReady(signal)
       .then(() => {

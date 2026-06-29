@@ -45,6 +45,16 @@ export function markToolContinuationAttempt(
   return true;
 }
 
+/** Undo fingerprint consumption when continuation scheduling was rejected. */
+export function unmarkToolContinuationAttempt(
+  tracker: ToolContinuationAttemptTracker,
+  fingerprint: string,
+): void {
+  if (tracker.lastFingerprint === fingerprint) {
+    tracker.lastFingerprint = null;
+  }
+}
+
 export type ChatRunStatus = 'submitted' | 'streaming' | 'ready' | 'error' | string;
 
 const CONTINUE_RETRY_MS = 32;
@@ -96,9 +106,8 @@ function scheduleContinueRetry(args: ContinueFrontendToolChatArgs): void {
 }
 
 /**
- * Resume after a client-completed suspend tool (ask_user_question / read_open_page).
- * AI SDK skips auto-send while status is streaming/submitted; this bridges that gap.
- * When status is already submitted from addToolResult's own auto-send, we bail out.
+ * Resume after a client-completed suspend tool or provider-executed server tool.
+ * Production disables AI SDK sendAutomaticallyWhen; this is the sole continuation path.
  */
 export async function tryContinueFrontendToolChat(
   args: ContinueFrontendToolChatArgs,
@@ -123,12 +132,6 @@ export async function tryContinueFrontendToolChat(
     }
 
     const status = args.getStatus();
-
-    // addToolResult already kicked off sendAutomaticallyWhen — don't double-send.
-    if (status === 'submitted' && !args.controller.stopRequested) {
-      args.controller.pending = false;
-      return;
-    }
 
     if (status === 'streaming' || status === 'submitted') {
       if (!args.controller.stopRequested) {
@@ -161,11 +164,12 @@ export async function tryContinueFrontendToolChat(
 export function requestFrontendToolContinuation(
   controller: FrontendToolContinuationController,
   run: () => void,
-): void {
+): boolean {
   if (controller.continuing || controller.pending || controller.sendStarted) {
-    return;
+    return false;
   }
   controller.pending = true;
   controller.sendStarted = false;
   run();
+  return true;
 }

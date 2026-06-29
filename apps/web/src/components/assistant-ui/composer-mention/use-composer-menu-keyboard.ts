@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { isImeComposing } from '@/lib/composer-submit-keys';
 
 export function useComposerMenuKeyboard(options: {
   open: boolean;
@@ -16,6 +17,7 @@ export function useComposerMenuKeyboard(options: {
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
+      if (isImeComposing(event)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         if (inSubmenu && onBack) {

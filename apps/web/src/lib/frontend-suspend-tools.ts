@@ -15,6 +15,18 @@ type ToolPart = {
 
 const frontendToolStopPromises = new Map<string, Promise<unknown>>();
 
+/** Sentinel key for awaiting the in-flight chat run stop (not tied to a tool call). */
+const STREAM_STOP_KEY = '__chat_run__';
+
+export function registerStreamStop(promise: Promise<unknown>): void {
+  registerFrontendToolStop(STREAM_STOP_KEY, promise);
+}
+
+export async function waitForStreamStop(): Promise<void> {
+  const pending = frontendToolStopPromises.get(STREAM_STOP_KEY);
+  if (pending) await pending;
+}
+
 export function registerFrontendToolStop(toolCallId: string, promise: Promise<unknown>): void {
   frontendToolStopPromises.set(toolCallId, promise);
   void promise.finally(() => {
@@ -97,7 +109,17 @@ function isToolPartComplete(part: unknown): boolean {
 
 /** True when the model already produced a user-facing reply after the tool. */
 function hasAssistantReplyAfter(parts: unknown[], afterIndex: number): boolean {
+  let stepStartAfterTool = -1;
   for (let i = afterIndex + 1; i < parts.length; i += 1) {
+    const part = parts[i];
+    if (!part || typeof part !== 'object') continue;
+    if ((part as { type?: string }).type === 'step-start') {
+      stepStartAfterTool = i;
+    }
+  }
+  if (stepStartAfterTool < 0) return false;
+
+  for (let i = stepStartAfterTool + 1; i < parts.length; i += 1) {
     const part = parts[i];
     if (!part || typeof part !== 'object') continue;
     const type = (part as { type?: string }).type;

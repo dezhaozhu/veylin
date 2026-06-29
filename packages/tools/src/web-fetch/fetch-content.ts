@@ -25,10 +25,17 @@ export type FetchedContent = CacheEntry;
 async function fetchWithPermittedRedirects(
   url: string,
   depth = 0,
+  externalSignal?: AbortSignal,
 ): Promise<Response | RedirectInfo> {
   if (depth > MAX_REDIRECTS) {
     throw new Error(`Too many redirects (exceeded ${MAX_REDIRECTS})`);
   }
+
+  const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  const signal =
+    externalSignal != null
+      ? AbortSignal.any([externalSignal, timeoutSignal])
+      : timeoutSignal;
 
   const res = await fetch(url, {
     redirect: 'manual',
@@ -36,7 +43,7 @@ async function fetchWithPermittedRedirects(
       Accept: 'text/markdown, text/html, text/plain, application/json, */*',
       'User-Agent': USER_AGENT,
     },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal,
   });
 
   if ([301, 302, 307, 308].includes(res.status)) {
@@ -44,7 +51,7 @@ async function fetchWithPermittedRedirects(
     if (!location) throw new Error('Redirect missing Location header');
     const redirectUrl = new URL(location, url).toString();
     if (isPermittedRedirect(url, redirectUrl)) {
-      return fetchWithPermittedRedirects(redirectUrl, depth + 1);
+      return fetchWithPermittedRedirects(redirectUrl, depth + 1, externalSignal);
     }
     return { type: 'redirect', originalUrl: url, redirectUrl, statusCode: res.status };
   }
@@ -68,6 +75,7 @@ To complete your request, fetch content from the redirected URL. Use web_fetch a
 /** Fetch URL, convert HTML→markdown, cache raw content (the agent WebFetch core). */
 export async function getUrlMarkdownContent(
   url: string,
+  externalSignal?: AbortSignal,
 ): Promise<FetchedContent | RedirectInfo> {
   if (!validateUrl(url)) {
     throw new Error('Invalid URL');
@@ -77,7 +85,7 @@ export async function getUrlMarkdownContent(
   if (cached) return cached;
 
   const fetchUrl = upgradeToHttps(url);
-  const response = await fetchWithPermittedRedirects(fetchUrl);
+  const response = await fetchWithPermittedRedirects(fetchUrl, 0, externalSignal);
 
   if ('type' in response && response.type === 'redirect') {
     return response;
@@ -119,6 +127,7 @@ export async function getUrlMarkdownContent(
 export async function runWebFetch(
   url: string,
   prompt?: string,
+  externalSignal?: AbortSignal,
 ): Promise<{
   bytes: number;
   code: number;
@@ -128,7 +137,7 @@ export async function runWebFetch(
   url: string;
 }> {
   const start = Date.now();
-  const fetched = await getUrlMarkdownContent(url);
+  const fetched = await getUrlMarkdownContent(url, externalSignal);
 
   if ('type' in fetched && fetched.type === 'redirect') {
     const message = formatRedirectMessage(url, fetched, prompt ?? 'summarize this page');

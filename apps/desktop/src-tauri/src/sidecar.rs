@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
-use tauri_plugin_shell::process::CommandChild;
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 enum SidecarChild {
@@ -64,9 +64,22 @@ impl Sidecar {
                 cmd = cmd.env("VEYLIN_MODEL_CATALOG_PATH", path);
             }
             match cmd.spawn() {
-                Ok((_rx, child)) => {
+                Ok((mut rx, child)) => {
                     *self.child.lock().unwrap() = Some(SidecarChild::Shell(child));
                     self.set_status(true, None);
+                    let status = Arc::clone(&self.status);
+                    std::thread::spawn(move || {
+                        while let Some(event) = rx.blocking_recv() {
+                            if matches!(event, CommandEvent::Terminated(_)) {
+                                break;
+                            }
+                        }
+                        let mut guard = status.lock().unwrap();
+                        if guard.spawn_ok {
+                            guard.spawn_ok = false;
+                            guard.error = Some("sidecar process exited unexpectedly".into());
+                        }
+                    });
                     return;
                 }
                 Err(err) => {

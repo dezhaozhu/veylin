@@ -29,7 +29,8 @@ export const ReadOpenPageToolUI = makeAssistantToolUI<ReadOpenPageArgs, ReadOpen
     const maxChars = args?.maxChars ?? 50_000;
 
     useEffect(() => {
-      if (status.type !== 'running' || !addResult || startedRef.current || result) return;
+      if (!addResult || startedRef.current || result) return;
+      if (status.type === 'complete') return;
       startedRef.current = true;
 
       void (async () => {

@@ -10,6 +10,7 @@ import {
   createToolContinuationAttemptTracker,
   toolContinuationFingerprint,
   tryContinueFrontendToolChat,
+  unmarkToolContinuationAttempt,
 } from './frontend-tool-continuation';
 
 function answeredFirstRoundAskMessage(): UIMessage[] {
@@ -128,7 +129,7 @@ describe('frontend-tool-continuation', () => {
     assert.equal(controller.pending, false);
   });
 
-  it('submitted without prior stop defers to addToolResult auto-send', async () => {
+  it('submitted: stops then sends when SDK auto-send is disabled', async () => {
     let stopCount = 0;
     let sendCount = 0;
     const controller = createFrontendToolContinuationController();
@@ -147,8 +148,8 @@ describe('frontend-tool-continuation', () => {
       },
     });
 
-    assert.equal(stopCount, 0);
-    assert.equal(sendCount, 0);
+    assert.equal(stopCount, 1);
+    assert.equal(sendCount, 1);
     assert.equal(controller.pending, false);
   });
 
@@ -288,6 +289,27 @@ describe('frontend-tool-continuation', () => {
     const fp1 = toolContinuationFingerprint(before);
     const fp2 = toolContinuationFingerprint(after);
     assert.notEqual(fp1, fp2);
+  });
+
+  it('requestFrontendToolContinuation returns false when already pending', () => {
+    const controller = createFrontendToolContinuationController();
+    controller.pending = true;
+    let ran = false;
+    assert.equal(
+      requestFrontendToolContinuation(controller, () => {
+        ran = true;
+      }),
+      false,
+    );
+    assert.equal(ran, false);
+  });
+
+  it('unmarkToolContinuationAttempt clears matching fingerprint only', () => {
+    const tracker = createToolContinuationAttemptTracker();
+    markToolContinuationAttempt(tracker, 'a1|tool');
+    unmarkToolContinuationAttempt(tracker, 'a1|tool');
+    assert.equal(tracker.lastFingerprint, null);
+    assert.equal(markToolContinuationAttempt(tracker, 'a1|tool'), true);
   });
 
   it('markToolContinuationAttempt dedupes identical fingerprints', () => {

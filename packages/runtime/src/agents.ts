@@ -78,14 +78,22 @@ function whitelistFor(definition: AgentDefinition, permitted: BuiltinToolId[]): 
   return permitted.filter((id) => declared.includes(id));
 }
 
+function applyPolicyToTool(
+  id: string,
+  base: AnyTool,
+  policy: PolicyConfig,
+): AnyTool | null {
+  const decision = evaluateTool(id, policy);
+  if (decision === 'deny') return null;
+  const needsApproval = decision === 'approve' || base.requireApproval === true;
+  return { ...base, requireApproval: needsApproval } as AnyTool;
+}
+
 function toolMapFor(ids: BuiltinToolId[], policy: PolicyConfig): ToolMap {
   const map: ToolMap = {};
   for (const id of ids) {
-    const base = builtinTools[id];
-    const decision = evaluateTool(id, policy);
-    if (decision === 'deny') continue;
-    const needsApproval = decision === 'approve' || base.requireApproval === true;
-    map[id] = { ...base, requireApproval: needsApproval } as AnyTool;
+    const applied = applyPolicyToTool(id, builtinTools[id], policy);
+    if (applied) map[id] = applied;
   }
   return map;
 }
@@ -129,8 +137,12 @@ export function buildAgent({
       const discovered = (requestContext?.get('discoveredToolIds') as string[] | undefined) ?? [];
       const ids = resolveActiveToolIds(definition, permitted, discovered);
       const map = toolMapFor(ids, activePolicy);
-      map.tool_search = toolSearch as unknown as AnyTool;
-      if (skillTool) map.skill = skillTool as unknown as AnyTool;
+      const toolSearchApplied = applyPolicyToTool('tool_search', toolSearch as unknown as AnyTool, activePolicy);
+      if (toolSearchApplied) map.tool_search = toolSearchApplied;
+      if (skillTool) {
+        const skillApplied = applyPolicyToTool('skill', skillTool as unknown as AnyTool, activePolicy);
+        if (skillApplied) map.skill = skillApplied;
+      }
       return map;
     },
     inputProcessors: [

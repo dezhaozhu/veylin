@@ -178,6 +178,26 @@ describe('frontend-suspend-tools', () => {
     assert.equal(lastAssistantMessageIsCompleteWithToolCalls({ messages }), false);
   });
 
+  it('ignores streaming residue text before step-start after server tool', () => {
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-web_fetch',
+            state: 'output-available',
+            providerExecuted: true,
+            output: { content: 'page', code: 200 },
+          },
+          { type: 'text', text: 'Summarizing the page…' },
+        ],
+      },
+    ] as UIMessage[];
+
+    assert.equal(shouldAutoSendChat({ messages, status: 'ready' }), true);
+  });
+
   it('auto-continues when provider-executed web_fetch is stuck at input-available', () => {
     const messages = [
       {
@@ -212,6 +232,7 @@ describe('frontend-suspend-tools', () => {
             providerExecuted: true,
             output: { result: 'page summary', code: 200 },
           },
+          { type: 'step-start' },
           { type: 'text', text: 'Here is the summary.' },
         ],
       },

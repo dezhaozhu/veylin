@@ -69,6 +69,9 @@ export const ComposerMentionInput: FC<ComposerMentionInputProps> = ({
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (isImeComposing(event)) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+        }
         return;
       }
 
@@ -81,6 +84,7 @@ export const ComposerMentionInput: FC<ComposerMentionInputProps> = ({
           ['ArrowUp', 'ArrowDown', 'Enter'].includes(event.key) &&
           event.key !== 'Escape'
         ) {
+          event.preventDefault();
           event.stopPropagation();
         }
       }

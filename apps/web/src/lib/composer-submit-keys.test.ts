@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resolveEnterWhileRunning } from './composer-submit-keys';
+import {
+  composerHasSendableDraft,
+  resolveEnterWhileRunning,
+} from './composer-submit-keys';
 
 describe('composer-submit-keys', () => {
   it('resolveEnterWhileRunning queues only while running with draft text', () => {
@@ -27,6 +30,29 @@ describe('composer-submit-keys', () => {
         composerEmpty: true,
       }),
       'ignore',
+    );
+  });
+
+  it('composerHasSendableDraft treats pending skill as non-empty', () => {
+    assert.equal(
+      composerHasSendableDraft({ composerEmpty: true, hasPendingSkill: true }),
+      true,
+    );
+    assert.equal(
+      composerHasSendableDraft({ composerEmpty: true, hasPendingSkill: false }),
+      false,
+    );
+  });
+
+  it('resolveEnterWhileRunning queues with pending skill only', () => {
+    assert.equal(
+      resolveEnterWhileRunning({
+        isRunning: true,
+        canQueue: true,
+        composerEmpty: true,
+        hasPendingSkill: true,
+      }),
+      'queue',
     );
   });
 });
