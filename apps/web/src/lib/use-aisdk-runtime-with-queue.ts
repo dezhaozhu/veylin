@@ -81,12 +81,29 @@ import {
   resolveThreadMessagesToUi,
 } from "./resolve-branch-ui-messages";
 import { isPersistableThreadId, syncThreadMessagesToServer } from "./sync-thread-messages";
+import { dedupeAssistantMessageParts, assistantPartsSemanticallyEqual } from "@veylin/shared";
 
 export type CustomToCreateMessageFunction = <
   UI_MESSAGE extends UIMessage = UIMessage,
 >(
   message: AppendMessage,
 ) => CreateUIMessage<UI_MESSAGE>;
+
+function dedupeLastAssistantMessage<UI_MESSAGE extends UIMessage>(
+  messages: readonly UI_MESSAGE[],
+): UI_MESSAGE[] | null {
+  const last = messages.at(-1);
+  if (last?.role !== "assistant" || !last.parts?.length) return null;
+
+  const deduped = dedupeAssistantMessageParts(last.parts);
+  if (deduped === last.parts) return null;
+  if (assistantPartsSemanticallyEqual(deduped, last.parts)) return null;
+
+  return [
+    ...messages.slice(0, -1),
+    { ...last, parts: deduped as UI_MESSAGE["parts"] },
+  ];
+}
 
 const toUIMessage = <UI_MESSAGE extends UIMessage>(
   createMessage: CreateUIMessage<UI_MESSAGE>,
@@ -596,6 +613,13 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
 
     if (chatHelpers.status === "ready" && prev !== "ready") {
       frontendContinuationRef.current.sendStarted = false;
+    }
+
+    const deduped = dedupeLastAssistantMessage(chatHelpers.messages);
+    if (deduped) {
+      rememberUiMessages(deduped);
+      chatHelpers.setMessages(deduped);
+      return;
     }
 
     scheduleToolContinuationIfNeeded();

@@ -14,11 +14,13 @@ import {
   isAbortError,
   isPermanentHttpStatus,
   isPostSuccess,
+  isResumableStreamGone,
   postChatWithRetry,
   RECONNECT_GIVE_UP_MS,
   sleepMs,
 } from '@/lib/transport-reconnect';
 import { wrapStreamWithLiveness } from '@/lib/wrap-stream-liveness';
+import { isBenignChatError } from '@/lib/format-chat-error';
 
 export type ResilientChatFetchOptions = {
   fetch?: typeof globalThis.fetch;
@@ -78,6 +80,10 @@ function resumeUrl(baseUrl: string, streamId: string): string {
   return `${baseUrl}${sep}from_sequence_num=${seq}`;
 }
 
+function isBenignResumeError(error: unknown): boolean {
+  return isBenignChatError(error);
+}
+
 /**
  * the agent SSETransport-style fetch:
  * - POST write retry (10×)
@@ -122,7 +128,7 @@ async function reconnectingGetStream(
     try {
       const response = await baseFetch(input, init);
       if (response.status === 204) return response;
-      if (response.status === 404) {
+      if (response.status === 204 || response.status === 404) {
         resumableStorage.clear();
         banner.clearTransientBanner();
         return response;
@@ -186,6 +192,7 @@ async function resilientChatPost(
   const reconnectStartTime = Date.now();
   let reconnectAttempts = 0;
   let streamId = '';
+  let finishedSeen = false;
   const decoder = new TextDecoder();
   let accumulator = '';
 
@@ -257,6 +264,10 @@ async function resilientChatPost(
         setAccumulator: (v) => {
           accumulator = v;
         },
+        getFinishedSeen: () => finishedSeen,
+        setFinishedSeen: (v) => {
+          finishedSeen = v;
+        },
         onLivenessTimeout: () => {
           banner.setReconnecting({
             attempt: reconnectAttempts + 1,
@@ -276,9 +287,10 @@ async function resilientChatPost(
           });
           await sleepMs(delayMs, signal);
           const resumed = await fetchResume();
-          if (resumed.status === 404) {
+          if (isResumableStreamGone(resumed.status)) {
             resumableStorage.clear();
             banner.clearTransientBanner();
+            return null;
           }
           if (!resumed.ok) {
             await throwChatHttpError('resume', resumed);
@@ -289,6 +301,7 @@ async function resilientChatPost(
           return resumed.body;
         },
         onFinished: () => {
+          finishedSeen = true;
           resumableStorage.clear();
           banner.clearTransientBanner();
         },
@@ -328,8 +341,10 @@ type AutoResumeStreamOptions = {
   decoder: TextDecoder;
   getAccumulator: () => string;
   setAccumulator: (value: string) => void;
+  getFinishedSeen: () => boolean;
+  setFinishedSeen: (value: boolean) => void;
   onLivenessTimeout: () => void;
-  resume: () => Promise<ReadableStream<Uint8Array>>;
+  resume: () => Promise<ReadableStream<Uint8Array> | null>;
   onFinished: () => void;
 };
 
@@ -354,9 +369,12 @@ function createAutoResumeStream(
           if (done) break;
 
           const acc = options.getAccumulator() + options.decoder.decode(value, { stream: true });
+          if (hasStreamFinished(acc) || acc.includes('data: [DONE]')) {
+            options.setFinishedSeen(true);
+          }
           options.setAccumulator(acc.length > 4096 ? acc.slice(-1024) : acc);
 
-          if (hasStreamFinished(acc) || acc.includes('data: [DONE]')) {
+          if (options.getFinishedSeen()) {
             closed = true;
             options.onFinished();
             controller.enqueue(value);
@@ -367,11 +385,18 @@ function createAutoResumeStream(
           controller.enqueue(value);
         }
 
-        if (!hasStreamFinished(options.getAccumulator())) {
+        if (!options.getFinishedSeen()) {
           if (!options.streamId) {
             throw new Error('stream ended without finish');
           }
-          currentBody = await options.resume();
+          const resumed = await options.resume();
+          if (resumed === null) {
+            closed = true;
+            options.onFinished();
+            controller.close();
+            return;
+          }
+          currentBody = resumed;
           continue;
         }
 
@@ -389,8 +414,21 @@ function createAutoResumeStream(
           return;
         }
         try {
-          currentBody = await options.resume();
+          const resumed = await options.resume();
+          if (resumed === null) {
+            closed = true;
+            options.onFinished();
+            controller.close();
+            return;
+          }
+          currentBody = resumed;
         } catch (resumeErr) {
+          if (isBenignResumeError(resumeErr)) {
+            closed = true;
+            options.onFinished();
+            controller.close();
+            return;
+          }
           controller.error(resumeErr);
           return;
         }

@@ -62,23 +62,13 @@ Confirm with the user before destructive \`workspace_config\` actions when inten
 
 /**
  * Compose the final instructions for an agent: base prompt + the definition's
- * own domain role + (optionally) the available-skills catalog.
+ * role. Skill catalogs are injected per chat request (see buildSkillsCatalogBlock).
  */
-export function composeInstructions(
-  definitionInstructions: string,
-  skills: { name: string; description: string }[] = [],
-): string {
+export function composeInstructions(definitionInstructions: string): string {
   const parts = [BASE_SYSTEM_PROMPT];
   const role = definitionInstructions.trim();
   if (role) {
     parts.push(`# Your role\n${role}`);
-  }
-  if (skills.length > 0) {
-    const lines = skills.map((s) => `- ${s.name}: ${s.description}`).join('\n');
-    parts.push(
-      `# Available skills\n${lines}\n` +
-        'When a skill is relevant, load its full instructions with the `skill` tool before acting.',
-    );
   }
   return parts.join('\n\n');
 }

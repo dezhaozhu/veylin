@@ -488,7 +488,7 @@ async function main() {
       ...base,
       agentId: resolvedAgentId,
       skills: mergedSkills
-        .filter((s) => s.enabled)
+        .filter((s) => s.enabled && s.userInvocable !== false)
         .map((s) => ({ name: s.name, description: s.description })),
       mcpServers,
     };
@@ -1885,7 +1885,8 @@ async function main() {
 
     const resumed = await resumeStreamResponse(streamId, cursor);
     if (!resumed?.body) {
-      return reply.status(404).send({ error: 'stream not found' });
+      // 204 = nothing to resume (finished / expired / other instance) — not an error.
+      return reply.status(204).send();
     }
 
     reply.hijack();

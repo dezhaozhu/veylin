@@ -7,7 +7,13 @@ import {
   upsertTenantSettings,
 } from '@veylin/db';
 import type { CustomSkillInput, SkillListItem } from '@veylin/shared';
-import { DEFAULT_AGENT_ID } from '@veylin/shared';
+import {
+  DEFAULT_AGENT_ID,
+  buildSkillsCatalogBlock,
+  formatSkillCatalogDescription,
+  parseSkillFrontmatter,
+  skillActivationBody,
+} from '@veylin/shared';
 import { dirname } from 'node:path';
 import type { Runtime } from '@veylin/runtime';
 import { refreshAgentPackages } from './agent-packages-sync';
@@ -58,6 +64,28 @@ export async function deleteCustomSkill(tenantId: string, id: string): Promise<b
   return deleteCustomSkillRow(tenantId, id);
 }
 
+function customSkillListItem(row: {
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+  enabled: boolean;
+}): SkillListItem {
+  const frontmatter = parseSkillFrontmatter(row.content);
+  return {
+    id: row.id,
+    name: frontmatter.name ?? row.name,
+    description: formatSkillCatalogDescription(frontmatter, row.description),
+    source: 'custom',
+    type: 'knowledge',
+    triggers: [],
+    enabled: row.enabled,
+    disableModelInvocation: frontmatter.disableModelInvocation ?? false,
+    userInvocable: frontmatter.userInvocable ?? true,
+    content: row.content,
+  };
+}
+
 export async function listMergedSkills(
   runtime: Runtime,
   tenantId: string,
@@ -75,32 +103,16 @@ export async function listMergedSkills(
     type: 'knowledge',
     triggers: [],
     enabled: !disabled.has(s.name),
+    disableModelInvocation: s.disableModelInvocation,
+    userInvocable: s.userInvocable,
   }));
 
-  const customItems: SkillListItem[] = custom.map((row) => ({
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    source: 'custom' as const,
-    type: 'knowledge',
-    triggers: [],
-    enabled: row.enabled,
-    content: row.content,
-  }));
+  const customItems: SkillListItem[] = custom.map(customSkillListItem);
 
   return [...bundled, ...customItems];
 }
 
-export function buildSkillsCatalogBlock(skills: SkillListItem[]): string {
-  const enabled = skills.filter((s) => s.enabled);
-  if (enabled.length === 0) return '';
-  const lines = [
-    '## Available Skills',
-    ...enabled.map((s) => `- ${s.name}: ${s.description}`),
-    'When a skill is relevant, load its full instructions with the `skill` tool before acting.',
-  ];
-  return lines.join('\n');
-}
+export { buildSkillsCatalogBlock } from '@veylin/shared';
 
 export async function resolveSkillContent(
   runtime: Runtime,
@@ -111,11 +123,14 @@ export async function resolveSkillContent(
   const merged = await listMergedSkills(runtime, tenantId, agentId);
   const hit = merged.find((s) => s.name === name && s.enabled);
   if (!hit) return null;
-  if (hit.content) return hit.content;
+
+  if (hit.content) {
+    return skillActivationBody(hit.content);
+  }
 
   const loaded = runtime.definitions.get(agentId ?? DEFAULT_AGENT_ID);
   const fileSkill = loaded?.skills.find((s) => s.name === name);
   if (!fileSkill?.content) return null;
   const baseDir = dirname(fileSkill.path);
-  return `Base directory for this skill: ${baseDir}\n\n${fileSkill.content}`;
+  return skillActivationBody(fileSkill.content, baseDir);
 }

@@ -120,6 +120,11 @@ export function hasStreamFinished(accumulator: string): boolean {
   return accumulator.includes(FINISH_MARKER);
 }
 
+/** Resume target is gone (finished, expired, or server restarted) — not a user-facing failure. */
+export function isResumableStreamGone(status: number): boolean {
+  return status === 204 || status === 404;
+}
+
 export type PostWithRetryOptions = {
   signal?: AbortSignal | null;
   sleep?: (ms: number, signal?: AbortSignal | null) => Promise<void>;

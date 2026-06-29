@@ -1,6 +1,6 @@
 import { useAuiState } from '@assistant-ui/react';
 import { ListTodoIcon, ListChecksIcon, LoaderIcon, CheckCircle2Icon } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 
@@ -73,17 +73,35 @@ function usePolling<T>(
   return state.threadId === threadId ? state.value : fallback;
 }
 
+/** Per-thread expand/collapse preference for the todo checklist. */
+const todoPanelOpenByThread = new Map<string, boolean>();
+
+function readTodoPanelOpen(threadId: string | undefined): boolean {
+  if (!threadId) return true;
+  return todoPanelOpenByThread.get(threadId) ?? true;
+}
+
+function writeTodoPanelOpen(threadId: string | undefined, open: boolean): void {
+  if (!threadId) return;
+  todoPanelOpenByThread.set(threadId, open);
+}
+
 /**
  * Compact status bar above the composer: the single, always-refreshing place
  * the todo list lives (the inline todo_write card is intentionally hidden).
  * Shows progress (done/total), an all-complete state, and background tasks.
- * Click to expand the full checklist with per-item status icons.
+ * Click to collapse/expand the full checklist with per-item status icons.
  */
 export function ComposerStatusBar() {
   const { t } = useTranslation();
   const threadId = useAuiState((s) => s.threadListItem.remoteId ?? s.threadListItem.externalId);
   const isRunning = useAuiState((s) => s.thread.isRunning);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => readTodoPanelOpen(threadId));
+  const prevTotalByThreadRef = useRef(new Map<string, number>());
+
+  useEffect(() => {
+    setOpen(readTodoPanelOpen(threadId));
+  }, [threadId]);
 
   // Refresh faster while the agent is actively running so the board updates
   // close to in-place; back off when idle to avoid needless polling.
@@ -108,6 +126,25 @@ export function ComposerStatusBar() {
   const allDone = total > 0 && openTodos.length === 0;
   const runningTasks = tasks.filter((t) => t.status === 'running');
 
+  // Expand when the model adds todos in the active thread (unless user collapsed earlier).
+  useEffect(() => {
+    if (!threadId) return;
+    const prev = prevTotalByThreadRef.current.get(threadId) ?? 0;
+    if (total > prev) {
+      setOpen(true);
+      writeTodoPanelOpen(threadId, true);
+    }
+    prevTotalByThreadRef.current.set(threadId, total);
+  }, [total, threadId]);
+
+  const toggleOpen = () => {
+    setOpen((current) => {
+      const next = !current;
+      writeTodoPanelOpen(threadId, next);
+      return next;
+    });
+  };
+
   if (total === 0 && tasks.length === 0) return null;
 
   return (
@@ -115,7 +152,7 @@ export function ComposerStatusBar() {
       <button
         type="button"
         className="hover:text-foreground flex w-full items-center gap-3 rounded-md px-1 py-1 transition-colors"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
         aria-expanded={open}
       >
         {total > 0 && (

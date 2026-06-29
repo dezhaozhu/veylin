@@ -5,6 +5,7 @@ import {
   isInternalModelContinuationText,
   embedTranscriptEnvelope,
   extractTranscriptEnvelope,
+  dedupeAssistantMessageParts,
 } from '@veylin/shared';
 import type { TodoItem } from '@veylin/tools';
 
@@ -73,7 +74,9 @@ export function uiMessagesToMastra(
         : m.content
           ? [{ type: 'text', text: m.content }]
           : [{ type: 'text', text: '' }];
-    const enveloped = embedTranscriptEnvelope(rawParts, m.metadata);
+    const normalizedParts =
+      m.role === 'assistant' ? dedupeAssistantMessageParts(rawParts) : rawParts;
+    const enveloped = embedTranscriptEnvelope(normalizedParts, m.metadata);
     const parts = filterPersistableUiMessageParts(coerceSanitizableUiParts(enveloped));
     return {
       id: m.id ?? crypto.randomUUID(),
@@ -129,8 +132,12 @@ export function mastraMessagesToUi(
     const { parts: restoredParts, meta } = extractTranscriptEnvelope(
       coerceSanitizableUiParts(m.content?.parts ?? []),
     );
+    const dedupedParts =
+      (m.role ?? 'assistant') === 'assistant'
+        ? dedupeAssistantMessageParts(restoredParts)
+        : restoredParts;
     const parts = filterPersistableUiMessageParts(
-      coerceSanitizableUiParts(restoredParts as Parameters<typeof coerceSanitizableUiParts>[0]),
+      coerceSanitizableUiParts(dedupedParts as Parameters<typeof coerceSanitizableUiParts>[0]),
     );
     if (parts.length === 0) continue;
     out.push({

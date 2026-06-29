@@ -98,11 +98,8 @@ function toolMapFor(ids: BuiltinToolId[], policy: PolicyConfig): ToolMap {
   return map;
 }
 
-function buildInstructions(definition: AgentDefinition, skills: Skill[]): string {
-  return composeInstructions(
-    definition.instructions,
-    skills.map((s) => ({ name: s.name, description: s.description })),
-  );
+function buildInstructions(definition: AgentDefinition): string {
+  return composeInstructions(definition.instructions);
 }
 
 export function buildAgent({
@@ -120,7 +117,7 @@ export function buildAgent({
     id: definition.id,
     name: definition.name,
     description: definition.description,
-    instructions: buildInstructions(definition, skills),
+    instructions: buildInstructions(definition),
     defaultOptions: {
       // Tool calls (web_fetch, etc.) need a follow-up model turn in the same run.
       maxSteps: 25,

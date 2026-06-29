@@ -1,6 +1,7 @@
 export * from './events';
 export * from './agent';
 export * from './skills';
+export * from './skill-frontmatter';
 export * from './rules';
 export * from './mcp';
 export * from './automation';
@@ -9,6 +10,7 @@ export * from './workflow';
 export * from './task-notification';
 export * from './ui-message-parts';
 export * from './transcript-persist';
+export * from './assistant-display-parts';
 export * from './working-memory';
 export * from './constants';
 export * from './model';

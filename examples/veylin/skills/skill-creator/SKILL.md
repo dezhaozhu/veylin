@@ -3,6 +3,16 @@ name: skill-creator
 description: Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a skill's description for better triggering accuracy.
 ---
 
+## Veylin runtime notes
+
+This skill was written for Claude Code; in **Veylin** the same workflow applies, but adapt tooling as follows:
+
+- **Activate skills** with the composer `/skill` chip or the `skill` tool — there is no separate Claude Code CLI.
+- **Do not assume** `` !`bash` `` / `` !`command` `` blocks in SKILL.md run automatically; use available tools (`workspace_config`, file/table tools, `web_fetch`, etc.) instead of shell scripts unless the user explicitly runs them.
+- **Bundled scripts** under this skill's `scripts/` directory are reference material. Prefer describing steps the agent can execute with Veylin tools; copy scripts to a writable path only when the user asks to run them locally.
+- **Eval / benchmark loops** (`eval-viewer`, `aggregate_benchmark.py`, etc.) are optional. Default to a short qualitative review plus a few hand-run test prompts when the full Python pipeline is unavailable.
+- **Package / install**: use `workspace_config` with `resource: skill` to create or update custom skills in Settings; there is no `.skill` zip installer in Veylin.
+
 # Skill Creator
 
 A skill for creating new skills and iteratively improving them.

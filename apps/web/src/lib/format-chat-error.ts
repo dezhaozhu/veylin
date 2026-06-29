@@ -56,6 +56,8 @@ export function isBenignChatError(error: unknown): boolean {
   const message = errorMessage(error);
   return (
     /nothing to resume|no resumable stream id available/i.test(message) ||
+    /stream not found|stream already finished|resumable stream gone/i.test(message) ||
+    /(?:resume|stream_resume)_http_(?:404|204)/i.test(message) ||
     /Aborted|aborted/i.test(message)
   );
 }

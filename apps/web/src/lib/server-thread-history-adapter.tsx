@@ -15,6 +15,7 @@ import { generateId, type UIMessage } from 'ai';
 import { extractSentAtFromParts, stampMessageWithSentAt } from '@/lib/message-timestamp';
 import {
   extractTranscriptEnvelope,
+  dedupeAssistantMessageParts,
   isObsoleteUiMessagePart,
   sanitizeUiMessagePartsForDisplay,
   coerceSanitizableUiParts,
@@ -77,8 +78,10 @@ export function storedMessageToUiMessage(msg: StoredUiMessage): UIMessage {
   const { parts: envelopeParts, meta } = extractTranscriptEnvelope(
     coerceSanitizableUiParts(rawParts.map(normalizePart)),
   );
-  const parts = sanitizeUiMessagePartsForDisplay(
-    envelopeParts as Parameters<typeof sanitizeUiMessagePartsForDisplay>[0],
+  const parts = dedupeAssistantMessageParts(
+    sanitizeUiMessagePartsForDisplay(
+      envelopeParts as Parameters<typeof sanitizeUiMessagePartsForDisplay>[0],
+    ),
   ).filter((part) => {
     if (!part || typeof part !== 'object') return false;
     if (isObsoleteUiMessagePart(part)) return false;

@@ -51,7 +51,12 @@ export interface AgentSummary {
 
 export interface AgentContext {
   agentId: string;
-  skills: { name: string; description: string }[];
+  skills: {
+    name: string;
+    description: string;
+    disableModelInvocation: boolean;
+    userInvocable: boolean;
+  }[];
   mcpServers: string[];
 }
 
@@ -198,6 +203,8 @@ export async function createRuntime(
         skills: filtered.map((s) => ({
           name: s.name,
           description: s.description,
+          disableModelInvocation: s.disableModelInvocation,
+          userInvocable: s.userInvocable,
         })),
         mcpServers: definition.mcpServers ?? [],
       };

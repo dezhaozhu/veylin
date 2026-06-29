@@ -6,6 +6,7 @@ import {
   hasStreamFinished,
   isPermanentHttpStatus,
   isPostSuccess,
+  isResumableStreamGone,
   postChatWithRetry,
   POST_MAX_RETRIES,
   shouldRetryPost,
@@ -42,6 +43,12 @@ test('getStreamReconnectDelay respects 1s base and 30s cap without jitter', () =
 test('hasStreamFinished detects AI SDK finish marker', () => {
   assert.equal(hasStreamFinished('{"type":"finish"}'), true);
   assert.equal(hasStreamFinished('{"type":"text-delta"}'), false);
+});
+
+test('isResumableStreamGone treats 204/404 as terminal resume', () => {
+  assert.equal(isResumableStreamGone(204), true);
+  assert.equal(isResumableStreamGone(404), true);
+  assert.equal(isResumableStreamGone(200), false);
 });
 
 test('postChatWithRetry retries 503 then succeeds', async () => {

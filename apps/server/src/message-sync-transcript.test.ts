@@ -53,4 +53,42 @@ describe('message-sync transcript round-trip', () => {
     assert.equal(restored.meta?.sentAt, 42);
     assert.deepEqual(restored.parts, [{ type: 'text', text: 'hello' }]);
   });
+
+  it('dedupes repeated assistant narration on persist and recall', () => {
+    const identity = { threadId: 't1', tenantId: 'tenant', resourceId: 'user' };
+    const intro = '好的！我来帮你创建一个写故事的 skill。';
+    const source = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          { type: 'reasoning', text: intro },
+          { type: 'text', text: '先聊聊你的想法。' },
+          {
+            type: 'tool-ask_user_question',
+            state: 'output-available',
+            output: { answers: { Q: 'A' } },
+          },
+          { type: 'step-start' },
+          { type: 'reasoning', text: intro },
+          { type: 'text', text: '先聊聊你的想法。' },
+          { type: 'text', text: '好的，清楚了！' },
+        ],
+      },
+    ];
+
+    const mastra = uiMessagesToMastra(source, identity);
+    const ui = mastraMessagesToUi(
+      mastra.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+      })),
+    );
+
+    const reasoning = ui[0]?.parts?.filter((p) => (p as { type?: string }).type === 'reasoning') ?? [];
+    assert.equal(reasoning.length, 1);
+    assert.equal((reasoning[0] as { text?: string }).text, intro);
+    assert.ok(ui[0]?.parts?.some((p) => (p as { text?: string }).text === '好的，清楚了！'));
+  });
 });

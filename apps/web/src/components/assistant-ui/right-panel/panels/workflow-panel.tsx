@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState, createContext, type ReactNode } from 'react';
 import { Check, ChevronDown, Play, Plus, Save, ScrollText, Trash2 } from 'lucide-react';
 import {
   ReactFlow,
@@ -110,7 +110,10 @@ type WorkflowDetail = WorkflowSummary & {
   };
 };
 
-type NodeViewData = { label: string; kind: NodeKind; runStatus?: NodeRunStatus };
+type NodeViewData = { label: string; kind: NodeKind };
+
+const EMPTY_RUN_STATUS_MAP = new Map<string, NodeRunStatus>();
+const WorkflowNodeRunStatusContext = createContext<Map<string, NodeRunStatus>>(EMPTY_RUN_STATUS_MAP);
 
 function defaultData(kind: NodeKind): Record<string, unknown> {
   switch (kind) {
@@ -141,17 +144,18 @@ function defaultData(kind: NodeKind): Record<string, unknown> {
 
 function NodeView({ id, data }: NodeProps) {
   const d = data as NodeViewData;
+  const runStatus = useContext(WorkflowNodeRunStatusContext).get(id);
   const meta = NODE_META[d.kind];
   const isStart = d.kind === 'start';
   const isEnd = d.kind === 'end';
   const isBranch = d.kind === 'if_else';
   const hasFail = d.kind === 'code' || d.kind === 'http_request';
   const runRing =
-    d.runStatus === 'ok'
+    runStatus === 'ok'
       ? 'ring-2 ring-green-500/50'
-      : d.runStatus === 'error'
+      : runStatus === 'error'
         ? 'ring-2 ring-red-500/50'
-        : d.runStatus === 'running'
+        : runStatus === 'running'
           ? 'ring-2 ring-amber-500/50 animate-pulse'
           : '';
   return (
@@ -247,6 +251,7 @@ function fromFlowState(nodes: Node[], edges: Edge[]): WorkflowDetail['definition
       const data = { ...(n.data as Record<string, unknown>) };
       const kind = data.kind as NodeKind;
       delete data.kind;
+      delete data.runStatus;
       return { id: n.id, kind, position: n.position, data };
     }),
     edges: edges.map((e) => ({
@@ -384,6 +389,20 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
     [runs, selectedRunId],
   );
 
+  const runTraceKey = selectedRun
+    ? `${selectedRun.id}:${selectedRun.status}:${selectedRun.log.map((e) => `${e.nodeId}:${e.status}`).join('|')}`
+    : '';
+
+  const nodeIdsKey = useMemo(() => nodes.map((n) => n.id).join(','), [nodes]);
+
+  const nodeRunStatusMap = useMemo(() => {
+    if (!selectedRun) return EMPTY_RUN_STATUS_MAP;
+    return buildNodeRunStatusMap(
+      selectedRun,
+      nodes.map((n) => n.id),
+    );
+  }, [selectedRun, runTraceKey, nodeIdsKey, nodes]);
+
   const nodeLabels = useMemo(() => {
     const map = new Map<string, string>();
     for (const n of nodes) {
@@ -423,21 +442,6 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
     const timer = setInterval(() => void poll(), ms);
     return () => clearInterval(timer);
   }, [workflowId, showLogs, pollFast]);
-
-  useEffect(() => {
-    const statusMap = buildNodeRunStatusMap(
-      selectedRun,
-      nodes.map((n) => n.id),
-    );
-    setNodes((nds) =>
-      nds.map((n) => {
-        const next = statusMap.get(n.id);
-        const prev = (n.data as NodeViewData).runStatus;
-        if (prev === next) return n;
-        return { ...n, data: { ...n.data, runStatus: next } };
-      }),
-    );
-  }, [selectedRun, nodes.length, setNodes]);
 
   const onConnect = useCallback(
     (connection: Connection) =>
@@ -792,27 +796,29 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
 
       <div className="flex min-h-0 flex-1">
         <div className="min-h-0 flex-1">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            nodeTypes={nodeTypes}
-            fitView
-            proOptions={{ hideAttribution: true }}
-            onNodeClick={(_, node) => {
-              setSelectedId(node.id);
-              if (selectedRun?.log.some((e) => e.nodeId === node.id)) {
-                setSelectedLogNodeId(node.id);
-              }
-            }}
-            onPaneClick={() => setSelectedId(null)}
-          >
-            <Background />
-            <Controls />
-            <MiniMap pannable zoomable />
-          </ReactFlow>
+          <WorkflowNodeRunStatusContext.Provider value={nodeRunStatusMap}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              nodeTypes={nodeTypes}
+              fitView
+              proOptions={{ hideAttribution: true }}
+              onNodeClick={(_, node) => {
+                setSelectedId(node.id);
+                if (selectedRun?.log.some((e) => e.nodeId === node.id)) {
+                  setSelectedLogNodeId(node.id);
+                }
+              }}
+              onPaneClick={() => setSelectedId(null)}
+            >
+              <Background />
+              <Controls />
+              <MiniMap pannable zoomable />
+            </ReactFlow>
+          </WorkflowNodeRunStatusContext.Provider>
         </div>
 
         {selectedNode && selKind ? (

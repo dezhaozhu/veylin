@@ -20,7 +20,7 @@ export function makeSkillTool(skills: SkillEntry[]) {
     id: 'skill',
     description:
       'Activate a named skill to load its full step-by-step instructions. ' +
-      `Available skills: ${skills.map((s) => s.name).join(', ') || '(none)'}.`,
+      'Use a skill name from the Available Skills catalog in context.',
     inputSchema: z.object({
       name: z.string().describe('Skill name to activate'),
     }),
