@@ -80,6 +80,7 @@ import {
   isThreadMessageInput,
   resolveThreadMessagesToUi,
 } from "./resolve-branch-ui-messages";
+import { isPersistableThreadId, syncThreadMessagesToServer } from "./sync-thread-messages";
 
 export type CustomToCreateMessageFunction = <
   UI_MESSAGE extends UIMessage = UIMessage,
@@ -355,6 +356,27 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   useEffect(() => {
     rememberUiMessages(chatHelpers.messages);
   }, [chatHelpers.messages]);
+
+  useEffect(() => {
+    const flushTranscript = () => {
+      const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
+      if (!isPersistableThreadId(threadId)) return;
+      const messages = chatHelpersRef.current.messages;
+      if (messages.length === 0) return;
+      void syncThreadMessagesToServer(threadId, messages, { forceReplace: true });
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flushTranscript();
+    };
+
+    window.addEventListener('beforeunload', flushTranscript);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('beforeunload', flushTranscript);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [getThreadId]);
 
   const stoppedFrontendToolIdsRef = useRef<Set<string>>(new Set());
   const stampedAssistantIdsRef = useRef<Set<string>>(new Set());

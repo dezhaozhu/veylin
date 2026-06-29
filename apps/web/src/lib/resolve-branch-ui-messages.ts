@@ -36,14 +36,36 @@ function threadMessageToUiMessage(message: ThreadMessage): UIMessage | null {
           ...(part.filename ? { filename: part.filename } : {}),
         });
         break;
-      case 'tool-call':
+      case 'tool-call': {
+        const output = part.result;
+        const hasOutput = output !== undefined;
         parts.push({
           type: `tool-${part.toolName}`,
           toolCallId: part.toolCallId,
-          state: 'output-available',
+          state: part.isError ? 'output-error' : hasOutput ? 'output-available' : 'input-available',
           input: part.args,
-          output: part.result,
+          ...(hasOutput ? { output } : {}),
+          ...(part.isError && typeof output === 'object' && output != null && 'error' in output
+            ? { errorText: String((output as { error?: unknown }).error ?? 'Tool error') }
+            : {}),
         } as UIMessage['parts'][number]);
+        break;
+      }
+      case 'data':
+        parts.push({
+          type: `data-${part.name}`,
+          data: part.data,
+        } as UIMessage['parts'][number]);
+        break;
+      case 'source':
+        if (part.sourceType === 'url') {
+          parts.push({
+            type: 'source-url',
+            sourceId: part.id,
+            url: part.url,
+            ...(part.title != null ? { title: part.title } : {}),
+          } as UIMessage['parts'][number]);
+        }
         break;
       default:
         break;
@@ -52,11 +74,16 @@ function threadMessageToUiMessage(message: ThreadMessage): UIMessage | null {
 
   if (parts.length === 0) return null;
 
-  return {
+  const custom = message.metadata?.custom as { sentAt?: number } | undefined;
+  const base: UIMessage = {
     id: message.id,
     role: message.role as UIMessage['role'],
     parts,
+    ...(custom?.sentAt != null
+      ? { metadata: { custom: { sentAt: custom.sentAt } } }
+      : {}),
   };
+  return base;
 }
 
 /** Resolve assistant-ui thread messages to AI SDK UI messages for history import. */

@@ -23,6 +23,10 @@ import type { UIMessage } from "ai";
 
 import { readPendingSkillFromMessage } from '@/lib/pending-skill-message';
 import { restorePendingAskUserSession } from '@/lib/restore-ask-user-session';
+import {
+  fetchThreadMessages,
+  storedMessageToUiMessage,
+} from '@/lib/server-thread-history-adapter';
 
 function countFileParts(messages: ReadonlyArray<unknown>): number {
   return messages.reduce<number>((total, message) => {
@@ -120,8 +124,21 @@ export const useExternalHistory = <TMessage>(
     const loadHistory = async () => {
       setIsLoading(true);
       try {
-        const repo = await formatAdapter.load();
-        if (repo && repo.messages.length > 0) {
+        const stored = await fetchThreadMessages(remoteId);
+        if (stored.length === 0) return;
+
+        const uiMessages = stored.map((msg) => storedMessageToUiMessage(msg)) as TMessage[];
+        let parentId: string | null = null;
+        const repo: MessageFormatRepository<TMessage> = {
+          messages: uiMessages.map((message) => {
+            const item = { parentId, message };
+            parentId = storageFormatAdapter.getId(message);
+            return item;
+          }),
+          ...(parentId != null ? { headId: parentId } : {}),
+        };
+
+        if (repo.messages.length > 0) {
           const converted = toExportedMessageRepository(toThreadMessages, repo);
 
           const tempRepo = new MessageRepository();
@@ -141,7 +158,7 @@ export const useExternalHistory = <TMessage>(
 
           if (
             localMessages.length > 0 &&
-            (serverMessages.length < localMessages.length ||
+            (uiMessages.length < localMessages.length ||
               serverFileParts < localFileParts ||
               serverSkills < localSkills)
           ) {
@@ -149,8 +166,8 @@ export const useExternalHistory = <TMessage>(
           }
 
           runtimeRef.current.thread.import(converted);
-          onSetMessagesRef.current(serverMessages);
-          restorePendingAskUserSession(remoteId, serverMessages as UIMessage[]);
+          onSetMessagesRef.current(uiMessages);
+          restorePendingAskUserSession(remoteId, uiMessages as UIMessage[]);
 
           historyIds.current = new Set(
             converted.messages.map((m) => m.message.id),

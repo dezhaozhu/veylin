@@ -3,6 +3,8 @@ import {
   filterPersistableUiMessageParts,
   coerceSanitizableUiParts,
   isInternalModelContinuationText,
+  embedTranscriptEnvelope,
+  extractTranscriptEnvelope,
 } from '@veylin/shared';
 import type { TodoItem } from '@veylin/tools';
 
@@ -11,6 +13,7 @@ export type UiMessage = {
   role: string;
   content?: string;
   parts?: unknown[];
+  metadata?: unknown;
 };
 
 export interface ThreadSnapshot {
@@ -70,7 +73,8 @@ export function uiMessagesToMastra(
         : m.content
           ? [{ type: 'text', text: m.content }]
           : [{ type: 'text', text: '' }];
-    const parts = filterPersistableUiMessageParts(coerceSanitizableUiParts(rawParts));
+    const enveloped = embedTranscriptEnvelope(rawParts, m.metadata);
+    const parts = filterPersistableUiMessageParts(coerceSanitizableUiParts(enveloped));
     return {
       id: m.id ?? crypto.randomUUID(),
       role: m.role,
@@ -122,13 +126,21 @@ export function mastraMessagesToUi(
 ): UiMessage[] {
   const out: UiMessage[] = [];
   for (const m of messages) {
-    const parts = filterPersistableUiMessageParts(coerceSanitizableUiParts(m.content?.parts ?? []));
+    const { parts: restoredParts, meta } = extractTranscriptEnvelope(
+      coerceSanitizableUiParts(m.content?.parts ?? []),
+    );
+    const parts = filterPersistableUiMessageParts(
+      coerceSanitizableUiParts(restoredParts as Parameters<typeof coerceSanitizableUiParts>[0]),
+    );
     if (parts.length === 0) continue;
     out.push({
       id: m.id,
       role: m.role ?? 'assistant',
       parts,
       content: partText(parts),
+      ...(meta?.sentAt != null
+        ? { metadata: { custom: { sentAt: meta.sentAt } } }
+        : {}),
     });
   }
   return normalizeRecalledUiMessages(out);

@@ -8,6 +8,7 @@ export * from './webhook';
 export * from './workflow';
 export * from './task-notification';
 export * from './ui-message-parts';
+export * from './transcript-persist';
 export * from './working-memory';
 export * from './constants';
 export * from './model';

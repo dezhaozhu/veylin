@@ -58,7 +58,27 @@ export function isObsoleteUiMessagePart(part: unknown): boolean {
 export function filterPersistableUiMessageParts<T extends { type?: string; text?: string }>(
   parts: T[] | undefined,
 ): T[] {
-  return sanitizeUiMessagePartsForDisplay(parts);
+  if (!parts) return [];
+  const out: T[] = [];
+  for (const part of parts) {
+    if (isObsoleteUiMessagePart(part)) continue;
+    if (part.type === 'step-start') {
+      out.push(part);
+      continue;
+    }
+    if (part.type?.startsWith('data-veylin-')) {
+      out.push(part);
+      continue;
+    }
+    if (part.type === 'text' && typeof part.text === 'string') {
+      const cleaned = sanitizeDisplayTextPart(part.text);
+      if (cleaned === null) continue;
+      out.push(cleaned === part.text ? part : ({ ...part, text: cleaned } as T));
+      continue;
+    }
+    out.push(part);
+  }
+  return out;
 }
 
 export type SanitizableUiPart = { type?: string; text?: string };
