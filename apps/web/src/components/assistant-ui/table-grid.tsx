@@ -15,6 +15,8 @@ import {
   themeQuartz,
 } from 'ag-grid-community';
 import './ag-grid-modules';
+import { hasProEntitlement } from '@/lib/ag-grid-license';
+import { isAgGridEnterpriseReady } from '@/lib/ag-grid-enterprise-state';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { Button } from '@/components/ui/button';
@@ -37,6 +39,39 @@ type TableRow = Record<string, string | number> & { row_id?: string };
 
 function rowKey(row: TableRow): string {
   return String(row.row_id ?? '');
+}
+
+// ── 二三级 master-detail (Pro / AG-Grid Enterprise) ──────────────────────────
+// The schedule sheet's 二级 rows expand to their 三级 (设备级) ops, fetched on
+// demand from /api/schedule-detail (→ Compass get_workorder_rows). Read-only.
+const SCHEDULE_SHEET_ID = 'schedule';
+
+const SCHEDULE_DETAIL_COLUMN_DEFS: ColDef[] = [
+  { field: 'op_seq', headerName: '工序号', maxWidth: 90 },
+  { field: 'op_name', headerName: '工序' },
+  { field: 'op_code', headerName: '工序编码' },
+  { field: 'resource_id', headerName: '设备/工作中心' },
+  { field: 'status', headerName: '状态' },
+  { field: 'wbs', headerName: 'WBS' },
+  { field: 'material_code', headerName: '物料' },
+  { field: 'planned_start', headerName: '计划开始' },
+  { field: 'planned_end', headerName: '计划完成' },
+  { field: 'actual_start', headerName: '实际开始' },
+  { field: 'actual_end', headerName: '实际完成' },
+];
+
+async function fetchScheduleDetail(orderId: unknown, stageCode: unknown): Promise<Record<string, unknown>[]> {
+  const qs = new URLSearchParams();
+  if (orderId != null && orderId !== '') qs.set('order_id', String(orderId));
+  if (stageCode != null && stageCode !== '') qs.set('stage_code', String(stageCode));
+  try {
+    const res = await fetch(`/api/schedule-detail?${qs.toString()}`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { rows?: Record<string, unknown>[] };
+    return Array.isArray(data.rows) ? data.rows : [];
+  } catch {
+    return [];
+  }
 }
 
 interface TableColumnDef {
@@ -737,6 +772,32 @@ export function TableGrid() {
     [],
   );
 
+  // 二三级 master-detail (Pro): only on the schedule sheet, only when entitled AND
+  // Enterprise modules are loaded (set masterDetail props otherwise → module error).
+  const proMasterDetail =
+    activeSheetId === SCHEDULE_SHEET_ID && hasProEntitlement() && isAgGridEnterpriseReady();
+
+  const getScheduleDetailRowData = useCallback(
+    (params: { data: TableRow; successCallback: (rows: Record<string, unknown>[]) => void }) => {
+      void fetchScheduleDetail(params.data['order_id'], params.data['stage_code']).then((rows) =>
+        params.successCallback(rows),
+      );
+    },
+    [],
+  );
+
+  const detailCellRendererParams = useMemo(
+    () => ({
+      detailGridOptions: {
+        theme: themeQuartz,
+        columnDefs: SCHEDULE_DETAIL_COLUMN_DEFS,
+        defaultColDef: { flex: 1, minWidth: 100, sortable: true, resizable: true },
+      },
+      getDetailRowData: getScheduleDetailRowData,
+    }),
+    [getScheduleDetailRowData],
+  );
+
   const handleAddRow = async () => {
     const res = await fetch('/api/table/rows', {
       method: 'POST',
@@ -1105,11 +1166,15 @@ export function TableGrid() {
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="min-h-0 flex-1 text-sm" style={{ height: '100%' }}>
             <AgGridReact<TableRow>
+              key={proMasterDetail ? 'grid-md' : 'grid-plain'}
               theme={themeQuartz}
               rowData={filteredRows}
               columnDefs={agColDefs}
               getRowId={(params: GetRowIdParams<TableRow>) => rowKey(params.data)}
               rowSelection={rowSelection}
+              masterDetail={proMasterDetail || undefined}
+              isRowMaster={proMasterDetail ? () => true : undefined}
+              detailCellRendererParams={proMasterDetail ? detailCellRendererParams : undefined}
               onGridReady={onGridReady}
               onCellValueChanged={onCellValueChanged}
               onCellKeyDown={onGridCellKeyDown}

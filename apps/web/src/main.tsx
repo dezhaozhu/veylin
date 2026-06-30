@@ -12,7 +12,12 @@ import { ModuleRegistry } from 'ag-grid-community';
 // Register AG-Grid Community modules at startup (order-safe regardless of how the
 // grid component is bundled — don't rely on table-grid.tsx's side-effect import).
 import './components/assistant-ui/ag-grid-modules';
-import { getAgGridLicenseKey } from '@/lib/ag-grid-license';
+import { getAgGridLicenseKey, hasProEntitlement } from '@/lib/ag-grid-license';
+import {
+  markAgGridEnterpriseReady,
+  setEnterpriseBootstrap,
+  whenEnterpriseSettled,
+} from '@/lib/ag-grid-enterprise-state';
 import i18n from '@/i18n';
 import { App } from './App';
 import './index.css';
@@ -22,20 +27,24 @@ installDesktopReloadShortcut();
 startupCheckpoint('react_shell');
 
 // AG-Grid: Community (MIT) is the default — no Enterprise in the default bundle.
-// Enterprise is loaded ONLY here, dynamically, when the user has supplied a key.
+// Enterprise is loaded ONLY here, dynamically, when the operator's key is injected
+// AND the user is Pro-entitled. The startup gate awaits this before rendering, so
+// any grid mounts with a deterministic Enterprise-ready state.
 {
   const _agKey = getAgGridLicenseKey();
-  if (_agKey) {
+  if (_agKey && hasProEntitlement()) {
     // Dynamic import keeps ag-grid-enterprise out of the default chunk.
-    void import('ag-grid-enterprise')
+    const bootstrap = import('ag-grid-enterprise')
       .then((ent) => {
         // AllEnterpriseModule already includes AllCommunityModule; re-registering is safe.
         ModuleRegistry.registerModules([ent.AllEnterpriseModule]);
         ent.LicenseManager.setLicenseKey(_agKey);
+        markAgGridEnterpriseReady();
       })
       .catch(() => {
         // Fall back to Community silently.
       });
+    setEnterpriseBootstrap(bootstrap);
   }
 }
 
@@ -210,6 +219,9 @@ function StartupGate() {
     const failsafe = window.setTimeout(() => removeSplash(), 45_000);
     setStartupError(null);
     void waitForApiReady(signal)
+      // Ensure AG-Grid Enterprise (if entitled) has settled before mounting any grid,
+      // so master-detail props are only set once the module is registered.
+      .then(() => whenEnterpriseSettled())
       .then(() => {
         if (signal.cancelled) return;
         setReady(true);

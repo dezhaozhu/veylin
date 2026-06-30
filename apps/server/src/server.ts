@@ -42,7 +42,7 @@ import { buildAttachedBrowserBlock, lastUserText, modelSupportsImages, parseChat
 import { buildAgentTaskTools } from './agent-task-tool';
 import { executeSubagentJob, CancelledTaskError, listDispatchableCustomAgentIds } from './agent-task-runner';
 import { scheduleDreamConsolidation } from './dream-service';
-import { buildTableTools } from './table-tools';
+import { buildTableTools, unwrapMcpPayload } from './table-tools';
 import {
   addTableColumn,
   addTableRow,
@@ -1067,6 +1067,42 @@ async function main() {
       defaultSheet: DEFAULT_TABLE_SHEET,
       columns: listTableColumns(sheetId),
       rows: listTableRows(sheetId),
+    };
+  });
+
+  // 二三级 master-detail drill-down: given a 二级 schedule row (order_id + stage_code),
+  // proxy to the Compass `get_workorder_rows` MCP tool for that row's 三级 ops.
+  // Read-only; used by the table's AG-Grid detail grid (Pro feature).
+  app.get('/api/schedule-detail', async (req, reply) => {
+    await resolveContext(req.headers);
+    const { order_id, wbs, stage_code, material, limit } = req.query as {
+      order_id?: string;
+      wbs?: string;
+      stage_code?: string;
+      material?: string;
+      limit?: string;
+    };
+    const compass = mcpToolsets['compass'] as
+      | Record<string, { execute: (args: unknown) => Promise<unknown> }>
+      | undefined;
+    const tool = compass?.['get_workorder_rows'];
+    if (!tool) {
+      reply.code(503);
+      return { ok: false, error: 'compass MCP not connected (no get_workorder_rows)', columns: [], rows: [], total: 0 };
+    }
+    const res = await tool.execute({
+      order_id,
+      wbs,
+      stage_code,
+      material,
+      limit: limit ? Math.max(1, parseInt(limit, 10)) : 500,
+    });
+    const payload = unwrapMcpPayload(res);
+    return {
+      ok: true,
+      columns: payload['columns'] ?? [],
+      rows: payload['rows'] ?? [],
+      total: payload['total'] ?? 0,
     };
   });
 

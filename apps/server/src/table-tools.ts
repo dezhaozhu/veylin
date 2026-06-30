@@ -19,6 +19,27 @@ const rowSchema = z.record(z.string(), z.union([z.string(), z.number()]));
 const cellValueSchema = z.union([z.string(), z.number()]);
 
 /**
+ * Unwrap a remote Mastra MCP tool result. Depending on the Mastra version + MCP
+ * transport it is either the typed object directly, or wrapped in content[0].text
+ * as a JSON string. Returns the parsed payload object (or {} on failure).
+ */
+export function unwrapMcpPayload(res: unknown): Record<string, unknown> {
+  if (res != null && typeof res === 'object' && 'columns' in (res as object)) {
+    return res as Record<string, unknown>;
+  }
+  try {
+    const r = res as Record<string, unknown> | null;
+    const text =
+      (r?.['content'] as Array<Record<string, unknown>> | undefined)?.[0]?.['text'] ??
+      r?.['text'] ??
+      '{}';
+    return JSON.parse(String(text)) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * A getter that returns the live Mastra MCP toolsets map.
  * Wrapping in a getter (not a snapshot) ensures we always see the latest set
  * after a rebuildMcp() call.
@@ -290,23 +311,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
         order_id: input.order_id,
       });
 
-      // Mastra remote MCP tools may return the typed object directly, or wrap it in
-      // content[0].text JSON (depends on Mastra version + MCP transport). Unwrap either.
-      const payload: Record<string, unknown> =
-        res != null && typeof res === 'object' && 'columns' in (res as object)
-          ? (res as Record<string, unknown>)
-          : (() => {
-              try {
-                const r = res as Record<string, unknown> | null;
-                const text =
-                  (r?.['content'] as Array<Record<string, unknown>> | undefined)?.[0]?.['text'] ??
-                  r?.['text'] ??
-                  '{}';
-                return JSON.parse(String(text)) as Record<string, unknown>;
-              } catch {
-                return {};
-              }
-            })();
+      const payload = unwrapMcpPayload(res);
 
       const columns = (payload['columns'] as Array<Record<string, string>> | undefined) ?? [];
       const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
