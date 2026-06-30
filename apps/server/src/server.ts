@@ -1919,7 +1919,7 @@ async function main() {
   // Connect MCP servers; expose their tools to chat as a toolset.
   await rebuildMcp(DEV_TENANT_ID);
 
-  const tableTools = buildTableTools();
+  const tableTools = buildTableTools(() => mcpToolsets);
   const workspaceConfig = buildWorkspaceConfigTool({
     runtime,
     queue,

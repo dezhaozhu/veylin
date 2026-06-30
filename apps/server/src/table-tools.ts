@@ -7,6 +7,7 @@ import {
   deleteTableColumn,
   deleteTableRows,
   deleteTableSheet,
+  importTableSheet,
   listTableColumns,
   listTableRows,
   listTableSheets,
@@ -18,9 +19,16 @@ const rowSchema = z.record(z.string(), z.union([z.string(), z.number()]));
 const cellValueSchema = z.union([z.string(), z.number()]);
 
 /**
+ * A getter that returns the live Mastra MCP toolsets map.
+ * Wrapping in a getter (not a snapshot) ensures we always see the latest set
+ * after a rebuildMcp() call.
+ */
+export type ToolsetsGetter = () => Record<string, unknown>;
+
+/**
  * Generic spreadsheet/table tools backed by the multi-sheet grid store.
  */
-export function buildTableTools() {
+export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
   const tableGet = createTool({
     id: 'table_get',
     description:
@@ -248,6 +256,83 @@ export function buildTableTools() {
     execute: async () => ({ sheets: listTableSheets() }),
   });
 
+  const SCHEDULE_SHEET_ID = 'schedule';
+
+  const loadCompassSchedule = createTool({
+    id: 'load_compass_schedule',
+    description:
+      '从 Compass 拉取本租户的排产网格行，写入名为 schedule 的表 sheet 供展示。' +
+      ' 需要 Compass MCP 服务器已连接。',
+    inputSchema: z.object({
+      limit: z.number().int().min(1).optional().describe('最多返回多少行（默认 500）'),
+      workshop: z.string().optional().describe('按车间过滤'),
+      status: z.string().optional().describe('按状态过滤'),
+      order_id: z.string().optional().describe('按订单号过滤'),
+    }),
+    execute: async (input) => {
+      // Resolve live toolsets via the getter (not a snapshot — rebuildMcp re-assigns the var)
+      const toolsets = getMcpToolsets?.() ?? {};
+      const compass = toolsets['compass'] as
+        | Record<string, { execute: (args: unknown) => Promise<unknown> }>
+        | undefined;
+      const tool = compass?.['get_schedule_rows'];
+      if (!tool) {
+        return {
+          ok: false as const,
+          error: 'compass MCP server not connected (no get_schedule_rows)',
+        };
+      }
+
+      const res: unknown = await tool.execute({
+        limit: input.limit ?? 500,
+        workshop: input.workshop,
+        status: input.status,
+        order_id: input.order_id,
+      });
+
+      // Mastra remote MCP tools may return the typed object directly, or wrap it in
+      // content[0].text JSON (depends on Mastra version + MCP transport). Unwrap either.
+      const payload: Record<string, unknown> =
+        res != null && typeof res === 'object' && 'columns' in (res as object)
+          ? (res as Record<string, unknown>)
+          : (() => {
+              try {
+                const r = res as Record<string, unknown> | null;
+                const text =
+                  (r?.['content'] as Array<Record<string, unknown>> | undefined)?.[0]?.['text'] ??
+                  r?.['text'] ??
+                  '{}';
+                return JSON.parse(String(text)) as Record<string, unknown>;
+              } catch {
+                return {};
+              }
+            })();
+
+      const columns = (payload['columns'] as Array<Record<string, string>> | undefined) ?? [];
+      const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
+
+      // Ensure the 'schedule' sheet exists (create on first use; fire-and-forget persist is fine)
+      const existingSheets = listTableSheets();
+      if (!existingSheets.find((s) => s.id === SCHEDULE_SHEET_ID)) {
+        createTableSheet(SCHEDULE_SHEET_ID);
+      }
+
+      const result = importTableSheet(
+        SCHEDULE_SHEET_ID,
+        columns.map((c) => c['key'] ?? '').filter(Boolean),
+        rows as Array<Record<string, string | number>>,
+      );
+
+      return {
+        ok: true as const,
+        sheet: SCHEDULE_SHEET_ID,
+        imported: rows.length,
+        total: (payload['total'] as number | undefined) ?? rows.length,
+        columns: result?.columns?.length ?? columns.length,
+      };
+    },
+  });
+
   return {
     table_get: tableGet,
     table_update_row: tableUpdateRow,
@@ -259,5 +344,6 @@ export function buildTableTools() {
     table_create_sheet: tableCreateSheet,
     table_delete_sheet: tableDeleteSheet,
     table_list_sheets: tableListSheets,
+    load_compass_schedule: loadCompassSchedule,
   };
 }
