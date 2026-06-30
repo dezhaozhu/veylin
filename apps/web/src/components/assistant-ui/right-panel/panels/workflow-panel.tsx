@@ -20,7 +20,9 @@ import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import type { PanelContentProps } from '../panel-types';
+import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 import { cn } from '@/lib/utils';
+import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 import { WorkflowRunPanel } from './workflow-run-panel';
 import { WorkflowJsonBlock } from './workflow-json-block';
 import { SettingsDeleteDialog } from '@/components/features/settings/settings-item-actions';
@@ -303,6 +305,8 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   const [isNewDraft, setIsNewDraft] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [workflowMenuOpen, setWorkflowMenuOpen] = useState(false);
+  const closeWorkflowMenu = useCallback(() => setWorkflowMenuOpen(false), []);
+  useOverlayDismiss(closeWorkflowMenu);
   const [deletePrompt, setDeletePrompt] = useState<
     | { type: 'workflow'; id: string; name: string }
     | { type: 'draft'; name: string }
@@ -621,11 +625,10 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
           </button>
           {workflowMenuOpen ? (
             <>
-              <button
-                type="button"
+              <DismissibleBackdrop
+                ariaLabel={t('wf.closeList')}
+                onClose={closeWorkflowMenu}
                 className="fixed inset-0 z-[200] cursor-default bg-black/20"
-                aria-label={t('wf.closeList')}
-                onClick={() => setWorkflowMenuOpen(false)}
               />
               <div className="border-border bg-popover absolute left-0 top-full z-[201] mt-1 w-56 overflow-hidden rounded-md border shadow-lg">
                 <div className="max-h-48 overflow-y-auto py-1">

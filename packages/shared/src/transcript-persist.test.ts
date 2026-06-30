@@ -41,4 +41,14 @@ describe('filterPersistableUiMessageParts', () => {
     ]);
     assert.equal(parts.length, 4);
   });
+
+  it('adds reasoning.details for Mastra memory persistence', () => {
+    const [reasoning] = filterPersistableUiMessageParts([
+      { type: 'reasoning', text: 'chain of thought' },
+    ]);
+    assert.equal((reasoning as { type?: string }).type, 'reasoning');
+    assert.deepEqual((reasoning as { details?: unknown[] }).details, [
+      { type: 'text', text: 'chain of thought' },
+    ]);
+  });
 });

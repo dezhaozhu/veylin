@@ -9,10 +9,10 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@veylin/runtime": "*",
     "@veylin/shared": "*",
     "@mastra/core": "^1.45.0",
     "linkedom": "^0.18.12",

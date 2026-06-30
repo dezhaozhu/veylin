@@ -67,7 +67,10 @@ import {
   getAskUserSessionForThread,
   subscribeAskUserSession,
 } from "@/lib/ask-user-question-session";
+import { usePlanModeBridge } from "@/lib/use-composer-settings";
+import { dispatchOverlayDismiss } from "@/lib/overlay-dismiss";
 import { hideWebView, isTauri } from "@/lib/tauri-web-view";
+import { isTaskNotificationText } from "@veylin/shared";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
@@ -118,11 +121,17 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
 const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
   const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
   const threadId = useAuiState((s) => s.threadListItem.id);
+  usePlanModeBridge();
   const askOpen = useSyncExternalStore(
     subscribeAskUserSession,
     () => getAskUserSessionForThread(threadId) != null,
     () => false,
   );
+
+  useEffect(() => {
+    dispatchOverlayDismiss('thread-switch');
+    if (isTauri()) void hideWebView();
+  }, [threadId]);
 
   useEffect(() => {
     if (!isTauri() || !askOpen) return;
@@ -151,7 +160,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
       <ThreadPrimitive.Viewport
         turnAnchor="top"
         data-slot="aui_thread-viewport"
-        className="relative flex min-h-0 flex-1 flex-col overflow-x-auto overflow-y-auto scroll-smooth"
+        className="relative flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto scroll-smooth"
       >
         <div
           className={cn(
@@ -305,7 +314,9 @@ const ComposerAction: FC = () => {
 const MessageError: FC = () => {
   const { t } = useTranslation();
   const error = useMessageError();
+  const isRunning = useAuiState((s) => s.thread.isRunning);
   if (error === undefined) return null;
+  if (!isRunning) return null;
 
   const formatted =
     formatChatError(error instanceof Error ? error : new Error(String(error))) ?? {
@@ -357,6 +368,7 @@ const AssistantMessage: FC = () => {
         <MessagePrimitive.GroupedParts
           groupBy={groupPartByType({
             reasoning: ["group-chainOfThought", "group-reasoning"],
+            text: ["group-chainOfThought", "group-prose"],
             "tool-call": ["group-chainOfThought", "group-tool"],
             "standalone-tool-call": [],
           })}
@@ -393,6 +405,12 @@ const AssistantMessage: FC = () => {
                   </ReasoningGroupBlock>
                 );
               }
+              case "group-prose":
+                return (
+                  <div data-slot="aui_assistant-prose" className="flex flex-col gap-2">
+                    {children}
+                  </div>
+                );
               case "text":
                 return <AssistantMarkdownText />;
               case "reasoning":
@@ -458,13 +476,19 @@ const AssistantActionBar: FC = () => {
 };
 
 const UserMessage: FC = () => {
-  const hasText = useAuiState((s) =>
+  const text = useAuiState((s) =>
     s.message.content
       .filter((part): part is { type: "text"; text: string } => part.type === "text")
-      .some((part) => part.text.length > 0),
+      .map((part) => part.text)
+      .join("\n"),
   );
   const hasChips = useAuiState((s) => userMessageHasDisplayChips(s.message));
-  const showBubble = hasText || hasChips;
+  const isNotificationOnly = Boolean(text.trim()) && isTaskNotificationText(text.trim());
+  const hasDisplayText = Boolean(text.trim()) && !isTaskNotificationText(text.trim());
+  const showBubble = hasDisplayText || hasChips;
+
+  // Synthesis injects hidden task-notification user turns for the model only.
+  if (isNotificationOnly && !hasChips) return null;
 
   return (
     <MessagePrimitive.Root
@@ -480,7 +504,7 @@ const UserMessage: FC = () => {
             <div
               className={cn(
                 "aui-user-message-content bg-muted text-foreground rounded-3xl px-4 py-2 wrap-break-word",
-                !hasText && "min-h-[2.25rem]",
+                !hasDisplayText && "min-h-[2.25rem]",
               )}
             >
               <UserMessageText />

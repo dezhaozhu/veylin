@@ -1,8 +1,21 @@
 import { useAuiState } from '@assistant-ui/react';
-import { ListTodoIcon, ListChecksIcon, LoaderIcon, CheckCircle2Icon } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { BotIcon, CheckCircle2Icon, ListTodoIcon, LoaderIcon } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
+import { formatTaskAgentKind, formatTaskDisplayName } from '@veylin/shared';
+import {
+  collectSubagentTasksFromThreadMessages,
+  mergePanelBackgroundTasksFromThread,
+  type BackgroundTaskRow,
+} from '@/lib/background-task-continuation';
+import {
+  getBackgroundTasksSnapshot,
+  subscribeBackgroundTasks,
+} from '@/lib/background-tasks-store';
 import { cn } from '@/lib/utils';
+
+/** Default subagent worker concurrency (see server SUBAGENT_CONCURRENCY). */
+export const SUBAGENT_PARALLEL_LIMIT = 4;
 
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 
@@ -12,21 +25,11 @@ type TodoItem = {
   status: TodoStatus;
 };
 
-interface TaskRow {
-  id: string;
-  status: string;
-  label?: string | null;
-  agentId: string;
-  subagentType?: string | null;
-}
+type TaskRow = BackgroundTaskRow & { agentId: string };
 
-const TASK_STATUS_STYLE: Record<string, string> = {
-  queued: 'text-muted-foreground',
-  running: 'text-primary font-medium',
-  done: 'text-green-600',
-  failed: 'text-destructive',
-  cancelled: 'text-muted-foreground line-through',
-};
+function asTaskRow(task: BackgroundTaskRow): TaskRow {
+  return { ...task, agentId: task.agentId ?? 'subagent' };
+}
 
 const TODO_STATUS_ICON: Record<TodoStatus, string> = {
   pending: '○',
@@ -35,26 +38,45 @@ const TODO_STATUS_ICON: Record<TodoStatus, string> = {
   cancelled: '⊘',
 };
 
+const TASK_STATUS_ICON: Record<string, string> = {
+  queued: '○',
+  running: '◐',
+  done: '●',
+  failed: '⊘',
+  cancelled: '⊘',
+};
+
+function hasDistinctTaskLabel(task: TaskRow): boolean {
+  const label = task.label?.trim();
+  const preset = task.subagentType?.trim();
+  return Boolean(label && (!preset || (label !== preset && label !== 'fork')));
+}
+
 function usePolling<T>(
   threadId: string | undefined,
   path: string,
   pick: (data: unknown) => T,
   intervalMs: number,
   fallback: T,
+  enabled = true,
+  extraQuery?: Record<string, string>,
 ): T {
   const [state, setState] = useState<{ threadId: string | undefined; value: T }>(() => ({
     threadId,
     value: fallback,
   }));
 
+  const extraQueryKey = extraQuery ? JSON.stringify(extraQuery) : '';
+
   useEffect(() => {
-    if (!threadId) {
+    if (!threadId || !enabled) {
       setState({ threadId, value: fallback });
       return;
     }
     let cancelled = false;
     const load = () => {
-      fetch(`${path}?threadId=${encodeURIComponent(threadId)}`)
+      const query = new URLSearchParams({ threadId, ...(extraQuery ?? {}) });
+      fetch(`${path}?${query.toString()}`, { credentials: 'include' })
         .then((r) => r.json())
         .then((d: unknown) => {
           if (!cancelled) setState({ threadId, value: pick(d) });
@@ -68,43 +90,100 @@ function usePolling<T>(
       window.clearInterval(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, path, intervalMs]);
+  }, [threadId, path, intervalMs, enabled, extraQueryKey]);
 
   return state.threadId === threadId ? state.value : fallback;
 }
 
-/** Per-thread expand/collapse preference for the todo checklist. */
-const todoPanelOpenByThread = new Map<string, boolean>();
+/** Per-thread expand/collapse preference for the status panel. */
+const panelOpenByThread = new Map<string, boolean>();
 
-function readTodoPanelOpen(threadId: string | undefined): boolean {
+function readPanelOpen(threadId: string | undefined): boolean {
   if (!threadId) return true;
-  return todoPanelOpenByThread.get(threadId) ?? true;
+  return panelOpenByThread.get(threadId) ?? true;
 }
 
-function writeTodoPanelOpen(threadId: string | undefined, open: boolean): void {
+function writePanelOpen(threadId: string | undefined, open: boolean): void {
   if (!threadId) return;
-  todoPanelOpenByThread.set(threadId, open);
+  panelOpenByThread.set(threadId, open);
+}
+
+function useBackgroundTasksPanel() {
+  return useSyncExternalStore(subscribeBackgroundTasks, getBackgroundTasksSnapshot, getBackgroundTasksSnapshot);
 }
 
 /**
- * Compact status bar above the composer: the single, always-refreshing place
- * the todo list lives (the inline todo_write card is intentionally hidden).
- * Shows progress (done/total), an all-complete state, and background tasks.
- * Click to collapse/expand the full checklist with per-item status icons.
+ * Claude Code–style status panel above the composer: todos + current-batch agents.
  */
 export function ComposerStatusBar() {
   const { t } = useTranslation();
-  const threadId = useAuiState((s) => s.threadListItem.remoteId ?? s.threadListItem.externalId);
+  const threadId = useAuiState(
+    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId ?? s.threadListItem.id,
+  );
   const isRunning = useAuiState((s) => s.thread.isRunning);
-  const [open, setOpen] = useState(() => readTodoPanelOpen(threadId));
+  const threadMessages = useAuiState((s) => s.thread.messages);
+  const [open, setOpen] = useState(() => readPanelOpen(threadId));
   const prevTotalByThreadRef = useRef(new Map<string, number>());
+  const prevBatchCountByThreadRef = useRef(new Map<string, number>());
+
+  const taskSnapshot = useBackgroundTasksPanel();
+  // The store is a single global; only trust it when it belongs to the active
+  // thread, otherwise a just-switched session would briefly show (and pin) the
+  // previous thread's agents.
+  const storeMatchesThread =
+    taskSnapshot.threadId != null && taskSnapshot.threadId === threadId;
+  const storeBatchTasks = (storeMatchesThread ? taskSnapshot.batchTasks : []) as TaskRow[];
+  const dispatchTaskIds = storeMatchesThread ? (taskSnapshot.dispatchTaskIds ?? []) : [];
+  const allStoreTasks = (storeMatchesThread ? taskSnapshot.tasks : []) as TaskRow[];
+
+  const optimisticFromThread = useMemo(
+    () => collectSubagentTasksFromThreadMessages(threadMessages),
+    [threadMessages],
+  );
+
+  const batchTasks = useMemo(() => {
+    if (storeBatchTasks.length > 0) {
+      const fromStore = mergePanelBackgroundTasksFromThread(threadMessages, storeBatchTasks, {
+        pinnedTaskIds:
+          dispatchTaskIds.length > 0
+            ? dispatchTaskIds
+            : storeBatchTasks.map((row) => row.id),
+      });
+      if (fromStore.length > 0) return fromStore;
+    }
+    const merged = mergePanelBackgroundTasksFromThread(threadMessages, allStoreTasks, {
+      pinnedTaskIds: dispatchTaskIds,
+    });
+    if (merged.length > 0) return merged;
+    if (optimisticFromThread.length > 0) return optimisticFromThread;
+    return [];
+  }, [threadMessages, allStoreTasks, dispatchTaskIds, storeBatchTasks, optimisticFromThread]);
+
+  const pinnedTaskIds = useMemo(
+    () =>
+      dispatchTaskIds.length > 0
+        ? dispatchTaskIds
+        : optimisticFromThread.map((row) => row.id),
+    [dispatchTaskIds, optimisticFromThread],
+  );
+
+  const hasDispatchedAgents =
+    optimisticFromThread.length > 0 ||
+    storeBatchTasks.length > 0 ||
+    pinnedTaskIds.length > 0;
+  const hasActivePanelTasks = batchTasks.some(
+    (task) => task.status === 'queued' || task.status === 'running',
+  );
+  const needsTaskFallbackPoll =
+    Boolean(threadId) &&
+    hasDispatchedAgents &&
+    pinnedTaskIds.length > 0 &&
+    (batchTasks.length === 0 || hasActivePanelTasks);
 
   useEffect(() => {
-    setOpen(readTodoPanelOpen(threadId));
+    setOpen(readPanelOpen(threadId));
   }, [threadId]);
 
-  // Refresh faster while the agent is actively running so the board updates
-  // close to in-place; back off when idle to avoid needless polling.
   const todos = usePolling<TodoItem[]>(
     threadId,
     '/api/todos',
@@ -112,40 +191,84 @@ export function ComposerStatusBar() {
     isRunning ? 1500 : 6000,
     [],
   );
-  const tasks = usePolling<TaskRow[]>(
+
+  const fallbackTasks = usePolling<TaskRow[]>(
     threadId,
     '/api/tasks',
     (d) => (d as { tasks?: TaskRow[] }).tasks ?? [],
-    isRunning ? 2500 : 6000,
+    2000,
     [],
+    needsTaskFallbackPoll,
+    pinnedTaskIds.length > 0 ? { batchIds: pinnedTaskIds.join(',') } : undefined,
   );
+
+  const displayTasks = useMemo(() => {
+    const base =
+      batchTasks.length > 0
+        ? batchTasks
+        : mergePanelBackgroundTasksFromThread(threadMessages, [], {
+            pinnedTaskIds,
+          });
+    if (!needsTaskFallbackPoll || fallbackTasks.length === 0) return base;
+    return mergePanelBackgroundTasksFromThread(threadMessages, fallbackTasks, {
+      pinnedTaskIds,
+    });
+  }, [
+    batchTasks,
+    needsTaskFallbackPoll,
+    fallbackTasks,
+    threadMessages,
+    pinnedTaskIds,
+  ]);
 
   const total = todos.length;
   const doneCount = todos.filter((t) => t.status === 'completed' || t.status === 'cancelled').length;
   const openTodos = todos.filter((t) => t.status !== 'completed' && t.status !== 'cancelled');
-  const allDone = total > 0 && openTodos.length === 0;
-  const runningTasks = tasks.filter((t) => t.status === 'running');
+  const allTodosDone = total > 0 && openTodos.length === 0;
+  const runningTasks = displayTasks.filter((task) => task.status === 'running');
+  const queuedTasks = displayTasks.filter((task) => task.status === 'queued');
+  const terminalTasks = displayTasks.filter((task) =>
+    task.status === 'done' || task.status === 'failed' || task.status === 'cancelled',
+  );
 
-  // Expand when the model adds todos in the active thread (unless user collapsed earlier).
   useEffect(() => {
     if (!threadId) return;
     const prev = prevTotalByThreadRef.current.get(threadId) ?? 0;
     if (total > prev) {
       setOpen(true);
-      writeTodoPanelOpen(threadId, true);
+      writePanelOpen(threadId, true);
     }
     prevTotalByThreadRef.current.set(threadId, total);
   }, [total, threadId]);
 
+  useEffect(() => {
+    if (!threadId) return;
+    const prev = prevBatchCountByThreadRef.current.get(threadId) ?? 0;
+    if (displayTasks.length > prev && displayTasks.length > 0) {
+      setOpen(true);
+      writePanelOpen(threadId, true);
+    }
+    prevBatchCountByThreadRef.current.set(threadId, displayTasks.length);
+  }, [displayTasks.length, threadId]);
+
   const toggleOpen = () => {
     setOpen((current) => {
       const next = !current;
-      writeTodoPanelOpen(threadId, next);
+      writePanelOpen(threadId, next);
       return next;
     });
   };
 
-  if (total === 0 && tasks.length === 0) return null;
+  const taskStatusLabel = (status: string): string | null => {
+    if (status === 'queued') return t('status.taskQueued');
+    if (status === 'running') return t('status.taskRunning');
+    if (status === 'done') return t('status.taskDone');
+    if (status === 'failed') return t('status.taskFailed');
+    if (status === 'cancelled') return t('status.taskCancelled');
+    return null;
+  };
+
+  if (total === 0 && displayTasks.length === 0) return null;
 
   return (
     <div className="text-muted-foreground w-full text-xs">
@@ -159,77 +282,124 @@ export function ComposerStatusBar() {
           <span
             className={cn(
               'flex items-center gap-1.5',
-              allDone && 'text-green-600',
+              allTodosDone && 'text-green-600',
             )}
           >
-            {allDone ? (
+            {allTodosDone ? (
               <CheckCircle2Icon className="size-3.5" />
             ) : (
               <ListTodoIcon className="size-3.5" />
             )}
-            {allDone ? t('status.allDone') : `${doneCount}/${total}`}
+            {allTodosDone ? t('status.allDone') : `${doneCount}/${total}`}
           </span>
         )}
-        {tasks.length > 0 && (
+        {displayTasks.length > 0 && (
           <span className="flex items-center gap-1.5">
             {runningTasks.length > 0 ? (
               <LoaderIcon className="size-3.5 animate-spin" />
             ) : (
-              <ListChecksIcon className="size-3.5" />
+              <BotIcon className="size-3.5" />
             )}
             {runningTasks.length > 0
-              ? `${runningTasks.length} running`
-              : `${tasks.length} tasks`}
+              ? t('status.agentsRunning', { count: runningTasks.length })
+              : queuedTasks.length > 0
+                ? t('status.agentsQueued', { count: queuedTasks.length })
+                : terminalTasks.length === displayTasks.length
+                  ? t('status.agentsDone', { count: displayTasks.length })
+                  : t('status.agentsCount', { count: displayTasks.length })}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="mt-1 flex flex-col gap-3 rounded-md border border-border/60 bg-background/60 p-2">
+        <div className="mt-1 flex flex-col gap-2 rounded-md border border-border/60 bg-background/60 p-2">
           {total > 0 && (
             <section>
-              <div className="mb-1 flex items-center gap-1.5 font-medium">
+              <div className="mb-1 flex items-center gap-1.5 font-medium text-foreground">
                 <ListTodoIcon className="size-3.5" />
-                Todos ({doneCount}/{total} done)
+                {t('status.todosHeading', { done: doneCount, total })}
               </div>
               <ul className="flex flex-col gap-0.5">
-                {todos.map((t) => (
+                {todos.map((item) => (
                   <li
-                    key={t.id}
+                    key={item.id}
                     className={cn(
                       'flex items-start gap-2',
-                      t.status === 'completed' && 'text-muted-foreground line-through',
-                      t.status === 'cancelled' && 'text-muted-foreground line-through opacity-60',
-                      t.status === 'in_progress' && 'text-foreground font-medium',
+                      item.status === 'completed' && 'text-muted-foreground line-through',
+                      item.status === 'cancelled' && 'text-muted-foreground line-through opacity-60',
+                      item.status === 'in_progress' && 'text-foreground font-medium',
                     )}
                   >
                     <span className="mt-px w-4 shrink-0 text-center">
-                      {TODO_STATUS_ICON[t.status]}
+                      {TODO_STATUS_ICON[item.status]}
                     </span>
-                    <span>{t.content}</span>
+                    <span>{item.content}</span>
                   </li>
                 ))}
               </ul>
             </section>
           )}
-          {tasks.length > 0 && (
+
+          {displayTasks.length > 0 && (
             <section>
-              <div className="mb-1 flex items-center gap-1.5 font-medium">
-                <ListChecksIcon className="size-3.5" />
-                Background tasks
+              <div className="mb-1 flex flex-col gap-0.5">
+                <div className="flex items-center gap-1.5 font-medium text-foreground">
+                  <BotIcon className="size-3.5" />
+                  {t('status.agentsHeading', { count: displayTasks.length })}
+                </div>
+                {queuedTasks.length > 0 ? (
+                  <p className="text-muted-foreground ps-5 text-[10px] leading-snug">
+                    {t('status.agentsQueueHint', {
+                      queued: queuedTasks.length,
+                      max: SUBAGENT_PARALLEL_LIMIT,
+                    })}
+                  </p>
+                ) : null}
               </div>
-              <ul className="flex flex-col gap-1">
-                {tasks.map((task) => (
-                  <li key={task.id} className="flex items-center gap-2">
-                    {task.status === 'running' && <LoaderIcon className="size-3 animate-spin" />}
-                    <span className={cn(TASK_STATUS_STYLE[task.status] ?? '')}>
-                      {task.subagentType ?? task.label ?? task.agentId}
-                    </span>
-                    <span className="text-muted-foreground font-mono text-[10px]">
-                      {task.status}
-                    </span>
-                  </li>
-                ))}
+              <ul className="flex flex-col gap-0.5">
+                {displayTasks.map((task) => {
+                  const row = asTaskRow(task);
+                  const title = formatTaskDisplayName(row);
+                  const distinctLabel = hasDistinctTaskLabel(row);
+                  const statusLabel = taskStatusLabel(task.status);
+                  return (
+                    <li key={task.id} className="flex min-w-0 items-center gap-2">
+                      <span className="mt-px w-4 shrink-0 text-center">
+                        {TASK_STATUS_ICON[task.status] ?? '○'}
+                      </span>
+                      <span
+                        className={cn(
+                          'min-w-0 flex-1 truncate',
+                          task.status === 'running' && 'text-foreground font-medium',
+                          task.status === 'done' && 'text-foreground',
+                          task.status === 'failed' && 'text-destructive',
+                          task.status === 'queued' && 'text-muted-foreground',
+                        )}
+                        title={title}
+                      >
+                        {title}
+                      </span>
+                      {!distinctLabel && row.subagentType ? (
+                        <span className="text-muted-foreground shrink-0 text-[10px]">
+                          {formatTaskAgentKind(row)}
+                        </span>
+                      ) : null}
+                      {statusLabel ? (
+                        <span
+                          className={cn(
+                            'shrink-0 rounded px-1 py-0.5 text-[10px]',
+                            task.status === 'running' && 'bg-primary/10 text-primary',
+                            task.status === 'done' && 'bg-green-500/10 text-green-700 dark:text-green-400',
+                            task.status === 'failed' && 'bg-destructive/10 text-destructive',
+                            task.status === 'queued' && 'bg-muted text-muted-foreground',
+                          )}
+                        >
+                          {statusLabel}
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           )}

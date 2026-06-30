@@ -372,17 +372,26 @@ function SidebarResizeHandle({
       setWidth(nextWidth)
     }
 
-    const onPointerUp = () => {
+    let ended = false
+    const endResize = () => {
+      if (ended) return
+      ended = true
       document.body.classList.remove("sidebar-column-resizing")
       document.body.style.cursor = ""
       document.body.style.userSelect = ""
-      handle.releasePointerCapture(event.pointerId)
+      if (handle.hasPointerCapture(event.pointerId)) {
+        handle.releasePointerCapture(event.pointerId)
+      }
       window.removeEventListener("pointermove", onPointerMove)
-      window.removeEventListener("pointerup", onPointerUp)
+      window.removeEventListener("pointerup", endResize)
+      window.removeEventListener("pointercancel", endResize)
+      handle.removeEventListener("lostpointercapture", endResize)
     }
 
     window.addEventListener("pointermove", onPointerMove)
-    window.addEventListener("pointerup", onPointerUp, { once: true })
+    window.addEventListener("pointerup", endResize)
+    window.addEventListener("pointercancel", endResize)
+    handle.addEventListener("lostpointercapture", endResize)
   }
 
   return (

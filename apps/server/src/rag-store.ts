@@ -196,7 +196,14 @@ export async function buildKnowledgeContextBlock(tenantId: string): Promise<stri
   } catch {
     return '';
   }
-  if (docs.length === 0) return '';
+  if (docs.length === 0) {
+    return [
+      '# Knowledge base (local)',
+      'No documents are uploaded yet. The **知识库** panel is empty until the user adds files.',
+      'Spreadsheet/table data in the **表格** panel is separate — use `table_list_sheets` / `table_get`, not `knowledge_search`, for grid data.',
+      'After documents are uploaded, call `knowledge_search` before answering document questions.',
+    ].join('\n');
+  }
 
   const readyCount = docs.filter((d) => d.status === 'ready').length;
   const shown = docs.slice(0, KNOWLEDGE_BLOCK_DOC_LIMIT);

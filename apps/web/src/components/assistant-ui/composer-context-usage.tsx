@@ -2,6 +2,7 @@
 
 import {
   computeContextUsageSnapshot,
+  contextUsageSignature,
   formatTokenCount,
   getLastTokenUsageFromMessages,
   measureContextTokenCount,
@@ -52,8 +53,18 @@ export const ComposerContextUsage: FC<{ className?: string }> = ({ className }) 
 
   useEffect(() => onChatSettingsChange((s) => setModel(s.model)), []);
 
-  const estimatedTokens = useAuiState((s) =>
-    measureContextTokenCount(s.thread.messages, s.composer.text),
+  // Cheap signature selector re-runs every token, but the expensive full-transcript
+  // token scan below is gated on the signature so it does not run on every token.
+  const messages = useAuiState((s) => s.thread.messages);
+  const composerText = useAuiState((s) => s.composer.text);
+  const usageSignature = useAuiState((s) =>
+    contextUsageSignature(s.thread.messages, s.composer.text),
+  );
+
+  const estimatedTokens = useMemo(
+    () => measureContextTokenCount(messages, composerText),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [usageSignature],
   );
 
   const lastUsageKey = useAuiState((s) => serializeLastUsageKey(s.thread.messages));

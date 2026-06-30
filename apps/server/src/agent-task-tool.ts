@@ -1,7 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { insertTask, updateTaskRow, getTaskRow } from '@veylin/db';
-import { DEFAULT_AGENT_ID } from '@veylin/shared';
+import { DEFAULT_AGENT_ID, deriveTaskLabel } from '@veylin/shared';
 import {
   SUBAGENT_TYPES,
   formatPresetListing,
@@ -10,6 +10,7 @@ import {
 import { SUBAGENT_QUEUE, type QueuePort, type SubagentJob } from './queue';
 import {
   type AgentTaskRunnerDeps,
+  awaitTaskCompletion,
   ctxValue,
   devTenantFallback,
   resolveDispatchTarget,
@@ -18,6 +19,7 @@ import {
   continueTaskThread,
 } from './agent-task-runner';
 import { buildTaskManagementTools } from './task-tools';
+import { publishTaskEvent } from './task-events';
 
 interface TaskCtx {
   requestContext?: { get(key: string): unknown; set?(key: string, value: unknown): void };
@@ -26,6 +28,38 @@ interface TaskCtx {
 
 export interface AgentTaskToolDeps extends AgentTaskRunnerDeps {
   queue: QueuePort;
+}
+
+/**
+ * Block on a queued worker and return its result text for the parent agent to act on.
+ * Keeps worker isolation/concurrency (queue) while behaving like a synchronous Claude
+ * Code Task tool: the parent continues via native tool-result continuation, not a
+ * client-side synthesis re-POST. If the parent stream aborts, the task is cancelled.
+ */
+async function awaitDispatchedTaskResult(
+  deps: AgentTaskToolDeps,
+  options: {
+    taskId: string;
+    jobId: string | null;
+    parentThreadId?: string;
+    label: string;
+    abortSignal?: AbortSignal;
+  },
+): Promise<string> {
+  const { taskId, jobId, parentThreadId, label, abortSignal } = options;
+  const row = await awaitTaskCompletion({ taskId, parentThreadId, abortSignal });
+  if (!row || row.status === 'cancelled') {
+    if (jobId) await deps.queue.cancel(SUBAGENT_QUEUE, jobId).catch(() => undefined);
+    await updateTaskRow(taskId, { status: 'cancelled' }).catch(() => undefined);
+    if (parentThreadId) {
+      publishTaskEvent({ kind: 'task.updated', threadId: parentThreadId, taskId });
+    }
+    return `Agent "${label}" was cancelled before completing.`;
+  }
+  if (row.status === 'failed') {
+    return `Agent "${label}" failed: ${row.result ?? 'unknown error'}`;
+  }
+  return row.result ?? '(no output)';
 }
 
 const taskOutputSchema = z.object({
@@ -56,15 +90,17 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
     run_in_background: z
       .boolean()
       .optional()
-      .describe('Queue the task and return task_id immediately instead of waiting inline.'),
+      .describe(
+        'Run the worker on the isolated queue (used for forks and long jobs). The call still waits for the result inline; for parallel work issue multiple task calls in one step.',
+      ),
   });
 
   const task = createTool({
     id: 'task',
     description:
-      'Dispatch a specialized subagent (Claude Code Agent tool). Pick subagent_type by need: ' +
+      'Dispatch a specialized subagent (Claude Code Agent tool) and wait for its result inline. Pick subagent_type by need: ' +
       formatPresetListing() +
-      '. For custom agent packages use agent_id. Omit both to fork with inherited conversation context (always background). Set run_in_background for long work and parallel dispatches. Continue workers with task_continue.',
+      '. For custom agent packages use agent_id. Omit both to fork with inherited conversation context. To run subagents in parallel, issue multiple task calls in a single step; each returns its own result and you continue once all complete. Continue a worker with task_continue.',
     inputSchema: dispatchInputSchema,
     outputSchema: taskOutputSchema,
     execute: async (input, ctx?: TaskCtx) => {
@@ -114,7 +150,13 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
         };
       }
 
-      const label = input.description?.trim() || target.label;
+      const label = deriveTaskLabel({
+        description: input.description,
+        prompt: input.prompt,
+        subagentType: target.subagentType ?? null,
+        agentId: target.agentId,
+        defaultLabel: target.label,
+      });
       const enveloped = isFork ? input.prompt : subagentTaskEnvelope(label, input.prompt);
       const runBackground = isFork || input.run_in_background === true;
 
@@ -129,6 +171,9 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           subagentType: target.subagentType ?? null,
         });
         const taskId = row.id;
+        if (parentThreadId) {
+          publishTaskEvent({ kind: 'task.updated', threadId: parentThreadId, taskId });
+        }
         const workerThread = `task-${taskId}`;
         const job: SubagentJob = {
           tenantId,
@@ -145,13 +190,23 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
         };
         const jobId = await deps.queue.send(SUBAGENT_QUEUE, job);
         await updateTaskRow(taskId, { jobId: jobId ?? null, workerThreadId: workerThread });
+        if (parentThreadId) {
+          publishTaskEvent({ kind: 'task.updated', threadId: parentThreadId, taskId });
+        }
+        const summary = await awaitDispatchedTaskResult(deps, {
+          taskId,
+          jobId: jobId ?? null,
+          parentThreadId,
+          label,
+          abortSignal: ctx?.abortSignal,
+        });
         return {
           subagent_type: target.subagentType ?? null,
           agent_id: isFork ? null : target.subagentType ? null : target.agentId,
           description: label,
-          summary: null,
+          summary,
           task_id: taskId,
-          background: true,
+          background: false,
           notification: null,
         };
       }
@@ -214,6 +269,13 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
       if (input.run_in_background === true) {
         const enveloped = `${row.prompt}\n\n---\nFollow-up:\n${input.message}`;
         await updateTaskRow(row.id, { prompt: enveloped, status: 'queued' });
+        if (parentThreadId ?? row.parentThreadId) {
+          publishTaskEvent({
+            kind: 'task.updated',
+            threadId: parentThreadId ?? row.parentThreadId!,
+            taskId: row.id,
+          });
+        }
         const workerThread = row.workerThreadId ?? `task-${row.id}`;
         const job: SubagentJob = {
           tenantId,
@@ -228,13 +290,28 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
         };
         const jobId = await deps.queue.send(SUBAGENT_QUEUE, job);
         await updateTaskRow(row.id, { jobId: jobId ?? null, workerThreadId: workerThread });
+        const continueParentThreadId = parentThreadId ?? row.parentThreadId ?? undefined;
+        if (continueParentThreadId) {
+          publishTaskEvent({
+            kind: 'task.updated',
+            threadId: continueParentThreadId,
+            taskId: row.id,
+          });
+        }
+        const summary = await awaitDispatchedTaskResult(deps, {
+          taskId: row.id,
+          jobId: jobId ?? null,
+          parentThreadId: continueParentThreadId,
+          label: row.label ?? row.agentId,
+          abortSignal: ctx?.abortSignal,
+        });
         return {
           subagent_type: row.subagentType ?? null,
           agent_id: row.subagentType ? null : row.agentId,
           description: row.label ?? null,
-          summary: null,
+          summary,
           task_id: row.id,
-          background: true,
+          background: false,
           notification: null,
         };
       }
@@ -246,6 +323,13 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
         totalTokens: result.totalTokens ?? null,
         durationMs: result.durationMs,
       });
+      if (parentThreadId ?? row.parentThreadId) {
+        publishTaskEvent({
+          kind: 'task.updated',
+          threadId: parentThreadId ?? row.parentThreadId!,
+          taskId: row.id,
+        });
+      }
 
       return {
         subagent_type: row.subagentType ?? null,
@@ -259,7 +343,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
     },
   });
 
-  const management = buildTaskManagementTools(deps.queue);
+  const management = buildTaskManagementTools(deps.queue, { memory: runtime.memory });
 
   return {
     task,

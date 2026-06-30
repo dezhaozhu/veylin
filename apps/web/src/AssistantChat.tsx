@@ -16,13 +16,12 @@ import {
 } from '@assistant-ui/react';
 import { FileAttachmentAdapter } from '@/lib/file-attachment-adapter';
 import { getChatSettings, setChatSettings } from '@/lib/chat-settings';
+import { readWorkspacePanelContext } from '@/lib/panel-tabs-storage';
 import i18n, { resolveAppLanguage } from '@/i18n';
 import { consumeForceReplaceNextChat } from '@/lib/chat-force-replace-ref';
 import { createResilientChatFetch } from '@/lib/create-resilient-chat-fetch';
 import { useNetworkConnectivity } from '@/lib/use-network-connectivity';
 import { useNetworkReconnectStore } from '@/lib/network-reconnect-store';
-import { isAbortError } from '@/lib/transport-reconnect';
-import { formatChatError, isBenignChatError } from '@/lib/format-chat-error';
 import {
   cursorToSequenceNum,
   getResumeCursor,
@@ -37,6 +36,7 @@ import {
 } from '@/components/assistant-ui/lazy-assistant-modules';
 import { ChatPanelRatioSync } from '@/components/assistant-ui/chat-panel-ratio-sync';
 import { Thread } from '@/components/assistant-ui/thread';
+import { AppTitlebarControls } from '@/components/assistant-ui/app-titlebar-controls';
 import { ThreadHeaderToolbar } from '@/components/assistant-ui/thread-header-toolbar';
 import { ThreadListSidebar } from '@/components/assistant-ui/threadlist-sidebar';
 import { PanelTabsProvider } from '@/components/assistant-ui/right-panel/panel-tabs-context';
@@ -48,7 +48,29 @@ import {
   RightSidebarProvider,
   SidebarInset,
   SidebarProvider,
+  useRightSidebar,
 } from '@/components/ui/sidebar';
+import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
+import { useDesktopInteractionGuard } from '@/lib/use-desktop-interaction-guard';
+
+function DesktopInteractionGuard() {
+  const { view } = useSettingsPanel();
+  const { open: rightSidebarOpen } = useRightSidebar();
+  const { activeTab } = usePanelTabs();
+  const storedUrl =
+    activeTab?.kind === 'web' && typeof activeTab.state?.url === 'string'
+      ? activeTab.state.url.trim()
+      : '';
+  const hasVisibleWebTab =
+    view === 'chat' && rightSidebarOpen && activeTab?.kind === 'web' && storedUrl.length > 0;
+
+  useDesktopInteractionGuard({
+    rightSidebarOpen,
+    workspaceView: view,
+    hasVisibleWebTab,
+  });
+  return null;
+}
 
 function ChatShell() {
   const aui = useAui();
@@ -60,7 +82,9 @@ function ChatShell() {
         <PanelTabsProvider>
         <SidebarProvider>
         <RightSidebarProvider>
+          <AppTitlebarControls />
           <ChatPanelRatioSync />
+          <DesktopInteractionGuard />
           <div className="flex h-dvh w-full overflow-hidden">
             <ThreadListSidebar />
             <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -119,13 +143,9 @@ export function AssistantChat() {
     resume: true,
     // Tool continuation is orchestrated in useAISDKRuntimeWithQueue (single path, deduped).
     sendAutomaticallyWhen: () => false,
-    onError: (error) => {
-      if (isAbortError(error) || isBenignChatError(error)) return;
-      const formatted = formatChatError(error);
-      if (!formatted) return;
-      useNetworkReconnectStore
-        .getState()
-        .setConnectionError(formatted.title, formatted.detail);
+    onError: () => {
+      // Stream errors are shown once via MessageError on the assistant row.
+      // Reconnect / exhausted states use the network reconnect banner in fetch layer.
     },
     onFinish: () => {
       useNetworkReconnectStore.getState().clearTransientBanner();
@@ -166,6 +186,7 @@ export function AssistantChat() {
           mcpEnabled: s.mcpEnabled,
           pendingSkill: s.pendingSkill ?? undefined,
           attachedBrowser: s.attachedBrowserTab ?? undefined,
+          workspacePanel: readWorkspacePanelContext(),
           forceReplace: consumeForceReplaceNextChat(),
           locale: resolveAppLanguage(i18n.resolvedLanguage ?? i18n.language),
         };

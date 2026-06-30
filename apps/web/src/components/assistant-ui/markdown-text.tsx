@@ -7,9 +7,10 @@ import {
   MarkdownTextPrimitive,
   unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
   useIsMarkdownCodeBlock,
+  type SyntaxHighlighterProps,
 } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
-import { type FC, memo, useEffect, useRef, useState, type ReactElement } from "react";
+import { type FC, memo, useEffect, useRef, useState } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
@@ -25,6 +26,7 @@ const MarkdownTextImpl = () => {
       remarkPlugins={[remarkGfm]}
       className="aui-md"
       components={defaultComponents}
+      componentsByLanguage={markdownComponentsByLanguage}
       defer
     />
   );
@@ -38,6 +40,7 @@ const AssistantMarkdownTextImpl = () => {
       remarkPlugins={[remarkGfm, remarkInlineCitations]}
       className="aui-md"
       components={assistantComponents}
+      componentsByLanguage={markdownComponentsByLanguage}
       defer
     />
   );
@@ -95,15 +98,18 @@ const useCopyToClipboard = ({
   return { isCopied, copyToClipboard: copyToClipboardValue };
 };
 
-function mermaidSourceFromPre(children: React.ReactNode): string | null {
-  const child = children as ReactElement<{ className?: string; children?: React.ReactNode }>;
-  const className = child?.props?.className ?? "";
-  if (!className.includes("language-mermaid")) return null;
-  const raw = child?.props?.children;
-  if (typeof raw === "string") return raw;
-  if (Array.isArray(raw)) return raw.map(String).join("");
-  return raw != null ? String(raw) : "";
-}
+const MermaidSyntaxHighlighter: FC<SyntaxHighlighterProps> = ({ code }) => (
+  <MermaidDiagram code={code} />
+);
+
+const MermaidCodeHeader: FC<CodeHeaderProps> = () => null;
+
+const markdownComponentsByLanguage = {
+  mermaid: {
+    SyntaxHighlighter: MermaidSyntaxHighlighter,
+    CodeHeader: MermaidCodeHeader,
+  },
+} as const;
 
 const defaultComponents = memoizeMarkdownComponents({
   h1: ({ className, ...props }) => (
@@ -263,10 +269,6 @@ const defaultComponents = memoizeMarkdownComponents({
     />
   ),
   pre: function Pre({ className, children, ...props }) {
-    const mermaidCode = mermaidSourceFromPre(children);
-    if (mermaidCode != null) {
-      return <MermaidDiagram code={mermaidCode} />;
-    }
     return (
       <pre
         className={cn(

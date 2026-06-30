@@ -31,3 +31,28 @@ jobs:
 
       - name: Test
         run: npm test
+
+  e2e:
+    name: Playwright smoke
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npm run -w @veylin/web test:e2e:install
+
+      - name: E2E tests
+        run: npm run -w @veylin/web test:e2e
+        env:
+          VEYLIN_DESKTOP_AUTH: '1'
+          VEYLIN_DATA_DIR: ./data

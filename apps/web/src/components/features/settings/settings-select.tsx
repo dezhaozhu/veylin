@@ -2,7 +2,6 @@ import {
   Children,
   isValidElement,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -12,7 +11,9 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
+import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 import { cn } from '@/lib/utils';
+import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 
 type SelectOption = { value: string; label: string };
 
@@ -59,6 +60,8 @@ export function SettingsSelect({
 
   const close = useCallback(() => setOpen(false), []);
 
+  useOverlayDismiss(close);
+
   const updateMenuPos = useCallback(() => {
     const el = btnRef.current;
     if (!el) return;
@@ -88,15 +91,6 @@ export function SettingsSelect({
     };
   }, [open, updateMenuPos]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, close]);
-
   const emitChange = (next: string) => {
     onChange?.({
       target: { value: next },
@@ -108,12 +102,7 @@ export function SettingsSelect({
     open && menuPos
       ? createPortal(
           <>
-            <button
-              type="button"
-              className="fixed inset-0 z-[200] cursor-default bg-transparent"
-              aria-label="Close menu"
-              onClick={close}
-            />
+            <DismissibleBackdrop ariaLabel="Close menu" onClose={close} />
             <div
               className="bg-popover text-popover-foreground fixed z-[201] max-h-60 overflow-y-auto rounded-lg border p-1 shadow-lg"
               style={{

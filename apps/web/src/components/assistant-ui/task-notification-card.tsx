@@ -1,8 +1,9 @@
 import type { TaskNotification } from '@veylin/shared';
-import { parseTaskNotification } from '@veylin/shared';
+import { formatTaskAgentKind, formatTaskDisplayName, parseTaskNotification } from '@veylin/shared';
 import { BotIcon, CheckCircle2Icon, XCircleIcon } from 'lucide-react';
-import { useState, type FC } from 'react';
+import { type FC } from 'react';
 import { useTranslation } from 'react-i18next';
+import { cn } from '@/lib/utils';
 
 function statusIcon(status: TaskNotification['status']) {
   if (status === 'completed') return <CheckCircle2Icon className="size-3.5 text-emerald-600" />;
@@ -10,41 +11,57 @@ function statusIcon(status: TaskNotification['status']) {
   return <BotIcon className="text-primary size-3.5" />;
 }
 
+function parseNotificationAgentLabel(summary: string): string | null {
+  const match = summary.match(/^Agent "(.+)" (?:completed|failed|killed)/);
+  return match?.[1] ?? null;
+}
+
+function notificationStatusLabel(
+  status: TaskNotification['status'],
+  t: (key: string) => string,
+): string {
+  if (status === 'completed') return t('status.taskDone');
+  if (status === 'failed') return t('status.taskFailed');
+  if (status === 'killed') return t('status.taskCancelled');
+  return t('status.taskRunning');
+}
+
 export function TaskNotificationCard({ notification }: { notification: TaskNotification }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const typeLabel = notification.subagent_type ?? notification.agent_id ?? 'agent';
+  const storedLabel = parseNotificationAgentLabel(notification.summary);
+  const title = formatTaskDisplayName({
+    id: notification.taskId,
+    label: storedLabel,
+    agentId: notification.agent_id ?? 'agent',
+    subagentType: notification.subagent_type ?? null,
+  });
+  const kind = formatTaskAgentKind({
+    id: notification.taskId,
+    agentId: notification.agent_id ?? 'agent',
+    subagentType: notification.subagent_type ?? null,
+  });
+  const statusLabel = notificationStatusLabel(notification.status, t);
 
   return (
-    <div className="border-border/60 bg-muted/25 my-2 w-full max-w-xl rounded-lg border text-xs">
-      <button
-        type="button"
-        className="flex w-full items-start gap-2 px-3 py-2 text-left"
-        onClick={() => notification.result && setOpen((v) => !v)}
-      >
-        {statusIcon(notification.status)}
-        <div className="min-w-0 flex-1">
-          <div className="font-medium">
-            {typeLabel}
-            <span className="text-muted-foreground ml-1.5 font-normal">{notification.summary}</span>
-          </div>
-          {notification.usage?.duration_ms != null && (
-            <div className="text-muted-foreground mt-0.5">
-              {t('subagent.duration', { ms: notification.usage.duration_ms })}
-              {notification.usage.total_tokens != null &&
-                ` · ${t('subagent.tokens', { count: notification.usage.total_tokens })}`}
-            </div>
-          )}
-        </div>
-        {notification.result && (
-          <span className="text-muted-foreground shrink-0">{open ? '▾' : '▸'}</span>
+    <div className="border-border/60 bg-muted/25 my-2 flex w-full max-w-xl items-center gap-2 rounded-lg border px-3 py-2 text-xs">
+      {statusIcon(notification.status)}
+      <span className="min-w-0 flex-1 truncate font-medium" title={title}>
+        {title}
+        {kind && kind !== title ? (
+          <span className="text-muted-foreground ml-1.5 font-normal">{kind}</span>
+        ) : null}
+      </span>
+      <span
+        className={cn(
+          'shrink-0 rounded px-1 py-0.5 text-[10px]',
+          notification.status === 'completed' && 'bg-green-500/10 text-green-700 dark:text-green-400',
+          (notification.status === 'failed' || notification.status === 'killed') &&
+            'bg-destructive/10 text-destructive',
+          notification.status === 'running' && 'bg-primary/10 text-primary',
         )}
-      </button>
-      {open && notification.result && (
-        <div className="border-border/40 text-muted-foreground border-t px-3 py-2 whitespace-pre-wrap">
-          {notification.result}
-        </div>
-      )}
+      >
+        {statusLabel}
+      </span>
     </div>
   );
 }

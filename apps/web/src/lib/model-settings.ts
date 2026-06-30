@@ -48,8 +48,8 @@ export function getModelSettings(): ModelSettings {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return { models: [], enabledModels: {} };
-    const parsed = JSON.parse(raw) as Partial<ModelSettings> & { customModels?: ModelCatalogEntry[] };
-    const models = parsed.models ?? parsed.customModels ?? [];
+    const parsed = JSON.parse(raw) as Partial<ModelSettings>;
+    const models = parsed.models ?? [];
     return {
       models,
       enabledModels: sanitizeEnabledModels(models, parsed.enabledModels),

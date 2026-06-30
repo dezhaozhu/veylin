@@ -11,6 +11,9 @@ export default defineConfig({
     dedupe: ['react', 'react-dom'],
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@/vendor/assistant-ui': fileURLToPath(
+        new URL('./src/vendor/assistant-ui/index.ts', import.meta.url),
+      ),
       'secure-json-parse': fileURLToPath(
         new URL('./src/shims/secure-json-parse.ts', import.meta.url),
       ),

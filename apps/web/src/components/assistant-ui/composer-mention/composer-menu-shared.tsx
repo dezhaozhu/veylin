@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 
 export type MenuAnchor = {
   top?: number;
@@ -37,12 +38,7 @@ export function ComposerTriggerMenuShell({
 
   return createPortal(
     <>
-      <button
-        type="button"
-        className="fixed inset-0 z-[200] cursor-default bg-transparent"
-        aria-label={closeLabel}
-        onClick={onClose}
-      />
+      <DismissibleBackdrop ariaLabel={closeLabel} onClose={onClose} />
       <div
         className={`bg-popover text-popover-foreground fixed z-[201] ${maxHeight} w-[min(340px,calc(100vw-1rem))] overflow-y-auto rounded-lg border p-1 shadow-lg`}
         style={{

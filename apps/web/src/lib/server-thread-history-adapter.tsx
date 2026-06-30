@@ -16,6 +16,7 @@ import { extractSentAtFromParts, stampMessageWithSentAt } from '@/lib/message-ti
 import {
   extractTranscriptEnvelope,
   dedupeAssistantMessageParts,
+  normalizeAssistantMessageParts,
   isObsoleteUiMessagePart,
   sanitizeUiMessagePartsForDisplay,
   coerceSanitizableUiParts,
@@ -78,16 +79,16 @@ export function storedMessageToUiMessage(msg: StoredUiMessage): UIMessage {
   const { parts: envelopeParts, meta } = extractTranscriptEnvelope(
     coerceSanitizableUiParts(rawParts.map(normalizePart)),
   );
-  const parts = dedupeAssistantMessageParts(
+  const parts = normalizeAssistantMessageParts(
     sanitizeUiMessagePartsForDisplay(
       envelopeParts as Parameters<typeof sanitizeUiMessagePartsForDisplay>[0],
     ),
+    { mode: 'display' },
   ).filter((part) => {
     if (!part || typeof part !== 'object') return false;
     if (isObsoleteUiMessagePart(part)) return false;
     const p = part as { type?: string; text?: string };
     if (p.type === 'data-veylin-pendingSkill') return true;
-    if (p.type === 'step-start') return true;
     if (p.type === 'text' || p.type === 'reasoning') {
       return (p.text ?? '').trim().length > 0;
     }

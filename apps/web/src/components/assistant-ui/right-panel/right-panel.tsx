@@ -1,7 +1,8 @@
 import { useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { closeWebView, hideWebView, isTauri } from '@/lib/tauri-web-view';
+import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
+import { useRightSidebar } from '@/components/ui/sidebar';
 import { PanelTabBar } from './panel-tab-bar';
 import { getPanelKindDef } from './panel-registry';
 import { usePanelTabs } from './panel-tabs-context';
@@ -10,6 +11,7 @@ import { usePanelTabs } from './panel-tabs-context';
 export function RightPanel() {
   const { t } = useTranslation();
   const { view } = useSettingsPanel();
+  const { open: rightOpen } = useRightSidebar();
   const { tabs, activeId, activeTab, open, close, activate, updateState } = usePanelTabs();
 
   const handleUpdateState = useCallback(
@@ -24,10 +26,10 @@ export function RightPanel() {
 
   useEffect(() => {
     if (!isTauri()) return;
-    if (view !== 'chat' || activeTab?.kind !== 'web') {
+    if (!rightOpen || view !== 'chat' || activeTab?.kind !== 'web') {
       void hideWebView();
     }
-  }, [view, activeTab?.kind, activeTab?.id]);
+  }, [rightOpen, view, activeTab?.kind, activeTab?.id]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

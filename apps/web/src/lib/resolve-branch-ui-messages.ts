@@ -86,6 +86,31 @@ function threadMessageToUiMessage(message: ThreadMessage): UIMessage | null {
   return base;
 }
 
+function normalizeToolOutputParts<UI_MESSAGE extends UIMessage>(message: UI_MESSAGE): UI_MESSAGE {
+  if (!message.parts?.length) return message;
+  let changed = false;
+  const parts = message.parts.map((part) => {
+    if (!part || typeof part !== 'object') return part;
+    const p = part as { type?: string; output?: unknown; result?: unknown };
+    if (!p.type?.startsWith('tool-') || p.output !== undefined || p.result === undefined) {
+      return part;
+    }
+    changed = true;
+    const { result: _result, ...rest } = p;
+    return { ...rest, output: p.result } as typeof part;
+  });
+  return changed ? ({ ...message, parts } as UI_MESSAGE) : message;
+}
+
+export function threadMessagesToUiMessages(
+  threadMessages: readonly ThreadMessage[],
+): UIMessage[] {
+  return threadMessages.flatMap((message) => {
+    const ui = threadMessageToUiMessage(message);
+    return ui ? [ui] : [];
+  });
+}
+
 /** Resolve assistant-ui thread messages to AI SDK UI messages for history import. */
 export function resolveThreadMessagesToUi<UI_MESSAGE extends UIMessage>(
   threadMessages: readonly ThreadMessage[],
@@ -93,10 +118,10 @@ export function resolveThreadMessagesToUi<UI_MESSAGE extends UIMessage>(
 ): UI_MESSAGE[] {
   return threadMessages.flatMap((message) => {
     const bound = getExternalStoreMessages<UI_MESSAGE>(message);
-    if (bound.length > 0) return bound;
+    if (bound.length > 0) return bound.map(normalizeToolOutputParts);
 
     const cached = fallbackById.get(message.id);
-    if (cached) return [cached];
+    if (cached) return [normalizeToolOutputParts(cached)];
 
     const reconstructed = threadMessageToUiMessage(message);
     return reconstructed ? [reconstructed as UI_MESSAGE] : [];

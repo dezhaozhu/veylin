@@ -4,12 +4,14 @@ import {
   addTableColumn,
   addTableRow,
   createTableSheet,
+  DEFAULT_TABLE_GET_LIMIT,
   deleteTableColumn,
   deleteTableRows,
   deleteTableSheet,
   listTableColumns,
-  listTableRows,
+  listTableRowsPage,
   listTableSheets,
+  MAX_TABLE_GET_LIMIT,
   resolveTableSheetId,
   updateTableRow,
 } from './table-store';
@@ -24,27 +26,68 @@ export function buildTableTools() {
   const tableGet = createTool({
     id: 'table_get',
     description:
-      'Read rows and column definitions from a table sheet. Call table_list_sheets first if sheet id is unknown.',
+      'Read rows and column definitions from a table sheet (paginated). ' +
+      'Always check totalRows in the response; call again with offset/limit for more. ' +
+      'Call table_list_sheets first if sheet id is unknown.',
     inputSchema: z.object({
       sheet: z.string().optional().describe('Sheet id. Defaults to main.'),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe(`Row offset for pagination (default 0).`),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_TABLE_GET_LIMIT)
+        .optional()
+        .describe(`Rows per page (default ${DEFAULT_TABLE_GET_LIMIT}, max ${MAX_TABLE_GET_LIMIT}).`),
     }),
     outputSchema: z.object({
       sheet: z.string(),
+      totalRows: z.number(),
+      offset: z.number(),
+      limit: z.number(),
+      hasMore: z.boolean(),
       columns: z.array(
         z.object({ key: z.string(), name: z.string(), type: z.string() }),
       ),
       rows: z.array(rowSchema),
+      notice: z.string().optional(),
     }),
     execute: async (input) => {
       const sheet = resolveTableSheetId(input.sheet);
+      const offset = input.offset ?? 0;
+      const limit = input.limit ?? DEFAULT_TABLE_GET_LIMIT;
+      const { totalRows, rows } = listTableRowsPage(sheet, offset, limit);
+      const hasMore = offset + rows.length < totalRows;
       return {
         sheet,
+        totalRows,
+        offset,
+        limit,
+        hasMore,
         columns: listTableColumns(sheet).map((c) => ({
           key: c.key,
           name: c.name,
           type: c.type,
         })),
-        rows: listTableRows(sheet),
+        rows,
+        ...(hasMore
+          ? {
+              notice:
+                `Showing rows ${offset + 1}–${offset + rows.length} of ${totalRows}. ` +
+                `Call table_get again with offset=${offset + rows.length} for the next page.`,
+            }
+          : totalRows === 0
+            ? {
+                notice:
+                  'This sheet has zero rows in the server table store. ' +
+                  'If the UI shows data, confirm the correct sheet id via table_list_sheets.',
+              }
+            : {}),
       };
     },
   });

@@ -59,9 +59,12 @@ function NetworkReconnectStatus() {
 /** Reconnect status on the next line of the active assistant reply. */
 export function NetworkReconnectInAssistant() {
   const isLast = useAuiState((s) => s.message.isLast);
+  const isRunning = useAuiState((s) => s.thread.isRunning);
   const kind = useNetworkReconnectStore((s) => s.kind);
 
   if (!isLast || !isInlineReconnectKind(kind)) return null;
+  // Stale banners from another thread must not decorate settled history.
+  if (!isRunning && kind !== 'offline') return null;
 
   return <NetworkReconnectStatus />;
 }
@@ -72,9 +75,11 @@ export function NetworkReconnectInAssistant() {
  */
 export function NetworkReconnectThreadFallback() {
   const lastRole = useAuiState((s) => s.thread.messages.at(-1)?.role);
+  const isRunning = useAuiState((s) => s.thread.isRunning);
   const kind = useNetworkReconnectStore((s) => s.kind);
 
   if (lastRole !== 'user' || !isInlineReconnectKind(kind)) return null;
+  if (!isRunning && kind !== 'offline') return null;
 
   return (
     <div

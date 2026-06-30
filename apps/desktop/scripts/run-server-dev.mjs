@@ -61,8 +61,8 @@ async function probe() {
 
 function spawnServer() {
   if (shuttingDown) return;
-  logLine(`starting tsx server on :${port} (log: ${logPath})`);
-  child = spawn('npx', ['tsx', 'src/server.ts'], {
+  logLine(`starting tsx watch server on :${port} (log: ${logPath})`);
+  child = spawn('npx', ['tsx', 'watch', 'src/server.ts'], {
     cwd: serverRoot,
     env: serverEnv,
     stdio: ['ignore', 'pipe', 'pipe'],

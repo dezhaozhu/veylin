@@ -53,6 +53,17 @@ npm run -w @veylin/desktop build  # 自动：构建前端 → 打包 sidecar(含
 
 桌面安装包**不内置模型凭据**。首次聊天前，请从左下角用户菜单进入 **Settings** → **Models**，配置你自己的 OpenAI-compatible API Key。
 
+## 上下文工程
+
+长对话时 Veylin 会分层管理上下文，避免超出模型窗口：
+
+- **System prompt 分层**：静态 instructions（角色、沟通规范）与每轮动态块（技能、规则、RAG、提醒）分开组装；稳定段落进程内缓存，`/api/compact` 后清空重拼。
+- **微压缩（microcompact）**：只读大结果工具（如 `knowledge_search`、`web_fetch`）的旧输出替换为占位符，保留最近几轮完整结果；关键事实应在助手回复中记下。
+- **Compaction**：历史超阈值时摘要较早消息（支持 LLM 九段式摘要）；阈值可按 context window 比例自动触发（`VEYLIN_AUTOCOMPACT_PCT`）。
+- **沟通规范**：首次调工具前一句话说明、关键节点短更新、回合末 1–2 句总结（改了什么 + 下一步）。
+
+相关环境变量见 `.env.example` 中 Context engineering 一节。
+
 ## 关键决策
 
 - 存储：**嵌入式 SurrealDB 单引擎**（业务表 + 知识库 图+向量+全文），线程记忆旁挂本地 LibSQL；不依赖外部 Postgres / Redis / Docker。

@@ -1,20 +1,7 @@
-import { DEFAULT_MODEL, getModelConfig } from '@veylin/runtime';
+import { getDefaultModelConfigIfKeyed } from '@veylin/shared/node';
 import { makeSecondaryModelPrompt } from './prompt';
 
 export const MAX_MARKDOWN_LENGTH = 100_000;
-
-type ModelCfg = { url: string; modelId: string; apiKey: string };
-
-function webFetchModelConfig(): ModelCfg | undefined {
-  const cfg = getModelConfig(DEFAULT_MODEL);
-  const apiKey = cfg.apiKey.trim();
-  if (!apiKey) return undefined;
-  return {
-    url: cfg.url.replace(/\/$/, ''),
-    modelId: cfg.modelId,
-    apiKey,
-  };
-}
 
 /** Run the user's prompt against fetched markdown via a small flash model. */
 export async function applyPromptToMarkdown(
@@ -27,7 +14,7 @@ export async function applyPromptToMarkdown(
       ? `${markdownContent.slice(0, MAX_MARKDOWN_LENGTH)}\n\n[Content truncated due to length...]`
       : markdownContent;
 
-  const cfg = webFetchModelConfig();
+  const cfg = getDefaultModelConfigIfKeyed();
   if (!cfg) {
     return `[No API key for web_fetch secondary model; raw excerpt below]\n\n${truncated.slice(0, 4000)}`;
   }
@@ -58,3 +45,6 @@ export async function applyPromptToMarkdown(
   }
   return content;
 }
+
+// Re-export for callers that referenced DEFAULT_MODEL from this module.
+export { DEFAULT_MODEL } from '@veylin/shared/node';

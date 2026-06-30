@@ -26,3 +26,30 @@ export function getActiveWebTabId(): string | null {
   const tab = state.tabs.find((t) => t.id === state.activeId);
   return tab?.kind === ('web' as PanelKind) ? tab.id : null;
 }
+
+/** Snapshot of the active right-panel tab for chat request body. */
+export function readWorkspacePanelContext():
+  | {
+      activePanel: PanelKind;
+      webUrl?: string;
+      webTitle?: string;
+    }
+  | undefined {
+  const state = readPanelTabsState();
+  if (!state?.activeId) return undefined;
+  const tab = state.tabs.find((t) => t.id === state.activeId);
+  if (!tab) return undefined;
+  const ctx: {
+    activePanel: PanelKind;
+    webUrl?: string;
+    webTitle?: string;
+  } = { activePanel: tab.kind };
+  if (tab.kind === 'web') {
+    const url = typeof tab.state?.url === 'string' ? tab.state.url.trim() : '';
+    if (url) {
+      ctx.webUrl = url;
+      ctx.webTitle = tab.title?.trim() || url;
+    }
+  }
+  return ctx;
+}

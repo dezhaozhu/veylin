@@ -10,6 +10,7 @@ import { listRules, buildRulesMemoryBlock } from './rules-store';
 import { createMcpClient, listActiveMcpServerNames } from './mcp-store';
 import { applyTenantModelSettings } from './model-settings-store';
 import { refreshAgentPackages, requireAgent } from './agent-packages-sync';
+import { buildAgentRunSystemBlocks } from './chat-system-blocks';
 
 export interface RunAgentOptions {
   runtime: Runtime;
@@ -55,7 +56,7 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
   const rules = await listRules(tenantId, userId, agentId);
   const skillsCatalog = buildSkillsCatalogBlock(mergedSkills);
   const rulesBlock = buildRulesMemoryBlock(rules, userPrompt);
-  const systemBlocks = [skillsCatalog, rulesBlock].filter(Boolean).join('\n\n');
+  const systemBlocks = await buildAgentRunSystemBlocks({ skillsCatalog, rulesBlock });
 
   const declaredMcp = runtime.definitions.get(agentId)?.definition.mcpServers ?? [];
   const activeMcp = await listActiveMcpServerNames(tenantId, declaredMcp);

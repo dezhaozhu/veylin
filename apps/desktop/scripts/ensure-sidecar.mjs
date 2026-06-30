@@ -9,6 +9,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+
+if (process.env.VEYLIN_SKIP_SIDECAR === '1') {
+  console.log('[desktop] VEYLIN_SKIP_SIDECAR=1 — skip sidecar bundle, use tsx dev server');
+  process.exit(0);
+}
+
 const hostTriple = execSync('rustc --print host-tuple', { encoding: 'utf8' }).trim();
 const sidecarRoot = resolve(repoRoot, 'apps/server/dist/sidecar');
 const stampPath = resolve(sidecarRoot, '.target-triple');

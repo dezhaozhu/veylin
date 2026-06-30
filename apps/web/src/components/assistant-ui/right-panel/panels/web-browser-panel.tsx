@@ -13,6 +13,7 @@ import {
 } from '@/lib/tauri-web-view';
 import { PANEL_TAB_MENU_CLOSED_EVENT } from '@/components/assistant-ui/right-panel/panel-events';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
+import { useRightSidebar } from '@/components/ui/sidebar';
 import {
   hasAskUserSession,
   subscribeAskUserSession,
@@ -32,6 +33,7 @@ function titleFromUrl(url: string): string {
 export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
   const { t } = useTranslation();
   const { view } = useSettingsPanel();
+  const { open: rightOpen } = useRightSidebar();
   const storedUrl = typeof tab.state?.url === 'string' ? tab.state.url : '';
   const [input, setInput] = useState(storedUrl);
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +58,7 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
   }, []);
 
   const syncBounds = useCallback(async () => {
-    if (view !== 'chat' || askOpen || !storedUrl) return;
+    if (view !== 'chat' || !rightOpen || askOpen || !storedUrl) return;
     const bounds = measureBounds();
     if (!bounds) return;
     try {
@@ -64,17 +66,17 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
     } catch {
       // The webview may not exist yet; opening a URL will create it with fresh bounds.
     }
-  }, [askOpen, measureBounds, tabId, view, storedUrl]);
+  }, [askOpen, measureBounds, rightOpen, tabId, view, storedUrl]);
 
   const revealWebView = useCallback(async () => {
-    if (!isTauri() || askOpen || !storedUrl) return;
+    if (!isTauri() || askOpen || !storedUrl || !rightOpen || view !== 'chat') return;
     const bounds = measureBounds();
     if (!bounds) return;
     const shown = await showWebView(tabId, bounds);
     if (!shown) {
       await openWebView(tabId, storedUrl, bounds);
     }
-  }, [askOpen, tabId, storedUrl, measureBounds]);
+  }, [askOpen, rightOpen, tabId, storedUrl, measureBounds, view]);
 
   const handleOpen = useCallback(async () => {
     const url = input.trim();
@@ -107,12 +109,15 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
   }, [askOpen]);
 
   useEffect(() => {
-    if (!isTauri() || askOpen || !storedUrl || view !== 'chat') return;
+    if (!isTauri() || askOpen || !storedUrl || view !== 'chat' || !rightOpen) {
+      if (!rightOpen && isTauri()) void hideWebView(tabId);
+      return;
+    }
     const frame = window.requestAnimationFrame(() => {
       void revealWebView();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [askOpen, tabId, storedUrl, revealWebView, view]);
+  }, [askOpen, rightOpen, tabId, storedUrl, revealWebView, view]);
 
   useEffect(() => {
     if (!isTauri() || view === 'chat') return;
@@ -129,7 +134,7 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
     resizeObserver.observe(node);
     window.addEventListener('resize', syncBounds);
     const onMenuClosed = () => {
-      if (storedUrl && view === 'chat' && !askOpen) void syncBounds();
+      if (storedUrl && view === 'chat' && !askOpen && rightOpen) void revealWebView();
     };
     window.addEventListener(PANEL_TAB_MENU_CLOSED_EVENT, onMenuClosed);
 
@@ -138,15 +143,49 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
       window.removeEventListener('resize', syncBounds);
       window.removeEventListener(PANEL_TAB_MENU_CLOSED_EVENT, onMenuClosed);
     };
-  }, [askOpen, syncBounds, storedUrl, view]);
+  }, [askOpen, revealWebView, rightOpen, syncBounds, storedUrl, view]);
 
   useEffect(() => {
-    if (view !== 'chat' || askOpen) return;
+    if (!isTauri()) return;
+    const container = document.querySelector(
+      '[data-slot="sidebar"][data-side="right"] [data-slot="sidebar-container"]',
+    );
+    if (!container) return;
+
+    let raf = 0;
+    const onLayoutChange = () => {
+      if (raf) window.cancelAnimationFrame(raf);
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        if (!rightOpen) {
+          void hideWebView(tabId);
+          return;
+        }
+        if (storedUrl && view === 'chat' && !askOpen) void syncBounds();
+      });
+    };
+
+    const onTransitionEnd = (event: Event) => {
+      if (event.target !== container) return;
+      onLayoutChange();
+    };
+
+    container.addEventListener('transitionend', onTransitionEnd);
+    window.addEventListener('resize', onLayoutChange);
+    return () => {
+      container.removeEventListener('transitionend', onTransitionEnd);
+      window.removeEventListener('resize', onLayoutChange);
+      if (raf) window.cancelAnimationFrame(raf);
+    };
+  }, [askOpen, rightOpen, storedUrl, syncBounds, tabId, view]);
+
+  useEffect(() => {
+    if (view !== 'chat' || askOpen || !rightOpen) return;
     const frame = window.requestAnimationFrame(() => {
       void syncBounds();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [askOpen, view, syncBounds]);
+  }, [askOpen, rightOpen, view, syncBounds]);
 
   useEffect(() => {
     return () => {

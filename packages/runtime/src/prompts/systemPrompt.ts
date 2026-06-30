@@ -8,6 +8,8 @@
  * Keep this generic: do NOT bake in any specific industry or product. Each
  * AgentDefinition appends its own role on top via composeInstructions().
  */
+import { buildCommunicationStyleSection } from './communicationStyle';
+
 export const BASE_SYSTEM_PROMPT = `You are a capable, autonomous AI assistant operating inside an agentic tool-calling runtime. You help users think, research, organize information, automate workflows, and complete multi-step tasks end to end. You are not bound to any single domain — your concrete role and focus are supplied by additional instructions below.
 
 # Tone & style
@@ -64,8 +66,8 @@ Confirm with the user before destructive \`workspace_config\` actions when inten
  * Compose the final instructions for an agent: base prompt + the definition's
  * role. Skill catalogs are injected per chat request (see buildSkillsCatalogBlock).
  */
-export function composeInstructions(definitionInstructions: string): string {
-  const parts = [BASE_SYSTEM_PROMPT];
+export function composeInstructions(definitionInstructions: string, outputStyle?: string): string {
+  const parts = [BASE_SYSTEM_PROMPT, buildCommunicationStyleSection(outputStyle)];
   const role = definitionInstructions.trim();
   if (role) {
     parts.push(`# Your role\n${role}`);

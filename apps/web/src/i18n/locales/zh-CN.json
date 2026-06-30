@@ -94,7 +94,19 @@
     "removeSkill": "移除技能"
   },
   "status": {
-    "allDone": "全部完成"
+    "allDone": "全部完成",
+    "agentsRunning": "{{count}} 个智能体运行中",
+    "agentsQueued": "{{count}} 个智能体已排队",
+    "agentsDone": "{{count}} 个智能体已完成",
+    "agentsCount": "{{count}} 个智能体",
+    "agentsHeading": "智能体 ({{count}})",
+    "todosHeading": "待办 ({{done}}/{{total}})",
+    "taskQueued": "已排队",
+    "taskRunning": "运行中",
+    "taskDone": "已完成",
+    "taskFailed": "失败",
+    "taskCancelled": "已取消",
+    "agentsQueueHint": "{{queued}} 个在排队等待（最多 {{max}} 个并行执行）"
   },
   "queue": {
     "editMessage": "编辑消息",
@@ -461,7 +473,11 @@
     "modelNotConfigured": { "title": "模型未配置", "detail": "请先打开「设置 -> Models」并配置你自己的 API Key。" },
     "unknown": { "detail": "出现问题，请重试。" },
     "retryLater": "请稍后重试。",
-    "connectFailed": { "title": "连接失败" }
+    "connectFailed": { "title": "连接失败" },
+    "providerClosed": {
+      "title": "模型 API 连接中断",
+      "detail": "上游模型关闭了连接。系统会自动重试汇总；你也可以手动发送消息请求汇总。"
+    }
   },
   "table": {
     "noResponse": "后端无响应 ({{status}})",
@@ -480,6 +496,8 @@
       "overdue": "逾期"
     },
     "loadFailedGeneric": "表格数据加载失败",
+    "deleteSheetFailed": "删除工作表失败",
+    "createSheetFailed": "创建工作表失败",
     "newSheetName": "新工作表名称",
     "confirmDeleteSheet": "删除该工作表？此操作不可恢复。",
     "newColumnName": "新列名称",

@@ -5,7 +5,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { apiUrl, installApiFetchShim } from '@/lib/api-base';
 import { probeVeylinHealth } from '@/lib/health-probe';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
-import { installDesktopReloadShortcut } from '@/lib/desktop-reload-shortcut';
+import { installDesktopRecoveryShortcut, installDesktopReloadShortcut } from '@/lib/desktop-reload-shortcut';
 import { fetchSidecarStatus } from '@/lib/sidecar-status';
 import { startupCheckpoint } from '@/lib/startup-profiler';
 import i18n from '@/i18n';
@@ -14,6 +14,7 @@ import './index.css';
 
 installApiFetchShim();
 installDesktopReloadShortcut();
+installDesktopRecoveryShortcut();
 startupCheckpoint('react_shell');
 
 if (import.meta.env.DEV) {

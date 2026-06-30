@@ -4,7 +4,7 @@
  * Desktop dev (VEYLIN_SKIP_SIDECAR=1): tsx + watchdog (current source, auto-restart).
  * Production / bundled dev: apps/server/dist/sidecar.
  */
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +26,29 @@ const distRoot = resolve(repoRoot, 'apps/server/dist/sidecar');
 
 async function probe() {
   return probeVeylinHealth(healthUrl);
+}
+
+/** Dev tsx servers started before route refactors may answer /health but miss newer APIs. */
+async function probeDevRoutes() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/rag/local-models`, { cache: 'no-store' });
+    return res.status !== 404;
+  } catch {
+    return false;
+  }
+}
+
+async function killPortListener(listenPort) {
+  try {
+    const out = execSync(`lsof -ti :${listenPort}`, { encoding: 'utf8' }).trim();
+    if (!out) return;
+    for (const pid of out.split(/\s+/)) {
+      if (pid) process.kill(Number(pid), 'SIGTERM');
+    }
+    await new Promise((r) => setTimeout(r, 800));
+  } catch {
+    // nothing listening
+  }
 }
 
 function sidecarNode() {
@@ -81,8 +104,13 @@ function spawnDevServerWatchdog(serverEnv) {
 
 async function main() {
   if (await probe()) {
-    console.log(`[ensure-server] sidecar already ready on :${port}`);
-    return;
+    if (useDevTsxServer() && !(await probeDevRoutes())) {
+      console.log(`[ensure-server] stale dev server on :${port} (missing routes); restarting...`);
+      await killPortListener(port);
+    } else {
+      console.log(`[ensure-server] sidecar already ready on :${port}`);
+      return;
+    }
   }
 
   const serverEnv = {

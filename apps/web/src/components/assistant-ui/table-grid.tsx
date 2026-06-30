@@ -1,5 +1,5 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download } from 'lucide-react';
+import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X } from 'lucide-react';
 import {
   DataGrid,
   SELECT_COLUMN_KEY,
@@ -573,6 +573,11 @@ export function TableGrid() {
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(
     null,
   );
+  const [deleteSheetTarget, setDeleteSheetTarget] = useState<TableSheet | null>(null);
+  const [deletingSheet, setDeletingSheet] = useState(false);
+  const [addSheetOpen, setAddSheetOpen] = useState(false);
+  const [newSheetName, setNewSheetName] = useState('');
+  const [addingSheet, setAddingSheet] = useState(false);
 
   useEffect(() => {
     if (!toast) return;
@@ -588,7 +593,6 @@ export function TableGrid() {
     if (importInputRef.current) importInputRef.current.value = '';
   }, []);
 
-  const columnKeys = useMemo(() => new Set(columnDefs.map((c) => c.key)), [columnDefs]);
   const editableKeys = useMemo(
     () => new Set(columnDefs.map((c) => c.key)),
     [columnDefs],
@@ -657,6 +661,83 @@ export function TableGrid() {
     },
     [activeSheetId, resetSheetUiState],
   );
+
+  const confirmDeleteSheet = async () => {
+    if (!deleteSheetTarget || deletingSheet) return;
+    setDeletingSheet(true);
+    try {
+      const res = await fetch(
+        `/api/table/sheets/${encodeURIComponent(deleteSheetTarget.id)}`,
+        { method: 'DELETE' },
+      );
+      const data = await readJsonResponse<{
+        ok?: boolean;
+        message?: string;
+        sheets?: TableSheet[];
+        nextSheet?: string;
+      }>(res);
+      if (!res.ok || !data.ok) {
+        showToast(data.message ?? t('table.deleteSheetFailed'), 'error');
+        return;
+      }
+      if (data.sheets) setSheets(data.sheets);
+      if (deleteSheetTarget.id === activeSheetId && data.nextSheet) {
+        resetSheetUiState();
+        setActiveSheetId(data.nextSheet);
+        setLoading(true);
+      }
+      setDeleteSheetTarget(null);
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : t('table.deleteSheetFailed'), 'error');
+    } finally {
+      setDeletingSheet(false);
+    }
+  };
+
+  const suggestNewSheetName = useCallback(() => {
+    const used = new Set(sheets.map((s) => s.name));
+    let n = sheets.length + 1;
+    while (used.has(`Sheet ${n}`)) n++;
+    return `Sheet ${n}`;
+  }, [sheets]);
+
+  const openAddSheetDialog = useCallback(() => {
+    setNewSheetName(suggestNewSheetName());
+    setAddSheetOpen(true);
+  }, [suggestNewSheetName]);
+
+  const submitAddSheet = async () => {
+    const name = newSheetName.trim();
+    if (!name) return;
+    setAddingSheet(true);
+    try {
+      const res = await fetch('/api/table/sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await readJsonResponse<{
+        ok?: boolean;
+        message?: string;
+        sheet?: TableSheet;
+        sheets?: TableSheet[];
+      }>(res);
+      if (!res.ok || !data.ok || !data.sheet) {
+        showToast(data.message ?? t('table.createSheetFailed'), 'error');
+        return;
+      }
+      if (data.sheets) setSheets(data.sheets);
+      resetSheetUiState();
+      setActiveSheetId(data.sheet.id);
+      setLoading(true);
+      setAddSheetOpen(false);
+      setNewSheetName('');
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : t('table.createSheetFailed'), 'error');
+    } finally {
+      setAddingSheet(false);
+    }
+  };
 
   useEffect(() => {
     void load(activeSheetId, true);
@@ -1148,29 +1229,57 @@ export function TableGrid() {
         </div>
       ) : null}
       {/* Sheet tabs — top */}
-      <div className="border-border flex shrink-0 items-center gap-1 overflow-x-auto border-b px-2 py-1.5">
-        {sheets.map((sheet) => {
-          const active = activeSheetId === sheet.id;
-          return (
-            <div
-              key={sheet.id}
-              className={cn(
-                'flex shrink-0 items-center rounded-md text-xs transition-colors',
-                active
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              <button
-                type="button"
-                onClick={() => switchSheet(sheet.id)}
-                className="sheet-tab-label py-1 pl-2.5 pr-2.5 transition-[padding] duration-150"
+      <div className="border-border flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {sheets.map((sheet) => {
+            const active = activeSheetId === sheet.id;
+            return (
+              <div
+                key={sheet.id}
+                className={cn(
+                  'group/tab flex shrink-0 items-center rounded-md text-xs transition-colors',
+                  '[&:hover_.sheet-tab-close]:ml-0.5 [&:hover_.sheet-tab-close]:max-w-5 [&:hover_.sheet-tab-close]:opacity-100',
+                  active
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                )}
               >
-                {sheet.name}
-              </button>
-            </div>
-          );
-        })}
+                <button
+                  type="button"
+                  onClick={() => switchSheet(sheet.id)}
+                  className="sheet-tab-label py-1 pl-2.5 pr-1 transition-[padding] duration-150"
+                >
+                  {sheet.name}
+                </button>
+                {sheets.length > 1 ? (
+                  <button
+                    type="button"
+                    aria-label={t('table.deleteSheet', { name: sheet.name })}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteSheetTarget(sheet);
+                    }}
+                    className={cn(
+                      'sheet-tab-close mr-1 overflow-hidden rounded-md p-0.5 transition-all duration-150',
+                      'max-w-0 opacity-0',
+                      active ? 'hover:bg-primary-foreground/20' : 'hover:bg-foreground/10',
+                    )}
+                  >
+                    <X className="size-3" />
+                  </button>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          aria-label={t('table.newSheet')}
+          onClick={openAddSheetDialog}
+          className="text-muted-foreground hover:bg-muted hover:text-foreground ml-1 flex size-7 shrink-0 items-center justify-center rounded-md border border-transparent transition-colors"
+        >
+          <Plus className="size-3.5" />
+        </button>
       </div>
 
       {/* Toolbar + filters */}
@@ -1323,6 +1432,51 @@ export function TableGrid() {
       )}
 
       <Dialog
+        open={addSheetOpen}
+        onOpenChange={(open) => {
+          if (addingSheet) return;
+          setAddSheetOpen(open);
+          if (!open) setNewSheetName('');
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('table.newSheet')}</DialogTitle>
+            <DialogDescription>{t('table.newSheetName')}</DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={newSheetName}
+            onChange={(e) => setNewSheetName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && newSheetName.trim()) void submitAddSheet();
+            }}
+            placeholder={t('table.newSheetName')}
+          />
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={addingSheet}
+              onClick={() => {
+                setAddSheetOpen(false);
+                setNewSheetName('');
+              }}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              type="button"
+              disabled={addingSheet || !newSheetName.trim()}
+              onClick={() => void submitAddSheet()}
+            >
+              {t('common.create')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={addColumnOpen}
         onOpenChange={(open) => {
           if (addingColumn) return;
@@ -1362,6 +1516,42 @@ export function TableGrid() {
               onClick={() => void submitAddColumn()}
             >
               {t('common.create')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteSheetTarget != null}
+        onOpenChange={(open) => {
+          if (!open && !deletingSheet) setDeleteSheetTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {deleteSheetTarget
+                ? t('table.deleteSheet', { name: deleteSheetTarget.name })
+                : ''}
+            </DialogTitle>
+            <DialogDescription>{t('table.confirmDeleteSheet')}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={deletingSheet}
+              onClick={() => setDeleteSheetTarget(null)}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletingSheet}
+              onClick={() => void confirmDeleteSheet()}
+            >
+              {t('common.delete')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -6,8 +6,7 @@ type SyncThreadMessagesBody = {
 };
 
 export function isPersistableThreadId(threadId: string | undefined): boolean {
-  if (!threadId) return false;
-  return !threadId.startsWith('__LOCALID');
+  return Boolean(threadId?.trim());
 }
 
 export async function syncThreadMessagesToServer(

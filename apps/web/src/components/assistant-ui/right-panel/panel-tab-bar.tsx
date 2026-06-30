@@ -6,8 +6,10 @@ import {
   ComposerMenuPanel,
   ComposerMenuRow,
 } from '@/components/assistant-ui/composer-menu-flyout';
+import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 import { RightSidebarTrigger } from '@/components/ui/sidebar';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
+import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 import { cn } from '@/lib/utils';
 import { startWindowDrag } from '@/lib/window-drag';
 import { PANEL_KINDS, getPanelKindDef } from './panel-registry';
@@ -37,6 +39,8 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
   const close = useCallback(() => setMenuOpen(false), []);
+
+  useOverlayDismiss(close);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -77,24 +81,13 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
     };
   }, [menuOpen, updateMenuPos]);
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [menuOpen, close]);
-
   const menu =
     menuOpen && menuPos
       ? createPortal(
           <>
-            <button
-              type="button"
-              className="fixed inset-0 z-[200]"
-              aria-label={t('panelTab.closeMenu')}
-              onClick={close}
+            <DismissibleBackdrop
+              ariaLabel={t('panelTab.closeMenu')}
+              onClose={close}
             />
             <div
               className="fixed z-[201]"

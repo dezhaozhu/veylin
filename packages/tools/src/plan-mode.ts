@@ -1,5 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import { ENTER_PLAN_MODE_TOOL, EXIT_PLAN_MODE_TOOL } from '@veylin/shared';
 
 /** Thread-scoped plan mode flag (the agent EnterPlanModeTool / ExitPlanModeTool). */
 const planModeByThread = new Map<string, boolean>();
@@ -13,7 +14,7 @@ export function setThreadPlanMode(threadId: string, on: boolean): void {
 }
 
 export const enterPlanMode = createTool({
-  id: 'enter_plan_mode',
+  id: ENTER_PLAN_MODE_TOOL,
   description:
     'Enter planning mode: a read-only phase for exploring and designing an approach before ' +
     'making any changes. While in plan mode, mutating tools are denied, so use this when a task ' +
@@ -36,7 +37,7 @@ export const enterPlanMode = createTool({
 });
 
 export const exitPlanMode = createTool({
-  id: 'exit_plan_mode',
+  id: EXIT_PLAN_MODE_TOOL,
   description:
     'Exit planning mode and proceed with execution. Call this only after you have explored ' +
     'enough and are ready to act; it re-enables mutating tools (subject to the usual approval ' +

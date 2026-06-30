@@ -9,11 +9,86 @@ import {
   type Runtime,
   type SubagentPreset,
 } from '@veylin/runtime';
-import { getTaskRow, updateTaskRow, type TaskRow } from '@veylin/db';
+import { getTaskRow, updateTaskRow, type TaskRow, type TaskStatus } from '@veylin/db';
 import type { SubagentJob } from './queue';
 import { seedForkWorkerThread } from './agent-fork';
+import { publishTaskEvent, subscribeTaskEvents } from './task-events';
 
 const DEV_TENANT_FALLBACK = '00000000-0000-0000-0000-000000000000';
+
+const TERMINAL_TASK_STATUSES = new Set<TaskStatus>(['done', 'failed', 'cancelled']);
+const TASK_POLL_INTERVAL_MS = 500;
+
+/**
+ * Block until a queued/running task reaches a terminal state. Driven by task-event
+ * wakeups with DB polling as a fallback so the dispatching tool call can return the
+ * worker's result inline (synchronous Claude Code style Task), instead of relying on
+ * a client-side synthesis re-POST. Resolves null when aborted by the parent stream.
+ */
+export async function awaitTaskCompletion(options: {
+  taskId: string;
+  parentThreadId?: string | null;
+  abortSignal?: AbortSignal;
+  pollIntervalMs?: number;
+  /** Override the row fetcher (tests); defaults to the DB-backed getTaskRow. */
+  getRow?: (taskId: string) => Promise<TaskRow | null>;
+}): Promise<TaskRow | null> {
+  const { taskId, parentThreadId, abortSignal } = options;
+  const pollIntervalMs = options.pollIntervalMs ?? TASK_POLL_INTERVAL_MS;
+  const getRow = options.getRow ?? getTaskRow;
+
+  const initial = await getRow(taskId);
+  if (initial && TERMINAL_TASK_STATUSES.has(initial.status)) return initial;
+
+  return new Promise<TaskRow | null>((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribe: (() => void) | null = null;
+    let onAbort: (() => void) | null = null;
+
+    const finish = (row: TaskRow | null) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (unsubscribe) unsubscribe();
+      if (onAbort && abortSignal) abortSignal.removeEventListener('abort', onAbort);
+      resolve(row);
+    };
+
+    const poll = async () => {
+      if (settled) return;
+      let row: TaskRow | null = null;
+      try {
+        row = await getRow(taskId);
+      } catch {
+        /* transient DB error — retry on next tick */
+      }
+      if (settled) return;
+      if (row && TERMINAL_TASK_STATUSES.has(row.status)) {
+        finish(row);
+        return;
+      }
+      timer = setTimeout(() => void poll(), pollIntervalMs);
+    };
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        finish(null);
+        return;
+      }
+      onAbort = () => finish(null);
+      abortSignal.addEventListener('abort', onAbort);
+    }
+
+    if (parentThreadId) {
+      unsubscribe = subscribeTaskEvents(parentThreadId, (event) => {
+        if (event.taskId === taskId) void poll();
+      });
+    }
+
+    void poll();
+  });
+}
 
 export interface AgentTaskRunnerDeps {
   mcpToolsets: Record<string, unknown>;
@@ -43,6 +118,8 @@ export function subagentTaskEnvelope(label: string, prompt: string): string {
     '- You CANNOT dispatch further subagents.',
     '- Stay within the scope of the task below; do not take unrelated actions.',
     '- When done, return a concise, structured summary with concrete references the parent can act on.',
+    '- End-of-turn: one sentence on what changed and what is next.',
+    '- Record load-bearing facts from tool results in your reply before moving on; old tool output may be cleared later.',
     '',
     'Task:',
     prompt,
@@ -211,7 +288,7 @@ export async function writeTaskNotificationToParent(options: {
   await options.memory.saveMessages({
     messages: [
       {
-        id: crypto.randomUUID(),
+        id: `task-notif-${options.notification.taskId}`,
         role: 'user',
         createdAt: new Date(),
         threadId: options.parentThreadId,
@@ -220,6 +297,11 @@ export async function writeTaskNotificationToParent(options: {
       },
     ],
   } as never);
+  publishTaskEvent({
+    kind: 'batch.readiness',
+    threadId: options.parentThreadId,
+    taskId: options.notification.taskId,
+  });
 }
 
 export async function executeSubagentJob(
@@ -240,6 +322,9 @@ export async function executeSubagentJob(
       throw new CancelledTaskError();
     }
     await updateTaskRow(job.taskId, { status: 'running', workerThreadId: workerThread });
+    if (job.parentThreadId) {
+      publishTaskEvent({ kind: 'task.updated', threadId: job.parentThreadId, taskId: job.taskId });
+    }
   }
 
   try {
@@ -295,26 +380,16 @@ export async function executeSubagentJob(
         durationMs: result.durationMs,
         workerThreadId: workerThread,
       });
+      if (job.parentThreadId) {
+        publishTaskEvent({ kind: 'task.updated', threadId: job.parentThreadId, taskId: job.taskId });
+      }
     }
 
-    if (job.parentThreadId) {
-      const label = job.label ?? job.agentId;
-      await writeTaskNotificationToParent({
-        memory: runtime.memory,
-        parentThreadId: job.parentThreadId,
-        parentResource: job.parentResource ?? job.tenantId,
-        notification: {
-          taskId: job.taskId ?? workerThread,
-          status: 'completed',
-          summary: `Agent "${label}" completed`,
-          result: result.text,
-          durationMs: result.durationMs,
-          totalTokens: result.totalTokens,
-          subagentType: job.subagentType,
-          agentId: isFork ? undefined : job.agentId,
-        },
-      });
-    }
+    // Synchronous Task model: the dispatching `task` tool awaits this worker and
+    // returns `result.text` (persisted on the task row above) as the tool result, so
+    // the parent agent continues natively via AI SDK tool-result continuation. We no
+    // longer inject a <task-notification> into parent memory (that drove the removed
+    // client-side synthesis path and would duplicate the tool result in context).
 
     return result;
   } catch (err) {
@@ -325,20 +400,9 @@ export async function executeSubagentJob(
         status: 'failed',
         result: message,
       }).catch(() => undefined);
-    }
-    if (job.parentThreadId) {
-      await writeTaskNotificationToParent({
-        memory: runtime.memory,
-        parentThreadId: job.parentThreadId,
-        parentResource: job.parentResource ?? job.tenantId,
-        notification: {
-          taskId: job.taskId ?? workerThread,
-          status: 'failed',
-          summary: `Agent "${job.label ?? job.agentId}" failed: ${message}`,
-          subagentType: job.subagentType,
-          agentId: isFork ? undefined : job.agentId,
-        },
-      }).catch(() => undefined);
+      if (job.parentThreadId) {
+        publishTaskEvent({ kind: 'task.updated', threadId: job.parentThreadId, taskId: job.taskId });
+      }
     }
     throw err;
   }

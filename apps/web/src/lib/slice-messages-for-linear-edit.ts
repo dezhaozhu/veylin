@@ -1,5 +1,5 @@
 import type { UIMessage } from 'ai';
-import { sliceMessagesUntil } from '../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/sliceMessagesUntil';
+import { sliceMessagesUntil } from '@/vendor/assistant-ui';
 
 /**
  * Linear edit: drop the edited message, everything after it, and any consecutive

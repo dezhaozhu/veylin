@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import type { UIMessage } from 'ai';
 import { lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
 import {
+  conversationAwaitsResume,
   hasAskUserAnswers,
   isAwaitingFrontendToolPart,
   isAwaitingFrontendToolAnswer,
@@ -135,7 +136,7 @@ describe('frontend-suspend-tools', () => {
     assert.equal(isAwaitingFrontendToolAnswer(messages), false);
   });
 
-  it('auto-continues after provider-executed web_fetch completes', () => {
+  it('does NOT client-continue after a provider-executed web_fetch (server resumes natively)', () => {
     const messages = [
       {
         id: 'a1',
@@ -152,11 +153,11 @@ describe('frontend-suspend-tools', () => {
       },
     ] as UIMessage[];
 
-    assert.equal(shouldAutoSendChat({ messages }), true);
+    assert.equal(shouldAutoSendChat({ messages }), false);
     assert.equal(lastAssistantMessageIsCompleteWithToolCalls({ messages }), false);
   });
 
-  it('auto-continues when web_fetch is followed by step-start only', () => {
+  it('does NOT client-continue when web_fetch is followed by step-start only', () => {
     const messages = [
       {
         id: 'a1',
@@ -174,31 +175,13 @@ describe('frontend-suspend-tools', () => {
       },
     ] as UIMessage[];
 
-    assert.equal(shouldAutoSendChat({ messages }), true);
-    assert.equal(lastAssistantMessageIsCompleteWithToolCalls({ messages }), false);
+    assert.equal(shouldAutoSendChat({ messages }), false);
   });
 
-  it('ignores streaming residue text before step-start after server tool', () => {
-    const messages = [
-      {
-        id: 'a1',
-        role: 'assistant',
-        parts: [
-          {
-            type: 'tool-web_fetch',
-            state: 'output-available',
-            providerExecuted: true,
-            output: { content: 'page', code: 200 },
-          },
-          { type: 'text', text: 'Summarizing the page…' },
-        ],
-      },
-    ] as UIMessage[];
-
-    assert.equal(shouldAutoSendChat({ messages, status: 'ready' }), true);
-  });
-
-  it('auto-continues when provider-executed web_fetch is stuck at input-available', () => {
+  it('does NOT client-continue a provider-executed web_fetch stuck at input-available', () => {
+    // The server owns this tool; if its stream is alive it finishes it, and if the
+    // connection dropped, resumable GET resume recovers it. A client re-POST would
+    // restart the whole turn.
     const messages = [
       {
         id: 'a1',
@@ -215,7 +198,7 @@ describe('frontend-suspend-tools', () => {
       },
     ] as UIMessage[];
 
-    assert.equal(shouldAutoSendChat({ messages }), true);
+    assert.equal(shouldAutoSendChat({ messages }), false);
     assert.equal(shouldAutoSendChat({ messages, status: 'streaming' }), false);
     assert.equal(shouldAutoSendChat({ messages, status: 'submitted' }), false);
   });
@@ -241,7 +224,9 @@ describe('frontend-suspend-tools', () => {
     assert.equal(shouldAutoSendChat({ messages }), false);
   });
 
-  it('auto-continues server tools after step-start across tool kinds', () => {
+  it('does NOT client-continue server tools after step-start across tool kinds', () => {
+    // Server-executed tools complete inside the server agent loop; the client must
+    // not re-POST for them (that would restart the turn and loop the model).
     const withStepStart = (toolType: string, output: unknown) =>
       [
         {
@@ -259,36 +244,19 @@ describe('frontend-suspend-tools', () => {
         },
       ] as UIMessage[];
 
-    assert.equal(
-      shouldAutoSendChat({
-        messages: withStepStart('tool-knowledge_search', { hits: [] }),
-      }),
-      true,
-    );
-    assert.equal(
-      shouldAutoSendChat({
-        messages: withStepStart('tool-todo_write', { newTodos: [] }),
-      }),
-      true,
-    );
-    assert.equal(
-      shouldAutoSendChat({
-        messages: withStepStart('tool-tool_search', { tools: [] }),
-      }),
-      true,
-    );
-    assert.equal(
-      shouldAutoSendChat({
-        messages: withStepStart('tool-task', { status: 'spawned' }),
-      }),
-      true,
-    );
-    assert.equal(
-      shouldAutoSendChat({
-        messages: withStepStart('tool-table_get', { rows: [] }),
-      }),
-      true,
-    );
+    for (const toolType of [
+      'tool-knowledge_search',
+      'tool-todo_write',
+      'tool-tool_search',
+      'tool-task',
+      'tool-table_get',
+    ]) {
+      assert.equal(
+        shouldAutoSendChat({ messages: withStepStart(toolType, {}) }),
+        false,
+        `${toolType} must not client-continue`,
+      );
+    }
   });
 
   it('auto-continues answered ask_user_question after step-start', () => {
@@ -362,6 +330,69 @@ describe('frontend-suspend-tools', () => {
     assert.equal(isAwaitingFrontendToolAnswer(messages), true);
   });
 
+  it('conversationAwaitsResume is false for a finished assistant reply', () => {
+    const messages = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: '读取表格并分析' }] },
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-task',
+            state: 'output-available',
+            providerExecuted: true,
+            output: { summary: 'analysis', background: false },
+          },
+          { type: 'step-start' },
+          { type: 'text', text: '下面是完整的分析报告。' },
+        ],
+      },
+    ] as UIMessage[];
+    // A completed reply must never be resumed on refresh, even if the server still
+    // reports the thread as "running" (stale stream mapping / orphaned task row).
+    assert.equal(conversationAwaitsResume(messages), false);
+  });
+
+  it('conversationAwaitsResume is true while a turn is genuinely mid-flight', () => {
+    const pendingUser = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hi' }] },
+    ] as UIMessage[];
+    assert.equal(conversationAwaitsResume(pendingUser), true);
+
+    const toolPending = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'fetch' }] },
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-web_fetch',
+            toolCallId: 'wf-1',
+            state: 'input-available',
+            providerExecuted: true,
+            input: { url: 'https://example.com' },
+          },
+        ],
+      },
+    ] as UIMessage[];
+    assert.equal(conversationAwaitsResume(toolPending), true);
+
+    const emptyAssistant = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hi' }] },
+      { id: 'a1', role: 'assistant', parts: [] },
+    ] as UIMessage[];
+    assert.equal(conversationAwaitsResume(emptyAssistant), true);
+
+    const awaitingAnswer = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [{ type: 'tool-ask_user_question', state: 'input-available' }],
+      },
+    ] as UIMessage[];
+    assert.equal(conversationAwaitsResume(awaitingAnswer), true);
+  });
+
   it('waitForFrontendToolStop resolves after the registered stop promise', async () => {
     let resolveStop!: () => void;
     const stopPromise = new Promise<void>((resolve) => {
@@ -380,6 +411,28 @@ describe('frontend-suspend-tools', () => {
     resolveStop();
     await waiting;
     assert.equal(settled, true);
+  });
+
+  it('does not auto-continue after background task dispatch — synthesis handles it', () => {
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'text',
+            text: '正在等待各子智能体返回结果，稍后会汇总汇报',
+          },
+          {
+            type: 'tool-task',
+            toolCallId: 'task-1',
+            state: 'output-available',
+            output: { background: true, task_id: 'bg-abc' },
+          },
+        ],
+      },
+    ] as UIMessage[];
+    assert.equal(shouldAutoSendChat({ messages, status: 'ready' }), false);
   });
 
 });

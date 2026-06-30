@@ -51,6 +51,32 @@ function parseHttpChatError(raw: string): FormattedChatError | null {
   };
 }
 
+function extractNestedErrorMessage(raw: string): string {
+  const jsonStart = raw.indexOf('{');
+  if (jsonStart < 0) return raw;
+  try {
+    const parsed = JSON.parse(raw.slice(jsonStart)) as { message?: string };
+    if (typeof parsed.message === 'string' && parsed.message.trim()) {
+      return parsed.message.trim();
+    }
+  } catch {
+    // keep raw
+  }
+  return raw;
+}
+
+function isProviderConnectionError(message: string): boolean {
+  return /AI_APICallError|other side closed|ECONNRESET|socket hang up|connection reset/i.test(
+    message,
+  );
+}
+
+/** Provider-side disconnects that synthesis continuation should retry automatically. */
+export function isRetryableProviderChatError(error: unknown): boolean {
+  const message = extractNestedErrorMessage(errorMessage(error));
+  return isProviderConnectionError(message);
+}
+
 /** Errors that should not surface in the UI (normal resume no-op, user cancel). */
 export function isBenignChatError(error: unknown): boolean {
   const message = errorMessage(error);
@@ -99,6 +125,14 @@ export function formatChatError(error: unknown): FormattedChatError | null {
   }
   if (/model_not_configured|Model API key is not configured/i.test(raw)) {
     return { title: ce('modelNotConfigured.title'), detail: ce('modelNotConfigured.detail') };
+  }
+
+  const nested = extractNestedErrorMessage(raw);
+  if (isProviderConnectionError(nested) || isProviderConnectionError(raw)) {
+    return { title: ce('providerClosed.title'), detail: ce('providerClosed.detail') };
+  }
+  if (/AI_APICallError/i.test(raw)) {
+    return { title: ce('providerClosed.title'), detail: ce('providerClosed.detail') };
   }
 
   if (!raw) {
