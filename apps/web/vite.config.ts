@@ -6,7 +6,7 @@ import { fileURLToPath, URL } from 'node:url';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
-    // Ensure a single React copy so react-data-grid's hooks share the app's
+    // Ensure a single React copy so AG-Grid's hooks share the app's
     // React instance (otherwise: "Invalid hook call / more than one copy").
     dedupe: ['react', 'react-dom'],
     alias: {
@@ -17,11 +17,10 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['assistant-stream', 'react-data-grid'],
+    include: ['assistant-stream'],
   },
   build: {
-    // Vite 8 lightningcss has a bug minifying light-dark() (used by
-    // react-data-grid styles). Use esbuild for CSS minification instead.
+    // Keep esbuild for CSS minification (safe override, harmless here).
     cssMinify: 'esbuild',
   },
   server: {

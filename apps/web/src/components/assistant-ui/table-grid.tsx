@@ -1,22 +1,47 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download } from 'lucide-react';
-import {
-  DataGrid,
-  SELECT_COLUMN_KEY,
-  type CellCopyArgs,
-  type CellKeyDownArgs,
-  type CellKeyboardEvent,
-  type CellMouseArgs,
-  type CellMouseEvent,
-  type CellPasteArgs,
-  type Column,
-  type RenderCellProps,
-  type RenderEditCellProps,
-  type RenderHeaderCellProps,
-  type RowsChangeData,
-  type SortColumn,
-  type SortDirection,
-} from 'react-data-grid';
+import { AgGridReact } from 'ag-grid-react';
+import { type ColDef, type GetRowIdParams } from 'ag-grid-community';
+import './ag-grid-modules';
+
+// -- local placeholder types (replacing removed grid lib); re-wired in Task 3 --
+type SortDirection = 'ASC' | 'DESC';
+type SortColumn = { columnKey: string; direction: SortDirection };
+type RenderCellProps<TRow> = { row: TRow; rowIdx: number; tabIndex: number };
+type RenderEditCellProps<TRow> = {
+  row: TRow;
+  column: { key: string; name: string };
+  onRowChange: (row: TRow, commit?: boolean) => void;
+  onClose: (commitChanges: boolean) => void;
+};
+type RenderHeaderCellProps<_TRow> = { tabIndex: number; sortDirection?: SortDirection };
+type Column<TRow> = {
+  key: string;
+  name: string;
+  width?: number;
+  minWidth?: number;
+  maxWidth?: number;
+  frozen?: boolean;
+  sortable?: boolean;
+  resizable?: boolean;
+  renderHeaderCell?: (props: RenderHeaderCellProps<TRow>) => React.ReactNode;
+  renderCell?: (props: RenderCellProps<TRow>) => React.ReactNode;
+  renderEditCell?: (props: RenderEditCellProps<TRow>) => React.ReactNode;
+};
+type RowsChangeData<_TRow> = { column: { key: string }; indexes: number[] };
+type CellMouseEvent = { shiftKey: boolean; preventGridDefault: () => void };
+type CellMouseArgs<TRow> = { column: { key: string }; rowIdx: number; row: TRow };
+type CellKeyboardEvent = {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  key: string;
+  shiftKey: boolean;
+  preventGridDefault: () => void;
+};
+type CellKeyDownArgs<TRow> = { column: { key: string }; rowIdx: number; row: TRow };
+type CellCopyArgs<TRow> = { row: TRow; column: { key: string } };
+type CellPasteArgs<TRow> = { row: TRow; column: { key: string } };
+// -- end local placeholder types --
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { Button } from '@/components/ui/button';
@@ -97,6 +122,8 @@ function resolveStatusOptions(def: TableColumnDef, rows: TableRow[]): string[] {
 
 const EMPTY_FILTERS: FilterState = { query: '' };
 const HISTORY_LIMIT = 20;
+// placeholder select-column key constant (re-wired in Task 3)
+const SELECT_COLUMN_KEY = '__rdg_select__';
 const SELECT_COL_KEY = SELECT_COLUMN_KEY;
 
 type ScheduleEdit = {
@@ -900,6 +927,7 @@ export function TableGrid() {
     [columnDefs, filteredRows],
   );
 
+  // Dead-code for now; Task 3 will re-wire these onto AG-Grid.
   const columns = useMemo<Column<TableRow>[]>(
     () => [
       {
@@ -940,6 +968,22 @@ export function TableGrid() {
       ...dataColumns,
     ],
     [dataColumns],
+  );
+
+  // AG-Grid column definitions (Task 3 adds editors/renderers on top of this)
+  const agColDefs = useMemo<ColDef<TableRow>[]>(
+    () => columnDefs.map((def) => ({
+      field: def.key,
+      headerName: def.name,
+      resizable: true,
+      sortable: true,
+      pinned: def.frozen ? ('left' as const) : undefined,
+      valueFormatter: (params: { value: unknown }) => {
+        const v = params.value;
+        return v === undefined || v === null ? '' : String(v);
+      },
+    })),
+    [columnDefs],
   );
 
   const handleAddRow = async () => {
@@ -1297,27 +1341,13 @@ export function TableGrid() {
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <RowSelectionContext.Provider value={rowSelectionCtx}>
-            <ColumnSelectionContext.Provider value={columnSelectionCtx}>
-              <DataGrid
-                className="table-grid rdg-light min-h-0 flex-1 text-sm"
-                style={{ blockSize: '100%' }}
-                aria-label={t('table.ariaGrid')}
-                columns={columns}
-                rows={filteredRows}
-                onRowsChange={onRowsChange}
-                onCellClick={onCellClick}
-                onCellKeyDown={onCellKeyDown}
-                onCellCopy={onCellCopy}
-                onCellPaste={onCellPaste}
-                rowKeyGetter={(row) => rowKey(row)}
-                rowClass={(row) => (selectedRows.has(rowKey(row)) ? 'bg-primary/8' : undefined)}
-                sortColumns={sortColumns}
-                onSortColumnsChange={setSortColumns}
-                defaultColumnOptions={{ resizable: true, sortable: true }}
-              />
-            </ColumnSelectionContext.Provider>
-          </RowSelectionContext.Provider>
+          <div className="ag-theme-quartz min-h-0 flex-1 text-sm" style={{ height: '100%' }}>
+            <AgGridReact<TableRow>
+              rowData={filteredRows}
+              columnDefs={agColDefs}
+              getRowId={(params: GetRowIdParams<TableRow>) => rowKey(params.data)}
+            />
+          </div>
           <TableGridFooter totals={totals} />
         </div>
       )}

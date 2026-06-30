@@ -1,7 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "tw-shimmer";
-@import "react-data-grid/lib/styles.css";
+@import "ag-grid-community/styles/ag-grid.css";
+@import "ag-grid-community/styles/ag-theme-quartz.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -163,33 +164,8 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
   transition: none !important;
 }
 
-/* Schedule grid: remove header/cell padding, center content */
-.table-grid .rdg-header-row .rdg-cell,
-.table-grid .rdg-row .rdg-cell {
-  padding: 0;
+/* Schedule grid (AG-Grid): cell content centering — Task 3 will add full overrides */
+.ag-theme-quartz .ag-cell {
   display: flex;
   align-items: center;
-  justify-content: center;
-  text-align: center;
-}
-
-.table-grid .rdg-cell input,
-.table-grid .rdg-cell select {
-  text-align: center;
-}
-
-.table-grid .rdg-header-row .rdg-cell button {
-  box-shadow: none;
-  outline: none;
-}
-
-.table-grid .rdg-header-row .rdg-cell button:focus,
-.table-grid .rdg-header-row .rdg-cell button:focus-visible {
-  box-shadow: none;
-  outline: none;
-}
-
-/* Sticky frozen columns stack; the # column paints over the select column's border-inline-end */
-.table-grid .rdg-row .rdg-cell[aria-colindex="2"] {
-  box-shadow: inset 1px 0 0 var(--rdg-border-color);
 }
