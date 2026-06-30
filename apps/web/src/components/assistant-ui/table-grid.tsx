@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
-import { type ColDef, type GetRowIdParams } from 'ag-grid-community';
+import { type ColDef, type GetRowIdParams, themeQuartz } from 'ag-grid-community';
 import './ag-grid-modules';
 
 // -- local placeholder types (replacing removed grid lib); re-wired in Task 3 --
@@ -1341,8 +1341,9 @@ export function TableGrid() {
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="ag-theme-quartz min-h-0 flex-1 text-sm" style={{ height: '100%' }}>
+          <div className="min-h-0 flex-1 text-sm" style={{ height: '100%' }}>
             <AgGridReact<TableRow>
+              theme={themeQuartz}
               rowData={filteredRows}
               columnDefs={agColDefs}
               getRowId={(params: GetRowIdParams<TableRow>) => rowKey(params.data)}

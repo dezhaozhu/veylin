@@ -1,8 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "tw-shimmer";
-@import "ag-grid-community/styles/ag-grid.css";
-@import "ag-grid-community/styles/ag-theme-quartz.css";
+/* AG-Grid 33+ uses the JS Theming API (theme={themeQuartz} on the grid); the legacy
+   CSS stylesheets are removed and mixing them triggers AG-Grid error #239. */
 
 @custom-variant dark (&:is(.dark *));
 
@@ -164,8 +164,4 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
   transition: none !important;
 }
 
-/* Schedule grid (AG-Grid): cell content centering — Task 3 will add full overrides */
-.ag-theme-quartz .ag-cell {
-  display: flex;
-  align-items: center;
-}
+/* Schedule grid (AG-Grid) cell overrides — Task 3 will do these via the Theming API params */
