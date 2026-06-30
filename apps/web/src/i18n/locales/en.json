@@ -179,13 +179,7 @@
     "navTitle": "Settings",
     "general": {
       "nav": "General",
-      "title": "General",
-      "agGrid": {
-        "section": "AG-Grid",
-        "label": "Enterprise License Key",
-        "placeholder": "Paste your AG-Grid Enterprise license key",
-        "hint": "Optional. Enables Enterprise features (column grouping, pivot, etc.). Takes effect after reload."
-      }
+      "title": "General"
     },
     "language": {
       "title": "Language",

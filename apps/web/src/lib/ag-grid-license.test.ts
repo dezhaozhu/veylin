@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import { getAgGridLicenseKey, setAgGridLicenseKey } from './ag-grid-license';
+import { getAgGridLicenseKey, hasProEntitlement } from './ag-grid-license';
 
-// Set up localStorage + window mocks for node:test (no browser globals).
-// The implementation guards on `typeof window === 'undefined'` at call time,
-// so setting these up before any test function runs is sufficient.
+// node:test has no browser globals. The key now comes from VITE_AG_GRID_LICENSE
+// (build-injected, absent here) with a localStorage override fallback; entitlement
+// reads VITE_PRO_FEATURES (absent here → defaults on). We exercise the fallback +
+// default paths.
 const store: Record<string, string> = {};
 const localStorageMock = {
   getItem: (key: string): string | null => store[key] ?? null,
@@ -23,30 +24,23 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
 });
 Object.defineProperty(globalThis, 'window', {
-  value: {
-    dispatchEvent: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  },
+  value: {},
   configurable: true,
 });
 
 describe('ag-grid-license', () => {
   beforeEach(() => localStorageMock.clear());
 
-  it('returns empty string when no key is stored', () => {
+  it('returns empty string when no key is injected or stored', () => {
     assert.equal(getAgGridLicenseKey(), '');
   });
 
-  it('round-trips the key via localStorage', () => {
-    assert.equal(getAgGridLicenseKey(), '');
-    setAgGridLicenseKey('LICENSE-XYZ');
-    assert.equal(getAgGridLicenseKey(), 'LICENSE-XYZ');
+  it('honors a self-hoster localStorage override when no key is build-injected', () => {
+    localStorageMock.setItem('veylin-aggrid-license', 'OVERRIDE-KEY');
+    assert.equal(getAgGridLicenseKey(), 'OVERRIDE-KEY');
   });
 
-  it('overwriting the key returns the new value', () => {
-    setAgGridLicenseKey('KEY-A');
-    setAgGridLicenseKey('KEY-B');
-    assert.equal(getAgGridLicenseKey(), 'KEY-B');
+  it('grants Pro entitlement by default (operator build, flag unset)', () => {
+    assert.equal(hasProEntitlement(), true);
   });
 });
