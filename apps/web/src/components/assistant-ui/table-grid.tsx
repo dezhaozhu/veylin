@@ -730,7 +730,9 @@ export function TableGrid() {
       mode: 'multiRow' as const,
       checkboxes: true,
       headerCheckbox: true,
-      enableClickSelection: true,
+      // checkbox-only selection: clicking a cell (to edit) must NOT select the row.
+      // shift-range still works natively via the checkboxes.
+      enableClickSelection: false,
     }),
     [],
   );

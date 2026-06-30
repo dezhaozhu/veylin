@@ -317,10 +317,20 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
         createTableSheet(SCHEDULE_SHEET_ID);
       }
 
+      // Preserve the column types Compass reports (text/number/status) so the grid
+      // renders status badges / number alignment / the status dropdown editor.
+      const columnTypes: Record<string, 'text' | 'number' | 'status'> = {};
+      for (const c of columns) {
+        const key = c['key'];
+        const t = c['type'];
+        if (key && (t === 'text' || t === 'number' || t === 'status')) columnTypes[key] = t;
+      }
+
       const result = importTableSheet(
         SCHEDULE_SHEET_ID,
         columns.map((c) => c['key'] ?? '').filter(Boolean),
         rows as Array<Record<string, string | number>>,
+        columnTypes,
       );
 
       return {

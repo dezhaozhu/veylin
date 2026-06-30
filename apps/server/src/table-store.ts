@@ -419,7 +419,10 @@ function inferColumnType(name: string): TableColumnType {
   return 'text';
 }
 
-function buildColumnsFromNames(names: string[]): TableColumnDef[] {
+function buildColumnsFromNames(
+  names: string[],
+  types?: Record<string, TableColumnType>,
+): TableColumnDef[] {
   const columns: TableColumnDef[] = [];
   for (const rawName of names) {
     const name = rawName.trim();
@@ -429,7 +432,9 @@ function buildColumnsFromNames(names: string[]): TableColumnDef[] {
         key: slugifyColumnKey(name, columns),
         name,
         width: 110,
-        type: inferColumnType(name),
+        // caller-provided type (e.g. from a typed source like get_schedule_rows)
+        // wins; fall back to name-based inference (the Excel-import path).
+        type: types?.[rawName] ?? types?.[name] ?? inferColumnType(name),
         deletable: true,
       }, true),
     );
@@ -442,6 +447,7 @@ export function importTableSheet(
   sheetId: string,
   columnNames: string[],
   importedRows: TableRowPatch[],
+  columnTypes?: Record<string, TableColumnType>,
 ): { columns: TableColumnDef[]; rows: TableRowData[] } | null {
   const resolved = resolveTableSheetId(sheetId);
   const sheet = getSheet(resolved);
@@ -450,7 +456,7 @@ export function importTableSheet(
   const fresh = getSheet(resolved);
   if (!fresh) return null;
 
-  fresh.columns = buildColumnsFromNames(columnNames);
+  fresh.columns = buildColumnsFromNames(columnNames, columnTypes);
 
   fresh.rows = importedRows.map((raw) => {
     const base = emptyRow();
