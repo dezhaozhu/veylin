@@ -669,6 +669,11 @@ export function TableGrid() {
   }, [columnDefs, rows]);
 
   // AG-Grid column definitions: row-number + typed data columns
+  // 二三级 master-detail (Pro): only on the schedule sheet, only when entitled AND
+  // Enterprise modules are loaded (setting masterDetail props otherwise → module error).
+  const proMasterDetail =
+    activeSheetId === SCHEDULE_SHEET_ID && hasProEntitlement() && isAgGridEnterpriseReady();
+
   const agColDefs = useMemo<ColDef<TableRow>[]>(() => {
     const defs: ColDef<TableRow>[] = [];
 
@@ -694,6 +699,26 @@ export function TableGrid() {
         fontVariantNumeric: 'tabular-nums',
       },
     });
+
+    // Master-detail expander column (Pro) — the agGroupCellRenderer draws the
+    // expand/collapse chevron that reveals each 二级 row's 三级 detail grid.
+    if (proMasterDetail) {
+      defs.push({
+        colId: '__expand__',
+        headerName: '',
+        width: 44,
+        minWidth: 44,
+        maxWidth: 44,
+        pinned: 'left' as const,
+        lockPosition: true,
+        sortable: false,
+        resizable: false,
+        editable: false,
+        suppressMovable: true,
+        suppressHeaderFilterButton: true,
+        cellRenderer: 'agGroupCellRenderer',
+      });
+    }
 
     // Data columns
     for (const def of columnDefs) {
@@ -757,7 +782,7 @@ export function TableGrid() {
     }
 
     return defs;
-  }, [columnDefs, statusOptionsByKey, selectColumn]);
+  }, [columnDefs, statusOptionsByKey, selectColumn, proMasterDetail]);
 
   // AG-Grid v36 row selection config (object form)
   const rowSelection = useMemo(
@@ -771,11 +796,6 @@ export function TableGrid() {
     }),
     [],
   );
-
-  // 二三级 master-detail (Pro): only on the schedule sheet, only when entitled AND
-  // Enterprise modules are loaded (set masterDetail props otherwise → module error).
-  const proMasterDetail =
-    activeSheetId === SCHEDULE_SHEET_ID && hasProEntitlement() && isAgGridEnterpriseReady();
 
   const getScheduleDetailRowData = useCallback(
     (params: { data: TableRow; successCallback: (rows: Record<string, unknown>[]) => void }) => {
