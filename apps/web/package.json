@@ -26,6 +26,7 @@
     "@veylin/shared": "*",
     "@xyflow/react": "^12.11.1",
     "ag-grid-community": "^36.0.0",
+    "ag-grid-enterprise": "^36.0.0",
     "ag-grid-react": "^36.0.0",
     "ai": "^6.0.208",
     "assistant-stream": "^0.3.23",

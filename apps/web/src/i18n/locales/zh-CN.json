@@ -179,7 +179,13 @@
     "navTitle": "设置",
     "general": {
       "nav": "通用",
-      "title": "通用"
+      "title": "通用",
+      "agGrid": {
+        "section": "AG-Grid",
+        "label": "企业版许可证密钥",
+        "placeholder": "粘贴 AG-Grid 企业版许可证密钥",
+        "hint": "可选。启用企业版功能（列分组、透视表等）。重新加载后生效。"
+      }
     },
     "language": {
       "title": "语言",

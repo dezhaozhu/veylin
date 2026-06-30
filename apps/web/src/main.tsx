@@ -8,6 +8,8 @@ import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import { installDesktopReloadShortcut } from '@/lib/desktop-reload-shortcut';
 import { fetchSidecarStatus } from '@/lib/sidecar-status';
 import { startupCheckpoint } from '@/lib/startup-profiler';
+import { ModuleRegistry } from 'ag-grid-community';
+import { getAgGridLicenseKey } from '@/lib/ag-grid-license';
 import i18n from '@/i18n';
 import { App } from './App';
 import './index.css';
@@ -15,6 +17,24 @@ import './index.css';
 installApiFetchShim();
 installDesktopReloadShortcut();
 startupCheckpoint('react_shell');
+
+// AG-Grid: Community (MIT) is the default — no Enterprise in the default bundle.
+// Enterprise is loaded ONLY here, dynamically, when the user has supplied a key.
+{
+  const _agKey = getAgGridLicenseKey();
+  if (_agKey) {
+    // Dynamic import keeps ag-grid-enterprise out of the default chunk.
+    void import('ag-grid-enterprise')
+      .then((ent) => {
+        // AllEnterpriseModule already includes AllCommunityModule; re-registering is safe.
+        ModuleRegistry.registerModules([ent.AllEnterpriseModule]);
+        ent.LicenseManager.setLicenseKey(_agKey);
+      })
+      .catch(() => {
+        // Fall back to Community silently.
+      });
+  }
+}
 
 if (import.meta.env.DEV) {
   void import('./lib/dev-test-hooks').then((m) => m.installDevTestHooks());
