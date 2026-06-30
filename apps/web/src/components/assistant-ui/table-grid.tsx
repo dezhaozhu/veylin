@@ -1,47 +1,20 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
-import { type ColDef, type GetRowIdParams, themeQuartz } from 'ag-grid-community';
+import {
+  type ColDef,
+  type GetRowIdParams,
+  type ValueFormatterParams,
+  type ICellRendererParams,
+  type CellValueChangedEvent,
+  type CellKeyDownEvent,
+  type SelectionChangedEvent,
+  type IHeaderParams,
+  type GridApi,
+  type GridReadyEvent,
+  themeQuartz,
+} from 'ag-grid-community';
 import './ag-grid-modules';
-
-// -- local placeholder types (replacing removed grid lib); re-wired in Task 3 --
-type SortDirection = 'ASC' | 'DESC';
-type SortColumn = { columnKey: string; direction: SortDirection };
-type RenderCellProps<TRow> = { row: TRow; rowIdx: number; tabIndex: number };
-type RenderEditCellProps<TRow> = {
-  row: TRow;
-  column: { key: string; name: string };
-  onRowChange: (row: TRow, commit?: boolean) => void;
-  onClose: (commitChanges: boolean) => void;
-};
-type RenderHeaderCellProps<_TRow> = { tabIndex: number; sortDirection?: SortDirection };
-type Column<TRow> = {
-  key: string;
-  name: string;
-  width?: number;
-  minWidth?: number;
-  maxWidth?: number;
-  frozen?: boolean;
-  sortable?: boolean;
-  resizable?: boolean;
-  renderHeaderCell?: (props: RenderHeaderCellProps<TRow>) => React.ReactNode;
-  renderCell?: (props: RenderCellProps<TRow>) => React.ReactNode;
-  renderEditCell?: (props: RenderEditCellProps<TRow>) => React.ReactNode;
-};
-type RowsChangeData<_TRow> = { column: { key: string }; indexes: number[] };
-type CellMouseEvent = { shiftKey: boolean; preventGridDefault: () => void };
-type CellMouseArgs<TRow> = { column: { key: string }; rowIdx: number; row: TRow };
-type CellKeyboardEvent = {
-  ctrlKey: boolean;
-  metaKey: boolean;
-  key: string;
-  shiftKey: boolean;
-  preventGridDefault: () => void;
-};
-type CellKeyDownArgs<TRow> = { column: { key: string }; rowIdx: number; row: TRow };
-type CellCopyArgs<TRow> = { row: TRow; column: { key: string } };
-type CellPasteArgs<TRow> = { row: TRow; column: { key: string } };
-// -- end local placeholder types --
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { Button } from '@/components/ui/button';
@@ -87,9 +60,7 @@ interface TableGridTotals {
   selectedCount: number;
 }
 
-type FilterState = {
-  query: string;
-};
+type FilterState = { query: string };
 
 const STATUS_STYLE: Record<string, string> = {
   open: 'bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-300',
@@ -122,9 +93,6 @@ function resolveStatusOptions(def: TableColumnDef, rows: TableRow[]): string[] {
 
 const EMPTY_FILTERS: FilterState = { query: '' };
 const HISTORY_LIMIT = 20;
-// placeholder select-column key constant (re-wired in Task 3)
-const SELECT_COLUMN_KEY = '__rdg_select__';
-const SELECT_COL_KEY = SELECT_COLUMN_KEY;
 
 type ScheduleEdit = {
   rowKey: string;
@@ -143,7 +111,6 @@ type SchedulePayload = {
 };
 
 const DEFAULT_EMPTY_COLUMNS: TableColumnDef[] = [];
-
 const DEFAULT_EMPTY_SHEETS: TableSheet[] = [
   { id: 'main', name: 'Sheet 1', builtin: true },
 ];
@@ -214,32 +181,7 @@ function applyHistoryBatch(
   });
 }
 
-function collectEdits(
-  beforeRows: readonly TableRow[],
-  afterRows: readonly TableRow[],
-  columnKey: string,
-  indexes: readonly number[],
-  editableKeys: ReadonlySet<string>,
-): HistoryBatch {
-  const edits: HistoryBatch = [];
-  if (!editableKeys.has(columnKey)) return edits;
-  for (const idx of indexes) {
-    const before = beforeRows[idx];
-    const after = afterRows[idx];
-    if (!before || !after) continue;
-    const prev = before[columnKey];
-    const next = after[columnKey];
-    if (prev === next) continue;
-    edits.push({
-      rowKey: rowKey(after),
-      columnKey,
-      before: prev ?? '',
-      after: next ?? '',
-    });
-  }
-  return edits;
-}
-
+// applyFilters: used for React-level pre-filter before passing rowData to AG-Grid
 function applyFilters(rows: TableRow[], filters: FilterState): TableRow[] {
   const q = filters.query.trim().toLowerCase();
   if (!q) return rows;
@@ -262,21 +204,6 @@ function compareScheduleValues(
   return String(a).localeCompare(String(b), 'zh-CN', { numeric: true });
 }
 
-function sortTableRows(
-  rows: TableRow[],
-  sortColumns: readonly SortColumn[],
-  columnDefs: TableColumnDef[],
-): TableRow[] {
-  if (sortColumns.length === 0) return rows;
-  const { columnKey, direction } = sortColumns[0]!;
-  const colDef = columnDefs.find((c) => c.key === columnKey);
-  const type = colDef?.type ?? 'text';
-  return [...rows].sort((a, b) => {
-    const cmp = compareScheduleValues(a[columnKey], b[columnKey], type);
-    return direction === 'ASC' ? cmp : -cmp;
-  });
-}
-
 function cellTextValue(row: TableRow, columnKey: string): string {
   const value = row[columnKey];
   if (value === undefined || value === null) return '';
@@ -291,134 +218,13 @@ function TableGridFooter({ totals }: { totals: TableGridTotals }) {
       aria-live="polite"
       aria-atomic="true"
     >
-      <span className="text-foreground font-medium">{t('table.footerTotal', { count: totals.rowCount })}</span>
-      {totals.selectedCount > 0 ? <span>{t('table.footerSelected', { count: totals.selectedCount })}</span> : null}
+      <span className="text-foreground font-medium">
+        {t('table.footerTotal', { count: totals.rowCount })}
+      </span>
+      {totals.selectedCount > 0 ? (
+        <span>{t('table.footerSelected', { count: totals.selectedCount })}</span>
+      ) : null}
     </div>
-  );
-}
-
-function stopCellMouseDown(event: React.MouseEvent) {
-  event.stopPropagation();
-}
-
-type ColumnSelectionCtx = {
-  selectedKey: string | null;
-  select: (key: string | null) => void;
-  toggleSort: (columnKey: string) => void;
-};
-
-const ColumnSelectionContext = createContext<ColumnSelectionCtx | null>(null);
-
-const SelectableColumnHeader = memo(function SelectableColumnHeader({
-  columnKey,
-  name,
-  tabIndex,
-  sortDirection,
-}: {
-  columnKey: string;
-  name: string;
-  tabIndex: number;
-  sortDirection?: SortDirection;
-}) {
-  const { t } = useTranslation();
-  const ctx = useContext(ColumnSelectionContext);
-  const selected = ctx?.selectedKey === columnKey;
-  return (
-    <div className="flex size-full min-h-9 items-center justify-center gap-0.5 px-1">
-      <button
-        type="button"
-        tabIndex={tabIndex}
-        className={cn(
-          'min-w-0 flex-1 truncate px-2 py-1 text-center text-xs outline-none',
-          selected ? 'text-primary font-medium' : 'hover:bg-muted/60',
-        )}
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          ctx?.select(selected ? null : columnKey);
-        }}
-      >
-        {name}
-      </button>
-      <button
-        type="button"
-        tabIndex={-1}
-        aria-label={t('table.sortBy', { name })}
-        className="text-muted-foreground hover:text-foreground shrink-0 rounded p-0.5"
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          ctx?.toggleSort(columnKey);
-        }}
-      >
-        {sortDirection === 'ASC' ? (
-          <ChevronUp className="size-3.5" />
-        ) : sortDirection === 'DESC' ? (
-          <ChevronDown className="size-3.5" />
-        ) : (
-          <ChevronUp className="size-3.5 opacity-25" />
-        )}
-      </button>
-    </div>
-  );
-});
-
-type RowSelectionCtx = {
-  selectedRows: ReadonlySet<string>;
-  visibleRowKeys: readonly string[];
-  onRowSelect: (rowIdx: number, key: string, checked: boolean, shiftKey: boolean) => void;
-  onSelectAll: (checked: boolean) => void;
-};
-
-const RowSelectionContext = createContext<RowSelectionCtx | null>(null);
-
-function SelectAllHeader({ tabIndex }: { tabIndex: number }) {
-  const { t } = useTranslation();
-  const ctx = useContext(RowSelectionContext);
-  const visibleKeys = ctx?.visibleRowKeys ?? [];
-  const selectedRows = ctx?.selectedRows ?? new Set<string>();
-  const allSelected =
-    visibleKeys.length > 0 && visibleKeys.every((k) => selectedRows.has(k));
-  const someSelected = visibleKeys.some((k) => selectedRows.has(k));
-
-  return (
-    <input
-      type="checkbox"
-      aria-label={t('table.selectAll')}
-      tabIndex={tabIndex}
-      checked={allSelected}
-      ref={(el) => {
-        if (el) el.indeterminate = !allSelected && someSelected;
-      }}
-      onMouseDown={stopCellMouseDown}
-      onChange={(e) => ctx?.onSelectAll(e.target.checked)}
-    />
-  );
-}
-
-function SelectRowCell({
-  tabIndex,
-  rowKeyValue,
-  rowIdx,
-}: {
-  tabIndex: number;
-  rowKeyValue: string;
-  rowIdx: number;
-}) {
-  const { t } = useTranslation();
-  const ctx = useContext(RowSelectionContext);
-  const checked = ctx?.selectedRows.has(rowKeyValue) ?? false;
-  return (
-    <input
-      type="checkbox"
-      aria-label={t('table.selectRow')}
-      tabIndex={tabIndex}
-      checked={checked}
-      onMouseDown={stopCellMouseDown}
-      onChange={(e) =>
-        ctx?.onRowSelect(rowIdx, rowKeyValue, e.target.checked, (e.nativeEvent as MouseEvent).shiftKey)
-      }
-    />
   );
 }
 
@@ -437,139 +243,64 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function StatusEditor({
-  row,
-  column,
-  onRowChange,
-  onClose,
-  options,
-}: RenderEditCellProps<TableRow> & { options: string[] }) {
+// AG-Grid v36 custom header: name click → column selection, chevron → native sort
+interface AgColumnHeaderParams extends IHeaderParams<TableRow> {
+  columnKey: string;
+  onSelect: (key: string | null) => void;
+  selectedKeyRef: { current: string | null };
+}
+
+function AgColumnHeader(params: AgColumnHeaderParams) {
   const { t } = useTranslation();
-  const value = row[column.key] === undefined ? '' : String(row[column.key]);
+  const [sort, setSort] = useState<string | null | undefined>(
+    () => params.column.getSort(),
+  );
+
+  useEffect(() => {
+    const handler = () => setSort(params.column.getSort());
+    params.column.addEventListener('sortChanged', handler);
+    return () => params.column.removeEventListener('sortChanged', handler);
+  }, [params.column]);
+
+  const isSelected = params.selectedKeyRef.current === params.columnKey;
+
   return (
-    <select
-      className="block size-full bg-background px-2 text-center text-sm outline-none"
-      value={value}
-      autoFocus
-      onChange={(e) => onRowChange({ ...row, [column.key]: e.target.value }, true)}
-      onBlur={() => onClose(true)}
-    >
-      <option value=""> </option>
-      {options.map((opt) => (
-        <option key={opt} value={opt}>
-          {t(`table.status.${opt}`, { defaultValue: humanizeStatus(opt) })}
-        </option>
-      ))}
-    </select>
+    <div className="flex size-full min-h-9 items-center justify-center gap-0.5 px-1">
+      <button
+        type="button"
+        className={cn(
+          'min-w-0 flex-1 truncate px-2 py-1 text-center text-xs outline-none',
+          isSelected ? 'text-primary font-medium' : 'hover:bg-muted/60',
+        )}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          params.onSelect(isSelected ? null : params.columnKey);
+        }}
+      >
+        {params.displayName}
+      </button>
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label={t('table.sortBy', { name: params.displayName })}
+        className="text-muted-foreground hover:text-foreground shrink-0 rounded p-0.5"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          params.progressSort(e.shiftKey);
+        }}
+      >
+        {sort === 'asc' ? (
+          <ChevronUp className="size-3.5" />
+        ) : sort === 'desc' ? (
+          <ChevronDown className="size-3.5" />
+        ) : (
+          <ChevronUp className="size-3.5 opacity-25" />
+        )}
+      </button>
+    </div>
   );
-}
-
-function NumberEditor({ row, column, onRowChange, onClose }: RenderEditCellProps<TableRow>) {
-  const raw = row[column.key];
-  const display = raw === undefined || raw === '' ? '' : String(raw);
-  return (
-    <input
-      className="block size-full bg-background px-2 text-center text-sm outline-none"
-      type="number"
-      value={display}
-      autoFocus
-      onChange={(e) => {
-        const v = e.target.value;
-        onRowChange({ ...row, [column.key]: v === '' ? '' : Number(v) }, true);
-      }}
-      onBlur={() => onClose(true)}
-    />
-  );
-}
-
-function CenteredTextEditor({ row, column, onRowChange, onClose }: RenderEditCellProps<TableRow>) {
-  const value =
-    row[column.key] === undefined || row[column.key] === null ? '' : String(row[column.key]);
-  return (
-    <input
-      className="block size-full bg-background px-2 text-center text-sm outline-none"
-      value={value}
-      autoFocus
-      onChange={(e) => onRowChange({ ...row, [column.key]: e.target.value }, true)}
-      onBlur={() => onClose(true)}
-    />
-  );
-}
-
-function cellDisplayValue(row: TableRow, key: string): string {
-  const value = row[key];
-  if (value === undefined || value === null) return '';
-  return String(value);
-}
-
-function buildDataColumn(def: TableColumnDef, rows: TableRow[]): Column<TableRow> {
-  const headerCell = ({ tabIndex, sortDirection }: RenderHeaderCellProps<TableRow>) => (
-    <SelectableColumnHeader
-      columnKey={def.key}
-      name={def.name}
-      tabIndex={tabIndex}
-      sortDirection={sortDirection}
-    />
-  );
-  const base: Pick<Column<TableRow>, 'key' | 'name' | 'width' | 'frozen' | 'sortable' | 'renderHeaderCell'> = {
-    key: def.key,
-    name: def.name,
-    width: def.width,
-    frozen: def.frozen,
-    sortable: true,
-    renderHeaderCell: headerCell,
-  };
-
-  if (def.type === 'number') {
-    return {
-      ...base,
-      renderEditCell: NumberEditor,
-      renderCell: ({ row }) => (
-        <span className="block w-full truncate px-2 text-center tabular-nums">
-          {cellDisplayValue(row, def.key)}
-        </span>
-      ),
-    };
-  }
-  if (def.type === 'status') {
-    const options = resolveStatusOptions(def, rows);
-    return {
-      ...base,
-      renderCell: ({ row }: RenderCellProps<TableRow>) => (
-        <div className="flex w-full justify-center px-2">
-          <StatusBadge status={String(row[def.key] ?? '')} />
-        </div>
-      ),
-      renderEditCell: (props) => <StatusEditor {...props} options={options} />,
-    };
-  }
-  return {
-    ...base,
-    renderEditCell: CenteredTextEditor,
-    renderCell: ({ row }) => (
-      <span className="block w-full truncate px-2 text-center">{cellDisplayValue(row, def.key)}</span>
-    ),
-  };
-}
-
-function makeOnCellPaste(editableKeys: ReadonlySet<string>) {
-  return (args: CellPasteArgs<TableRow>, event: React.ClipboardEvent): TableRow => {
-    const text = event.clipboardData.getData('text/plain').trim();
-    const { column, row } = args;
-    if (!editableKeys.has(column.key)) return row;
-    if (column.key === 'qty' || column.key.includes('qty')) {
-      const n = Number(text);
-      if (!Number.isFinite(n)) return row;
-      return { ...row, [column.key]: n };
-    }
-    if (
-      column.key === 'status' &&
-      (text === 'normal' || text === 'tight' || text === 'overdue')
-    ) {
-      return { ...row, status: text };
-    }
-    return { ...row, [column.key]: text };
-  };
 }
 
 export function TableGrid() {
@@ -581,16 +312,25 @@ export function TableGrid() {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
-  const [sortColumns, setSortColumns] = useState<readonly SortColumn[]>([]);
   const [undoStack, setUndoStack] = useState<HistoryBatch[]>([]);
   const [redoStack, setRedoStack] = useState<HistoryBatch[]>([]);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
 
   const lastSerialized = useRef('');
   const editingUntil = useRef(0);
-  const selectionAnchorRef = useRef<number | null>(null);
   const isApplyingHistory = useRef(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  // AG-Grid API ref — populated in onGridReady
+  const gridApiRef = useRef<GridApi<TableRow> | null>(null);
+  // Ref mirror of selectedColumnKey — read by AgColumnHeader on refreshHeader()
+  const selectedColumnKeyRef = useRef<string | null>(null);
+  // Ref mirror of rows — used in async paste handler to avoid stale closure
+  const rowsRef = useRef<TableRow[]>(rows);
+
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
+
   const [importing, setImporting] = useState(false);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [importConfirmOpen, setImportConfirmOpen] = useState(false);
@@ -615,29 +355,32 @@ export function TableGrid() {
     if (importInputRef.current) importInputRef.current.value = '';
   }, []);
 
-  const columnKeys = useMemo(() => new Set(columnDefs.map((c) => c.key)), [columnDefs]);
-  const editableKeys = useMemo(
-    () => new Set(columnDefs.map((c) => c.key)),
-    [columnDefs],
-  );
+  const editableKeys = useMemo(() => new Set(columnDefs.map((c) => c.key)), [columnDefs]);
+
+  // Column selection — syncs React state + ref, then refreshes AG-Grid headers
   const selectColumn = useCallback((key: string | null) => {
     setSelectedColumnKey(key);
+    selectedColumnKeyRef.current = key;
     if (key) {
       setSelectedRows(new Set());
-      selectionAnchorRef.current = null;
+      gridApiRef.current?.deselectAll();
     }
+    gridApiRef.current?.refreshHeader();
   }, []);
 
-  const clearColumnSelection = useCallback(() => setSelectedColumnKey(null), []);
+  const clearColumnSelection = useCallback(() => {
+    setSelectedColumnKey(null);
+    selectedColumnKeyRef.current = null;
+    gridApiRef.current?.refreshHeader();
+  }, []);
 
   const resetSheetUiState = useCallback(() => {
     setFilters(EMPTY_FILTERS);
     setSelectedRows(new Set());
     setUndoStack([]);
     setRedoStack([]);
-    setSortColumns([]);
     setSelectedColumnKey(null);
-    selectionAnchorRef.current = null;
+    selectedColumnKeyRef.current = null;
     lastSerialized.current = '';
   }, []);
 
@@ -691,88 +434,8 @@ export function TableGrid() {
     return () => window.clearInterval(t);
   }, [activeSheetId, load]);
 
-  const filteredRows = useMemo(() => {
-    const filtered = applyFilters(rows, filters);
-    return sortTableRows(filtered, sortColumns, columnDefs);
-  }, [rows, filters, sortColumns, columnDefs]);
-
-  const toggleSort = useCallback((columnKey: string) => {
-    setSortColumns((prev) => {
-      const idx = prev.findIndex((s) => s.columnKey === columnKey);
-      if (idx === -1) return [{ columnKey, direction: 'ASC' }];
-      const current = prev[idx]!;
-      if (current.direction === 'ASC') return [{ columnKey, direction: 'DESC' }];
-      return [];
-    });
-  }, []);
-
-  const applyRowSelectionRange = useCallback(
-    (fromIdx: number, toIdx: number, checked: boolean, base: ReadonlySet<string>) => {
-      const start = Math.min(fromIdx, toIdx);
-      const end = Math.max(fromIdx, toIdx);
-      const next = new Set(base);
-      for (let i = start; i <= end; i++) {
-        const row = filteredRows[i];
-        if (!row) continue;
-        const key = rowKey(row);
-        if (checked) next.add(key);
-        else next.delete(key);
-      }
-      return next;
-    },
-    [filteredRows],
-  );
-
-  const handleRowSelect = useCallback(
-    (rowIdx: number, key: string, checked: boolean, shiftKey: boolean) => {
-      clearColumnSelection();
-      setSelectedRows((prev) => {
-        if (
-          shiftKey &&
-          selectionAnchorRef.current !== null &&
-          selectionAnchorRef.current !== rowIdx
-        ) {
-          return applyRowSelectionRange(selectionAnchorRef.current, rowIdx, checked, prev);
-        }
-        const next = new Set(prev);
-        if (checked) next.add(key);
-        else next.delete(key);
-        return next;
-      });
-      selectionAnchorRef.current = rowIdx;
-    },
-    [applyRowSelectionRange, clearColumnSelection],
-  );
-
-  const handleSelectAll = useCallback(
-    (checked: boolean) => {
-      clearColumnSelection();
-      setSelectedRows(checked ? new Set(filteredRows.map((r) => rowKey(r))) : new Set());
-      selectionAnchorRef.current = null;
-    },
-    [filteredRows, clearColumnSelection],
-  );
-
-  const onCellClick = useCallback(
-    (args: CellMouseArgs<TableRow>, event: CellMouseEvent) => {
-      if (args.column.key === SELECT_COL_KEY) return;
-      clearColumnSelection();
-      const { rowIdx, row } = args;
-      if (event.shiftKey && selectionAnchorRef.current !== null) {
-        setSelectedRows((prev) =>
-          applyRowSelectionRange(selectionAnchorRef.current!, rowIdx, true, prev),
-        );
-        event.preventGridDefault();
-        return;
-      }
-      selectionAnchorRef.current = rowIdx;
-      if (args.column.key === '__rowNum__') {
-        handleRowSelect(rowIdx, rowKey(row), !selectedRows.has(rowKey(row)), false);
-        event.preventGridDefault();
-      }
-    },
-    [applyRowSelectionRange, clearColumnSelection, handleRowSelect, selectedRows],
-  );
+  // Pre-filter rows in React; AG-Grid handles sort natively via comparator
+  const filteredRows = useMemo(() => applyFilters(rows, filters), [rows, filters]);
 
   const totals = useMemo<TableGridTotals>(
     () => ({
@@ -848,142 +511,228 @@ export function TableGrid() {
     });
   }, [applyHistory]);
 
-  const onRowsChange = useCallback(
-    (next: TableRow[], data: RowsChangeData<TableRow>) => {
-      const edits = isApplyingHistory.current
-        ? []
-        : collectEdits(filteredRows, next, data.column.key, data.indexes, editableKeys);
-      if (edits.length > 0) pushHistory(edits);
+  // AG-Grid cell value changed → push undo entry + call commitRows (server writeback)
+  const onCellValueChanged = useCallback(
+    (event: CellValueChangedEvent<TableRow>) => {
+      if (isApplyingHistory.current) return;
+      const columnKey = event.colDef.field ?? '';
+      if (!columnKey || !editableKeys.has(columnKey)) return;
 
-      const byKey = new Map(next.map((r) => [rowKey(r), r]));
-      const merged = rows.map((r) => byKey.get(rowKey(r)) ?? r);
-      const touched = new Set(
-        edits.length > 0
-          ? edits.map((e) => e.rowKey)
-          : data.indexes
-              .map((idx) => (next[idx] ? rowKey(next[idx]) : null))
-              .filter((k): k is string => k != null),
+      const oldValue = event.oldValue ?? '';
+      const newValue = event.newValue ?? '';
+      if (String(oldValue) === String(newValue)) return;
+
+      const edit: ScheduleEdit = {
+        rowKey: rowKey(event.data),
+        columnKey,
+        before: oldValue as string | number,
+        after: newValue as string | number,
+      };
+      pushHistory([edit]);
+
+      // event.data is already mutated with the new value by AG-Grid
+      const updatedRow = event.data;
+      const merged = rowsRef.current.map((r) =>
+        rowKey(r) === rowKey(updatedRow) ? updatedRow : r,
       );
-      commitRows(merged, touched);
+      commitRows(merged, new Set([rowKey(updatedRow)]));
     },
-    [commitRows, editableKeys, filteredRows, pushHistory, rows],
+    [commitRows, editableKeys, pushHistory],
   );
 
-  const onCellKeyDown = useCallback(
-    (_args: CellKeyDownArgs<TableRow>, event: CellKeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey)) return;
-      const key = event.key.toLowerCase();
-      if (key === 'z' && !event.shiftKey) {
-        event.preventGridDefault();
+  // AG-Grid keyboard handler: undo/redo + Community-safe copy/paste
+  const onGridCellKeyDown = useCallback(
+    (event: CellKeyDownEvent<TableRow>) => {
+      const ke = event.event as KeyboardEvent | undefined;
+      if (!ke) return;
+      const ctrl = ke.ctrlKey || ke.metaKey;
+      if (!ctrl) return;
+      const key = ke.key.toLowerCase();
+
+      if (key === 'z' && !ke.shiftKey) {
+        ke.preventDefault();
         handleUndo();
-      } else if ((key === 'z' && event.shiftKey) || key === 'y') {
-        event.preventGridDefault();
-        handleRedo();
-      }
-    },
-    [handleRedo, handleUndo],
-  );
-
-  const onCellCopy = useCallback(
-    (args: CellCopyArgs<TableRow>, event: React.ClipboardEvent) => {
-      if (window.getSelection()?.isCollapsed === false) return;
-      const { row, column } = args;
-      if (
-        column.key === SELECT_COLUMN_KEY ||
-        column.key === '__rowNum__'
-      ) {
         return;
       }
-      event.clipboardData.setData('text/plain', cellTextValue(row, column.key));
-      event.preventDefault();
+      if ((key === 'z' && ke.shiftKey) || key === 'y') {
+        ke.preventDefault();
+        handleRedo();
+        return;
+      }
+      // Copy: write raw cell value to clipboard (bypasses AG-Grid's formatted copy)
+      if (key === 'c') {
+        const colId = event.column.getColId();
+        if (colId && colId !== '__rowNum__' && event.data) {
+          void navigator.clipboard.writeText(cellTextValue(event.data, colId));
+          ke.preventDefault();
+        }
+        return;
+      }
+      // Paste: read clipboard, coerce to column type, commit via patchRow
+      if (key === 'v') {
+        const colId = event.column.getColId();
+        if (colId && editableKeys.has(colId) && event.data) {
+          ke.preventDefault();
+          const rowSnap = event.data;
+          void navigator.clipboard.readText().then((text) => {
+            const trimmed = text.trim();
+            const currentRows = rowsRef.current;
+            const def = columnDefs.find((c) => c.key === colId);
+            let newValue: string | number = trimmed;
+            if (def?.type === 'number') {
+              const n = Number(trimmed);
+              if (!Number.isFinite(n)) return;
+              newValue = n;
+            } else if (def?.type === 'status') {
+              const opts = resolveStatusOptions(def, currentRows);
+              if (!opts.includes(trimmed)) return;
+            }
+            if (newValue === (rowSnap[colId] ?? '')) return;
+            const updatedRow = { ...rowSnap, [colId]: newValue };
+            const merged = currentRows.map((r) =>
+              rowKey(r) === rowKey(updatedRow) ? updatedRow : r,
+            );
+            const edit: ScheduleEdit = {
+              rowKey: rowKey(rowSnap),
+              columnKey: colId,
+              before: (rowSnap[colId] ?? '') as string | number,
+              after: newValue,
+            };
+            pushHistory([edit]);
+            commitRows(merged, new Set([rowKey(updatedRow)]));
+          });
+        }
+      }
     },
-    [],
+    [columnDefs, commitRows, editableKeys, handleRedo, handleUndo, pushHistory],
   );
 
-  const onCellPaste = useMemo(() => makeOnCellPaste(editableKeys), [editableKeys]);
-
-  const visibleRowKeys = useMemo(
-    () => filteredRows.map((r) => rowKey(r)),
-    [filteredRows],
+  // AG-Grid selection changed → sync React selectedRows (used by toolbar + totals)
+  const onSelectionChanged = useCallback(
+    (event: SelectionChangedEvent<TableRow>) => {
+      const selected = event.api
+        .getSelectedNodes()
+        .filter((n) => n.data != null)
+        .map((n) => rowKey(n.data!));
+      setSelectedRows(new Set(selected));
+      if (selected.length > 0) clearColumnSelection();
+    },
+    [clearColumnSelection],
   );
 
-  const rowSelectionCtx = useMemo<RowSelectionCtx>(
+  const onGridReady = useCallback((event: GridReadyEvent<TableRow>) => {
+    gridApiRef.current = event.api;
+  }, []);
+
+  // Status options per column — includes values already present in rows
+  const statusOptionsByKey = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const def of columnDefs) {
+      if (def.type === 'status') map.set(def.key, resolveStatusOptions(def, rows));
+    }
+    return map;
+  }, [columnDefs, rows]);
+
+  // AG-Grid column definitions: row-number + typed data columns
+  const agColDefs = useMemo<ColDef<TableRow>[]>(() => {
+    const defs: ColDef<TableRow>[] = [];
+
+    // Pinned row-number column (read-only, no sort)
+    defs.push({
+      colId: '__rowNum__',
+      headerName: '#',
+      width: 44,
+      minWidth: 44,
+      maxWidth: 44,
+      pinned: 'left' as const,
+      lockPosition: true,
+      sortable: false,
+      resizable: false,
+      editable: false,
+      suppressMovable: true,
+      suppressHeaderFilterButton: true,
+      valueGetter: (p) => (p.node?.rowIndex ?? 0) + 1,
+      cellStyle: {
+        textAlign: 'center',
+        color: 'var(--muted-foreground)',
+        fontSize: '0.75rem',
+        fontVariantNumeric: 'tabular-nums',
+      },
+    });
+
+    // Data columns
+    for (const def of columnDefs) {
+      const baseColDef: ColDef<TableRow> = {
+        field: def.key,
+        colId: def.key,
+        headerName: def.name,
+        width: def.width,
+        resizable: true,
+        sortable: true,
+        pinned: def.frozen ? ('left' as const) : undefined,
+        editable: true,
+        cellDataType: false,
+        suppressHeaderFilterButton: true,
+        valueFormatter: (params: ValueFormatterParams<TableRow>) => {
+          const v = params.value;
+          return v === undefined || v === null ? '' : String(v);
+        },
+        // zh-CN numeric comparator — reuses compareScheduleValues
+        comparator: (valueA, valueB) =>
+          compareScheduleValues(
+            valueA as string | number | undefined,
+            valueB as string | number | undefined,
+            def.type,
+          ),
+        // Custom header: name click selects column, chevron cycles sort
+        headerComponent: AgColumnHeader,
+        headerComponentParams: {
+          columnKey: def.key,
+          onSelect: selectColumn,
+          selectedKeyRef: selectedColumnKeyRef,
+        },
+      };
+
+      if (def.type === 'number') {
+        defs.push({
+          ...baseColDef,
+          cellEditor: 'agNumberCellEditor',
+          cellStyle: { textAlign: 'center', fontVariantNumeric: 'tabular-nums' },
+        });
+      } else if (def.type === 'status') {
+        const options = statusOptionsByKey.get(def.key) ?? [];
+        defs.push({
+          ...baseColDef,
+          cellEditor: 'agSelectCellEditor',
+          cellEditorParams: { values: options },
+          cellRenderer: (params: ICellRendererParams<TableRow>) => (
+            <div className="flex w-full justify-center px-2">
+              <StatusBadge status={String(params.value ?? '')} />
+            </div>
+          ),
+        });
+      } else {
+        // text
+        defs.push({
+          ...baseColDef,
+          cellEditor: 'agTextCellEditor',
+          cellStyle: { textAlign: 'center' },
+        });
+      }
+    }
+
+    return defs;
+  }, [columnDefs, statusOptionsByKey, selectColumn]);
+
+  // AG-Grid v36 row selection config (object form)
+  const rowSelection = useMemo(
     () => ({
-      selectedRows,
-      visibleRowKeys,
-      onRowSelect: handleRowSelect,
-      onSelectAll: handleSelectAll,
+      mode: 'multiRow' as const,
+      checkboxes: true,
+      headerCheckbox: true,
+      enableClickSelection: true,
     }),
-    [handleRowSelect, handleSelectAll, selectedRows, visibleRowKeys],
-  );
-
-  const columnSelectionCtx = useMemo<ColumnSelectionCtx>(
-    () => ({ selectedKey: selectedColumnKey, select: selectColumn, toggleSort }),
-    [selectColumn, selectedColumnKey, toggleSort],
-  );
-
-  const dataColumns = useMemo(
-    () => columnDefs.map((def) => buildDataColumn(def, filteredRows)),
-    [columnDefs, filteredRows],
-  );
-
-  // Dead-code for now; Task 3 will re-wire these onto AG-Grid.
-  const columns = useMemo<Column<TableRow>[]>(
-    () => [
-      {
-        key: '__rowNum__',
-        name: '#',
-        // localized via aria where needed; '#' is universal
-        width: 44,
-        minWidth: 44,
-        frozen: true,
-        sortable: false,
-        resizable: false,
-        renderCell: ({ rowIdx }) => (
-          <span className="text-muted-foreground block w-full text-center tabular-nums">
-            {rowIdx + 1}
-          </span>
-        ),
-      },
-      {
-        key: SELECT_COL_KEY,
-        name: '',
-        width: 35,
-        minWidth: 35,
-        maxWidth: 35,
-        frozen: true,
-        sortable: false,
-        resizable: false,
-        renderHeaderCell: ({ tabIndex }: RenderHeaderCellProps<TableRow>) => (
-          <SelectAllHeader tabIndex={tabIndex} />
-        ),
-        renderCell: ({ row, rowIdx, tabIndex }) => (
-          <SelectRowCell
-            tabIndex={tabIndex}
-            rowKeyValue={rowKey(row)}
-            rowIdx={rowIdx}
-          />
-        ),
-      },
-      ...dataColumns,
-    ],
-    [dataColumns],
-  );
-
-  // AG-Grid column definitions (Task 3 adds editors/renderers on top of this)
-  const agColDefs = useMemo<ColDef<TableRow>[]>(
-    () => columnDefs.map((def) => ({
-      field: def.key,
-      headerName: def.name,
-      resizable: true,
-      sortable: true,
-      pinned: def.frozen ? ('left' as const) : undefined,
-      valueFormatter: (params: { value: unknown }) => {
-        const v = params.value;
-        return v === undefined || v === null ? '' : String(v);
-      },
-    })),
-    [columnDefs],
+    [],
   );
 
   const handleAddRow = async () => {
@@ -1074,6 +823,7 @@ export function TableGrid() {
       setRows(data.rows);
     }
     setSelectedColumnKey(null);
+    selectedColumnKeyRef.current = null;
   };
 
   const rowActionDelete = selectedRows.size > 0;
@@ -1149,7 +899,10 @@ export function TableGrid() {
         lastSerialized.current = JSON.stringify(data.rows);
         setRows(data.rows);
       }
-      showToast(t('table.importSuccess', { count: data.rows?.length ?? importedRows.length }), 'success');
+      showToast(
+        t('table.importSuccess', { count: data.rows?.length ?? importedRows.length }),
+        'success',
+      );
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : t('table.importFailed'), 'error');
     } finally {
@@ -1191,7 +944,8 @@ export function TableGrid() {
           {toast.message}
         </div>
       ) : null}
-      {/* Sheet tabs — top */}
+
+      {/* Sheet tabs */}
       <div className="border-border flex shrink-0 items-center gap-1 overflow-x-auto border-b px-2 py-1.5">
         {sheets.map((sheet) => {
           const active = activeSheetId === sheet.id;
@@ -1217,14 +971,17 @@ export function TableGrid() {
         })}
       </div>
 
-      {/* Toolbar + filters */}
+      {/* Toolbar + search */}
       <div className="border-border shrink-0 space-y-2 border-b px-2 py-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className={cn('h-7 gap-1 px-2 text-xs', rowActionDelete && 'text-destructive hover:text-destructive')}
+            className={cn(
+              'h-7 gap-1 px-2 text-xs',
+              rowActionDelete && 'text-destructive hover:text-destructive',
+            )}
             onClick={handleRowAction}
           >
             {rowActionDelete ? <Minus className="size-3" /> : <Plus className="size-3" />}
@@ -1236,7 +993,10 @@ export function TableGrid() {
             type="button"
             variant="outline"
             size="sm"
-            className={cn('h-7 gap-1 px-2 text-xs', columnSelected && 'text-destructive hover:text-destructive')}
+            className={cn(
+              'h-7 gap-1 px-2 text-xs',
+              columnSelected && 'text-destructive hover:text-destructive',
+            )}
             onClick={handleColumnAction}
           >
             {columnSelected ? <Minus className="size-3" /> : <Plus className="size-3" />}
@@ -1347,6 +1107,11 @@ export function TableGrid() {
               rowData={filteredRows}
               columnDefs={agColDefs}
               getRowId={(params: GetRowIdParams<TableRow>) => rowKey(params.data)}
+              rowSelection={rowSelection}
+              onGridReady={onGridReady}
+              onCellValueChanged={onCellValueChanged}
+              onCellKeyDown={onGridCellKeyDown}
+              onSelectionChanged={onSelectionChanged}
             />
           </div>
           <TableGridFooter totals={totals} />
