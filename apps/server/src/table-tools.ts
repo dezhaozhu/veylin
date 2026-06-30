@@ -317,13 +317,14 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
         createTableSheet(SCHEDULE_SHEET_ID);
       }
 
-      // Preserve the column types Compass reports (text/number/status) so the grid
-      // renders status badges / number alignment / the status dropdown editor.
+      // Preserve Compass's NUMBER columns (alignment + number editor). Map status→text:
+      // a Veylin 'status' column sanitizes values to its own option set, which would
+      // blank Compass's custom statuses (derived/solved/…); keep them as readable text.
+      // (Proper colored badges would need the column's statusOptions seeded from the data.)
       const columnTypes: Record<string, 'text' | 'number' | 'status'> = {};
       for (const c of columns) {
         const key = c['key'];
-        const t = c['type'];
-        if (key && (t === 'text' || t === 'number' || t === 'status')) columnTypes[key] = t;
+        if (key) columnTypes[key] = c['type'] === 'number' ? 'number' : 'text';
       }
 
       const result = importTableSheet(
