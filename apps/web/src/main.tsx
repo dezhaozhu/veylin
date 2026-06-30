@@ -9,6 +9,9 @@ import { installDesktopReloadShortcut } from '@/lib/desktop-reload-shortcut';
 import { fetchSidecarStatus } from '@/lib/sidecar-status';
 import { startupCheckpoint } from '@/lib/startup-profiler';
 import { ModuleRegistry } from 'ag-grid-community';
+// Register AG-Grid Community modules at startup (order-safe regardless of how the
+// grid component is bundled — don't rely on table-grid.tsx's side-effect import).
+import './components/assistant-ui/ag-grid-modules';
 import { getAgGridLicenseKey } from '@/lib/ag-grid-license';
 import i18n from '@/i18n';
 import { App } from './App';
