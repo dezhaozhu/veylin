@@ -13,6 +13,7 @@ import {
   upsertTableSheet,
 } from '@veylin/db';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
+import { EventEmitter } from 'node:events';
 
 export type TableColumnType = 'text' | 'number' | 'status';
 
@@ -35,6 +36,33 @@ export interface TableSheetMeta {
 export type TableRowData = Record<string, string | number> & { row_id: string };
 
 export type TableRowPatch = Record<string, string | number>;
+
+/**
+ * Row-level table change events for live SSE sync. Every mutator emits one, so the
+ * web client can replace its 4s full-sheet poll with an EventSource + AG-Grid
+ * applyTransaction (surgical updates whose cost is independent of sheet size).
+ */
+export type TableEvent =
+  | { type: 'rowUpsert'; sheet: string; row: TableRowData }
+  | { type: 'rowsDelete'; sheet: string; keys: string[] }
+  | { type: 'sheetReplace'; sheet: string } // bulk import — client refetches the sheet
+  | { type: 'schemaChange'; sheet: string } // column add/delete — client refetches columns
+  | { type: 'sheetsChange' }; // sheet create/delete — client refetches the sheet list
+
+const tableEvents = new EventEmitter();
+tableEvents.setMaxListeners(0); // one listener per open SSE connection; no arbitrary cap
+
+/** Subscribe to table change events (for the SSE endpoint). Returns an unsubscribe fn. */
+export function onTableEvent(cb: (event: TableEvent) => void): () => void {
+  tableEvents.on('change', cb);
+  return () => {
+    tableEvents.off('change', cb);
+  };
+}
+
+function emitTable(event: TableEvent): void {
+  tableEvents.emit('change', event);
+}
 
 export const DEFAULT_TABLE_SHEET = 'main';
 
@@ -395,6 +423,7 @@ export async function updateTableRow(
   const clean = sanitizePatch(patch, sheet.columns);
   sheet.rows[idx] = { ...sheet.rows[idx]!, ...clean };
   await persistSheet(resolveTableSheetId(sheetId));
+  emitTable({ type: 'rowUpsert', sheet: resolveTableSheetId(sheetId), row: { ...sheet.rows[idx]! } });
   return { ...sheet.rows[idx]! };
 }
 
@@ -424,6 +453,7 @@ export function createTableSheet(name: string): TableSheetMeta | null {
     rows: [],
   });
   tablePersist(id);
+  emitTable({ type: 'sheetsChange' });
   return { ...meta };
 }
 
@@ -439,6 +469,7 @@ export async function deleteTableSheet(sheetId: string): Promise<boolean> {
   try {
     await deleteTableSheetDb(sheetId);
     await ensureAtLeastOneSheet();
+    emitTable({ type: 'sheetsChange' });
     return true;
   } catch (e) {
     console.error('[table] delete sheet failed:', e);
@@ -469,6 +500,7 @@ export function addTableRow(sheetId: string): TableRowData | null {
   const row = emptyRow();
   sheet.rows.push(row);
   tablePersist(resolveTableSheetId(sheetId));
+  emitTable({ type: 'rowUpsert', sheet: resolveTableSheetId(sheetId), row: { ...row } });
   return { ...row };
 }
 
@@ -479,6 +511,7 @@ export function deleteTableRows(sheetId: string, rowKeys: string[]): number {
   const before = sheet.rows.length;
   sheet.rows = sheet.rows.filter((r) => !drop.has(tableRowKey(r)));
   tablePersist(resolveTableSheetId(sheetId));
+  emitTable({ type: 'rowsDelete', sheet: resolveTableSheetId(sheetId), keys: rowKeys });
   return before - sheet.rows.length;
 }
 
@@ -496,6 +529,7 @@ export function addTableColumn(sheetId: string, name: string): TableColumnDef | 
   }, true);
   sheet.columns.push(col);
   tablePersist(resolveTableSheetId(sheetId));
+  emitTable({ type: 'schemaChange', sheet: resolveTableSheetId(sheetId) });
   return { ...col };
 }
 
@@ -509,6 +543,7 @@ export function deleteTableColumn(sheetId: string, columnKey: string): boolean {
     delete row[columnKey];
   }
   tablePersist(resolveTableSheetId(sheetId));
+  emitTable({ type: 'schemaChange', sheet: resolveTableSheetId(sheetId) });
   return true;
 }
 
@@ -579,6 +614,7 @@ export function importTableSheet(
   });
 
   tablePersist(resolved);
+  emitTable({ type: 'sheetReplace', sheet: resolved });
 
   return {
     columns: fresh.columns.map((c) => ({ ...c })),
