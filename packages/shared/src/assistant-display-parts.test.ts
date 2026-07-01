@@ -1,8 +1,31 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { dedupeAssistantMessageParts } from './assistant-display-parts.js';
+import {
+  dedupeAssistantMessageParts,
+  migrateLegacyToolPart,
+  normalizeAssistantMessageParts,
+} from './assistant-display-parts.js';
 
-describe('dedupeAssistantMessageParts', () => {
+describe('migrateLegacyToolPart', () => {
+  it('converts tool-invocation into tool-{name} for UI', () => {
+    const migrated = migrateLegacyToolPart({
+      type: 'tool-invocation',
+      toolInvocation: {
+        state: 'result',
+        toolCallId: 'call_1',
+        toolName: 'task',
+        args: { description: '工厂维度分析' },
+        result: { task_id: 'abc', background: true },
+      },
+    }) as { type?: string; state?: string; output?: { task_id?: string } };
+
+    assert.equal(migrated.type, 'tool-task');
+    assert.equal(migrated.state, 'output-available');
+    assert.equal(migrated.output?.task_id, 'abc');
+  });
+});
+
+describe('normalizeAssistantMessageParts', () => {
   it('removes repeated narration after an answered ask_user_question step', () => {
     const intro = '好的！我来帮你创建一个写故事的 skill。在动手之前，让我先了解一下你的具体需求。';
     const questions = '先聊聊你的想法。我有一些问题需要确认：';
@@ -12,7 +35,7 @@ describe('dedupeAssistantMessageParts', () => {
       output: { answers: { Q: 'A' } },
     };
 
-    const parts = dedupeAssistantMessageParts([
+    const parts = normalizeAssistantMessageParts([
       { type: 'reasoning', text: intro },
       { type: 'text', text: questions },
       tool,
@@ -33,16 +56,54 @@ describe('dedupeAssistantMessageParts', () => {
       parts.filter((p) => (p as { type?: string }).type === 'tool-ask_user_question').length,
       2,
     );
-    assert.ok(!parts.some((p, i, arr) => {
-      if ((p as { type?: string }).type !== 'reasoning') return false;
-      return arr
-        .slice(i + 1)
-        .some(
-          (later) =>
-            (later as { type?: string }).type === 'reasoning' &&
-            (later as { text?: string }).text === (p as { text?: string }).text,
-        );
-    }));
+  });
+
+  it('drops empty reasoning shells and keeps following text', () => {
+    const parts = normalizeAssistantMessageParts([
+      { type: 'reasoning', text: '' },
+      { type: 'text', text: '4个分析Agent已全部并行派发完成' },
+      { type: 'step-start' },
+      { type: 'reasoning', text: '' },
+      { type: 'text', text: '请稍候，各Agent正在工作中' },
+    ]);
+
+    assert.deepEqual(
+      parts.map((p) => (p as { type?: string }).type),
+      ['text', 'step-start', 'text'],
+    );
+  });
+
+  it('merges narration-only step boundaries in display mode', () => {
+    const parts = normalizeAssistantMessageParts(
+      [
+        { type: 'text', text: '派发完成表格' },
+        { type: 'step-start' },
+        { type: 'text', text: '请稍候' },
+      ],
+      { mode: 'display' },
+    );
+
+    assert.equal(parts.length, 1);
+    assert.match((parts[0] as { text?: string }).text ?? '', /派发完成表格/);
+    assert.match((parts[0] as { text?: string }).text ?? '', /请稍候/);
+  });
+
+  it('migrates legacy tools and preserves them in the transcript', () => {
+    const parts = normalizeAssistantMessageParts([
+      { type: 'text', text: '开始' },
+      {
+        type: 'tool-invocation',
+        toolInvocation: {
+          state: 'result',
+          toolCallId: 'c1',
+          toolName: 'table_get',
+          args: {},
+          result: { rows: [] },
+        },
+      },
+    ]);
+
+    assert.equal((parts[1] as { type?: string }).type, 'tool-table_get');
   });
 
   it('is idempotent when step-start markers are already present', () => {
@@ -54,8 +115,8 @@ describe('dedupeAssistantMessageParts', () => {
       { type: 'text', text: '收尾' },
     ];
 
-    const once = dedupeAssistantMessageParts(parts);
-    const twice = dedupeAssistantMessageParts(once);
+    const once = normalizeAssistantMessageParts(parts);
+    const twice = normalizeAssistantMessageParts(once);
     assert.equal(twice, once);
   });
 

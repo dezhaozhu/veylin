@@ -5,7 +5,7 @@ import {
   modelCatalogEntrySchema,
   modelCatalogFileSchema,
   type ModelCatalogEntry,
-} from '@veylin/shared';
+} from './model.js';
 
 export type { ModelCatalogEntry };
 

@@ -94,7 +94,19 @@
     "removeSkill": "Remove skill"
   },
   "status": {
-    "allDone": "All done"
+    "allDone": "All done",
+    "agentsRunning": "{{count}} agents running",
+    "agentsQueued": "{{count}} agents queued",
+    "agentsDone": "{{count}} agents finished",
+    "agentsCount": "{{count}} agents",
+    "agentsHeading": "Agents ({{count}})",
+    "todosHeading": "Todos ({{done}}/{{total}})",
+    "taskQueued": "Queued",
+    "taskRunning": "Running",
+    "taskDone": "Done",
+    "taskFailed": "Failed",
+    "taskCancelled": "Cancelled",
+    "agentsQueueHint": "{{queued}} queued (max {{max}} parallel workers)"
   },
   "queue": {
     "editMessage": "Edit message",
@@ -461,7 +473,11 @@
     "modelNotConfigured": { "title": "Model not configured", "detail": "Open Settings -> Models and add your own API key before chatting." },
     "unknown": { "detail": "Something went wrong. Please try again." },
     "retryLater": "Please try again later.",
-    "connectFailed": { "title": "Connection failed" }
+    "connectFailed": { "title": "Connection failed" },
+    "providerClosed": {
+      "title": "Model API connection closed",
+      "detail": "The upstream model closed the connection. Automatic summary retry will continue; you can also send a follow-up to request the report."
+    }
   },
   "table": {
     "noResponse": "No response from server ({{status}})",
@@ -480,6 +496,8 @@
       "overdue": "Overdue"
     },
     "loadFailedGeneric": "Failed to load table data",
+    "deleteSheetFailed": "Failed to delete sheet",
+    "createSheetFailed": "Failed to create sheet",
     "newSheetName": "New sheet name",
     "confirmDeleteSheet": "Delete this sheet? This cannot be undone.",
     "newColumnName": "New column name",

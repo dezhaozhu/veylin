@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronRight, MoreHorizontal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
+import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 import { cn } from '@/lib/utils';
+import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 
 export function SettingsConnectedList({
   children,
@@ -159,6 +161,8 @@ function SettingsRowMenu({ items }: { items: SettingsRowMenuItem[] }) {
 
   const close = useCallback(() => setOpen(false), []);
 
+  useOverlayDismiss(close);
+
   const updateMenuPos = useCallback(() => {
     const el = btnRef.current;
     if (!el) return;
@@ -183,25 +187,11 @@ function SettingsRowMenu({ items }: { items: SettingsRowMenuItem[] }) {
     };
   }, [open, updateMenuPos]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, close]);
-
   const menu =
     open && menuPos
       ? createPortal(
           <>
-            <button
-              type="button"
-              className="fixed inset-0 z-[200] cursor-default bg-transparent"
-              aria-label={t('common.close')}
-              onClick={close}
-            />
+            <DismissibleBackdrop ariaLabel={t('common.close')} onClose={close} />
             <div
               className="border-border bg-popover text-popover-foreground fixed z-[201] min-w-[9rem] overflow-hidden rounded-lg border p-1 shadow-md"
               style={{ top: menuPos.top, right: menuPos.right }}

@@ -1,9 +1,21 @@
-/** Collapse duplicate assistant narration across tool-continuation steps (live + reload). */
+/**
+ * Normalize assistant message parts for display and persistence (Claude Code–style turn).
+ * - Migrate legacy tool-invocation → tool-{name}
+ * - Drop empty reasoning shells; prose lives in text or non-empty reasoning
+ * - Dedupe repeated narration across tool-continuation steps
+ * - Optionally merge prose across step-start when only narration continues
+ */
 
 const FRONTEND_SUSPEND_TOOL_TYPES = new Set([
   'tool-ask_user_question',
   'tool-read_open_page',
 ]);
+
+export type NormalizeAssistantPartsMode = 'persist' | 'display';
+
+export type NormalizeAssistantPartsOptions = {
+  mode?: NormalizeAssistantPartsMode;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value != null;
@@ -13,14 +25,98 @@ function isStepStart(part: unknown): boolean {
   return isRecord(part) && part.type === 'step-start';
 }
 
+function isReasoningPart(part: unknown): boolean {
+  return isRecord(part) && part.type === 'reasoning';
+}
+
+function isTextPart(part: unknown): boolean {
+  return isRecord(part) && part.type === 'text';
+}
+
 function isReasoningOrText(part: unknown): boolean {
-  if (!isRecord(part)) return false;
-  return part.type === 'reasoning' || part.type === 'text';
+  return isReasoningPart(part) || isTextPart(part);
 }
 
 function partText(part: unknown): string {
   if (!isRecord(part)) return '';
   return typeof part.text === 'string' ? part.text.trim() : '';
+}
+
+function isToolLikePart(part: unknown): boolean {
+  if (!isRecord(part)) return false;
+  const type = part.type;
+  return typeof type === 'string' && (type.startsWith('tool-') || type === 'tool-invocation');
+}
+
+function mapLegacyToolState(state: unknown): string {
+  switch (state) {
+    case 'result':
+      return 'output-available';
+    case 'error':
+      return 'output-error';
+    case 'call':
+      return 'input-available';
+    default:
+      return 'input-streaming';
+  }
+}
+
+/** Mastra / AI SDK v4-style tool-invocation → current tool-{name} parts. */
+export function migrateLegacyToolPart(part: unknown): unknown {
+  if (!isRecord(part) || part.type !== 'tool-invocation') return part;
+
+  const inv = part.toolInvocation;
+  if (!isRecord(inv)) return part;
+
+  const toolName = typeof inv.toolName === 'string' ? inv.toolName : 'unknown';
+  const toolCallId =
+    typeof inv.toolCallId === 'string' ? inv.toolCallId : crypto.randomUUID();
+
+  const migrated: Record<string, unknown> = {
+    type: `tool-${toolName}`,
+    toolCallId,
+    state: mapLegacyToolState(inv.state),
+    input: inv.args ?? {},
+  };
+
+  if (inv.state === 'result') migrated.output = inv.result;
+  if (inv.state === 'error') {
+    migrated.errorText =
+      typeof inv.result === 'string' ? inv.result : JSON.stringify(inv.result ?? 'Tool error');
+  }
+  if (inv.providerExecuted === true) migrated.providerExecuted = true;
+
+  return migrated;
+}
+
+function migrateLegacyTools(parts: readonly unknown[]): unknown[] {
+  return parts.map(migrateLegacyToolPart);
+}
+
+/** Drop empty reasoning; when reasoning is empty and followed by text, keep text only. */
+function coalesceEmptyReasoning(parts: readonly unknown[]): unknown[] {
+  const out: unknown[] = [];
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+    if (!isReasoningPart(part) || partText(part)) {
+      out.push(part);
+      continue;
+    }
+
+    const next = parts[i + 1];
+    if (isTextPart(next) && partText(next)) {
+      out.push(next);
+      i += 1;
+      continue;
+    }
+
+    if (isToolLikePart(next) || isStepStart(next)) {
+      continue;
+    }
+  }
+
+  return out;
 }
 
 function narrativeKey(parts: readonly unknown[]): string {
@@ -87,12 +183,8 @@ function stripDuplicateNarrativePrefix(
     if (!text) continue;
 
     acc = acc ? `${acc}\n${text}` : text;
-    if (acc === prevNarrative) {
-      continue;
-    }
-    if (prevNarrative.startsWith(acc)) {
-      continue;
-    }
+    if (acc === prevNarrative) continue;
+    if (prevNarrative.startsWith(acc)) continue;
 
     stripping = false;
     rest.push(part);
@@ -101,7 +193,7 @@ function stripDuplicateNarrativePrefix(
   return rest;
 }
 
-function dedupeInner(parts: readonly unknown[]): unknown[] {
+function dedupeAcrossSteps(parts: readonly unknown[]): unknown[] {
   const condensed: unknown[] = [];
   for (const part of parts) {
     const prev = condensed.at(-1);
@@ -149,6 +241,45 @@ function dedupeInner(parts: readonly unknown[]): unknown[] {
   return out;
 }
 
+/** Merge assistant prose across step-start when the boundary is narration-only. */
+function mergeProseAcrossTextOnlySteps(parts: readonly unknown[]): unknown[] {
+  const out: unknown[] = [];
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+
+    if (isStepStart(part)) {
+      const prev = out.at(-1);
+      let j = i + 1;
+      while (j < parts.length && isStepStart(parts[j]!)) j += 1;
+      const next = parts[j];
+
+      if (
+        isTextPart(prev) &&
+        partText(prev) &&
+        isTextPart(next) &&
+        partText(next) &&
+        !parts.slice(i + 1, j).some((p) => isToolLikePart(p) || isReasoningPart(p))
+      ) {
+        out[out.length - 1] = {
+          ...(prev as Record<string, unknown>),
+          text: `${partText(prev)}\n\n${partText(next)}`,
+        };
+        i = j;
+        continue;
+      }
+    }
+
+    out.push(part);
+  }
+
+  return out;
+}
+
+function stripStepStarts(parts: readonly unknown[]): unknown[] {
+  return parts.filter((part) => !isStepStart(part));
+}
+
 function partsEqual(a: readonly unknown[], b: readonly unknown[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((part, index) => part === b[index]);
@@ -176,10 +307,33 @@ export function assistantPartsSemanticallyEqual(
   return partsSemanticallyEqual(a, b);
 }
 
-/** Remove repeated Thought/text blocks after answered ask_user_question continuations. */
-export function dedupeAssistantMessageParts(parts: unknown[] | undefined): unknown[] {
+function normalizeInner(
+  parts: readonly unknown[],
+  options: NormalizeAssistantPartsOptions,
+): unknown[] {
+  const mode = options.mode ?? 'persist';
+  let work = migrateLegacyTools(parts);
+  work = coalesceEmptyReasoning(work);
+  work = dedupeAcrossSteps(work);
+  if (mode === 'display') {
+    work = mergeProseAcrossTextOnlySteps(work);
+    work = stripStepStarts(work);
+  }
+  return work;
+}
+
+/** Normalize assistant parts for UI or Mastra persistence. */
+export function normalizeAssistantMessageParts(
+  parts: unknown[] | undefined,
+  options: NormalizeAssistantPartsOptions = {},
+): unknown[] {
   if (!parts?.length) return parts ?? [];
-  const result = dedupeInner(parts);
+  const result = normalizeInner(parts, options);
   if (partsEqual(result, parts) || partsSemanticallyEqual(result, parts)) return parts;
   return result;
+}
+
+/** @deprecated Use normalizeAssistantMessageParts(parts, { mode: 'persist' }). */
+export function dedupeAssistantMessageParts(parts: unknown[] | undefined): unknown[] {
+  return normalizeAssistantMessageParts(parts, { mode: 'persist' });
 }

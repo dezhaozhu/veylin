@@ -1,6 +1,7 @@
 import { makeAssistantToolUI } from '@assistant-ui/react';
 import { BotIcon, LoaderIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { deriveTaskLabel } from '@veylin/shared';
 
 type TaskToolArgs = {
   description?: string;
@@ -27,15 +28,13 @@ function taskLabel(args: TaskToolArgs | undefined, result: TaskToolResult | unde
   if (fork) {
     return result?.description ?? args?.description ?? 'fork';
   }
-  return (
-    result?.description ??
-    args?.description ??
-    result?.subagent_type ??
-    args?.subagent_type ??
-    result?.agent_id ??
-    args?.agent_id ??
-    'subagent'
-  );
+  return deriveTaskLabel({
+    description: result?.description ?? args?.description,
+    prompt: args?.prompt ?? '',
+    subagentType: result?.subagent_type ?? args?.subagent_type ?? null,
+    agentId: result?.agent_id ?? args?.agent_id ?? 'subagent',
+    defaultLabel: result?.subagent_type ?? args?.subagent_type ?? result?.agent_id ?? args?.agent_id ?? 'subagent',
+  });
 }
 
 export const TaskToolUI = makeAssistantToolUI<TaskToolArgs, TaskToolResult>({
@@ -49,36 +48,28 @@ export const TaskToolUI = makeAssistantToolUI<TaskToolArgs, TaskToolResult>({
       return (
         <div className="border-border/50 bg-muted/30 my-1 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
           <LoaderIcon className="text-primary size-3.5 shrink-0 animate-spin" />
-          <span>
-            {t('subagent.dispatching', { label })}
-            {args?.run_in_background ? ` · ${t('subagent.background')}` : ''}
-          </span>
+          <span className="font-medium">{label}</span>
+          <span className="text-muted-foreground">{t('status.taskRunning')}</span>
         </div>
       );
     }
 
     if (result?.background && result.task_id) {
       return (
-        <div className="border-border/50 bg-muted/30 my-1 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs">
-          <BotIcon className="text-primary mt-0.5 size-3.5 shrink-0" />
-          <span>
-            <span className="font-medium">{label}</span>
-            <span className="text-muted-foreground ml-1">
-              {t('subagent.queued', { id: result.task_id.slice(0, 8) })}
-            </span>
-          </span>
+        <div className="border-border/50 bg-muted/30 my-1 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
+          <BotIcon className="text-primary size-3.5 shrink-0" />
+          <span className="font-medium">{label}</span>
+          <span className="text-muted-foreground">{t('status.taskQueued')}</span>
         </div>
       );
     }
 
     if (result?.summary) {
       return (
-        <div className="border-border/50 bg-muted/30 my-1 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs">
-          <BotIcon className="text-primary mt-0.5 size-3.5 shrink-0" />
-          <div className="min-w-0">
-            <div className="font-medium">{label}</div>
-            <p className="text-muted-foreground mt-0.5 line-clamp-4 whitespace-pre-wrap">{result.summary}</p>
-          </div>
+        <div className="border-border/50 bg-muted/30 my-1 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
+          <BotIcon className="text-primary size-3.5 shrink-0" />
+          <span className="font-medium">{label}</span>
+          <span className="text-muted-foreground">{t('status.taskDone')}</span>
         </div>
       );
     }
@@ -106,19 +97,18 @@ export const TaskContinueToolUI = makeAssistantToolUI<
 
     if (result?.background && result.task_id) {
       return (
-        <div className="text-muted-foreground my-1 text-xs">
-          {t('subagent.continueQueued', { id: result.task_id.slice(0, 8) })}
+        <div className="text-muted-foreground my-1 flex items-center gap-2 text-xs">
+          <span className="font-medium text-foreground">{args?.task_id?.slice(0, 8) ?? '…'}</span>
+          <span>{t('status.taskQueued')}</span>
         </div>
       );
     }
 
     if (result?.summary) {
       return (
-        <div className="border-border/40 bg-muted/20 my-1 rounded border px-2 py-1.5 text-xs">
-          <div className="text-muted-foreground mb-0.5 font-medium">
-            {t('subagent.continueResult', { id: args?.task_id?.slice(0, 8) ?? '' })}
-          </div>
-          <p className="line-clamp-4 whitespace-pre-wrap">{result.summary}</p>
+        <div className="border-border/40 bg-muted/20 my-1 flex items-center gap-2 rounded border px-2 py-1.5 text-xs">
+          <span className="font-medium">{t('subagent.continueResult', { id: args?.task_id?.slice(0, 8) ?? '' })}</span>
+          <span className="text-muted-foreground">{t('status.taskDone')}</span>
         </div>
       );
     }

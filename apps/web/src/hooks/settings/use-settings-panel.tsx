@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { CustomizeTab, SettingsTab, WorkspaceLocation, WorkspaceView } from '@/lib/workspace-navigation';
+import { dispatchOverlayDismiss } from '@/lib/overlay-dismiss';
 
 export type { CustomizeTab, SettingsTab, WorkspaceView };
 
@@ -24,6 +25,10 @@ export function SettingsPanelProvider({ children }: { children: ReactNode }) {
   const [view, setView] = useState<WorkspaceView>('chat');
   const [customizeTab, setCustomizeTab] = useState<CustomizeTab>('rules');
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+
+  useEffect(() => {
+    dispatchOverlayDismiss('workspace-view');
+  }, [view]);
 
   const openCustomize = useCallback((tab?: CustomizeTab) => {
     if (tab) setCustomizeTab(tab);

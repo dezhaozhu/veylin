@@ -1,4 +1,5 @@
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
+import { recoverDesktopInteraction } from '@/lib/use-desktop-interaction-guard';
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -22,5 +23,22 @@ export function installDesktopReloadShortcut(): void {
     event.preventDefault();
     if (isTauri()) void hideWebView();
     window.location.reload();
+  });
+}
+
+/** Cmd/Ctrl+Shift+. — reset stuck overlays and native web-views without restarting. */
+export function installDesktopRecoveryShortcut(): void {
+  if (typeof window === 'undefined') return;
+  if (!isTauri()) return;
+
+  window.addEventListener('keydown', (event) => {
+    const key = event.key.toLowerCase();
+    if (key !== '.' || (!event.metaKey && !event.ctrlKey) || event.altKey || !event.shiftKey) {
+      return;
+    }
+    if (isEditableTarget(event.target)) return;
+
+    event.preventDefault();
+    recoverDesktopInteraction();
   });
 }

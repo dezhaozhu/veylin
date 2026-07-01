@@ -1,6 +1,6 @@
 import { Agent } from '@mastra/core/agent';
-import { TokenLimiter } from '@mastra/core/processors';
 import type { Memory } from '@mastra/memory';
+import type { ModelKey } from './models';
 import type { AgentDefinition } from '@veylin/shared';
 import { builtinTools, makeSkillTool, toolSearch, type BuiltinToolId } from '@veylin/tools';
 import type { Skill } from '@veylin/agent-package';
@@ -11,11 +11,9 @@ import {
   permittedToolIds,
   type PolicyConfig,
 } from '@veylin/policy';
-import { getModelConfig, type ModelKey } from './models';
-import { ContextCompression } from './processors/contextCompression';
-import { buildSummarizer } from './summarizer';
-import { inputTokenLimit } from './token-limit';
+import { buildInputProcessors } from './input-processors';
 import { composeInstructions } from './prompts/systemPrompt';
+import { getModelConfig } from './models';
 
 /** Always available without tool_search discovery. */
 const ALWAYS_ON_TOOLS: BuiltinToolId[] = [
@@ -99,7 +97,8 @@ function toolMapFor(ids: BuiltinToolId[], policy: PolicyConfig): ToolMap {
 }
 
 function buildInstructions(definition: AgentDefinition): string {
-  return composeInstructions(definition.instructions);
+  const outputStyle = process.env.VEYLIN_OUTPUT_STYLE;
+  return composeInstructions(definition.instructions, outputStyle);
 }
 
 export function buildAgent({
@@ -142,10 +141,7 @@ export function buildAgent({
       }
       return map;
     },
-    inputProcessors: [
-      new ContextCompression({ summarizer: buildSummarizer(definition.model as ModelKey) }),
-      new TokenLimiter({ limit: inputTokenLimit() }),
-    ],
+    inputProcessors: buildInputProcessors(definition.model as ModelKey),
   });
 }
 
@@ -153,4 +149,5 @@ export function toolNeedsApproval(toolId: string, policy: PolicyConfig = default
   return evaluateTool(toolId, policy) === 'approve';
 }
 
-export { ContextCompression, buildSummarizer };
+export { ContextCompression } from './processors/contextCompression';
+export { buildSummarizer } from './summarizer';

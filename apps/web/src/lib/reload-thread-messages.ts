@@ -3,7 +3,7 @@ import type { ThreadMessage } from '@assistant-ui/core';
 import type { UIMessage } from 'ai';
 import { storedMessageToUiMessage } from '@/lib/server-thread-history-adapter';
 import { toExportedMessageRepository } from '@/lib/use-external-history';
-import { AISDKMessageConverter } from '../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/convertMessage';
+import { AISDKMessageConverter } from '@/vendor/assistant-ui';
 
 export type ReloadableMessage = {
   id?: string;

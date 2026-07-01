@@ -5,7 +5,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { apiUrl, installApiFetchShim } from '@/lib/api-base';
 import { probeVeylinHealth } from '@/lib/health-probe';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
-import { installDesktopReloadShortcut } from '@/lib/desktop-reload-shortcut';
+import { installDesktopRecoveryShortcut, installDesktopReloadShortcut } from '@/lib/desktop-reload-shortcut';
 import { fetchSidecarStatus } from '@/lib/sidecar-status';
 import { startupCheckpoint } from '@/lib/startup-profiler';
 import { ModuleRegistry } from 'ag-grid-community';
@@ -24,6 +24,7 @@ import './index.css';
 
 installApiFetchShim();
 installDesktopReloadShortcut();
+installDesktopRecoveryShortcut();
 startupCheckpoint('react_shell');
 
 // AG-Grid: Community (MIT) is the default — no Enterprise in the default bundle.

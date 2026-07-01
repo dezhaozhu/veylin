@@ -14,6 +14,18 @@ const ReadOpenPageToolUI = lazy(() =>
 const TodoWriteToolUI = lazy(() =>
   import('@/components/assistant-ui/todo-write').then((m) => ({ default: m.TodoWriteToolUI })),
 );
+const PlanModeTools = lazy(() =>
+  import('@/components/assistant-ui/plan-mode-tools').then((m) => ({
+    default: function PlanModeToolUIs() {
+      return (
+        <>
+          <m.EnterPlanModeToolUI />
+          <m.ExitPlanModeToolUI />
+        </>
+      );
+    },
+  })),
+);
 const WorkingMemoryTools = lazy(() =>
   import('@/components/assistant-ui/working-memory-tools').then((m) => ({
     default: function WorkingMemoryToolUIs() {
@@ -54,6 +66,7 @@ export function LazyAssistantToolUIs() {
       <Suspense fallback={null}>
         <AskUserQuestionToolUI />
         <TodoWriteToolUI />
+        <PlanModeTools />
         <WorkingMemoryTools />
         <ToolSearchToolUI />
         <TaskTools />

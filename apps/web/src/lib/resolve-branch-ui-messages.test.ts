@@ -28,6 +28,31 @@ describe('resolveThreadMessagesToUi', () => {
     assert.deepEqual(resolveThreadMessagesToUi([message], new Map()), [ui]);
   });
 
+  it('normalizes bound tool result fields to output fields', () => {
+    const message = assistant('a1', 'tool');
+    const ui = {
+      id: 'a1',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-task',
+          toolCallId: 't1',
+          state: 'output-available',
+          result: { background: true, task_id: 'bg-1' },
+        },
+      ],
+    } as unknown as UIMessage;
+    bindExternalStoreMessage(message, ui);
+
+    const [resolved] = resolveThreadMessagesToUi([message], new Map());
+    assert.deepEqual(resolved?.parts[0], {
+      type: 'tool-task',
+      toolCallId: 't1',
+      state: 'output-available',
+      output: { background: true, task_id: 'bg-1' },
+    });
+  });
+
   it('falls back to cached UI messages by thread id', () => {
     const message = assistant('a1', 'hello');
     const ui: UIMessage = {
@@ -40,6 +65,29 @@ describe('resolveThreadMessagesToUi', () => {
       resolveThreadMessagesToUi([message], new Map([['a1', ui]])),
       [ui],
     );
+  });
+
+  it('normalizes cached tool result fields to output fields', () => {
+    const message = assistant('a1', 'tool');
+    const cached = {
+      id: 'a1',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-task',
+          toolCallId: 't1',
+          state: 'output-available',
+          result: { background: true, task_id: 'bg-1' },
+        },
+      ],
+    } as unknown as UIMessage;
+
+    const [resolved] = resolveThreadMessagesToUi([message], new Map([['a1', cached]]));
+    assert.equal(
+      (resolved?.parts[0] as { output?: { task_id?: string } }).output?.task_id,
+      'bg-1',
+    );
+    assert.equal('result' in (resolved?.parts[0] as object), false);
   });
 
   it('reconstructs text assistant messages when no binding exists', () => {

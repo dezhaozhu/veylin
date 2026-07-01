@@ -236,12 +236,13 @@ export async function searchChunksByVector(
     return searchChunksByVectorBruteForce(tenantId, embedding, limit);
   }
   try {
+    const k = Math.max(1, Math.min(100, Math.floor(limit)));
     const rows = await queryRows<Record<string, unknown>>(
       getDb(),
       `SELECT *, vector::distance::knn() AS dist FROM chunk
-       WHERE tenant_id = $tenantId AND embedding <|$limit, 40|> $embedding
+       WHERE tenant_id = $tenantId AND embedding <|${k}, 40|> $embedding
        ORDER BY dist`,
-      { tenantId, embedding, limit },
+      { tenantId, embedding },
     );
     return rows.map((r) => ({
       chunk: mapChunk(r),

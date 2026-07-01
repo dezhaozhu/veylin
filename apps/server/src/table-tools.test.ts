@@ -1,5 +1,5 @@
 /**
- * Unit tests for buildTableTools — specifically the load_compass_schedule tool.
+ * Unit tests for buildTableTools — the load_compass_schedule tool + table_get pagination.
  *
  * The table store is an in-memory singleton. DB persistence calls (tablePersist) are
  * fire-and-forget and fail silently when no SurrealDB is available, so in-memory
@@ -8,7 +8,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildTableTools } from './table-tools.js';
-import { listTableRows, listTableColumns } from './table-store.js';
+import {
+  listTableRows,
+  listTableColumns,
+  importTableSheet,
+  listTableRowsPage,
+} from './table-store.js';
 
 describe('load_compass_schedule', () => {
   it('writes get_schedule_rows output into the schedule sheet', async () => {
@@ -52,5 +57,37 @@ describe('load_compass_schedule', () => {
 
     assert.equal(out.ok, false);
     assert.match(String(out.error), /compass|not connected|get_schedule_rows/i);
+  });
+});
+
+describe('table_get pagination', () => {
+  it('returns a bounded page with totalRows and hasMore', async () => {
+    importTableSheet('main', ['name', 'qty'], [
+      { name: 'A', qty: 1 },
+      { name: 'B', qty: 2 },
+      { name: 'C', qty: 3 },
+    ]);
+
+    const { table_get } = buildTableTools();
+    const page1 = await table_get.execute!(
+      { offset: 0, limit: 2 },
+      {} as never,
+    );
+    assert.ok(page1 && typeof page1 === 'object' && 'totalRows' in page1);
+    assert.equal(page1.totalRows, 3);
+    assert.equal(page1.rows.length, 2);
+    assert.equal(page1.hasMore, true);
+    assert.match(page1.notice ?? '', /offset=2/);
+
+    const page2 = await table_get.execute!({ offset: 2, limit: 2 }, {} as never);
+    assert.ok(page2 && typeof page2 === 'object' && 'rows' in page2);
+    assert.equal(page2.rows.length, 1);
+    assert.equal(page2.hasMore, false);
+  });
+
+  it('listTableRowsPage never returns more rows than exist', () => {
+    const { totalRows, rows } = listTableRowsPage('main', 0, 9999);
+    assert.equal(totalRows, 3);
+    assert.equal(rows.length, 3);
   });
 });

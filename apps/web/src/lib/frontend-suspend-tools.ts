@@ -1,5 +1,6 @@
 import type { UIMessage } from 'ai';
 import { isToolUIPart, lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
+import { assistantDispatchedBackgroundWorkers } from './background-task-continuation';
 
 /** Tools completed on the client; the server must not finish the same run. */
 export const FRONTEND_SUSPEND_TOOL_NAMES = ['ask_user_question', 'read_open_page'] as const;
@@ -93,6 +94,44 @@ export function isAwaitingFrontendToolAnswer(messages: UIMessage[]): boolean {
   return findFirstAwaitingFrontendToolIndex(last.parts) >= 0;
 }
 
+/**
+ * Whether the latest turn is genuinely mid-flight and therefore a candidate for
+ * resuming a server stream after a reload.
+ *
+ * A *completed* assistant reply (final text, every tool resolved, nothing awaiting)
+ * must NOT be resumed: the server's `activity === 'running'` signal can be stale (a
+ * lingering active-stream mapping within its TTL, or a non-terminal background task
+ * row on the parent thread), and re-attaching there makes a finished conversation
+ * look like it started streaming again. The visible message state is the authority.
+ */
+export function conversationAwaitsResume(messages: UIMessage[]): boolean {
+  const last = messages.at(-1);
+  if (!last) return false;
+  // Assistant has not answered the latest user turn yet.
+  if (last.role === 'user') return true;
+  if (last.role !== 'assistant') return false;
+
+  const parts = last.parts ?? [];
+  // An empty assistant placeholder is a freshly-created, not-yet-streamed turn.
+  if (parts.length === 0) return true;
+
+  // A tool whose output has not arrived means the run was cut mid-step.
+  for (const part of parts) {
+    if (!isToolUIPart(part as never)) continue;
+    const state = (part as { state?: string }).state;
+    if (
+      state === 'input-streaming' ||
+      state === 'input-available' ||
+      state === 'approval-requested'
+    ) {
+      return true;
+    }
+  }
+
+  // Blocked on a client-side suspend tool answer.
+  return isAwaitingFrontendToolAnswer(messages);
+}
+
 function lastStepParts(message: UIMessage): unknown[] {
   const parts = message.parts ?? [];
   const lastStepStartIndex = parts.reduce((lastIndex, part, index) => {
@@ -153,56 +192,41 @@ function messageNeedsFrontendSuspendContinuation(parts: unknown[]): boolean {
   return !hasAssistantReplyAfter(parts, toolIndex);
 }
 
-/** Server-executed tools (e.g. web_fetch) set providerExecuted; AI SDK ignores them in auto-send. */
-function findLastCompletedServerToolIndex(parts: unknown[]): number {
-  for (let i = parts.length - 1; i >= 0; i -= 1) {
-    const part = parts[i];
-    if (!isToolUIPart(part as never)) continue;
-    if (getFrontendSuspendToolName(part as ToolPart)) continue;
-    if (!isToolPartComplete(part)) return -1;
-    return i;
+/**
+ * The last assistant message has a *completed* client-side suspend tool (answered
+ * ask_user_question / read_open_page) with no follow-up reply. This is the only
+ * thing that can wedge a still-streaming run: in-progress server tools (subagent
+ * `task`, `web_fetch`) legitimately hold the stream open and must never be treated
+ * as "stuck".
+ */
+export function needsFrontendSuspendContinuation(messages: UIMessage[]): boolean {
+  const last = messages.at(-1);
+  if (last?.role !== 'assistant' || !last.parts?.length) return false;
+  for (const part of last.parts) {
+    if (isAwaitingFrontendToolPart(part)) return false;
   }
-  return -1;
+  return messageNeedsFrontendSuspendContinuation(last.parts);
 }
 
 /**
- * Mastra may emit `step-start` for the next agent step while ending the stream.
- * The completed server tool then sits in a prior step, so last-step-only checks miss it.
+ * Whether the chat runtime may auto-send the next model turn.
+ *
+ * The ONLY client-driven continuation is a frontend-suspend tool whose result the
+ * client just produced (ask_user_question / read_open_page) — the server has no
+ * other way to learn that result, so a follow-up POST is required.
+ *
+ * Server-executed tools (subagent `task`, web_fetch, knowledge_search, table reads)
+ * run to completion *inside* the server agent loop and the model continues there in
+ * the same stream. A dropped connection is recovered by resumable GET resume, never
+ * by a client re-POST — re-POSTing starts a brand-new run, which restarts the turn
+ * from scratch and makes the model loop ("read table → dispatch → read table → …").
+ * So we never auto-continue for a server tool.
  */
-function messageNeedsServerToolContinuation(parts: unknown[]): boolean {
-  const toolIndex = findLastCompletedServerToolIndex(parts);
-  if (toolIndex < 0) return false;
-  return !hasAssistantReplyAfter(parts, toolIndex);
-}
-
-/**
- * Stream ended after a provider-executed tool call but before output arrived.
- * Resume the agent loop so the server can finish the tool and summarize.
- */
-function messageNeedsServerToolResume(parts: unknown[]): boolean {
-  for (let i = parts.length - 1; i >= 0; i -= 1) {
-    const part = parts[i];
-    if (!part || typeof part !== 'object') continue;
-    const type = (part as { type?: string }).type;
-    if (type === 'step-start') continue;
-    if (!isToolUIPart(part as never)) return false;
-    if (getFrontendSuspendToolName(part as ToolPart)) return false;
-    const p = part as ToolPart & { providerExecuted?: boolean };
-    if (p.providerExecuted && p.state === 'input-available') {
-      return !hasAssistantReplyAfter(parts, i);
-    }
-    return false;
-  }
-  return false;
-}
-
-/** Whether the chat runtime may auto-send the next model turn. */
 export function shouldAutoSendChat({
   messages,
-  status,
 }: {
   messages: UIMessage[];
-  /** When streaming/submitted, defer server-tool continuation until the active run settles. */
+  /** Accepted for call-site compatibility; no longer affects the decision. */
   status?: string;
 }): boolean {
   const last = messages.at(-1);
@@ -226,21 +250,15 @@ export function shouldAutoSendChat({
       return false;
     }
 
-    const needsFrontendSuspend = messageNeedsFrontendSuspendContinuation(last.parts);
-    const needsServerTool =
-      messageNeedsServerToolContinuation(last.parts) ||
-      messageNeedsServerToolResume(last.parts);
+    if (assistantDispatchedBackgroundWorkers(last)) {
+      return false;
+    }
 
-    if (needsFrontendSuspend || needsServerTool) {
-      if (
-        needsServerTool &&
-        (status === 'streaming' || status === 'submitted')
-      ) {
-        return false;
-      }
+    if (messageNeedsFrontendSuspendContinuation(last.parts)) {
       return true;
     }
   }
+
   return lastAssistantMessageIsCompleteWithToolCalls({ messages });
 }
 

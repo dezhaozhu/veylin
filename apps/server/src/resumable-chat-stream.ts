@@ -201,8 +201,9 @@ export async function stopChatStream(
   const { context: ctx, store: resumableStore } = requireContext();
   try {
     const status = await ctx.status(streamId);
+    // Finalize as done so resume readers close cleanly (error finalize throws and can crash the process).
     if (status === 'streaming') {
-      await resumableStore.finalize(streamId, 'error', 'stopped by user');
+      await resumableStore.finalize(streamId, 'done');
     }
   } catch {
     /* stream may already be gone */
@@ -243,6 +244,10 @@ function readableFromStore(
           await iterator?.return?.();
         } catch {
           /* ignore */
+        }
+        if (err instanceof Error && err.message === 'stopped by user') {
+          controller.close();
+          return;
         }
         controller.error(err);
       }

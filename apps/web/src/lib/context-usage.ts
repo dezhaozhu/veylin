@@ -350,9 +350,29 @@ export function computeContextUsageSnapshot(
 /** Stable primitive for useAuiState — returns estimated token count only. */
 export function measureContextTokenCount(
   messages: readonly unknown[],
-  composerText: string,
+  composerText = '',
 ): number {
   return tokenCountWithEstimation(messages, composerText);
+}
+
+/**
+ * Cheap signature for memoizing {@link measureContextTokenCount} at the React
+ * layer. The full count re-scans and JSON.stringifies the transcript, which can
+ * block the main thread on long conversations if run on every streamed token.
+ * The context ring is an estimate, so recomputing only when the signature
+ * changes (message added/removed, last-message part count, composer length) is
+ * an acceptable trade-off.
+ */
+export function contextUsageSignature(
+  messages: readonly unknown[],
+  composerText = '',
+): string {
+  const last = messages[messages.length - 1] as
+    | { id?: string; parts?: unknown[] }
+    | undefined;
+  const lastId = last?.id ?? '';
+  const lastPartsLen = Array.isArray(last?.parts) ? last.parts.length : 0;
+  return `${messages.length}:${lastId}:${lastPartsLen}:${composerText.length}`;
 }
 
 export function formatTokenCount(n: number): string {

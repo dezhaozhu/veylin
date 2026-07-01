@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { languageLabel, resolveAppLanguage, setAppLanguage, SUPPORTED_LANGUAGES } from '@/i18n';
+import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 import { cn } from '@/lib/utils';
+import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 
 export function LanguageSettingRow() {
   const { t, i18n } = useTranslation();
@@ -17,6 +19,8 @@ export function LanguageSettingRow() {
   const currentLabel = languageLabel(currentLang);
 
   const close = useCallback(() => setOpen(false), []);
+
+  useOverlayDismiss(close);
 
   const updateMenuPos = useCallback(() => {
     const el = btnRef.current;
@@ -43,24 +47,13 @@ export function LanguageSettingRow() {
     };
   }, [open, updateMenuPos]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, close]);
-
   const menu =
     open && menuPos
       ? createPortal(
           <>
-            <button
-              type="button"
-              className="fixed inset-0 z-[200] cursor-default bg-transparent"
-              aria-label={t('settings.language.closeMenu')}
-              onClick={close}
+            <DismissibleBackdrop
+              ariaLabel={t('settings.language.closeMenu')}
+              onClose={close}
             />
             <div
               className="bg-popover text-popover-foreground fixed z-[201] overflow-hidden rounded-lg border p-1 shadow-lg"

@@ -287,6 +287,96 @@ export function listTableRows(sheetId: string = DEFAULT_TABLE_SHEET): TableRowDa
   return sheet ? sheet.rows.map((r) => ({ ...r })) : [];
 }
 
+export function countTableRows(sheetId: string = DEFAULT_TABLE_SHEET): number {
+  const sheet = getSheet(resolveTableSheetId(sheetId));
+  return sheet?.rows.length ?? 0;
+}
+
+export const DEFAULT_TABLE_GET_LIMIT = 50;
+export const MAX_TABLE_GET_LIMIT = 200;
+
+/** Paginated row read for table_get — avoids multi‑MB tool payloads on large sheets. */
+export function listTableRowsPage(
+  sheetId: string,
+  offset = 0,
+  limit = DEFAULT_TABLE_GET_LIMIT,
+): { totalRows: number; rows: TableRowData[] } {
+  const sheet = getSheet(resolveTableSheetId(sheetId));
+  if (!sheet) return { totalRows: 0, rows: [] };
+  const totalRows = sheet.rows.length;
+  const safeOffset = Math.max(0, Math.min(offset, totalRows));
+  const safeLimit = Math.max(1, Math.min(limit, MAX_TABLE_GET_LIMIT));
+  return {
+    totalRows,
+    rows: sheet.rows.slice(safeOffset, safeOffset + safeLimit).map((r) => ({ ...r })),
+  };
+}
+
+export type TableSheetSnapshot = {
+  id: string;
+  name: string;
+  columns: Array<{ key: string; name: string }>;
+  rowCount: number;
+  sampleRows: TableRowData[];
+};
+
+/** Format live table snapshots for the agent system prompt (right-panel 表格). */
+export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string {
+  if (snapshots.length === 0) return '';
+
+  const lines: string[] = [
+    '# Table / spreadsheet data (live snapshot)',
+    'The workspace **表格** panel holds multi-sheet spreadsheet data. This is separate from the knowledge base (uploaded documents).',
+    'Before saying there is no data, check this block and call `table_list_sheets` / `table_get` when row counts are non-zero.',
+  ];
+
+  for (const sheet of snapshots) {
+    const colLabel = sheet.columns
+      .map((c) => c.name || c.key)
+      .filter(Boolean)
+      .join(', ');
+    lines.push(`## Sheet "${sheet.name}" (id: \`${sheet.id}\`)`);
+    lines.push(
+      `- ${sheet.rowCount} row(s), ${sheet.columns.length} column(s)${colLabel ? `: ${colLabel}` : ''}`,
+    );
+    if (sheet.sampleRows.length > 0) {
+      lines.push('- Sample rows:');
+      for (const row of sheet.sampleRows) {
+        const keys =
+          sheet.columns.length > 0
+            ? sheet.columns.map((c) => c.key)
+            : Object.keys(row).filter((k) => k !== 'row_id');
+        const pairs = keys
+          .slice(0, 5)
+          .map((k) => `${k}=${String(row[k] ?? '').slice(0, 48)}`)
+          .join(', ');
+        lines.push(`  - \`${row.row_id}\`: ${pairs}`);
+      }
+    }
+    lines.push(
+      `- Use \`table_get\` with \`{ "sheet": "${sheet.id}", "offset": 0, "limit": 50 }\` (paginate; ${sheet.rowCount} rows total).`,
+    );
+  }
+
+  return lines.join('\n');
+}
+
+/** Inject current table state so the model does not miss right-panel spreadsheet data. */
+export function buildTableContextBlock(): string {
+  const snapshots = listTableSheets().map((meta) => {
+    const columns = listTableColumns(meta.id);
+    const rows = listTableRows(meta.id);
+    return {
+      id: meta.id,
+      name: meta.name,
+      columns: columns.map((c) => ({ key: c.key, name: c.name })),
+      rowCount: rows.length,
+      sampleRows: rows.slice(0, 3),
+    };
+  });
+  return formatTableContextBlock(snapshots);
+}
+
 export function getTableRow(rowKey: string, sheetId: string = DEFAULT_TABLE_SHEET) {
   const sheet = getSheet(resolveTableSheetId(sheetId));
   const found = sheet?.rows.find((r) => tableRowKey(r) === rowKey);
@@ -339,15 +429,38 @@ export function createTableSheet(name: string): TableSheetMeta | null {
 
 export async function deleteTableSheet(sheetId: string): Promise<boolean> {
   const sheet = sheetStore.get(sheetId);
-  if (!sheet || sheet.meta.builtin || sheetId === DEFAULT_TABLE_SHEET) return false;
+  if (!sheet) return false;
+  const snapshot: SheetState = {
+    meta: { ...sheet.meta },
+    columns: sheet.columns.map((c) => ({ ...c })),
+    rows: sheet.rows.map((r) => ({ ...r })),
+  };
   sheetStore.delete(sheetId);
   try {
     await deleteTableSheetDb(sheetId);
+    await ensureAtLeastOneSheet();
     return true;
   } catch (e) {
     console.error('[table] delete sheet failed:', e);
+    sheetStore.set(sheetId, snapshot);
+    if (sheetStore.size === 0) {
+      try {
+        await ensureAtLeastOneSheet();
+      } catch (ensureError) {
+        console.error('[table] ensure default sheet after rollback failed:', ensureError);
+      }
+    }
     return false;
   }
+}
+
+/** After deleting the last sheet, seed a fresh default Sheet 1. */
+async function ensureAtLeastOneSheet(): Promise<void> {
+  if (sheetStore.size > 0) return;
+  const initial = buildInitialStore();
+  const main = initial.get(DEFAULT_TABLE_SHEET)!;
+  sheetStore.set(DEFAULT_TABLE_SHEET, main);
+  await persistSheet(DEFAULT_TABLE_SHEET);
 }
 
 export function addTableRow(sheetId: string): TableRowData | null {

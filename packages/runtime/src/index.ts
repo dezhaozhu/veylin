@@ -9,6 +9,7 @@ export {
   type AgentContext,
 } from './registry';
 export { buildAgent, toolNeedsApproval, type BuildAgentOptions } from './agents';
+export { ContextCompression, estimateTokens } from './processors/contextCompression';
 export {
   SUBAGENT_PRESETS,
   SUBAGENT_TYPES,
@@ -43,14 +44,30 @@ export {
   type RuntimeModelOverrides,
   type ModelCatalogEntry,
 } from './models';
-export { ContextCompression } from './processors/contextCompression';
-export { buildSummarizer, COMPACTION_SYSTEM_PROMPT } from './summarizer';
+export { ToolResultMicrocompact, MICROCOMPACT_TOOL_WHITELIST, resetMicrocompactState } from './processors/toolResultMicrocompact';
+export { buildInputProcessors } from './input-processors';
+export {
+  getAutoCompactThreshold,
+  getContextWindowSize,
+  resetCompactCircuitBreaker,
+  recordCompactSuccess,
+  recordCompactFailure,
+} from './context-window';
+export { buildSummarizer, COMPACTION_SYSTEM_PROMPT, formatCompactSummary } from './summarizer';
 export { selectTools } from './processors/toolSearch';
 export {
   BASE_SYSTEM_PROMPT,
   composeInstructions,
   buildLocaleBlock,
 } from './prompts/systemPrompt';
+export {
+  clearSystemPromptSections,
+  resolveSystemPromptSections,
+  systemPromptSection,
+  uncachedSystemPromptSection,
+} from './prompts/systemPromptSections';
+export { getSummarizeToolResultsSection, SUMMARIZE_TOOL_RESULTS_SECTION } from './prompts/toolResultsHint';
+export { COMMUNICATION_STYLE_SECTION, buildCommunicationStyleSection } from './prompts/communicationStyle';
 export { buildAgentOrchestrationBlock } from './prompts/agentOrchestration';
 export { buildCoordinatorOrchestrationBlock, isCoordinatorMode } from './prompts/coordinatorMode';
 export {

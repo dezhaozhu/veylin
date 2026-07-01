@@ -18,6 +18,10 @@ export interface TaskNotification {
 
 const TAG = 'task-notification';
 
+export function isTaskNotificationText(text: string): boolean {
+  return parseTaskNotification(text.trim()) != null;
+}
+
 export function formatTaskNotification(n: TaskNotification): string {
   const lines = [
     `<${TAG}>`,

@@ -24,7 +24,7 @@ export const defaultPolicy: PolicyConfig = {
 
 /** Plan Mode: read/plan only; mutations and background tasks denied. */
 export const planModePolicy: PolicyConfig = {
-  byRisk: { safe: 'allow', caution: 'approve', dangerous: 'deny' },
+  byRisk: { safe: 'allow', caution: 'deny', dangerous: 'deny' },
   toolOverrides: {
     ask_user_question: 'allow',
     todo_write: 'allow',
@@ -32,6 +32,8 @@ export const planModePolicy: PolicyConfig = {
     enter_plan_mode: 'allow',
     exit_plan_mode: 'allow',
     skill: 'allow',
+    web_fetch: 'allow',
+    read_open_page: 'allow',
   },
   allowedPathPrefixes: [],
 };

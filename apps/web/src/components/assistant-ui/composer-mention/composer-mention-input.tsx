@@ -10,6 +10,7 @@ import {
 } from '@/components/assistant-ui/composer-mention/use-composer-mention';
 import { usePendingSkill } from '@/lib/use-composer-settings';
 import { isImeComposing } from '@/lib/composer-submit-keys';
+import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 
 type ComposerMentionInputProps = React.ComponentProps<typeof ComposerPrimitive.Input>;
 
@@ -39,6 +40,8 @@ export const ComposerMentionInput: FC<ComposerMentionInputProps> = ({
     setMentionTrigger(null);
     setSlashTrigger(null);
   }, []);
+
+  useOverlayDismiss(closeMenus);
 
   const syncTriggers = useCallback(
     (value: string, cursor: number) => {

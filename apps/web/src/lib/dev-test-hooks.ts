@@ -4,6 +4,7 @@ import {
   type AskQuestion,
   type AskUserResult,
 } from '@/lib/ask-user-question-session';
+import { recoverDesktopInteraction } from '@/lib/use-desktop-interaction-guard';
 
 let currentThreadId: string | undefined;
 let lastAskResult: AskUserResult | null = null;
@@ -22,7 +23,10 @@ export function installDevTestHooks(): void {
       peekAskResult: () => AskUserResult | null;
       clearAskResult: () => void;
     };
+    __veylinRecoverInteraction?: () => void;
   };
+
+  win.__veylinRecoverInteraction = recoverDesktopInteraction;
 
   win.__veylinTest = {
     hasThread: () => Boolean(currentThreadId),

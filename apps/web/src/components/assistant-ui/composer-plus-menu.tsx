@@ -8,12 +8,13 @@ import {
   PlugIcon,
   PlusIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type FC } from 'react';
+import { useCallback, useState, type FC } from 'react';
 import { useAui, useAuiState } from '@assistant-ui/store';
 import { applyCompactToThread } from '@/lib/compact-context';
 import { getChatSettings } from '@/lib/chat-settings';
 import { commitPendingSkillAtEnd } from '@/lib/composer-pending-skill';
 import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
+import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 import {
   ComposerMenuFlyoutItem,
   ComposerMenuPanel,
@@ -30,6 +31,7 @@ import {
   usePendingSkill,
   usePlanMode,
 } from '@/lib/use-composer-settings';
+import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 
 type Submenu = 'skills' | 'mcp' | null;
 
@@ -56,6 +58,8 @@ export const ComposerPlusMenu: FC = () => {
     setSearchQuery('');
     setMcpSearch('');
   }, []);
+
+  useOverlayDismiss(close);
 
   const openImagePicker = useCallback(() => {
     if (!addAttachment) return;
@@ -94,15 +98,6 @@ export const ComposerPlusMenu: FC = () => {
     input.click();
     close();
   }, [addAttachment, close]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, close]);
 
   const selectSkill = (name: string) => {
     const composer = aui.composer();
@@ -152,12 +147,7 @@ export const ComposerPlusMenu: FC = () => {
 
       {open && (
         <>
-          <button
-            type="button"
-            className="fixed inset-0 z-40"
-            aria-label="Close menu"
-            onClick={close}
-          />
+          <DismissibleBackdrop ariaLabel="Close menu" onClose={close} className="fixed inset-0 z-40" />
           <div
             className="absolute bottom-full left-0 z-50 mb-2"
             onClick={(e) => e.stopPropagation()}

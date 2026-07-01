@@ -2,6 +2,9 @@ import type { Memory } from '@mastra/memory';
 import {
   ensureMastraThread,
   mastraMessagesToUi,
+  mastraMessagesToAgentContext,
+  preserveServerTaskNotifications,
+  mergeAgentContextMessages,
   replaceThreadMessages,
   type ThreadIdentity,
   type UiMessage,
@@ -99,9 +102,11 @@ export async function syncThreadMessagesFromClient(opts: {
       return false;
     }
 
-    await replaceThreadMessages(opts.memory, opts.identity, opts.clientMessages);
+    const storedUi = mastraMessagesToAgentContext(stored);
+    const merged = preserveServerTaskNotifications(opts.clientMessages, storedUi);
+    await replaceThreadMessages(opts.memory, opts.identity, merged);
 
-    const todos = todosFromMessageHistory(opts.clientMessages);
+    const todos = todosFromMessageHistory(merged);
     if (todos != null) {
       await setThreadTodosDb(opts.identity.threadId, todos);
     }
@@ -110,4 +115,4 @@ export async function syncThreadMessagesFromClient(opts: {
   });
 }
 
-export { mastraMessagesToUi };
+export { mastraMessagesToUi, mastraMessagesToAgentContext, mergeAgentContextMessages };

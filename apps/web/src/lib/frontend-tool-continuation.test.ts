@@ -4,6 +4,7 @@ import type { UIMessage } from 'ai';
 import {
   createFrontendToolContinuationController,
   markToolContinuationAttempt,
+  MAX_CONTINUE_FAILURES,
   requestFrontendToolContinuation,
   resetFrontendToolContinuationController,
   resetToolContinuationAttemptTracker,
@@ -210,7 +211,108 @@ describe('frontend-tool-continuation', () => {
     assert.equal(sendCount, 0);
   });
 
-  it('ready status continues after provider-executed web_fetch', async () => {
+  it('does NOT client-continue after a subagent dispatch (synchronous Task model)', async () => {
+    // Subagents now run synchronously inside the server `task` tool call and the
+    // parent continues natively; the client must not fire a synthesis re-POST.
+    let sendCount = 0;
+    const controller = createFrontendToolContinuationController();
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'text',
+            text: '子智能体结果到达后我会立即整合汇报',
+          },
+          {
+            type: 'tool-task',
+            toolCallId: 'task-1',
+            state: 'output-available',
+            output: { background: true, task_id: 'bg-1' },
+          },
+        ],
+      },
+    ] as UIMessage[];
+
+    requestFrontendToolContinuation(controller, () => {
+      void tryContinueFrontendToolChat({
+        controller,
+        getStatus: () => 'ready',
+        getMessages: () => messages,
+        stopStream: () => undefined,
+        sendMessage: async () => {
+          sendCount += 1;
+        },
+      });
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(sendCount, 0);
+  });
+
+  it('does NOT client-continue for a pure-text "please wait" turn', async () => {
+    let sendCount = 0;
+    const controller = createFrontendToolContinuationController();
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [{ type: 'text', text: '正在等待智能体完成。' }],
+      },
+    ] as UIMessage[];
+
+    requestFrontendToolContinuation(controller, () => {
+      void tryContinueFrontendToolChat({
+        controller,
+        getStatus: () => 'streaming',
+        getMessages: () => messages,
+        stopStream: () => undefined,
+        ensureStopped: () => undefined,
+        sendMessage: async () => {
+          sendCount += 1;
+        },
+      });
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(sendCount, 0);
+  });
+
+  it('gives up after MAX_CONTINUE_FAILURES so retries cannot busy-loop', async () => {
+    let sendCount = 0;
+    const controller = createFrontendToolContinuationController();
+    const messages = answeredFirstRoundAskMessage();
+
+    const args = {
+      controller,
+      getStatus: () => 'ready' as const,
+      getMessages: () => messages,
+      stopStream: () => undefined,
+      sendMessage: async () => {
+        sendCount += 1;
+        throw new Error('send failed');
+      },
+      lastError: { current: null as unknown },
+    };
+
+    requestFrontendToolContinuation(controller, () => {
+      void tryContinueFrontendToolChat(args);
+    });
+
+    // Poll until the failure cap is hit (exponential backoff totals ~3.75s).
+    const deadline = Date.now() + 8000;
+    while (
+      controller.failureAttempts < MAX_CONTINUE_FAILURES &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(sendCount, MAX_CONTINUE_FAILURES);
+    assert.equal(controller.pending, false);
+  });
+
+  it('does NOT client-continue after a provider-executed web_fetch (server resumes natively)', async () => {
     let sendCount = 0;
     const controller = createFrontendToolContinuationController();
     const messages = [
@@ -241,7 +343,8 @@ describe('frontend-tool-continuation', () => {
       });
     });
 
-    assert.equal(sendCount, 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(sendCount, 0);
   });
 
   it('resetFrontendToolContinuationController clears pending continuation', () => {

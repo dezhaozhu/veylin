@@ -44,6 +44,8 @@ type ChatBody = {
   forceReplace?: boolean;
   /** Browser page attached via @ mention (desktop web view). */
   attachedBrowser?: { tabId: string; url: string; title: string };
+  /** Active right-panel tab (表格 / 知识库 / 网页) for workspace-aware prompts. */
+  workspacePanel?: WorkspacePanelContext;
   /** UI locale from react-i18next (en | zh-CN). */
   locale?: string;
 };
@@ -314,4 +316,61 @@ export function buildAttachedBrowserBlock(
     'Use `read_open_page` to read the fully rendered page (including logged-in intranet content). ' +
     'Do not use `web_fetch` for this page when session cookies matter.'
   );
+}
+
+export type WorkspacePanelKind = 'table' | 'rag' | 'web' | 'workflow';
+
+export type WorkspacePanelContext = {
+  activePanel?: WorkspacePanelKind;
+  webUrl?: string;
+  webTitle?: string;
+};
+
+/** Hint when the user is focused on a specific right-panel tab. */
+export function buildWorkspacePanelHintBlock(
+  ctx?: WorkspacePanelContext,
+): string {
+  if (!ctx?.activePanel) return '';
+
+  switch (ctx.activePanel) {
+    case 'table':
+      return (
+        '## User focus (right panel)\n' +
+        'The user is viewing the **表格 (spreadsheet)** panel. ' +
+        'Spreadsheet rows live in `table_*` tools — not in the knowledge base. ' +
+        'Call `table_list_sheets` and `table_get` before claiming there is no data.'
+      );
+    case 'rag':
+      return (
+        '## User focus (right panel)\n' +
+        'The user is viewing the **知识库 (knowledge base)** panel. ' +
+        'Use `knowledge_search` for uploaded documents; cite excerpts as [1], [2]. ' +
+        'Table/spreadsheet data is separate — use `table_*` tools when the question is about grid rows.'
+      );
+    case 'web': {
+      const url = ctx.webUrl?.trim();
+      const title = ctx.webTitle?.trim() || url;
+      if (url) {
+        return (
+          '## User focus (right panel)\n' +
+          `The user is viewing the **网页 (web)** panel: ${title} (${url}).\n` +
+          'Prefer `read_open_page` on desktop for the docked browser (session cookies). ' +
+          'Use `web_fetch` only for public URLs when cookies are not required.'
+        );
+      }
+      return (
+        '## User focus (right panel)\n' +
+        'The user is viewing the **网页 (web)** panel. ' +
+        'Use `read_open_page` after they open a URL in the docked browser.'
+      );
+    }
+    case 'workflow':
+      return (
+        '## User focus (right panel)\n' +
+        'The user is viewing the **工作流 (workflow)** panel. ' +
+        'Use workflow tools when they ask to run or edit automations.'
+      );
+    default:
+      return '';
+  }
 }

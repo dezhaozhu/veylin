@@ -4,6 +4,63 @@ import { toolKeywords, type BuiltinToolId } from './registry';
 
 type McpToolMeta = { id: string; description: string };
 
+/** External Mastra toolsets (table, knowledge, …) unlocked via tool_search discovery. */
+const EXTERNAL_TOOLSET_HINTS: Array<{ id: string; keywords: string[] }> = [
+  {
+    id: 'table',
+    keywords: [
+      'table',
+      'sheet',
+      'spreadsheet',
+      'grid',
+      'row',
+      'column',
+      'cell',
+      '表格',
+      '数据',
+      '分析',
+      'dataset',
+      'excel',
+      'csv',
+    ],
+  },
+  {
+    id: 'knowledge',
+    keywords: [
+      'knowledge',
+      'document',
+      'rag',
+      'upload',
+      'citation',
+      '知识库',
+      '文档',
+      '检索',
+      'kb',
+    ],
+  },
+  {
+    id: 'agent',
+    keywords: [
+      'subagent',
+      'task',
+      'delegate',
+      'multi',
+      'agent',
+      '多智能体',
+      '子任务',
+      '并行',
+    ],
+  },
+  {
+    id: 'workflow',
+    keywords: ['workflow', 'automation', 'cron', '工作流', '自动化'],
+  },
+  {
+    id: 'config',
+    keywords: ['skill', 'mcp', 'webhook', 'settings', 'workspace', '配置'],
+  },
+];
+
 function scoreQuery(query: string, keywords: string[]): number {
   const q = query.toLowerCase();
   return keywords.reduce((acc, kw) => (q.includes(kw) ? acc + 1 : acc), 0);
@@ -38,6 +95,11 @@ export const toolSearch = createTool({
         id,
         score: scoreQuery(q, toolKeywords[id] ?? []),
         description: id.replace(/_/g, ' '),
+      })),
+      ...EXTERNAL_TOOLSET_HINTS.map((entry) => ({
+        id: entry.id,
+        score: scoreQuery(q, entry.keywords),
+        description: `${entry.id} toolset`,
       })),
       ...mcpTools.map((t) => ({
         id: t.id,

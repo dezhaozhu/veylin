@@ -46,7 +46,7 @@
     "build": "npm run build --workspaces --if-present",
     "build:desktop": "npm run -w @veylin/desktop build",
     "typecheck": "tsc -b && npm run -w @veylin/web typecheck",
-    "test": "npm run -w @veylin/shared test && npm run -w @veylin/server test && npm run -w @veylin/web test"
+    "test": "npm run -w @veylin/shared test && npm run -w @veylin/db test && npm run -w @veylin/tools test && npm run -w @veylin/policy test && npm run -w @veylin/runtime test && npm run -w @veylin/server test && npm run -w @veylin/web test"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

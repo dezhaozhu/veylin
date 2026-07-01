@@ -1,7 +1,10 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { getTaskRow, listTasksByParentThread, updateTaskRow } from '@veylin/db';
+import type { Memory } from '@mastra/memory';
 import { SUBAGENT_QUEUE, type QueuePort } from './queue';
+import { writeTaskNotificationToParent } from './agent-task-runner';
+import { publishTaskEvent } from './task-events';
 
 interface TaskCtx {
   requestContext?: { get(key: string): unknown; set?(key: string, value: unknown): void };
@@ -12,7 +15,10 @@ function ctxValue(ctx: TaskCtx | undefined, key: string): string | undefined {
 }
 
 /** task_list / task_get / task_stop — background task management (no task_create; use `task`). */
-export function buildTaskManagementTools(boss: QueuePort) {
+export function buildTaskManagementTools(
+  boss: QueuePort,
+  opts?: { memory?: Memory },
+) {
   const taskList = createTool({
     id: 'task_list',
     description: 'List background subagent tasks spawned from the current conversation.',
@@ -99,8 +105,26 @@ export function buildTaskManagementTools(boss: QueuePort) {
         return { ok: false, status: row.status };
       }
       await updateTaskRow(input.task_id, { status: 'cancelled' });
+      if (row.parentThreadId) {
+        publishTaskEvent({ kind: 'task.updated', threadId: row.parentThreadId, taskId: row.id });
+      }
       if (row.jobId) await boss.cancel(SUBAGENT_QUEUE, row.jobId).catch(() => undefined);
       ctx?.requestContext?.set?.(`cancelledTask:${input.task_id}`, true);
+      if (opts?.memory && row.parentThreadId) {
+        const userId = ctxValue(ctx, 'userId') ?? row.tenantId;
+        await writeTaskNotificationToParent({
+          memory: opts.memory,
+          parentThreadId: row.parentThreadId,
+          parentResource: userId,
+          notification: {
+            taskId: row.id,
+            status: 'killed',
+            summary: `Agent "${row.label ?? row.agentId}" cancelled`,
+            subagentType: row.subagentType ?? undefined,
+            agentId: row.agentId,
+          },
+        }).catch(() => undefined);
+      }
       return { ok: true, status: 'cancelled' };
     },
   });

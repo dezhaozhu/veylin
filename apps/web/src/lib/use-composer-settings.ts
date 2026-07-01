@@ -1,16 +1,72 @@
 import { useAuiState } from '@assistant-ui/react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
   getChatSettings,
   onChatSettingsChange,
   setChatSettings,
   type AttachedBrowserTab,
 } from '@/lib/chat-settings';
+import {
+  fetchThreadPlanMode,
+  inferPlanModeFromThreadMessages,
+  readCachedThreadPlanMode,
+  writeCachedThreadPlanMode,
+} from '@/lib/plan-mode-sync';
+import { useState } from 'react';
 
-export interface AgentContextResponse {
-  agentId: string;
-  skills: { name: string; description: string }[];
-  mcpServers: string[];
+function applyPlanModeForThread(threadId: string | undefined, on: boolean): void {
+  if (threadId) writeCachedThreadPlanMode(threadId, on);
+  if (getChatSettings().planMode !== on) {
+    setChatSettings({ planMode: on });
+  }
+}
+
+/** Mount once per thread view — keeps composer plan UI in sync with agent tool calls. */
+export function usePlanModeBridge(): void {
+  const threadId = useAuiState(
+    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+  );
+  const messages = useAuiState((s) => s.thread.messages);
+  const isRunning = useAuiState((s) => s.thread.isRunning);
+  const wasRunningRef = useRef(false);
+
+  useEffect(() => {
+    if (!threadId) return;
+    const cached = readCachedThreadPlanMode(threadId);
+    if (cached != null) {
+      applyPlanModeForThread(threadId, cached);
+    }
+    void fetchThreadPlanMode(threadId).then((on) => {
+      applyPlanModeForThread(threadId, on);
+    });
+  }, [threadId]);
+
+  useEffect(() => {
+    if (!threadId) return;
+    const inferred = inferPlanModeFromThreadMessages(messages);
+    if (inferred == null) return;
+    applyPlanModeForThread(threadId, inferred);
+  }, [threadId, messages]);
+
+  useEffect(() => {
+    if (!threadId) return;
+    const wasRunning = wasRunningRef.current;
+    wasRunningRef.current = isRunning;
+
+    if (wasRunning && !isRunning) {
+      void fetchThreadPlanMode(threadId).then((on) => {
+        applyPlanModeForThread(threadId, on);
+      });
+    }
+
+    if (!isRunning) return;
+    const timer = window.setInterval(() => {
+      void fetchThreadPlanMode(threadId).then((on) => {
+        applyPlanModeForThread(threadId, on);
+      });
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [threadId, isRunning]);
 }
 
 export function useChatSettingsState() {
@@ -25,23 +81,11 @@ export function usePlanMode() {
   );
   const planMode = useChatSettingsState().planMode;
 
-  useEffect(() => {
-    if (!threadId) return;
-    fetch(`/api/plan-mode?threadId=${encodeURIComponent(threadId)}`)
-      .then((r) => r.json())
-      .then((d: { planMode?: boolean }) => {
-        if (d.planMode != null && d.planMode !== getChatSettings().planMode) {
-          setChatSettings({ planMode: d.planMode });
-        }
-      })
-      .catch(() => undefined);
-  }, [threadId]);
-
   const setPlanMode = useCallback(
     (on: boolean) => {
-      setChatSettings({ planMode: on });
+      applyPlanModeForThread(threadId, on);
       if (threadId) {
-        fetch('/api/plan-mode', {
+        void fetch('/api/plan-mode', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ threadId, planMode: on }),
@@ -54,6 +98,12 @@ export function usePlanMode() {
   const togglePlanMode = useCallback(() => setPlanMode(!planMode), [planMode, setPlanMode]);
 
   return { planMode, setPlanMode, togglePlanMode };
+}
+
+export interface AgentContextResponse {
+  agentId: string;
+  skills: { name: string; description: string }[];
+  mcpServers: string[];
 }
 
 export function usePendingSkill() {

@@ -25,9 +25,11 @@ You are a **coordinator**. Your job is to help the user achieve their goal by de
 
 ## Delegation rules
 - Do not use workers to trivially echo file contents — give higher-level tasks.
-- Launch independent work in parallel with \`run_in_background: true\` in one turn when possible.
-- After launching workers, tell the user what you started — never fabricate results before \`<task-notification>\` arrives.
+- Each \`task\` call **waits for its worker and returns the result inline**. To run independent work in parallel, issue **multiple \`task\` calls in a single step** — they execute concurrently and you continue once all return.
+- Do not fabricate results before a worker returns.
+- After all workers in a batch return, deliver the combined synthesis directly — the results are already in your context as tool results.
+- **Synthesis output**: one integrated report for the user. Do not re-print full worker result bodies or duplicate the same analysis sections.
 - Continue workers with loaded context via \`task_continue\` when follow-up fits the same thread.
-- Fork (omit subagent_type) for research/implementation that benefits from your conversation context — always background.${customLine}
+- Fork (omit subagent_type) for research/implementation that benefits from your conversation context.${customLine}
 </system-reminder>`;
 }

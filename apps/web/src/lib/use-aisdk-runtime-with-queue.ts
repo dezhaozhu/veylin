@@ -27,23 +27,21 @@ import {
   pickExternalStoreSharedOptions,
 } from "@assistant-ui/core";
 import type { ReadonlyJSONObject } from "assistant-stream/utils";
-import { toCreateMessage } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/toCreateMessage";
-import { vercelAttachmentAdapter } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/vercelAttachmentAdapter";
-import { AISDKMessageConverter } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/convertMessage";
-import { wrapModelContentEnvelope } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/modelContentEnvelope";
 import {
-  type AISDKStorageFormat,
+  toCreateMessage,
+  vercelAttachmentAdapter,
+  AISDKMessageConverter,
+  wrapModelContentEnvelope,
   aiSDKV6FormatAdapter,
-} from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/adapters/aiSDKFormatAdapter";
-import {
   sliceMessagesUntil,
-} from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/utils/sliceMessagesUntil";
+  useStreamingTiming,
+} from '@/vendor/assistant-ui';
+import type { AISDKStorageFormat } from '@/vendor/assistant-ui';
 import { sliceMessagesForLinearEdit } from "./slice-messages-for-linear-edit";
 import {
   useExternalHistory,
   toExportedMessageRepository,
 } from './use-external-history';
-import { useStreamingTiming } from "../../../../node_modules/@assistant-ui/react-ai-sdk/src/ui/use-chat/useStreamingTiming";
 import { stampMessageWithSentAt } from "./message-timestamp";
 import { stampOutgoingUserMessage } from "./pending-skill-message";
 import { createMessageQueueWithDrafts } from "./create-message-queue-with-drafts";
@@ -61,12 +59,12 @@ import {
   pendingFrontendToolCallId,
   registerFrontendToolStop,
   registerStreamStop,
-  shouldAutoSendChat,
   trimAssistantAfterAwaitingTool,
 } from "./frontend-suspend-tools";
 import {
   createFrontendToolContinuationController,
   createToolContinuationAttemptTracker,
+  canAutoContinueChat,
   markToolContinuationAttempt,
   requestFrontendToolContinuation,
   resetFrontendToolContinuationController,
@@ -75,13 +73,33 @@ import {
   tryContinueFrontendToolChat,
   unmarkToolContinuationAttempt,
 } from "./frontend-tool-continuation";
+import {
+  collectCoordinatorDispatchTaskIds,
+  mergePanelBackgroundTasks,
+  stripTaskNotificationUserMessages,
+  type BackgroundTaskRow,
+} from "./background-task-continuation";
+import {
+  getBackgroundTasksSnapshot,
+  resetBackgroundTasksSnapshot,
+  setBackgroundTasksSnapshot,
+} from "./background-tasks-store";
+import {
+  fetchBackgroundTaskSnapshot,
+  subscribeBackgroundTaskEvents,
+  type BackgroundTasksApiSnapshot,
+} from "./background-task-events";
 import { registerAskUserResultSubmitter } from "./ask-user-submit-bridge";
 import {
   isThreadMessageInput,
   resolveThreadMessagesToUi,
 } from "./resolve-branch-ui-messages";
 import { isPersistableThreadId, syncThreadMessagesToServer } from "./sync-thread-messages";
-import { dedupeAssistantMessageParts, assistantPartsSemanticallyEqual } from "@veylin/shared";
+import { normalizeAssistantMessageParts, assistantPartsSemanticallyEqual } from "@veylin/shared";
+import {
+  CHAT_STREAM_RECOVERY_EVENT,
+  isStuckAwaitingToolContinuation,
+} from "./chat-stream-recovery";
 
 export type CustomToCreateMessageFunction = <
   UI_MESSAGE extends UIMessage = UIMessage,
@@ -89,19 +107,19 @@ export type CustomToCreateMessageFunction = <
   message: AppendMessage,
 ) => CreateUIMessage<UI_MESSAGE>;
 
-function dedupeLastAssistantMessage<UI_MESSAGE extends UIMessage>(
+function normalizeLastAssistantMessage<UI_MESSAGE extends UIMessage>(
   messages: readonly UI_MESSAGE[],
 ): UI_MESSAGE[] | null {
   const last = messages.at(-1);
   if (last?.role !== "assistant" || !last.parts?.length) return null;
 
-  const deduped = dedupeAssistantMessageParts(last.parts);
-  if (deduped === last.parts) return null;
-  if (assistantPartsSemanticallyEqual(deduped, last.parts)) return null;
+  const normalized = normalizeAssistantMessageParts(last.parts, { mode: 'persist' });
+  if (normalized === last.parts) return null;
+  if (assistantPartsSemanticallyEqual(normalized, last.parts)) return null;
 
   return [
     ...messages.slice(0, -1),
-    { ...last, parts: deduped as UI_MESSAGE["parts"] },
+    { ...last, parts: normalized as UI_MESSAGE["parts"] },
   ];
 }
 
@@ -187,6 +205,8 @@ export type AISDKRuntimeAdapter = ExternalStoreSharedOptions & {
   joinStrategy?: JoinStrategy | undefined;
   /** Server thread id for stop/sync before rewind. */
   getThreadId?: (() => string | undefined) | undefined;
+  /** Ensures the remote thread exists on the server before the first chat POST. */
+  ensureThreadInitialized?: (() => Promise<string | undefined>) | undefined;
 };
 
 export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessage>(
@@ -200,6 +220,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     onResume,
     joinStrategy,
     getThreadId,
+    ensureThreadInitialized,
   } = adapter;
   const contextAdapters = useRuntimeAdapters();
   const [toolStatuses, setToolStatuses] = useState<
@@ -214,6 +235,25 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   const mcpAppMetadataCacheRef = useRef<Map<string, McpAppMetadata>>(new Map());
   const lastRunConfigRef = useRef<RunConfig | undefined>(undefined);
   const messageCacheRef = useRef(new Map<string, UI_MESSAGE>());
+  const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTaskRow[]>([]);
+  const backgroundTasksRef = useRef(backgroundTasks);
+  const backgroundDispatchTaskIdsRef = useRef<string[]>([]);
+  const historyLoadingRef = useRef(false);
+  /**
+   * Assistant message id that was just restored from persisted history (page load /
+   * refresh / thread switch). The effect-driven continuation must never auto-resume a
+   * persisted turn — only live tool completions (via applyToolResult) may continue.
+   */
+  const restoredHistoryHeadRef = useRef<string | null>(null);
+  const frontendContinuationRef = useRef(createFrontendToolContinuationController());
+  const refreshBackgroundTasksRef = useRef<(() => void) | null>(null);
+  backgroundTasksRef.current = backgroundTasks;
+
+  const resolvedThreadId = getThreadId?.() ?? chatHelpers.id;
+  const coordinatorDispatchFingerprint = useMemo(
+    () => collectCoordinatorDispatchTaskIds(chatHelpers.messages).join("\0"),
+    [chatHelpers.messages],
+  );
 
   const rememberUiMessages = (uiMessages: readonly UI_MESSAGE[]) => {
     for (const message of uiMessages) {
@@ -240,6 +280,10 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   const awaitingFrontendToolAnswer = isAwaitingFrontendToolAnswer(
     chatHelpers.messages,
   );
+  // Subagents now run synchronously inside the `task` tool call, so the parent
+  // chat stream stays open (status streaming/submitted) for the whole subagent
+  // run. `isRunning` therefore follows the native stream status; there is no
+  // client-driven "coordinator partial turn" or synthesis re-POST anymore.
   const isRunning =
     chatHelpers.status === "submitted" ||
     chatHelpers.status === "streaming" ||
@@ -266,7 +310,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         toolLastInputCache: toolLastInputCacheRef.current,
         mcpAppMetadataCache: mcpAppMetadataCacheRef.current,
         ...(optimisticMessageId && { optimisticMessageId }),
-        ...(chatHelpers.error && { error: chatHelpers.error.message }),
+        ...(isRunning && chatHelpers.error && { error: chatHelpers.error.message }),
       }),
       [toolStatuses, messageTiming, optimisticMessageId, chatHelpers.error],
     ),
@@ -290,9 +334,20 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     >,
     (messages) => {
       rememberUiMessages(messages);
+      const last = messages.at(-1);
+      restoredHistoryHeadRef.current =
+        last?.role === "assistant" ? last.id : null;
       chatHelpers.setMessages(messages);
     },
+    {
+      getChatMessageCount: () => chatHelpers.messages.length,
+    },
   );
+
+  historyLoadingRef.current = isLoading;
+
+  const chatHelpersRef = useRef(chatHelpers);
+  chatHelpersRef.current = chatHelpers;
 
   const completePendingToolCalls = async () => {
     if (!cancelPendingToolCallsOnSend) return;
@@ -320,9 +375,6 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       return [...messages.slice(0, -1), { ...lastMessage, parts }];
     });
   };
-
-  const chatHelpersRef = useRef(chatHelpers);
-  chatHelpersRef.current = chatHelpers;
 
   const dispatchNewRef = useRef<(message: AppendMessage) => Promise<void>>(
     async () => {},
@@ -397,7 +449,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
 
   const stoppedFrontendToolIdsRef = useRef<Set<string>>(new Set());
   const stampedAssistantIdsRef = useRef<Set<string>>(new Set());
-  const frontendContinuationRef = useRef(createFrontendToolContinuationController());
+  const continuationLastErrorRef = useRef<unknown>(null);
   const toolContinuationAttemptRef = useRef(createToolContinuationAttemptTracker());
   const prevChatStatusRef = useRef(chatHelpers.status);
   /** When set, auto-continue is blocked for this assistant message id (user cancelled). */
@@ -488,10 +540,14 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       getMessages: () => chatHelpersRef.current.messages,
       stopStream: () => stopFrontendToolStream("continue", undefined),
       ensureStopped: ensureFrontendToolStreamStopped,
-      sendMessage: () =>
-        chatHelpersRef.current.sendMessage(undefined, {
+      sendMessage: async () => {
+        resumableStorage.clear();
+        await chatHelpersRef.current.sendMessage(undefined, {
           metadata: lastRunConfigRef.current,
-        }),
+        });
+      },
+      clearError: () => chatHelpersRef.current.clearError(),
+      lastError: continuationLastErrorRef,
       onSendFailed: () => {
         resetToolContinuationAttemptTracker(toolContinuationAttemptRef.current);
       },
@@ -501,9 +557,12 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   const scheduleToolContinuationIfNeeded = () => {
     const messages = chatHelpersRef.current.messages;
     const status = chatHelpersRef.current.status;
-    if (status !== "ready") return;
     if (isToolContinuationSuppressed(messages)) return;
-    if (!shouldAutoSendChat({ messages, status: "ready" })) return;
+
+    if (status !== "ready") return;
+    if (!canAutoContinueChat(messages, status)) {
+      return;
+    }
 
     const fingerprint = toolContinuationFingerprint(messages);
     if (!fingerprint) return;
@@ -529,6 +588,41 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     }
   };
 
+  const recoverStuckChatRun = useCallback(async () => {
+    const chat = chatHelpersRef.current;
+    const messages = chat.messages;
+    const status = chat.status;
+    // Only the frontend-suspend tool continuation can wedge now (a client-completed
+    // suspend tool whose follow-up POST never fired). Subagents keep the stream open
+    // legitimately, so a streaming coordinator turn is not "stuck".
+    const stuckTool = isStuckAwaitingToolContinuation(messages, status);
+    if (!stuckTool) {
+      return;
+    }
+
+    const threadId = getThreadId?.() ?? chat.id;
+    if (threadId) {
+      try {
+        const activityRes = await fetch("/api/threads/activity", {
+          credentials: "include",
+        });
+        if (activityRes.ok) {
+          const data = (await activityRes.json()) as {
+            activity?: Record<string, { kind?: string }>;
+          };
+          if (data.activity?.[threadId]?.kind === "running") return;
+        }
+      } catch {
+        /* proceed — activity probe is best-effort */
+      }
+    }
+
+    resumableStorage.clear();
+    useNetworkReconnectStore.getState().clearTransientBanner();
+    resetFrontendToolContinuationController(frontendContinuationRef.current);
+    chat.stop();
+  }, [getThreadId]);
+
   const applyToolResult = useCallback(
     async ({
       toolCallId,
@@ -543,6 +637,9 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       isError?: boolean;
       modelContent?: Parameters<typeof wrapModelContentEnvelope>[1];
     }) => {
+      // A live tool result means the user is actively driving this turn; lift the
+      // history-restore guard so legitimate continuation can proceed.
+      restoredHistoryHeadRef.current = null;
       if (isToolContinuationSuppressed(chatHelpersRef.current.messages)) {
         return;
       }
@@ -608,22 +705,214 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   }, [applyToolResult, chatHelpers.id]);
 
   useEffect(() => {
+    const listItemId = chatHelpers.id;
+
+    const resolvePersistableThreadId = (): string | null => {
+      const threadId = getThreadId?.() ?? listItemId;
+      return isPersistableThreadId(threadId) ? threadId : null;
+    };
+
+    let cancelled = false;
+    let retryTimer: number | null = null;
+    let threadIdWaitTimer: number | null = null;
+    let unsubscribe: (() => void) | null = null;
+
+    const applyBackgroundTaskSnapshot = (
+      data: BackgroundTasksApiSnapshot | null,
+      localMessages: UI_MESSAGE[],
+      snapshotThreadId: string | null,
+    ) => {
+      if (!data) return;
+      // Ignore late responses for a thread we already navigated away from.
+      if (snapshotThreadId && snapshotThreadId !== resolvePersistableThreadId()) return;
+      const tasks = data.tasks ?? [];
+      const ready = Boolean(data.batch?.synthesisReady ?? data.batch?.notificationsReady);
+
+      const dispatchIds = collectCoordinatorDispatchTaskIds(localMessages);
+      const lastMsg = localMessages.at(-1);
+      const prevSnapshot = getBackgroundTasksSnapshot();
+      const prevPinnableForThread =
+        prevSnapshot.threadId === snapshotThreadId ? prevSnapshot.dispatchTaskIds : [];
+      const previousPinnedIds = lastMsg?.role === "user" ? [] : prevPinnableForThread;
+      const knownBatchIds = Array.from(new Set([...previousPinnedIds, ...dispatchIds]));
+
+      const activeTaskIds = tasks
+        .filter((t) => t.status === "queued" || t.status === "running")
+        .map((t) => t.id);
+      const nextDispatchIds = Array.from(
+        new Set([
+          ...knownBatchIds,
+          ...activeTaskIds,
+        ]),
+      );
+      backgroundDispatchTaskIdsRef.current = nextDispatchIds;
+
+      const panelTasks = mergePanelBackgroundTasks(localMessages, tasks, {
+        pinnedTaskIds: nextDispatchIds,
+      });
+      setBackgroundTasks(tasks);
+      backgroundTasksRef.current = tasks;
+      setBackgroundTasksSnapshot({
+        threadId: snapshotThreadId,
+        tasks,
+        batchTasks: panelTasks,
+        dispatchTaskIds: nextDispatchIds,
+        notificationsReady: ready,
+        synthesisReady: ready,
+      });
+
+      // Display-only: the background-tasks snapshot drives the subagent panel UI.
+      // It no longer triggers a client-side synthesis re-POST — subagents run
+      // synchronously in the `task` tool and the parent continues natively.
+    };
+
+    const refreshBackgroundTasks = async () => {
+      if (cancelled) return;
+      const threadId = resolvePersistableThreadId();
+      if (!threadId) return;
+      const chat = chatHelpersRef.current;
+      const localMessages = chat.messages;
+      const dispatchIds = collectCoordinatorDispatchTaskIds(localMessages);
+      const lastMsg = localMessages.at(-1);
+      const prevSnapshot = getBackgroundTasksSnapshot();
+      const prevPinnableForThread =
+        prevSnapshot.threadId === threadId ? prevSnapshot.dispatchTaskIds : [];
+      const previousPinnedIds = lastMsg?.role === "user" ? [] : prevPinnableForThread;
+      const knownBatchIds = Array.from(new Set([...previousPinnedIds, ...dispatchIds]));
+      const data = await fetchBackgroundTaskSnapshot(threadId, knownBatchIds).catch(() => null);
+      if (cancelled) return;
+      applyBackgroundTaskSnapshot(data, localMessages, threadId);
+    };
+
+    const scheduleRetrySnapshot = () => {
+      if (retryTimer != null) return;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        void refreshBackgroundTasks();
+      }, 5000);
+    };
+
+    const startBackgroundTaskSubscription = () => {
+      const threadId = resolvePersistableThreadId();
+      if (!threadId || cancelled) return;
+
+      refreshBackgroundTasksRef.current = () => {
+        void refreshBackgroundTasks();
+      };
+
+      unsubscribe = subscribeBackgroundTaskEvents(
+        threadId,
+        () => {
+          // SSE snapshots omit batchIds, so readiness must come from a scoped /api/tasks fetch.
+          void refreshBackgroundTasks();
+        },
+        scheduleRetrySnapshot,
+      );
+
+      void refreshBackgroundTasks();
+    };
+
+    if (resolvePersistableThreadId()) {
+      startBackgroundTaskSubscription();
+    } else {
+      threadIdWaitTimer = window.setInterval(() => {
+        if (cancelled) return;
+        if (!resolvePersistableThreadId()) return;
+        if (threadIdWaitTimer != null) {
+          window.clearInterval(threadIdWaitTimer);
+          threadIdWaitTimer = null;
+        }
+        startBackgroundTaskSubscription();
+      }, 300);
+    }
+
+    return () => {
+      cancelled = true;
+      refreshBackgroundTasksRef.current = null;
+      unsubscribe?.();
+      if (retryTimer != null) window.clearTimeout(retryTimer);
+      if (threadIdWaitTimer != null) window.clearInterval(threadIdWaitTimer);
+      setBackgroundTasks([]);
+      backgroundTasksRef.current = [];
+      backgroundDispatchTaskIdsRef.current = [];
+      resetBackgroundTasksSnapshot();
+    };
+  }, [chatHelpers.id, getThreadId]);
+
+  useEffect(() => {
+    stampedAssistantIdsRef.current = new Set();
+    stoppedFrontendToolIdsRef.current = new Set();
+    restoredHistoryHeadRef.current = null;
+    setToolStatuses({});
+    resetFrontendToolContinuationController(frontendContinuationRef.current);
+    resetToolContinuationAttemptTracker(toolContinuationAttemptRef.current);
+    resumableStorage.clear();
+    useNetworkReconnectStore.getState().clearReconnecting();
+    const chat = chatHelpersRef.current;
+    if (chat.status === "streaming" || chat.status === "submitted") {
+      chat.stop();
+    }
+  }, [chatHelpers.id]);
+
+  useEffect(() => {
+    if (!isPersistableThreadId(resolvedThreadId)) return;
+    refreshBackgroundTasksRef.current?.();
+  }, [resolvedThreadId, coordinatorDispatchFingerprint]);
+
+  useEffect(() => {
     const prev = prevChatStatusRef.current;
     prevChatStatusRef.current = chatHelpers.status;
 
     if (chatHelpers.status === "ready" && prev !== "ready") {
       frontendContinuationRef.current.sendStarted = false;
+      const last = chatHelpers.messages.at(-1);
+      if (last?.role === "assistant") {
+        const stripped = stripTaskNotificationUserMessages(chatHelpers.messages);
+        if (stripped.length !== chatHelpers.messages.length) {
+          rememberUiMessages(stripped as unknown as readonly UI_MESSAGE[]);
+          chatHelpers.setMessages(stripped as unknown as UI_MESSAGE[]);
+        }
+      }
     }
 
-    const deduped = dedupeLastAssistantMessage(chatHelpers.messages);
-    if (deduped) {
-      rememberUiMessages(deduped);
-      chatHelpers.setMessages(deduped);
+    const normalized = normalizeLastAssistantMessage(chatHelpers.messages);
+    if (normalized) {
+      rememberUiMessages(normalized);
+      chatHelpers.setMessages(normalized);
+      return;
+    }
+
+    // A turn restored from persisted history must not auto-resume on load/refresh.
+    // Live tool completions still continue via applyToolResult, which clears this.
+    const last = chatHelpers.messages.at(-1);
+    if (last && restoredHistoryHeadRef.current === last.id) {
       return;
     }
 
     scheduleToolContinuationIfNeeded();
   }, [chatHelpers.status, chatHelpers.messages]);
+
+  useEffect(() => {
+    const onRecovery = () => {
+      void recoverStuckChatRun();
+    };
+    window.addEventListener(CHAT_STREAM_RECOVERY_EVENT, onRecovery);
+    return () => window.removeEventListener(CHAT_STREAM_RECOVERY_EVENT, onRecovery);
+  }, [recoverStuckChatRun]);
+
+  useEffect(() => {
+    const stuckTool = isStuckAwaitingToolContinuation(
+      chatHelpers.messages,
+      chatHelpers.status,
+    );
+    if (!stuckTool) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void recoverStuckChatRun();
+    }, 750);
+    return () => window.clearTimeout(timer);
+  }, [chatHelpers.messages, chatHelpers.status, recoverStuckChatRun]);
 
   useEffect(() => {
     const last = chatHelpers.messages.at(-1);
@@ -704,8 +993,13 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     }
 
     clearToolContinuationSuppression();
+    backgroundDispatchTaskIdsRef.current = [];
+    resetBackgroundTasksSnapshot();
     lastRunConfigRef.current = message.runConfig;
     await completePendingToolCalls();
+    if (ensureThreadInitialized) {
+      await ensureThreadInitialized();
+    }
     await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage), {
       metadata: message.runConfig,
     });
@@ -809,6 +1103,8 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       if (isRunning) chatHelpers.stop();
 
       clearToolContinuationSuppression();
+      backgroundDispatchTaskIdsRef.current = [];
+      resetBackgroundTasksSnapshot();
       setForceReplaceNextChat(true);
       lastRunConfigRef.current = message.runConfig;
       await completePendingToolCalls();

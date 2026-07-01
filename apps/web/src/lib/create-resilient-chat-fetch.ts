@@ -21,6 +21,7 @@ import {
 } from '@/lib/transport-reconnect';
 import { wrapStreamWithLiveness } from '@/lib/wrap-stream-liveness';
 import { isBenignChatError } from '@/lib/format-chat-error';
+import { dispatchChatStreamRecovery } from '@/lib/chat-stream-recovery';
 
 export type ResilientChatFetchOptions = {
   fetch?: typeof globalThis.fetch;
@@ -393,6 +394,9 @@ function createAutoResumeStream(
           if (resumed === null) {
             closed = true;
             options.onFinished();
+            if (!options.getFinishedSeen()) {
+              dispatchChatStreamRecovery('stream_gone');
+            }
             controller.close();
             return;
           }
@@ -418,6 +422,9 @@ function createAutoResumeStream(
           if (resumed === null) {
             closed = true;
             options.onFinished();
+            if (!options.getFinishedSeen()) {
+              dispatchChatStreamRecovery('stream_gone');
+            }
             controller.close();
             return;
           }
