@@ -13,7 +13,9 @@ import {
   resolveTableSheetId,
   updateTableRow,
   DEFAULT_TABLE_SHEET,
+  onTableEvent,
   type TableRowPatch,
+  type TableEvent,
 } from '../table-store.js';
 import type { ServerDeps } from './types.js';
 import { unwrapMcpPayload } from '../table-tools.js';
@@ -31,6 +33,30 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       columns: listTableColumns(sheetId),
       rows: listTableRows(sheetId),
     };
+  });
+
+  // Server-Sent Events: push row-level table changes so the client can drop its 4s
+  // full-sheet poll and apply surgical AG-Grid transactions (cost independent of size).
+  app.get('/api/table/stream', async (req, reply) => {
+    await deps.resolveContext(req.headers);
+    reply.hijack();
+    const raw = reply.raw;
+    raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    raw.write('retry: 3000\n\n');
+    const send = (event: TableEvent): void => {
+      raw.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+    const unsubscribe = onTableEvent(send);
+    const keepAlive = setInterval(() => raw.write(': ping\n\n'), 25000);
+    req.raw.on('close', () => {
+      clearInterval(keepAlive);
+      unsubscribe();
+    });
   });
 
   // 二三级 master-detail drill-down: given a 二级 schedule row (order_id + stage_code),
