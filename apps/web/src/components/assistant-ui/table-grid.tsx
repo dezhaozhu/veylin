@@ -41,6 +41,16 @@ function rowKey(row: TableRow): string {
   return String(row.row_id ?? '');
 }
 
+// Live-sync events pushed over SSE from /api/table/stream (mirrors the server's
+// TableEvent union). Applied as row-level deltas so update cost is independent of
+// sheet size — the whole reason the 4s full-sheet poll is gone.
+type TableEvent =
+  | { type: 'rowUpsert'; sheet: string; row: TableRow }
+  | { type: 'rowsDelete'; sheet: string; keys: string[] }
+  | { type: 'sheetReplace'; sheet: string }
+  | { type: 'schemaChange'; sheet: string }
+  | { type: 'sheetsChange' };
+
 // ── 二三级 master-detail (Pro / AG-Grid Enterprise) ──────────────────────────
 // The schedule sheet's 二级 rows expand to their 三级 (设备级) ops, fetched on
 // demand from /api/schedule-detail (→ Compass get_workorder_rows). Read-only.
@@ -545,10 +555,45 @@ export function TableGrid() {
     }
   };
 
+  // Live sync: SSE push + row-level deltas replaces the old 4s full-sheet poll, so
+  // update cost is independent of sheet size (loading the full 30k-row schedule is cheap).
   useEffect(() => {
     void load(activeSheetId, true);
-    const t = window.setInterval(() => void load(activeSheetId, false), 4000);
-    return () => window.clearInterval(t);
+    const es = new EventSource('/api/table/stream');
+    es.onopen = () => {
+      // (re)connected — one full resync catches anything missed while disconnected.
+      void load(activeSheetId, false);
+    };
+    es.onmessage = (ev) => {
+      let e: TableEvent;
+      try {
+        e = JSON.parse(ev.data) as TableEvent;
+      } catch {
+        return;
+      }
+      if (e.type === 'sheetsChange') {
+        void load(activeSheetId, false);
+        return;
+      }
+      if (e.sheet !== activeSheetId) return; // sheet-scoped events for the active sheet only
+      if (e.type === 'rowUpsert') {
+        const incoming = e.row;
+        const key = rowKey(incoming);
+        setRows((prev) => {
+          const idx = prev.findIndex((r) => rowKey(r) === key);
+          if (idx === -1) return [...prev, incoming];
+          const next = prev.slice();
+          next[idx] = incoming;
+          return next;
+        });
+      } else if (e.type === 'rowsDelete') {
+        const drop = new Set(e.keys);
+        setRows((prev) => prev.filter((r) => !drop.has(rowKey(r))));
+      } else if (e.type === 'sheetReplace' || e.type === 'schemaChange') {
+        void load(activeSheetId, false); // bulk import / column change — full refetch
+      }
+    };
+    return () => es.close();
   }, [activeSheetId, load]);
 
   // Pre-filter rows in React; AG-Grid handles sort natively via comparator
