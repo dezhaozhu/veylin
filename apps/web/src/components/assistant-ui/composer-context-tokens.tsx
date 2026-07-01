@@ -1,25 +1,23 @@
-import { XIcon } from 'lucide-react';
+import { SparklesIcon } from 'lucide-react';
 import type { FC } from 'react';
+import { useTranslation } from 'react-i18next';
+import { ComposerRefChip } from '@/components/assistant-ui/composer-mention/composer-ref-chip';
 import { usePendingSkill } from '@/lib/use-composer-settings';
 
 export const ComposerContextTokens: FC = () => {
+  const { t } = useTranslation();
   const { pendingSkill, setPendingSkill } = usePendingSkill();
 
   if (!pendingSkill) return null;
 
   return (
-    <div className="aui-composer-context-tokens flex flex-wrap items-center gap-1 px-2.5 pt-1">
-      <span className="text-base font-medium text-amber-700 dark:text-amber-500">
-        /{pendingSkill}
-      </span>
-      <button
-        type="button"
-        className="text-muted-foreground hover:text-foreground rounded p-0.5"
-        aria-label="Remove skill"
-        onClick={() => setPendingSkill(null)}
-      >
-        <XIcon className="size-3.5" />
-      </button>
-    </div>
+    <ComposerRefChip
+      icon={<SparklesIcon className="size-5 text-amber-600 dark:text-amber-500" aria-hidden />}
+      title={`/${pendingSkill}`}
+      subtitle={t('mention.skillType')}
+      chipAriaLabel={t('mention.skillChip', { name: pendingSkill })}
+      removeAriaLabel={t('slash.removeSkill')}
+      onRemove={() => setPendingSkill(null)}
+    />
   );
 };

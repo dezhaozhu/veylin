@@ -1,8 +1,6 @@
-import {
-  ComposerAttachments,
-  UserMessageAttachments,
-} from "@/components/assistant-ui/attachment";
-import { MarkdownText } from "@/components/assistant-ui/markdown-text";
+import { UserMessageChipsRow, userMessageHasDisplayChips } from "@/components/assistant-ui/user-message-chips-row";
+import { UserMessageText } from "@/components/assistant-ui/user-message-text";
+import { AssistantMarkdownText, MarkdownText } from "@/components/assistant-ui/markdown-text";
 import {
   Reasoning,
   ReasoningGroupBlock,
@@ -11,10 +9,13 @@ import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { ToolGroupBlock } from "@/components/assistant-ui/tool-group";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { ComposerContextUsage } from "@/components/assistant-ui/composer-context-usage";
-import { ComposerContextTokens } from "@/components/assistant-ui/composer-context-tokens";
+import { ComposerChipsRow } from "@/components/assistant-ui/composer-mention/composer-chips-row";
+import { ComposerAttachmentDropzone } from "@/components/assistant-ui/composer-attachment-dropzone";
+import { ComposerMentionInput } from "@/components/assistant-ui/composer-mention/composer-mention-input";
 import { ComposerModeChips } from "@/components/assistant-ui/composer-mode-chips";
 import { ComposerPlusMenu } from "@/components/assistant-ui/composer-plus-menu";
 import { ComposerStatusBar } from "@/components/assistant-ui/composer-status-bar";
+import { ComposerAskPanel } from "@/components/assistant-ui/composer-ask-panel";
 import {
   ComposerQueue,
   useComposerSubmitKeys,
@@ -36,7 +37,6 @@ import {
   ActionBarPrimitive,
   AuiIf,
   type AssistantState,
-  BranchPickerPrimitive,
   ComposerPrimitive,
   ErrorPrimitive,
   groupPartByType,
@@ -50,20 +50,27 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CheckIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   CopyIcon,
   PencilIcon,
-  RefreshCwIcon,
   SquareIcon,
 } from "lucide-react";
 import {
   createContext,
   useContext,
+  useEffect,
+  useSyncExternalStore,
   type ComponentType,
   type FC,
   type PropsWithChildren,
 } from "react";
+import {
+  getAskUserSessionForThread,
+  subscribeAskUserSession,
+} from "@/lib/ask-user-question-session";
+import { usePlanModeBridge } from "@/lib/use-composer-settings";
+import { dispatchOverlayDismiss } from "@/lib/overlay-dismiss";
+import { hideWebView, isTauri } from "@/lib/tauri-web-view";
+import { isTaskNotificationText } from "@veylin/shared";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
@@ -113,6 +120,31 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
 
 const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
   const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
+  const threadId = useAuiState((s) => s.threadListItem.id);
+  usePlanModeBridge();
+  const askOpen = useSyncExternalStore(
+    subscribeAskUserSession,
+    () => getAskUserSessionForThread(threadId) != null,
+    () => false,
+  );
+
+  useEffect(() => {
+    dispatchOverlayDismiss('thread-switch');
+    if (isTauri()) void hideWebView();
+  }, [threadId]);
+
+  useEffect(() => {
+    if (!isTauri() || !askOpen) return;
+    void hideWebView();
+    return subscribeAskUserSession(() => {
+      if (getAskUserSessionForThread(threadId) != null) void hideWebView();
+    });
+  }, [askOpen, threadId]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    void import('@/lib/dev-test-hooks').then((m) => m.registerDevThreadId(threadId));
+  }, [threadId]);
 
   return (
     <ThreadPrimitive.Root
@@ -128,7 +160,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
       <ThreadPrimitive.Viewport
         turnAnchor="top"
         data-slot="aui_thread-viewport"
-        className="relative flex min-h-0 flex-1 flex-col overflow-x-auto overflow-y-auto scroll-smooth"
+        className="relative flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto scroll-smooth"
       >
         <div
           className={cn(
@@ -152,14 +184,15 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
 
           <ThreadPrimitive.ViewportFooter
             className={cn(
-              "aui-thread-viewport-footer bg-background flex shrink-0 flex-col gap-4 overflow-visible pb-5 md:pb-6",
+              "aui-thread-viewport-footer bg-background flex shrink-0 flex-col-reverse gap-4 overflow-visible pb-5 md:pb-6",
               !isEmpty &&
                 "sticky bottom-0 mt-auto rounded-t-(--composer-radius)",
             )}
           >
             <ThreadScrollToBottom />
-            <ComposerStatusBar />
             <Composer />
+            <ComposerAskPanel />
+            <ComposerStatusBar />
           </ThreadPrimitive.ViewportFooter>
         </div>
       </ThreadPrimitive.Viewport>
@@ -210,25 +243,26 @@ const Composer: FC = () => {
 
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
-      <ComposerQueue />
-      <ComposerPrimitive.AttachmentDropzone asChild>
-        <div
-          data-slot="aui_composer-shell"
-          className="border-border/60 data-[dragging=true]:border-ring focus-within:border-border dark:border-muted-foreground/15 dark:focus-within:border-muted-foreground/30 flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] focus-within:shadow-[0_6px_24px_-8px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.05)] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))] dark:shadow-none"
-        >
-          <ComposerAttachments />
-          <ComposerContextTokens />
-          <ComposerPrimitive.Input
-            placeholder={t("thread.composerPlaceholder")}
-            className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
-            rows={1}
-            autoFocus
-            aria-label={t("thread.composerAriaLabel")}
-            onKeyDown={onKeyDown}
-          />
-          <ComposerAction />
+      <ComposerAttachmentDropzone asChild>
+        <div className="flex w-full flex-col gap-2 data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:border-ring data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:border-dashed data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]">
+          <ComposerQueue />
+          <div
+            data-slot="aui_composer-shell"
+            className="border-border/60 focus-within:border-border dark:border-muted-foreground/15 dark:focus-within:border-muted-foreground/30 flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] focus-within:shadow-[0_6px_24px_-8px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.05)] dark:shadow-none"
+          >
+            <ComposerChipsRow />
+            <ComposerMentionInput
+              placeholder={t("thread.composerPlaceholder")}
+              className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
+              rows={1}
+              autoFocus
+              aria-label={t("thread.composerAriaLabel")}
+              onKeyDown={onKeyDown}
+            />
+            <ComposerAction />
+          </div>
         </div>
-      </ComposerPrimitive.AttachmentDropzone>
+      </ComposerAttachmentDropzone>
     </ComposerPrimitive.Root>
   );
 };
@@ -280,7 +314,9 @@ const ComposerAction: FC = () => {
 const MessageError: FC = () => {
   const { t } = useTranslation();
   const error = useMessageError();
+  const isRunning = useAuiState((s) => s.thread.isRunning);
   if (error === undefined) return null;
+  if (!isRunning) return null;
 
   const formatted =
     formatChatError(error instanceof Error ? error : new Error(String(error))) ?? {
@@ -332,6 +368,7 @@ const AssistantMessage: FC = () => {
         <MessagePrimitive.GroupedParts
           groupBy={groupPartByType({
             reasoning: ["group-chainOfThought", "group-reasoning"],
+            text: ["group-chainOfThought", "group-prose"],
             "tool-call": ["group-chainOfThought", "group-tool"],
             "standalone-tool-call": [],
           })}
@@ -368,8 +405,14 @@ const AssistantMessage: FC = () => {
                   </ReasoningGroupBlock>
                 );
               }
+              case "group-prose":
+                return (
+                  <div data-slot="aui_assistant-prose" className="flex flex-col gap-2">
+                    {children}
+                  </div>
+                );
               case "text":
-                return <MarkdownText />;
+                return <AssistantMarkdownText />;
               case "reasoning":
                 return <Reasoning {...part} />;
               case "tool-call":
@@ -400,7 +443,6 @@ const AssistantMessage: FC = () => {
         data-slot="aui_assistant-message-footer"
         className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
       >
-        <BranchPicker />
         <AssistantActionBar />
       </div>
     </MessagePrimitive.Root>
@@ -428,41 +470,53 @@ const AssistantActionBar: FC = () => {
       className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in col-start-3 row-start-2 -ms-1 flex items-center gap-1 duration-200"
     >
       <MessageCopyButton />
-      <ActionBarPrimitive.Reload asChild>
-        <TooltipIconButton tooltip="Refresh">
-          <RefreshCwIcon />
-        </TooltipIconButton>
-      </ActionBarPrimitive.Reload>
       <MessageTimestamp className="ms-0.5" align="start" inline />
     </ActionBarPrimitive.Root>
   );
 };
 
 const UserMessage: FC = () => {
+  const text = useAuiState((s) =>
+    s.message.content
+      .filter((part): part is { type: "text"; text: string } => part.type === "text")
+      .map((part) => part.text)
+      .join("\n"),
+  );
+  const hasChips = useAuiState((s) => userMessageHasDisplayChips(s.message));
+  const isNotificationOnly = Boolean(text.trim()) && isTaskNotificationText(text.trim());
+  const hasDisplayText = Boolean(text.trim()) && !isTaskNotificationText(text.trim());
+  const showBubble = hasDisplayText || hasChips;
+
+  // Synthesis injects hidden task-notification user turns for the model only.
+  if (isNotificationOnly && !hasChips) return null;
+
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
       className="fade-in slide-in-from-bottom-1 animate-in flex flex-col items-end gap-2 px-2 duration-150 [contain-intrinsic-size:auto_60px] [content-visibility:auto]"
       data-role="user"
     >
-      <UserMessageAttachments />
+      <UserMessageChipsRow />
 
-      <div className="aui-user-message-content-wrapper flex max-w-[85%] flex-col items-end">
-        <div className="relative w-max max-w-full">
-          <div className="aui-user-message-content bg-muted text-foreground rounded-3xl px-4 py-2 wrap-break-word empty:hidden">
-            <MessagePrimitive.Parts />
+      {showBubble && (
+        <div className="aui-user-message-content-wrapper flex max-w-[85%] flex-col items-end">
+          <div className="relative w-max max-w-full">
+            <div
+              className={cn(
+                "aui-user-message-content bg-muted text-foreground rounded-3xl px-4 py-2 wrap-break-word",
+                !hasDisplayText && "min-h-[2.25rem]",
+              )}
+            >
+              <UserMessageText />
+            </div>
+            <div className="aui-user-action-bar-wrapper absolute top-1/2 right-full -translate-y-1/2 pe-2">
+              <UserActionBar />
+            </div>
           </div>
-          <div className="aui-user-action-bar-wrapper absolute top-1/2 right-full -translate-y-1/2 pe-2">
-            <UserActionBar />
-          </div>
+          <UserMessageFooter />
         </div>
-        <UserMessageFooter />
-      </div>
+      )}
 
-      <BranchPicker
-        data-slot="aui_user-branch-picker"
-        className="-me-1"
-      />
     </MessagePrimitive.Root>
   );
 };
@@ -508,6 +562,7 @@ const UserActionBar: FC = () => {
 const EditComposer: FC = () => {
   const aui = useAui();
   const canSend = useAuiState((s) => s.composer.canSend);
+  const onKeyDown = useComposerSubmitKeys();
 
   return (
     <MessagePrimitive.Root
@@ -516,8 +571,10 @@ const EditComposer: FC = () => {
     >
       <ComposerPrimitive.Root className="aui-edit-composer-root border-border/60 dark:border-muted-foreground/15 ms-auto flex w-full max-w-[85%] flex-col rounded-(--composer-radius) border bg-(--composer-bg) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] dark:shadow-none">
         <ComposerPrimitive.Input
+          submitMode="none"
           className="aui-edit-composer-input text-foreground min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-none"
           autoFocus
+          onKeyDown={onKeyDown}
         />
         <div className="aui-edit-composer-footer mx-2.5 mb-2.5 flex items-center gap-1.5 self-end">
           <ComposerPrimitive.Cancel asChild>
@@ -541,35 +598,5 @@ const EditComposer: FC = () => {
         </div>
       </ComposerPrimitive.Root>
     </MessagePrimitive.Root>
-  );
-};
-
-const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
-  className,
-  ...rest
-}) => {
-  return (
-    <BranchPickerPrimitive.Root
-      hideWhenSingleBranch
-      className={cn(
-        "aui-branch-picker-root text-muted-foreground -ms-2 me-2 inline-flex items-center text-xs",
-        className,
-      )}
-      {...rest}
-    >
-      <BranchPickerPrimitive.Previous asChild>
-        <TooltipIconButton tooltip="Previous">
-          <ChevronLeftIcon />
-        </TooltipIconButton>
-      </BranchPickerPrimitive.Previous>
-      <span className="aui-branch-picker-state font-medium">
-        <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
-      </span>
-      <BranchPickerPrimitive.Next asChild>
-        <TooltipIconButton tooltip="Next">
-          <ChevronRightIcon />
-        </TooltipIconButton>
-      </BranchPickerPrimitive.Next>
-    </BranchPickerPrimitive.Root>
   );
 };

@@ -15,9 +15,12 @@ import { useCallback, type FC, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getComposerQueueRuntime } from '@/lib/composer-queue-runtime';
 import {
+  isImeComposing,
   resolveEnterWhileRunning,
   shouldInterceptTabForQueue,
+  composerHasSendableDraft,
 } from '@/lib/composer-submit-keys';
+import { usePendingSkill } from '@/lib/use-composer-settings';
 import { cn } from '@/lib/utils';
 import { useAui } from '@assistant-ui/store';
 
@@ -145,9 +148,11 @@ export const ComposerQueue: FC = () => {
 /** Codex-style keys: Enter always queues while running, Tab queue. */
 export function useComposerSubmitKeys(): (e: KeyboardEvent) => void {
   const aui = useAui();
+  const { pendingSkill } = usePendingSkill();
   return useCallback(
     (e: KeyboardEvent) => {
-      if (e.nativeEvent.isComposing) return;
+      if (isImeComposing(e)) return;
+      if (e.defaultPrevented) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       const thread = aui.thread().getState();
@@ -156,10 +161,12 @@ export function useComposerSubmitKeys(): (e: KeyboardEvent) => void {
         isRunning: thread.isRunning,
         canQueue: thread.capabilities.queue,
         composerEmpty: composer.isEmpty,
+        hasPendingSkill: Boolean(pendingSkill),
       };
 
       if (e.key === 'Tab' && !e.shiftKey) {
         if (!shouldInterceptTabForQueue(keyState)) return;
+        if (!composer.canSend) return;
         e.preventDefault();
         e.stopPropagation();
         aui.composer().send();
@@ -168,13 +175,23 @@ export function useComposerSubmitKeys(): (e: KeyboardEvent) => void {
 
       if (e.key !== 'Enter' || e.shiftKey) return;
 
+      if (!keyState.isRunning) {
+        if (!composerHasSendableDraft(keyState)) return;
+        if (!composer.canSend) return;
+        e.preventDefault();
+        e.stopPropagation();
+        aui.composer().send();
+        return;
+      }
+
       const enterAction = resolveEnterWhileRunning(keyState);
       if (enterAction === 'ignore') return;
+      if (!composer.canSend) return;
 
       e.preventDefault();
       e.stopPropagation();
       aui.composer().send();
     },
-    [aui],
+    [aui, pendingSkill],
   );
 }

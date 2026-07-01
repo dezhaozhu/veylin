@@ -6,33 +6,36 @@ import { fileURLToPath, URL } from 'node:url';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
-    // Ensure a single React copy so react-data-grid's hooks share the app's
+    // Ensure a single React copy so AG-Grid's hooks share the app's
     // React instance (otherwise: "Invalid hook call / more than one copy").
     dedupe: ['react', 'react-dom'],
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@/vendor/assistant-ui': fileURLToPath(
+        new URL('./src/vendor/assistant-ui/index.ts', import.meta.url),
+      ),
       'secure-json-parse': fileURLToPath(
         new URL('./src/shims/secure-json-parse.ts', import.meta.url),
       ),
     },
   },
   optimizeDeps: {
-    include: ['assistant-stream', 'react-data-grid'],
+    include: ['assistant-stream'],
   },
   build: {
-    // Vite 8 lightningcss has a bug minifying light-dark() (used by
-    // react-data-grid styles). Use esbuild for CSS minification instead.
+    // Keep esbuild for CSS minification (safe override, harmless here).
     cssMinify: 'esbuild',
   },
   server: {
     port: 5174,
+    strictPort: true,
     proxy: {
       '/health': {
-        target: process.env.VITE_API_URL ?? 'http://localhost:8787',
+        target: process.env.VITE_API_URL ?? 'http://127.0.0.1:8787',
         changeOrigin: true,
       },
       '/api': {
-        target: process.env.VITE_API_URL ?? 'http://localhost:8787',
+        target: process.env.VITE_API_URL ?? 'http://127.0.0.1:8787',
         changeOrigin: true,
       },
     },

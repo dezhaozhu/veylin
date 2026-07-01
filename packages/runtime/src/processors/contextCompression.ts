@@ -1,5 +1,12 @@
 import type { Processor } from '@mastra/core/processors';
 import type { MastraDBMessage } from '@mastra/core/memory';
+import {
+  getAutoCompactThreshold,
+  isAutoCompactDisabled,
+  recordCompactFailure,
+  recordCompactSuccess,
+} from '../context-window';
+import { formatCompactSummary } from '../summarizer';
 
 export type Summarizer = (text: string) => Promise<string>;
 
@@ -35,10 +42,19 @@ export function estimateTokens(messages: MastraDBMessage[]): number {
   return Math.ceil(chars / 4);
 }
 
+let compactGeneration = 0;
+
+export function getCompactGeneration(): number {
+  return compactGeneration;
+}
+
+export function bumpCompactGeneration(): number {
+  compactGeneration += 1;
+  return compactGeneration;
+}
+
 /**
- * Two-tier context compaction: triggers on message count OR estimated tokens.
- * Thresholds: VEYLIN_COMPACT_KEEP / VEYLIN_COMPACT_TRIGGER / VEYLIN_COMPACT_LLM_TRIGGER /
- * VEYLIN_COMPACT_TOKEN_TRIGGER / VEYLIN_COMPACT_TOKEN_LLM_TRIGGER.
+ * Two-tier context compaction: message count, token estimate, or context-window % threshold.
  */
 export class ContextCompression implements Processor {
   id = 'context-compression';
@@ -62,34 +78,46 @@ export class ContextCompression implements Processor {
   }
 
   async processInput({ messages }: { messages: MastraDBMessage[] }): Promise<MastraDBMessage[]> {
+    if (isAutoCompactDisabled()) return messages;
+
     const tokens = estimateTokens(messages);
+    const autoThreshold = getAutoCompactThreshold();
     const overCount = messages.length > this.triggerAt;
     const overTokens = tokens > this.tokenTriggerAt;
-    if (!overCount && !overTokens) return messages;
+    const overAutoWindow = tokens > autoThreshold;
+
+    if (!overCount && !overTokens && !overAutoWindow) return messages;
 
     const head = messages.slice(0, messages.length - this.keepRecent);
     const tail = messages.slice(messages.length - this.keepRecent);
+    if (head.length === 0) return messages;
 
     const useLlm =
       this.summarizer &&
-      (messages.length > this.llmTriggerAt || tokens > this.tokenLlmTriggerAt);
+      (messages.length > this.llmTriggerAt || tokens > this.tokenLlmTriggerAt || overAutoWindow);
     let summaryText: string;
 
-    if (useLlm && this.summarizer) {
-      const transcript = head
-        .map((m) => `${(m as { role?: string }).role ?? 'msg'}: ${textOf(m)}`)
-        .join('\n');
-      try {
-        const summary = await this.summarizer(transcript);
-        summaryText =
-          `[Conversation compacted: the ${head.length} earlier message(s) were summarized ` +
-          `below. Treat this as the authoritative record of that span and continue the task.]\n\n` +
-          summary;
-      } catch {
+    try {
+      if (useLlm && this.summarizer) {
+        const transcript = head
+          .map((m) => `${(m as { role?: string }).role ?? 'msg'}: ${textOf(m)}`)
+          .join('\n');
+        try {
+          const summary = await this.summarizer(transcript);
+          summaryText =
+            `[Conversation compacted (gen ${bumpCompactGeneration()}): the ${head.length} earlier message(s) were summarized below. ` +
+            `Treat this as the authoritative record of that span and continue the task.]\n\n` +
+            formatCompactSummary(summary);
+        } catch {
+          summaryText = this.deterministic(head);
+        }
+      } else {
         summaryText = this.deterministic(head);
       }
-    } else {
-      summaryText = this.deterministic(head);
+      recordCompactSuccess();
+    } catch {
+      recordCompactFailure();
+      throw new Error('context compaction failed');
     }
 
     const summaryMessage = {

@@ -1,8 +1,11 @@
+import { useEffect } from 'react';
 import {
   AssistantRuntimeProvider,
   AuiProvider,
   useAui,
 } from '@assistant-ui/react';
+import { bootstrapModelCatalogFromServer } from '@/hooks/use-server-model-catalog';
+import { startupCheckpoint } from '@/lib/startup-profiler';
 import {
   AssistantChatTransport,
 } from '@assistant-ui/react-ai-sdk';
@@ -11,75 +14,62 @@ import {
   CompositeAttachmentAdapter,
   SimpleImageAttachmentAdapter,
 } from '@assistant-ui/react';
-import { lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
 import { FileAttachmentAdapter } from '@/lib/file-attachment-adapter';
 import { getChatSettings, setChatSettings } from '@/lib/chat-settings';
+import { readWorkspacePanelContext } from '@/lib/panel-tabs-storage';
 import i18n, { resolveAppLanguage } from '@/i18n';
-import { consumeBranchEdit } from '@/lib/context-sync-ref';
+import { consumeForceReplaceNextChat } from '@/lib/chat-force-replace-ref';
 import { createResilientChatFetch } from '@/lib/create-resilient-chat-fetch';
 import { useNetworkConnectivity } from '@/lib/use-network-connectivity';
 import { useNetworkReconnectStore } from '@/lib/network-reconnect-store';
-import { isAbortError } from '@/lib/transport-reconnect';
-import { formatChatError, isBenignChatError } from '@/lib/format-chat-error';
 import {
   cursorToSequenceNum,
   getResumeCursor,
 } from '@/lib/stream-resume-cursor';
 import { resumableStorage } from '@/lib/resumable-storage';
-import { HandoffRenderers } from '@/components/assistant-ui/handoff';
-import { AskUserQuestionToolUI } from '@/components/assistant-ui/ask-user-question';
-import { WebFetchToolUI } from '@/components/assistant-ui/web-fetch';
-import { ReadOpenPageToolUI } from '@/components/assistant-ui/read-open-page';
-import { TodoWriteToolUI } from '@/components/assistant-ui/todo-write';
-import { ToolSearchToolUI } from '@/components/assistant-ui/tool-search';
-import { TaskCreateToolUI } from '@/components/assistant-ui/task-create-tool';
-import { KnowledgeSearchToolUI } from '@/components/assistant-ui/knowledge-search';
+import {
+  LazyAssistantToolUIs,
+  LazyAutomateWorkspace,
+  LazyCustomizeWorkspace,
+  LazySettingsWorkspace,
+  LazyThreadRightSidebar,
+} from '@/components/assistant-ui/lazy-assistant-modules';
 import { ChatPanelRatioSync } from '@/components/assistant-ui/chat-panel-ratio-sync';
 import { Thread } from '@/components/assistant-ui/thread';
+import { AppTitlebarControls } from '@/components/assistant-ui/app-titlebar-controls';
 import { ThreadHeaderToolbar } from '@/components/assistant-ui/thread-header-toolbar';
 import { ThreadListSidebar } from '@/components/assistant-ui/threadlist-sidebar';
-import { ThreadRightSidebar } from '@/components/assistant-ui/thread-right-sidebar';
+import { PanelTabsProvider } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import { SettingsPanelProvider, useSettingsPanel } from '@/hooks/settings/use-settings-panel';
-import { CustomizeWorkspace } from '@/components/features/customize/customize-workspace';
-import { AutomateWorkspace } from '@/components/features/automate/automate-workspace';
-import { SettingsWorkspace } from '@/components/features/settings/settings-workspace';
+import { WorkspaceNavigationProvider } from '@/hooks/use-workspace-navigation';
 import { WorkspacePanelDragOverlay } from '@/components/features/workspace-panel-drag-overlay';
+import { cn } from '@/lib/utils';
 import {
   RightSidebarProvider,
   SidebarInset,
   SidebarProvider,
+  useRightSidebar,
 } from '@/components/ui/sidebar';
+import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
+import { useDesktopInteractionGuard } from '@/lib/use-desktop-interaction-guard';
 
-const FRONTEND_SUSPEND_TOOLS = ['ask_user_question', 'read_open_page'] as const;
+function DesktopInteractionGuard() {
+  const { view } = useSettingsPanel();
+  const { open: rightSidebarOpen } = useRightSidebar();
+  const { activeTab } = usePanelTabs();
+  const storedUrl =
+    activeTab?.kind === 'web' && typeof activeTab.state?.url === 'string'
+      ? activeTab.state.url.trim()
+      : '';
+  const hasVisibleWebTab =
+    view === 'chat' && rightSidebarOpen && activeTab?.kind === 'web' && storedUrl.length > 0;
 
-/** Do not auto-continue while a frontend-suspend tool awaits user/desktop action. */
-function sendAutomaticallyWhen({ messages }: { messages: UIMessage[] }) {
-  const last = messages.at(-1);
-  if (last?.role === 'assistant' && last.parts) {
-    for (const part of last.parts) {
-      const p = part as {
-        type?: string;
-        toolInvocation?: { toolName?: string; state?: string };
-        state?: string;
-      };
-      if (p.type === 'tool-invocation') {
-        const name = p.toolInvocation?.toolName;
-        if (
-          name &&
-          (FRONTEND_SUSPEND_TOOLS as readonly string[]).includes(name) &&
-          p.toolInvocation?.state !== 'result'
-        ) {
-          return false;
-        }
-      }
-      for (const toolName of FRONTEND_SUSPEND_TOOLS) {
-        if (p.type === `tool-${toolName}` && p.state !== 'output-available') {
-          return false;
-        }
-      }
-    }
-  }
-  return lastAssistantMessageIsCompleteWithToolCalls({ messages });
+  useDesktopInteractionGuard({
+    rightSidebarOpen,
+    workspaceView: view,
+    hasVisibleWebTab,
+  });
+  return null;
 }
 
 function ChatShell() {
@@ -88,40 +78,54 @@ function ChatShell() {
 
   return (
     <AuiProvider value={aui}>
-      <SidebarProvider>
+      <WorkspaceNavigationProvider>
+        <PanelTabsProvider>
+        <SidebarProvider>
         <RightSidebarProvider>
+          <AppTitlebarControls />
           <ChatPanelRatioSync />
+          <DesktopInteractionGuard />
           <div className="flex h-dvh w-full overflow-hidden">
             <ThreadListSidebar />
-            {view === 'customize' ? (
-              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                <WorkspacePanelDragOverlay />
-                <CustomizeWorkspace />
-              </div>
-            ) : view === 'automate' ? (
-              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                <WorkspacePanelDragOverlay />
-                <AutomateWorkspace />
-              </div>
-            ) : view === 'settings' ? (
-              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                <WorkspacePanelDragOverlay />
-                <SettingsWorkspace />
-              </div>
-            ) : (
-              <>
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-1 overflow-hidden',
+                  view !== 'chat' && 'hidden',
+                )}
+              >
                 <SidebarInset className="flex min-h-0 flex-1 flex-col overflow-hidden">
                   <ThreadHeaderToolbar />
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                     <Thread />
                   </div>
                 </SidebarInset>
-                <ThreadRightSidebar />
-              </>
-            )}
+                <LazyThreadRightSidebar />
+              </div>
+              {view === 'customize' && (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                  <WorkspacePanelDragOverlay />
+                  <LazyCustomizeWorkspace />
+                </div>
+              )}
+              {view === 'automate' && (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                  <WorkspacePanelDragOverlay />
+                  <LazyAutomateWorkspace />
+                </div>
+              )}
+              {view === 'settings' && (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                  <WorkspacePanelDragOverlay />
+                  <LazySettingsWorkspace />
+                </div>
+              )}
+            </div>
           </div>
         </RightSidebarProvider>
-      </SidebarProvider>
+        </SidebarProvider>
+        </PanelTabsProvider>
+      </WorkspaceNavigationProvider>
     </AuiProvider>
   );
 }
@@ -131,20 +135,21 @@ const resilientChatFetch = createResilientChatFetch();
 export function AssistantChat() {
   useNetworkConnectivity();
 
+  useEffect(() => {
+    void bootstrapModelCatalogFromServer().finally(() => startupCheckpoint('catalog_ready'));
+  }, []);
+
   const runtime = useVeylinChatRuntime({
     resume: true,
-    sendAutomaticallyWhen,
-    onError: (error) => {
-      if (isAbortError(error) || isBenignChatError(error)) return;
-      const formatted = formatChatError(error);
-      if (!formatted) return;
-      useNetworkReconnectStore
-        .getState()
-        .setConnectionError(formatted.title, formatted.detail);
+    // Tool continuation is orchestrated in useAISDKRuntimeWithQueue (single path, deduped).
+    sendAutomaticallyWhen: () => false,
+    onError: () => {
+      // Stream errors are shown once via MessageError on the assistant row.
+      // Reconnect / exhausted states use the network reconnect banner in fetch layer.
     },
     onFinish: () => {
       useNetworkReconnectStore.getState().clearTransientBanner();
-      setChatSettings({ pendingSkill: null });
+      setChatSettings({ pendingSkill: null, attachedBrowserTab: null });
     },
     adapters: {
       attachments: new CompositeAttachmentAdapter([
@@ -180,7 +185,9 @@ export function AssistantChat() {
           planMode: s.planMode,
           mcpEnabled: s.mcpEnabled,
           pendingSkill: s.pendingSkill ?? undefined,
-          branchEdit: consumeBranchEdit(),
+          attachedBrowser: s.attachedBrowserTab ?? undefined,
+          workspacePanel: readWorkspacePanelContext(),
+          forceReplace: consumeForceReplaceNextChat(),
           locale: resolveAppLanguage(i18n.resolvedLanguage ?? i18n.language),
         };
       },
@@ -190,14 +197,7 @@ export function AssistantChat() {
   return (
     <SettingsPanelProvider>
       <AssistantRuntimeProvider runtime={runtime}>
-        <HandoffRenderers />
-        <AskUserQuestionToolUI />
-        <TodoWriteToolUI />
-        <ToolSearchToolUI />
-        <TaskCreateToolUI />
-        <KnowledgeSearchToolUI />
-        <WebFetchToolUI />
-        <ReadOpenPageToolUI />
+        <LazyAssistantToolUIs />
         <ChatShell />
       </AssistantRuntimeProvider>
     </SettingsPanelProvider>

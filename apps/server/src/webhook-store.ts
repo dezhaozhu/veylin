@@ -1,11 +1,17 @@
-import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   deleteWebhookRow,
-  getWebhookByTokenRow,
+  getWebhookBySourceRow,
   insertWebhook,
   listWebhookRows,
+  updateWebhookRow,
 } from '@veylin/db';
-import type { WebhookEndpoint } from '@veylin/shared';
+import type { WebhookCreateInput, WebhookEndpoint, WebhookUpdateInput } from '@veylin/shared';
+import { extractEventKey } from './webhook-filter';
+
+function buildWebhookUrl(baseUrl: string, tenantId: string, source: string): string {
+  return `${baseUrl}/api/events/${tenantId}/${source}`;
+}
 
 function rowToWebhook(
   row: Awaited<ReturnType<typeof listWebhookRows>>[number],
@@ -14,19 +20,18 @@ function rowToWebhook(
   return {
     id: row.id,
     tenantId: row.tenantId,
-    token: row.token,
-    sourceType: row.sourceType,
-    url: `${baseUrl}/api/webhooks/${row.token}`,
+    name: row.name,
+    source: row.source,
+    url: buildWebhookUrl(baseUrl, row.tenantId, row.source),
+    eventKeyExpr: row.eventKeyExpr,
+    signatureHeader: row.signatureHeader,
+    enabled: row.enabled,
     createdAt: row.createdAt,
   };
 }
 
-export function generateWebhookToken(): string {
-  return randomBytes(24).toString('hex');
-}
-
 export function generateWebhookSecret(): string {
-  return randomBytes(32).toString('hex');
+  return `whsec_${randomBytes(32).toString('base64url')}`;
 }
 
 export async function listWebhookEndpoints(tenantId: string, baseUrl: string) {
@@ -36,74 +41,139 @@ export async function listWebhookEndpoints(tenantId: string, baseUrl: string) {
 
 export async function createWebhookEndpoint(
   tenantId: string,
-  sourceType: 'github' | 'custom',
+  input: WebhookCreateInput,
   baseUrl: string,
-): Promise<{ endpoint: WebhookEndpoint; secret: string }> {
-  const token = generateWebhookToken();
-  const secret = generateWebhookSecret();
-  const row = await insertWebhook({ tenantId, token, secret, sourceType });
-  return { endpoint: rowToWebhook(row, baseUrl), secret };
+): Promise<{ endpoint: WebhookEndpoint; secret: string | null }> {
+  const secret = input.webhookSecret ?? generateWebhookSecret();
+  const row = await insertWebhook({
+    tenantId,
+    name: input.name,
+    source: input.source,
+    secret,
+    eventKeyExpr: input.eventKeyExpr,
+    signatureHeader: input.signatureHeader,
+    enabled: true,
+  });
+  return {
+    endpoint: rowToWebhook(row, baseUrl),
+    secret: input.webhookSecret ? null : secret,
+  };
+}
+
+export async function createGithubWebhookEndpoint(
+  tenantId: string,
+  baseUrl: string,
+  name = 'GitHub',
+): Promise<{ endpoint: WebhookEndpoint; secret: string | null }> {
+  const existing = await getWebhookBySourceRow(tenantId, 'github');
+  if (existing) {
+    return {
+      endpoint: rowToWebhook(existing, baseUrl),
+      secret: null,
+    };
+  }
+  const row = await insertWebhook({
+    tenantId,
+    name,
+    source: 'github',
+    secret: generateWebhookSecret(),
+    eventKeyExpr: 'type',
+    signatureHeader: 'X-Hub-Signature-256',
+    enabled: true,
+  });
+  return { endpoint: rowToWebhook(row, baseUrl), secret: row.secret };
 }
 
 export async function deleteWebhookEndpoint(tenantId: string, id: string): Promise<boolean> {
   return deleteWebhookRow(tenantId, id);
 }
 
-export async function getWebhookByToken(token: string) {
-  const row = await getWebhookByTokenRow(token);
-  if (!row) return null;
+export async function updateWebhookEndpoint(
+  tenantId: string,
+  id: string,
+  input: WebhookUpdateInput,
+  baseUrl: string,
+): Promise<WebhookEndpoint | null> {
+  const row = await updateWebhookRow(tenantId, id, input);
+  return row ? rowToWebhook(row, baseUrl) : null;
+}
+
+export async function getWebhookConfig(tenantId: string, source: string) {
+  const row = await getWebhookBySourceRow(tenantId, source);
+  if (!row || !row.enabled) return null;
   return {
     id: row.id,
     tenantId: row.tenantId,
-    token: row.token,
+    source: row.source,
     secret: row.secret,
-    sourceType: row.sourceType,
-    createdAt: row.createdAt ? new Date(row.createdAt) : undefined,
+    eventKeyExpr: row.eventKeyExpr,
+    signatureHeader: row.signatureHeader,
   };
 }
 
-export function verifyGithubSignature(
+/** OpenHands-compatible HMAC verification (supports `sha256=` prefix or raw hex). */
+export function verifyWebhookSignature(
+  payload: Buffer | string,
+  signature: string | undefined,
   secret: string,
-  rawBody: string,
-  signatureHeader: string | undefined,
 ): boolean {
-  if (!signatureHeader?.startsWith('sha256=')) return false;
-  const digest = createHmac('sha256', secret).update(rawBody).digest('hex');
-  const expected = `sha256=${digest}`;
+  if (!signature) return false;
+  const normalized = signature.startsWith('sha256=') ? signature.slice(7) : signature;
+  const body = typeof payload === 'string' ? payload : payload.toString('utf8');
+  const digest = createHmac('sha256', secret).update(body).digest('hex');
   try {
-    return timingSafeEqual(Buffer.from(expected), Buffer.from(signatureHeader));
+    return timingSafeEqual(Buffer.from(digest), Buffer.from(normalized));
   } catch {
     return false;
   }
 }
 
-export function verifyHmacSignature(
-  secret: string,
-  rawBody: string,
-  signatureHeader: string | undefined,
-): boolean {
-  if (!signatureHeader) return false;
-  const digest = createHmac('sha256', secret).update(rawBody).digest('hex');
-  try {
-    return timingSafeEqual(Buffer.from(digest), Buffer.from(signatureHeader));
-  } catch {
-    return false;
-  }
-}
-
-export function parseGithubEvent(
+export function parseGithubEventKey(
   payload: Record<string, unknown>,
   eventType?: string,
-): Record<string, unknown> {
-  const action = payload.action as string | undefined;
+): string {
   const type = eventType?.trim() || 'unknown';
-  const event = `github.${type}`;
+  const action = payload.action as string | undefined;
+  if (action) return `${type}.${action}`;
+  return type;
+}
+
+export function resolveEventKey(
+  source: string,
+  payload: Record<string, unknown>,
+  eventKeyExpr: string,
+  githubEventType?: string,
+): string {
+  if (source === 'github') {
+    return parseGithubEventKey(payload, githubEventType);
+  }
+  return extractEventKey(eventKeyExpr, payload);
+}
+
+export function buildEventContext(
+  source: string,
+  eventKey: string,
+  payload: Record<string, unknown>,
+  githubEventType?: string,
+): Record<string, unknown> {
+  if (source === 'github') {
+    const type = githubEventType?.trim() || 'unknown';
+    const action = payload.action as string | undefined;
+    return {
+      source,
+      eventKey,
+      event: eventKey,
+      eventType: type,
+      action,
+      ...(action ? { eventAction: `${type}.${action}` } : {}),
+      repository: (payload.repository as { full_name?: string })?.full_name,
+      ...payload,
+    };
+  }
   return {
-    event,
-    eventType: type,
-    action,
-    ...(action ? { eventAction: `${event}.${action}` } : {}),
-    repository: (payload.repository as { full_name?: string })?.full_name,
+    source,
+    eventKey,
+    event: eventKey,
     ...payload,
   };
 }

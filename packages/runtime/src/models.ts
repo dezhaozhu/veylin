@@ -1,76 +1,37 @@
-/** Catalog model id selected in chat (built-in or custom). */
-export type ModelKey = string;
+import {
+  DEFAULT_MODEL,
+  getModelConfig,
+  getRuntimeModelOverrides,
+  isModelProviderConfigured,
+  isRuntimeModelConfigured,
+  setRuntimeModelOverrides,
+  type ModelConfig,
+  type ModelKey,
+  type RuntimeModelOverrides,
+} from '@veylin/shared/node';
+import {
+  clearModelCatalogCache,
+  getCatalogModel,
+  getDefaultCatalogModel,
+  listModelCatalogPublic,
+  loadModelCatalog,
+  normalizeOpenAICompatibleUrl,
+  type ModelCatalogEntry,
+} from '@veylin/shared/node';
 
-export interface ModelConfig {
-  providerId: string;
-  modelId: string;
-  url: string;
-  apiKey: string;
-}
+export {
+  loadModelCatalog,
+  listModelCatalogPublic,
+  getDefaultCatalogModel,
+  getCatalogModel,
+  normalizeOpenAICompatibleUrl,
+  clearModelCatalogCache,
+  DEFAULT_MODEL,
+  getModelConfig,
+  setRuntimeModelOverrides,
+  getRuntimeModelOverrides,
+  isModelProviderConfigured,
+  isRuntimeModelConfigured,
+};
 
-export interface RuntimeModelOverrides {
-  modelName?: string;
-  requestUrl?: string;
-  apiKey?: string;
-}
-
-let runtimeOverrides: RuntimeModelOverrides = {};
-
-export function setRuntimeModelOverrides(overrides: RuntimeModelOverrides): void {
-  runtimeOverrides = { ...overrides };
-}
-
-export function getRuntimeModelOverrides(): RuntimeModelOverrides {
-  return { ...runtimeOverrides };
-}
-
-function requiresUserModelSettings(): boolean {
-  return process.env.VEYLIN_REQUIRE_USER_MODEL_SETTINGS === '1';
-}
-
-function resolvedModelName(): string {
-  return runtimeOverrides.modelName?.trim() ?? '';
-}
-
-export function isModelProviderConfigured(overrides: RuntimeModelOverrides): boolean {
-  const apiKey = overrides.apiKey?.trim() ?? '';
-  const requestUrl = overrides.requestUrl?.trim() ?? '';
-  const modelName = overrides.modelName?.trim() ?? '';
-  return Boolean(apiKey && requestUrl && modelName);
-}
-
-export function isRuntimeModelConfigured(): boolean {
-  return isModelProviderConfigured(runtimeOverrides);
-}
-
-function defaultEnvConfig(catalogId: string): ModelConfig {
-  return {
-    providerId: catalogId,
-    modelId: process.env.VEYLIN_MODEL ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-flash',
-    url: process.env.VEYLIN_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1',
-    apiKey:
-      process.env.VEYLIN_API_KEY ??
-      process.env.DEEPSEEK_API_KEY ??
-      process.env.ZENMUX_API_KEY ??
-      '',
-  };
-}
-
-function applyOpenAICompatibleOverrides(config: ModelConfig): ModelConfig {
-  const configuredApiKey = runtimeOverrides.apiKey?.trim() ?? '';
-  const modelName = resolvedModelName();
-
-  return {
-    ...config,
-    apiKey: configuredApiKey || (requiresUserModelSettings() ? '' : config.apiKey),
-    url: runtimeOverrides.requestUrl?.trim() || config.url,
-    modelId: modelName || config.modelId,
-  };
-}
-
-/** Resolve LLM config for any catalog model id using the shared provider settings. */
-export function getModelConfig(catalogId: ModelKey = DEFAULT_MODEL): ModelConfig {
-  return applyOpenAICompatibleOverrides(defaultEnvConfig(catalogId));
-}
-
-export const DEFAULT_MODEL = 'default';
+export type { ModelCatalogEntry, ModelConfig, ModelKey, RuntimeModelOverrides };

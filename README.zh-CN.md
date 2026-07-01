@@ -2,14 +2,14 @@
 
 [English](./README.md) · 简体中文
 
-从头重设计的工业 Agent 平台。**嵌入式 SurrealDB 单引擎**（文档+图+向量+全文），运行时内核，Fastify 薄 BFF，Tauri + React 客户端。打包为桌面应用后**双击即用**：服务端以内嵌 Node 的 sidecar 二进制随安装包分发，无需用户单独安装 Node / Docker / Postgres / Redis。
+从头重设计的通用 Agent 平台。**嵌入式 SurrealDB 单引擎**（文档+图+向量+全文），运行时内核，Fastify 薄 BFF，Tauri + React 客户端。打包为桌面应用后**双击即用**：服务端以内嵌 Node 的 sidecar 二进制随安装包分发，无需用户单独安装 Node / Docker / Postgres / Redis。
 
 ## 特点
 
 - **完整的 Agent**：自带工具调用、计划模式、子智能体、技能与记忆，端到端完成任务。
 - **无需写代码**：可视化工作流编排、定时与事件自动化、技能/规则/MCP 配置全部在 UI 完成。
 - **权限与隐私优先**：本地优先、单机自托管；危险操作走审批门；数据默认留在本机。
-- **工业通用**：不绑定单一行业，领域角色通过 agent.yaml 注入。
+- **领域无关**：不绑定单一行业，角色与指令通过 agent.yaml 与技能注入。
 - **介于「手搓」与「全包」之间**：易于 DIY，又开箱即用。
 - **企业自托管**：零外部依赖，可离线运行。
 - **右侧统一可 DIY 面板**：表格 / 网页 / 知识库(RAG) / 知识图谱 / 工作流。
@@ -53,6 +53,17 @@ npm run -w @veylin/desktop build  # 自动：构建前端 → 打包 sidecar(含
 
 桌面安装包**不内置模型凭据**。首次聊天前，请从左下角用户菜单进入 **Settings** → **Models**，配置你自己的 OpenAI-compatible API Key。
 
+## 上下文工程
+
+长对话时 Veylin 会分层管理上下文，避免超出模型窗口：
+
+- **System prompt 分层**：静态 instructions（角色、沟通规范）与每轮动态块（技能、规则、RAG、提醒）分开组装；稳定段落进程内缓存，`/api/compact` 后清空重拼。
+- **微压缩（microcompact）**：只读大结果工具（如 `knowledge_search`、`web_fetch`）的旧输出替换为占位符，保留最近几轮完整结果；关键事实应在助手回复中记下。
+- **Compaction**：历史超阈值时摘要较早消息（支持 LLM 九段式摘要）；阈值可按 context window 比例自动触发（`VEYLIN_AUTOCOMPACT_PCT`）。
+- **沟通规范**：首次调工具前一句话说明、关键节点短更新、回合末 1–2 句总结（改了什么 + 下一步）。
+
+相关环境变量见 `.env.example` 中 Context engineering 一节。
+
 ## 关键决策
 
 - 存储：**嵌入式 SurrealDB 单引擎**（业务表 + 知识库 图+向量+全文），线程记忆旁挂本地 LibSQL；不依赖外部 Postgres / Redis / Docker。
@@ -75,7 +86,7 @@ API：`GET/POST/PUT/DELETE /api/skills`、`/api/rules`、`/api/mcp-servers`
 ### Automate
 
 - **定时**：`automations` 表 + 进程内队列（node-cron）；每次运行新建 thread，写入 `automation_runs`，出现在会话列表。
-- **事件**：`POST /api/webhooks/:token`（GitHub `X-Hub-Signature-256` 或自定义 HMAC）；匹配 `kind=event` 的 automation 后投递队列。
+- **事件**：`POST /api/events/{tenantId}/{source}`（HMAC 验签）；按 OpenHands 风格 `on` + JMESPath `filter` 匹配 `kind=event` 的 automation 后投递队列。
 
 API：`GET/POST/PUT/DELETE /api/automations`、`POST /api/automations/:id/trigger`、`GET /api/automations/:id/runs`、`GET/POST/DELETE /api/webhooks`
 

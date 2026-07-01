@@ -1,10 +1,18 @@
 use serde::{Deserialize, Serialize};
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex};
 use std::time::Duration;
-use tauri::{webview::WebviewBuilder, AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl};
+use tauri::{webview::WebviewBuilder, AppHandle, LogicalPosition, LogicalSize, Manager, State, WebviewUrl};
 
-const WEB_VIEW_LABEL: &str = "web-view";
 const MAIN_LABEL: &str = "main";
+const WEB_VIEW_PREFIX: &str = "web-view-";
+
+pub struct ActiveWebTab(pub Mutex<Option<String>>);
+
+fn set_active_tab(state: &ActiveWebTab, tab_id: &str) {
+    if let Ok(mut guard) = state.0.lock() {
+        *guard = Some(tab_id.to_string());
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +40,48 @@ impl WebViewBounds {
             height: self.height.max(1.0),
         }
     }
+}
+
+fn web_view_label(tab_id: &str) -> Result<String, String> {
+    let trimmed = tab_id.trim();
+    if trimmed.is_empty() {
+        return Err("tabId is required".to_string());
+    }
+    let safe: String = trimmed
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    Ok(format!("{WEB_VIEW_PREFIX}{safe}"))
+}
+
+fn is_panel_web_view_label(label: &str) -> bool {
+    label.starts_with(WEB_VIEW_PREFIX)
+}
+
+fn hide_all_panel_web_views(app: &AppHandle) -> Result<(), String> {
+    for (label, webview) in app.webviews() {
+        if is_panel_web_view_label(&label) {
+            let _ = webview.hide();
+        }
+    }
+    Ok(())
+}
+
+fn apply_bounds(webview: &tauri::Webview, bounds: WebViewBounds) -> Result<(), String> {
+    let bounds = bounds.sanitized();
+    webview
+        .set_position(LogicalPosition::new(bounds.x, bounds.y))
+        .map_err(|e| e.to_string())?;
+    webview
+        .set_size(LogicalSize::new(bounds.width, bounds.height))
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn fallback_bounds(app: &AppHandle) -> Result<WebViewBounds, String> {
@@ -69,67 +119,126 @@ fn parse_external_url(url: &str) -> Result<url::Url, String> {
         .map_err(|_| format!("invalid URL: {trimmed}"))
 }
 
-#[tauri::command]
-pub async fn open_web_view(
-    app: AppHandle,
-    url: String,
-    bounds: Option<WebViewBounds>,
+fn navigate_webview(webview: &tauri::Webview, parsed: &url::Url) -> Result<(), String> {
+    let escaped = parsed
+        .as_str()
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'");
+    webview
+        .eval(&format!("window.location.href = '{escaped}';"))
+        .map_err(|e| e.to_string())
+}
+
+fn create_panel_webview(
+    app: &AppHandle,
+    label: &str,
+    parsed: url::Url,
+    bounds: WebViewBounds,
 ) -> Result<(), String> {
-    let parsed = parse_external_url(&url)?;
-    let bounds = bounds
-        .map(WebViewBounds::sanitized)
-        .unwrap_or(fallback_bounds(&app)?);
-
-    if let Some(webview) = app.get_webview(WEB_VIEW_LABEL) {
-        let escaped = parsed
-            .as_str()
-            .replace('\\', "\\\\")
-            .replace('\'', "\\'");
-        webview
-            .eval(&format!("window.location.href = '{escaped}';"))
-            .map_err(|e| e.to_string())?;
-        let _ = webview.set_position(LogicalPosition::new(bounds.x, bounds.y));
-        let _ = webview.set_size(LogicalSize::new(bounds.width, bounds.height));
-        webview.show().map_err(|e| e.to_string())?;
-        webview.set_focus().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
     let main = app
         .get_window(MAIN_LABEL)
         .ok_or_else(|| "main window not found".to_string())?;
 
     main.add_child(
-        WebviewBuilder::new(WEB_VIEW_LABEL, WebviewUrl::External(parsed)),
+        WebviewBuilder::new(label, WebviewUrl::External(parsed)),
         LogicalPosition::new(bounds.x, bounds.y),
         LogicalSize::new(bounds.width, bounds.height),
     )
     .map_err(|e| e.to_string())?
     .set_focus()
-        .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
+/// Open or navigate a per-tab web view. Each right-panel web tab gets its own webview.
 #[tauri::command]
-pub async fn resize_web_view(app: AppHandle, bounds: WebViewBounds) -> Result<(), String> {
-    if let Some(webview) = app.get_webview(WEB_VIEW_LABEL) {
-        let bounds = bounds.sanitized();
-        webview
-            .set_position(LogicalPosition::new(bounds.x, bounds.y))
-            .map_err(|e| e.to_string())?;
-        webview
-            .set_size(LogicalSize::new(bounds.width, bounds.height))
-            .map_err(|e| e.to_string())?;
+pub async fn open_web_view(
+    app: AppHandle,
+    active: State<'_, ActiveWebTab>,
+    tab_id: String,
+    url: String,
+    bounds: Option<WebViewBounds>,
+) -> Result<(), String> {
+    let label = web_view_label(&tab_id)?;
+    let parsed = parse_external_url(&url)?;
+    let bounds = bounds
+        .map(WebViewBounds::sanitized)
+        .unwrap_or(fallback_bounds(&app)?);
+
+    hide_all_panel_web_views(&app)?;
+
+    if let Some(webview) = app.get_webview(&label) {
+        navigate_webview(&webview, &parsed)?;
+        apply_bounds(&webview, bounds)?;
         webview.show().map_err(|e| e.to_string())?;
+        webview.set_focus().map_err(|e| e.to_string())?;
+        set_active_tab(&active, &tab_id);
+        return Ok(());
+    }
+
+    create_panel_webview(&app, &label, parsed, bounds)?;
+    set_active_tab(&active, &tab_id);
+    Ok(())
+}
+
+/// Show an existing tab webview without navigating (used when switching tabs).
+/// Returns true when the webview existed and was shown.
+#[tauri::command]
+pub async fn show_web_view(
+    app: AppHandle,
+    active: State<'_, ActiveWebTab>,
+    tab_id: String,
+    bounds: Option<WebViewBounds>,
+) -> Result<bool, String> {
+    let label = web_view_label(&tab_id)?;
+    let bounds = bounds
+        .map(WebViewBounds::sanitized)
+        .unwrap_or(fallback_bounds(&app)?);
+
+    hide_all_panel_web_views(&app)?;
+
+    let Some(webview) = app.get_webview(&label) else {
+        return Ok(false);
+    };
+
+    apply_bounds(&webview, bounds)?;
+    webview.show().map_err(|e| e.to_string())?;
+    webview.set_focus().map_err(|e| e.to_string())?;
+    set_active_tab(&active, &tab_id);
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn resize_web_view(
+    app: AppHandle,
+    tab_id: String,
+    bounds: WebViewBounds,
+) -> Result<(), String> {
+    let label = web_view_label(&tab_id)?;
+    if let Some(webview) = app.get_webview(&label) {
+        apply_bounds(&webview, bounds)?;
     }
     Ok(())
 }
 
 #[tauri::command]
-pub async fn hide_web_view(app: AppHandle) -> Result<(), String> {
-    if let Some(webview) = app.get_webview(WEB_VIEW_LABEL) {
-        webview.hide().map_err(|e| e.to_string())?;
+pub async fn hide_web_view(app: AppHandle, tab_id: Option<String>) -> Result<(), String> {
+    if let Some(tab_id) = tab_id {
+        let label = web_view_label(&tab_id)?;
+        if let Some(webview) = app.get_webview(&label) {
+            webview.hide().map_err(|e| e.to_string())?;
+        }
+        return Ok(());
+    }
+    hide_all_panel_web_views(&app)
+}
+
+#[tauri::command]
+pub async fn close_web_view(app: AppHandle, tab_id: String) -> Result<(), String> {
+    let label = web_view_label(&tab_id)?;
+    if let Some(webview) = app.get_webview(&label) {
+        webview.close().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -153,8 +262,22 @@ fn parse_page_content(raw: &str) -> Result<PageContent, String> {
 }
 
 #[tauri::command]
-pub async fn read_web_view(app: AppHandle, mode: Option<String>) -> Result<PageContent, String> {
-    let webview = app.get_webview(WEB_VIEW_LABEL).ok_or_else(|| {
+pub async fn read_web_view(
+    app: AppHandle,
+    active: State<'_, ActiveWebTab>,
+    tab_id: Option<String>,
+    mode: Option<String>,
+) -> Result<PageContent, String> {
+    let resolved_tab = tab_id.or_else(|| active.0.lock().ok().and_then(|g| g.clone()));
+
+    let webview = match resolved_tab {
+        Some(tab_id) => {
+            let label = web_view_label(&tab_id)?;
+            app.get_webview(&label)
+        }
+        None => None,
+    }
+    .ok_or_else(|| {
         "No page open: enter an address in the Web panel on the right and click Open first".to_string()
     })?;
 

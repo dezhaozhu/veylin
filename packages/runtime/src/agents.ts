@@ -1,6 +1,6 @@
 import { Agent } from '@mastra/core/agent';
-import { TokenLimiter } from '@mastra/core/processors';
 import type { Memory } from '@mastra/memory';
+import type { ModelKey } from './models';
 import type { AgentDefinition } from '@veylin/shared';
 import { builtinTools, makeSkillTool, toolSearch, type BuiltinToolId } from '@veylin/tools';
 import type { Skill } from '@veylin/agent-package';
@@ -11,11 +11,9 @@ import {
   permittedToolIds,
   type PolicyConfig,
 } from '@veylin/policy';
-import { getModelConfig, type ModelKey } from './models';
-import { ContextCompression } from './processors/contextCompression';
-import { buildSummarizer } from './summarizer';
-import { inputTokenLimit } from './token-limit';
+import { buildInputProcessors } from './input-processors';
 import { composeInstructions } from './prompts/systemPrompt';
+import { getModelConfig } from './models';
 
 /** Always available without tool_search discovery. */
 const ALWAYS_ON_TOOLS: BuiltinToolId[] = [
@@ -31,26 +29,27 @@ function resolveActiveToolIds(
   permitted: BuiltinToolId[],
   discovered: string[],
 ): BuiltinToolId[] {
+  const denied = new Set(
+    (definition.disallowedTools ?? []).filter((t): t is BuiltinToolId => t in builtinTools),
+  );
+  const applyDeny = (ids: BuiltinToolId[]) => ids.filter((id) => !denied.has(id));
+
   const discoveredBuiltins = discovered.filter(
     (id): id is BuiltinToolId => id in builtinTools && permitted.includes(id as BuiltinToolId),
   );
   const declared = definition.tools.filter((t): t is BuiltinToolId => t in builtinTools);
 
-  // Full-toolset agents (the main agent) always run with every policy-permitted
-  // builtin, so they never need tool_search to discover their own capabilities.
-  // Policy still applies (plan mode keeps denying dangerous, bash/web_fetch keep
-  // their approval gate).
   if (definition.fullToolset && declared.length === 0) {
-    return Array.from(new Set([...permitted, ...discoveredBuiltins]));
+    return applyDeny(Array.from(new Set([...permitted, ...discoveredBuiltins])));
   }
 
   if (declared.length > 0) {
     const base = declared.filter((id) => permitted.includes(id));
-    return Array.from(new Set([...base, ...discoveredBuiltins]));
+    return applyDeny(Array.from(new Set([...base, ...discoveredBuiltins])));
   }
 
   const alwaysOn = ALWAYS_ON_TOOLS.filter((id) => permitted.includes(id));
-  return Array.from(new Set([...alwaysOn, ...discoveredBuiltins]));
+  return applyDeny(Array.from(new Set([...alwaysOn, ...discoveredBuiltins])));
 }
 
 export interface BuildAgentOptions {
@@ -77,23 +76,29 @@ function whitelistFor(definition: AgentDefinition, permitted: BuiltinToolId[]): 
   return permitted.filter((id) => declared.includes(id));
 }
 
+function applyPolicyToTool(
+  id: string,
+  base: AnyTool,
+  policy: PolicyConfig,
+): AnyTool | null {
+  const decision = evaluateTool(id, policy);
+  if (decision === 'deny') return null;
+  const needsApproval = decision === 'approve' || base.requireApproval === true;
+  return { ...base, requireApproval: needsApproval } as AnyTool;
+}
+
 function toolMapFor(ids: BuiltinToolId[], policy: PolicyConfig): ToolMap {
   const map: ToolMap = {};
   for (const id of ids) {
-    const base = builtinTools[id];
-    const decision = evaluateTool(id, policy);
-    if (decision === 'deny') continue;
-    const needsApproval = decision === 'approve' || base.requireApproval === true;
-    map[id] = { ...base, requireApproval: needsApproval } as AnyTool;
+    const applied = applyPolicyToTool(id, builtinTools[id], policy);
+    if (applied) map[id] = applied;
   }
   return map;
 }
 
-function buildInstructions(definition: AgentDefinition, skills: Skill[]): string {
-  return composeInstructions(
-    definition.instructions,
-    skills.map((s) => ({ name: s.name, description: s.description })),
-  );
+function buildInstructions(definition: AgentDefinition): string {
+  const outputStyle = process.env.VEYLIN_OUTPUT_STYLE;
+  return composeInstructions(definition.instructions, outputStyle);
 }
 
 export function buildAgent({
@@ -111,7 +116,11 @@ export function buildAgent({
     id: definition.id,
     name: definition.name,
     description: definition.description,
-    instructions: buildInstructions(definition, skills),
+    instructions: buildInstructions(definition),
+    defaultOptions: {
+      // Tool calls (web_fetch, etc.) need a follow-up model turn in the same run.
+      maxSteps: 25,
+    },
     model: ({ requestContext }: { requestContext?: { get(key: string): unknown } }) => {
       const requested = requestContext?.get('model') as ModelKey | undefined;
       return getModelConfig(requested ?? (definition.model as ModelKey));
@@ -124,14 +133,15 @@ export function buildAgent({
       const discovered = (requestContext?.get('discoveredToolIds') as string[] | undefined) ?? [];
       const ids = resolveActiveToolIds(definition, permitted, discovered);
       const map = toolMapFor(ids, activePolicy);
-      map.tool_search = toolSearch as unknown as AnyTool;
-      if (skillTool) map.skill = skillTool as unknown as AnyTool;
+      const toolSearchApplied = applyPolicyToTool('tool_search', toolSearch as unknown as AnyTool, activePolicy);
+      if (toolSearchApplied) map.tool_search = toolSearchApplied;
+      if (skillTool) {
+        const skillApplied = applyPolicyToTool('skill', skillTool as unknown as AnyTool, activePolicy);
+        if (skillApplied) map.skill = skillApplied;
+      }
       return map;
     },
-    inputProcessors: [
-      new ContextCompression({ summarizer: buildSummarizer(definition.model as ModelKey) }),
-      new TokenLimiter({ limit: inputTokenLimit() }),
-    ],
+    inputProcessors: buildInputProcessors(definition.model as ModelKey),
   });
 }
 
@@ -139,4 +149,5 @@ export function toolNeedsApproval(toolId: string, policy: PolicyConfig = default
   return evaluateTool(toolId, policy) === 'approve';
 }
 
-export { ContextCompression, buildSummarizer };
+export { ContextCompression } from './processors/contextCompression';
+export { buildSummarizer } from './summarizer';

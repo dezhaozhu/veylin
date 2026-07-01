@@ -6,30 +6,35 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { loadAgentDefinition, loadSkillsDir, type Skill } from '@veylin/agent-package';
 import type { AgentDefinition } from '@veylin/shared';
+import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { defaultPolicy, planModePolicy, type PolicyConfig } from '@veylin/policy';
 import { buildMemory } from './memory';
+import { buildStorage } from './storage';
 import { buildAgent } from './agents';
 import { SUBAGENT_PRESETS, presetToDefinition } from './subagent-presets';
 
-export const DEFAULT_AGENT_ID = 'veylin';
+export { DEFAULT_AGENT_ID };
 
 const DEFAULT_AGENT: AgentDefinition = {
   id: DEFAULT_AGENT_ID,
-  name: 'Veylin',
-  description: 'General industrial operations assistant.',
-  model: 'deepseek',
+  name: 'Assistant',
+  description: 'General-purpose assistant for research, documents, workflows, and automation.',
+  model: 'default',
   instructions:
-    'You are an industrial operations assistant supporting factory production, ' +
-    'scheduling, and equipment workflows. Apply the general guidance above to this ' +
-    'domain: reason about work orders, schedules, and operational risk, and treat ' +
-    'production-data or schedule changes as high-stakes actions that warrant a plan ' +
-    'and approval before execution.',
+    'You are the user\'s primary assistant. Help with questions, document analysis, ' +
+    'structured data in tables, knowledge-base search, web research, and multi-step ' +
+    'workflows. Adapt to the user\'s domain from their messages and working memory — ' +
+    'do not assume manufacturing, software development, or any single industry unless ' +
+    'the user clearly works in that context. Treat data changes and external automations ' +
+    'as high-stakes: explain impact and use planning or approval when appropriate.',
   skills: [],
   tools: [],
+  disallowedTools: [],
   mcpServers: [],
   approvalRequired: [],
   subAgents: [],
   schedules: [],
+  optional: false,
   fullToolset: true,
 };
 
@@ -46,7 +51,12 @@ export interface AgentSummary {
 
 export interface AgentContext {
   agentId: string;
-  skills: { name: string; description: string }[];
+  skills: {
+    name: string;
+    description: string;
+    disableModelInvocation: boolean;
+    userInvocable: boolean;
+  }[];
   mcpServers: string[];
 }
 
@@ -56,6 +66,8 @@ export interface Runtime {
   memory: Memory;
   /** Loaded agent definitions, including the built-in default. */
   definitions: Map<string, LoadedAgent>;
+  /** Directory scanned for agent.yaml + skills (reloaded on demand). */
+  agentsDir?: string;
   /** List registered agents for UI pickers. */
   listAgents(): AgentSummary[];
   /** Skills + MCP metadata for the default (or given) agent package. */
@@ -63,6 +75,8 @@ export interface Runtime {
   getAgent(id: string): Agent | undefined;
   /** Build (and register) an extra agent at runtime. */
   createAgent(def: AgentDefinition, policy?: PolicyConfig, skills?: Skill[]): Agent;
+  /** Reload agent.yaml and bundled skills from agentsDir. */
+  reloadAgentPackages(): Promise<void>;
 }
 
 export interface CreateRuntimeOptions {
@@ -91,6 +105,9 @@ export async function loadAgentsFromDir(dir: string): Promise<LoadedAgent[]> {
     const yamlPath = join(dir, entry.name, 'agent.yaml');
     try {
       const definition = await loadAgentDefinition(yamlPath);
+      if (definition.optional && process.env.VEYLIN_LOAD_OPTIONAL_AGENTS !== '1') {
+        continue;
+      }
       const skills = await loadSkillsDir(join(dir, entry.name, 'skills'));
       loaded.push({ definition, skills });
     } catch {
@@ -98,6 +115,17 @@ export async function loadAgentsFromDir(dir: string): Promise<LoadedAgent[]> {
     }
   }
   return loaded;
+}
+
+async function loadDefinitionsFromAgentsDir(agentsDir?: string): Promise<Map<string, LoadedAgent>> {
+  const definitions = new Map<string, LoadedAgent>();
+  definitions.set(DEFAULT_AGENT.id, { definition: DEFAULT_AGENT, skills: [] });
+  if (agentsDir) {
+    for (const item of await loadAgentsFromDir(agentsDir)) {
+      definitions.set(item.definition.id, item);
+    }
+  }
+  return definitions;
 }
 
 export async function createRuntime(
@@ -110,40 +138,54 @@ export async function createRuntime(
   const libsqlUrl = resolved.libsqlUrl ?? `file:${join(resolved.dataDir, 'mastra-memory.db')}`;
 
   const memory = buildMemory(libsqlUrl);
-  const { agentsDir } = resolved;
+  const storage = buildStorage(libsqlUrl);
+  const agentsDir = resolved.agentsDir;
+  const definitions = await loadDefinitionsFromAgentsDir(agentsDir);
+  const agentById = new Map<string, Agent>();
 
-  const definitions = new Map<string, LoadedAgent>();
-  definitions.set(DEFAULT_AGENT.id, { definition: DEFAULT_AGENT, skills: [] });
+  const registerPackageAgent = (id: string, loaded: LoadedAgent) => {
+    const filteredSkills = filterSkills(loaded.skills, loaded.definition.skills);
+    agentById.set(
+      id,
+      buildAgent({ definition: loaded.definition, memory, policy: defaultPolicy, skills: filteredSkills }),
+    );
+  };
 
-  if (agentsDir) {
-    for (const item of await loadAgentsFromDir(agentsDir)) {
-      definitions.set(item.definition.id, item);
-    }
+  for (const [id, loaded] of definitions) {
+    registerPackageAgent(id, loaded);
   }
 
-  const agents: Record<string, Agent> = {};
-  for (const [id, { definition, skills }] of definitions) {
-    const filteredSkills = filterSkills(skills, definition.skills);
-    agents[id] = buildAgent({ definition, memory, policy: defaultPolicy, skills: filteredSkills });
-  }
-
-  // Register the built-in subagent presets dispatched synchronously by the `task`
-  // tool. They reuse the shared policy/memory/processors via buildAgent but are
-  // intentionally kept out of `definitions` so they don't show in UI agent pickers.
   for (const preset of Object.values(SUBAGENT_PRESETS)) {
     const definition = presetToDefinition(preset);
-    agents[definition.id] = buildAgent({ definition, memory, policy: defaultPolicy });
+    agentById.set(definition.id, buildAgent({ definition, memory, policy: defaultPolicy }));
   }
 
   const mastra = new Mastra({
-    agents,
+    agents: Object.fromEntries(agentById),
+    storage,
     logger: new PinoLogger({ name: 'veylin', level: 'info' }),
   });
+
+  const reloadAgentPackages = async () => {
+    if (!agentsDir) return;
+    const next = await loadDefinitionsFromAgentsDir(agentsDir);
+    for (const [id, loaded] of next) {
+      definitions.set(id, loaded);
+      registerPackageAgent(id, loaded);
+    }
+    for (const id of [...definitions.keys()]) {
+      if (!next.has(id)) {
+        definitions.delete(id);
+        agentById.delete(id);
+      }
+    }
+  };
 
   return {
     mastra,
     memory,
     definitions,
+    agentsDir,
     listAgents() {
       return [...definitions.values()].map(({ definition }) => ({
         id: definition.id,
@@ -161,20 +203,21 @@ export async function createRuntime(
         skills: filtered.map((s) => ({
           name: s.name,
           description: s.description,
+          disableModelInvocation: s.disableModelInvocation,
+          userInvocable: s.userInvocable,
         })),
         mcpServers: definition.mcpServers ?? [],
       };
     },
     getAgent(id) {
-      try {
-        return mastra.getAgent(id);
-      } catch {
-        return undefined;
-      }
+      return agentById.get(id);
     },
     createAgent(def, policy = defaultPolicy, skills = []) {
-      return buildAgent({ definition: def, memory, policy, skills });
+      const agent = buildAgent({ definition: def, memory, policy, skills });
+      agentById.set(def.id, agent);
+      return agent;
     },
+    reloadAgentPackages,
   };
 }
 

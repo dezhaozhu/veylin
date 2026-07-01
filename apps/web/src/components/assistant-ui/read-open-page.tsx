@@ -3,6 +3,7 @@ import { GlobeIcon, LoaderIcon } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { readWebView, truncatePageContent } from '@/lib/tauri-web-view';
+import { getActiveWebTabId } from '@/lib/panel-tabs-storage';
 
 interface ReadOpenPageArgs {
   mode?: 'text' | 'html';
@@ -28,12 +29,13 @@ export const ReadOpenPageToolUI = makeAssistantToolUI<ReadOpenPageArgs, ReadOpen
     const maxChars = args?.maxChars ?? 50_000;
 
     useEffect(() => {
-      if (status.type !== 'running' || !addResult || startedRef.current || result) return;
+      if (!addResult || startedRef.current || result) return;
+      if (status.type === 'complete') return;
       startedRef.current = true;
 
       void (async () => {
         try {
-          const page = await readWebView(mode);
+          const page = await readWebView(mode, getActiveWebTabId() ?? undefined);
           const { content, truncated } = truncatePageContent(page.content, maxChars);
           addResult({
             mode,

@@ -1,16 +1,20 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import type { CustomizeTab, SettingsTab, WorkspaceLocation, WorkspaceView } from '@/lib/workspace-navigation';
+import { dispatchOverlayDismiss } from '@/lib/overlay-dismiss';
 
-export type WorkspaceView = 'chat' | 'customize' | 'automate' | 'settings';
-export type CustomizeTab = 'skills' | 'rules' | 'mcp';
+export type { CustomizeTab, SettingsTab, WorkspaceView };
 
 type WorkspacePanelContextValue = {
   view: WorkspaceView;
   customizeTab: CustomizeTab;
+  settingsTab: SettingsTab;
   openCustomize: (tab?: CustomizeTab) => void;
   openAutomate: () => void;
   openAppSettings: () => void;
   closeWorkspace: () => void;
   setCustomizeTab: (tab: CustomizeTab) => void;
+  setSettingsTab: (tab: SettingsTab) => void;
+  applyWorkspaceLocation: (loc: WorkspaceLocation) => void;
   /** Opens Customize MCP (composer shortcut). */
   openSettings: (tab?: CustomizeTab | 'mcp' | 'skills' | 'rules') => void;
 };
@@ -20,6 +24,11 @@ const WorkspacePanelContext = createContext<WorkspacePanelContextValue | null>(n
 export function SettingsPanelProvider({ children }: { children: ReactNode }) {
   const [view, setView] = useState<WorkspaceView>('chat');
   const [customizeTab, setCustomizeTab] = useState<CustomizeTab>('rules');
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+
+  useEffect(() => {
+    dispatchOverlayDismiss('workspace-view');
+  }, [view]);
 
   const openCustomize = useCallback((tab?: CustomizeTab) => {
     if (tab) setCustomizeTab(tab);
@@ -38,6 +47,25 @@ export function SettingsPanelProvider({ children }: { children: ReactNode }) {
     setView('chat');
   }, []);
 
+  const applyWorkspaceLocation = useCallback((loc: WorkspaceLocation) => {
+    switch (loc.view) {
+      case 'chat':
+        setView('chat');
+        break;
+      case 'customize':
+        setCustomizeTab(loc.tab);
+        setView('customize');
+        break;
+      case 'automate':
+        setView('automate');
+        break;
+      case 'settings':
+        setSettingsTab(loc.tab);
+        setView('settings');
+        break;
+    }
+  }, []);
+
   const openSettings = useCallback(
     (tab?: CustomizeTab | 'mcp' | 'skills' | 'rules' | 'automations') => {
       if (tab === 'automations') {
@@ -54,14 +82,27 @@ export function SettingsPanelProvider({ children }: { children: ReactNode }) {
     () => ({
       view,
       customizeTab,
+      settingsTab,
       openCustomize,
       openAutomate,
       openAppSettings,
       closeWorkspace,
       setCustomizeTab,
+      setSettingsTab,
+      applyWorkspaceLocation,
       openSettings,
     }),
-    [view, customizeTab, openCustomize, openAutomate, openAppSettings, closeWorkspace, openSettings],
+    [
+      view,
+      customizeTab,
+      settingsTab,
+      openCustomize,
+      openAutomate,
+      openAppSettings,
+      closeWorkspace,
+      applyWorkspaceLocation,
+      openSettings,
+    ],
   );
 
   return (

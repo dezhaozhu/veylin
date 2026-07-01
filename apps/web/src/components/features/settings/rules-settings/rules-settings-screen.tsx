@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
+import { List } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Rule } from '@/hooks/settings/api';
 import { settingsApi } from '@/hooks/settings/api';
-import { SettingsSwitch } from '../settings-switch';
 import {
   PageHeader,
   PageSearchBar,
@@ -14,8 +14,49 @@ import {
   FormInput,
   FormSelect,
   FormTextarea,
-  SettingsInlineEditor,
+  SettingsFormDialog,
 } from '../settings-form-dialog';
+import { SettingsDeleteDialog } from '../settings-item-actions';
+import {
+  SettingsConnectedList,
+  SettingsListIcon,
+  SettingsListRow,
+} from '../settings-list';
+
+function RuleRow({
+  rule,
+  onToggle,
+  onEdit,
+  onDelete,
+}: {
+  rule: Rule;
+  onToggle: (enabled: boolean) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <SettingsListRow
+      icon={
+        <SettingsListIcon statusDot={rule.enabled}>
+          <List className="size-4" />
+        </SettingsListIcon>
+      }
+      title={rule.name}
+      subtitle={rule.content}
+      subtitleClamp={2}
+      menuItems={[
+        {
+          label: rule.enabled ? t('common.disable') : t('common.enable'),
+          onClick: () => onToggle(!rule.enabled),
+        },
+        { label: t('common.edit'), onClick: onEdit },
+        { label: t('common.delete'), onClick: onDelete, destructive: true },
+      ]}
+    />
+  );
+}
 
 export function RulesSettingsScreen() {
   const { t } = useTranslation();
@@ -23,6 +64,8 @@ export function RulesSettingsScreen() {
   const [query, setQuery] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Rule | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Rule | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState({
     name: '',
     content: '',
@@ -96,6 +139,20 @@ export function RulesSettingsScreen() {
     }
   };
 
+  const confirmDelete = async () => {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    try {
+      await settingsApi.deleteRule(deleteTarget.id);
+      setDeleteTarget(null);
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader
@@ -106,13 +163,17 @@ export function RulesSettingsScreen() {
 
       <PageSearchBar value={query} onChange={setQuery} placeholder={t('customize.rulesPage.searchPlaceholder')} />
 
-      <SettingsInlineEditor
+      <SettingsFormDialog
         open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) setEditing(null);
+        }}
         title={editing ? t('customize.rulesPage.editTitle') : t('customize.rulesPage.addTitle')}
         description={t('customize.rulesPage.editorDescription')}
         submitLabel={editing ? t('common.saveChanges') : t('customize.rulesPage.addRule')}
         onSubmit={() => void save()}
-        onCancel={() => setDialogOpen(false)}
+        onCancel={() => setEditing(null)}
       >
         <FormField label={t('common.name')} required>
           <FormInput
@@ -148,46 +209,32 @@ export function RulesSettingsScreen() {
             />
           </FormField>
         )}
-      </SettingsInlineEditor>
+      </SettingsFormDialog>
 
       <SectionHeading title={t('customize.rulesPage.allRules')} count={filtered.length} />
 
-      <div className="flex flex-col gap-2">
-        {filtered.map((rule) => (
-          <div
-            key={rule.id}
-            className="border-border bg-card flex items-center gap-3 rounded-xl border px-4 py-3"
-          >
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">{rule.name}</div>
-              <p className="text-muted-foreground mt-1 truncate text-sm">{rule.content}</p>
-              <div className="text-muted-foreground text-xs">
-                {rule.trigger === 'always' ? t('customize.rulesPage.triggerAlways') : t('customize.rulesPage.triggerKeyword')}
-                {rule.trigger === 'keyword' && rule.keywords.length > 0
-                  ? ` · ${rule.keywords.join(', ')}`
-                  : ''}
-              </div>
-            </div>
-            <button type="button" className="text-xs underline" onClick={() => openEdit(rule)}>
-              {t('common.edit')}
-            </button>
-            <button
-              type="button"
-              className="text-destructive text-xs underline"
-              onClick={() => {
-                if (confirm(t('customize.rulesPage.confirmDelete'))) void settingsApi.deleteRule(rule.id).then(load);
-              }}
-            >
-              {t('common.delete')}
-            </button>
-            <SettingsSwitch
-              checked={rule.enabled}
-              onChange={(on) => void settingsApi.updateRule(rule.id, { enabled: on }).then(load)}
-              label={t('customize.rulesPage.toggle', { name: rule.name })}
+      {filtered.length > 0 ? (
+        <SettingsConnectedList>
+          {filtered.map((rule) => (
+            <RuleRow
+              key={rule.id}
+              rule={rule}
+              onToggle={(on) => void settingsApi.updateRule(rule.id, { enabled: on }).then(load)}
+              onEdit={() => openEdit(rule)}
+              onDelete={() => setDeleteTarget(rule)}
             />
-          </div>
-        ))}
-      </div>
+          ))}
+        </SettingsConnectedList>
+      ) : null}
+
+      <SettingsDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={t('customize.rulesPage.deleteTitle')}
+        description={t('customize.rulesPage.confirmDelete')}
+        onConfirm={confirmDelete}
+        busy={deleting}
+      />
     </div>
   );
 }

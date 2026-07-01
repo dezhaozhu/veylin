@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { SkillListItem } from '@/hooks/settings/api';
 import { settingsApi } from '@/hooks/settings/api';
-import { SettingsSwitch } from '../settings-switch';
 import {
   PageHeader,
   PageSearchBar,
@@ -13,11 +13,31 @@ import {
   FormField,
   FormInput,
   FormTextarea,
-  SettingsInlineEditor,
+  SettingsFormDialog,
 } from '../settings-form-dialog';
-import { cn } from '@/lib/utils';
+import { SettingsDeleteDialog } from '../settings-item-actions';
+import {
+  SettingsConnectedList,
+  SettingsListIcon,
+  SettingsListRow,
+} from '../settings-list';
 
-function SkillCard({
+function skillSubtitle(skill: SkillListItem): string {
+  const raw =
+    skill.description?.trim() ||
+    (skill.content?.trim()
+      ? skill.content
+          .trim()
+          .split('\n')
+          .find((l) => l.trim() && !l.startsWith('#'))
+          ?.trim()
+      : '') ||
+    skill.triggers?.join(', ') ||
+    '';
+  return raw.replace(/\s+/g, ' ').trim();
+}
+
+function SkillRow({
   skill,
   onToggle,
   onEdit,
@@ -30,53 +50,30 @@ function SkillCard({
 }) {
   const { t } = useTranslation();
 
+  const menuItems = [
+    {
+      label: skill.enabled ? t('common.disable') : t('common.enable'),
+      onClick: () => onToggle(!skill.enabled),
+    },
+    ...(onEdit
+      ? [{ label: t('common.edit'), onClick: onEdit }]
+      : []),
+    ...(onDelete
+      ? [{ label: t('common.delete'), onClick: onDelete, destructive: true }]
+      : []),
+  ];
+
   return (
-    <div className="border-border bg-card flex items-start gap-3 rounded-xl border p-4">
-      <div className="bg-primary/10 text-primary flex size-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold">
-        {skill.name.slice(0, 2).toUpperCase()}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">{skill.name}</span>
-          <span
-            className={cn(
-              'rounded px-1.5 py-0.5 text-[10px] font-medium uppercase',
-              skill.source === 'bundled' ? 'bg-muted text-muted-foreground' : 'bg-blue-500/15 text-blue-600',
-            )}
-          >
-            {t(`customize.skillsPage.source.${skill.source}`)}
-          </span>
-        </div>
-        {skill.description && (
-          <p className="text-muted-foreground mt-1 text-sm leading-relaxed">{skill.description}</p>
-        )}
-        {skill.content && (
-          <p className="text-muted-foreground mt-1 line-clamp-2 text-xs leading-relaxed">
-            {skill.content}
-          </p>
-        )}
-        {skill.triggers?.length > 0 && (
-          <p className="text-muted-foreground mt-1 text-xs">
-            {t('customize.skillsPage.triggers', { triggers: skill.triggers.join(', ') })}
-          </p>
-        )}
-        {skill.source === 'custom' && (
-          <div className="mt-2 flex gap-3">
-            {onEdit && (
-              <button type="button" className="text-xs underline" onClick={onEdit}>
-                {t('common.edit')}
-              </button>
-            )}
-            {onDelete && (
-              <button type="button" className="text-destructive text-xs underline" onClick={onDelete}>
-                {t('common.delete')}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-      <SettingsSwitch checked={skill.enabled} onChange={onToggle} label={t('customize.skillsPage.toggle', { name: skill.name })} />
-    </div>
+    <SettingsListRow
+      icon={
+        <SettingsListIcon statusDot={skill.enabled}>
+          <Zap className="size-4" />
+        </SettingsListIcon>
+      }
+      title={skill.name}
+      subtitle={skillSubtitle(skill)}
+      menuItems={menuItems}
+    />
   );
 }
 
@@ -88,6 +85,8 @@ export function SkillsSettingsScreen() {
   const [query, setQuery] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<SkillListItem | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SkillListItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState({ name: '', description: '', content: '' });
 
   const load = useCallback(async () => {
@@ -142,6 +141,20 @@ export function SkillsSettingsScreen() {
     setDialogOpen(true);
   };
 
+  const confirmDelete = async () => {
+    if (!deleteTarget?.id || deleting) return;
+    setDeleting(true);
+    try {
+      await settingsApi.deleteSkill(deleteTarget.id);
+      setDeleteTarget(null);
+      await load();
+    } catch (err) {
+      alert(t('customize.skillsPage.saveFailed', { error: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const saveCustom = async () => {
     if (!form.name.trim() || !form.content.trim()) return;
     try {
@@ -177,13 +190,17 @@ export function SkillsSettingsScreen() {
 
       <PageSearchBar value={query} onChange={setQuery} placeholder={t('customize.skillsPage.searchPlaceholder')} />
 
-      <SettingsInlineEditor
+      <SettingsFormDialog
         open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) setEditing(null);
+        }}
         title={editing ? t('customize.skillsPage.editTitle') : t('customize.skillsPage.addTitle')}
         description={t('customize.skillsPage.editorDescription')}
         submitLabel={editing ? t('common.saveChanges') : t('customize.skillsPage.addSkill')}
         onSubmit={() => void saveCustom()}
-        onCancel={() => setDialogOpen(false)}
+        onCancel={() => setEditing(null)}
       >
         <FormField label={t('common.name')} required>
           <FormInput
@@ -206,45 +223,51 @@ export function SkillsSettingsScreen() {
             onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
           />
         </FormField>
-      </SettingsInlineEditor>
+      </SettingsFormDialog>
 
       <section className="mb-8">
         <SectionHeading title={t('customize.skillsPage.builtIn')} count={bundled.length} />
-        <div className="flex flex-col gap-2">
+        <SettingsConnectedList>
           {bundled.map((s) => (
-            <SkillCard
+            <SkillRow
               key={s.name}
               skill={s}
               onToggle={(on) => void toggleBundled(s.name, on)}
             />
           ))}
-        </div>
+        </SettingsConnectedList>
       </section>
 
       <section className="mb-8">
         <SectionHeading title={t('customize.skillsPage.custom')} count={custom.length} />
-        <div className="flex flex-col gap-2">
-          {custom.map((s) => (
-            <SkillCard
-              key={s.id ?? s.name}
-              skill={s}
-              onToggle={async (on) => {
-                if (s.id) {
-                  await settingsApi.updateSkill(s.id, { enabled: on });
-                  await load();
-                }
-              }}
-              onEdit={() => openEdit(s)}
-              onDelete={async () => {
-                if (s.id && confirm(t('customize.skillsPage.confirmDelete'))) {
-                  await settingsApi.deleteSkill(s.id);
-                  await load();
-                }
-              }}
-            />
-          ))}
-        </div>
+        {custom.length > 0 ? (
+          <SettingsConnectedList>
+            {custom.map((s) => (
+              <SkillRow
+                key={s.id ?? s.name}
+                skill={s}
+                onToggle={async (on) => {
+                  if (s.id) {
+                    await settingsApi.updateSkill(s.id, { enabled: on });
+                    await load();
+                  }
+                }}
+                onEdit={() => openEdit(s)}
+                onDelete={() => setDeleteTarget(s)}
+              />
+            ))}
+          </SettingsConnectedList>
+        ) : null}
       </section>
+
+      <SettingsDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={t('customize.skillsPage.deleteTitle')}
+        description={t('customize.skillsPage.confirmDelete')}
+        onConfirm={confirmDelete}
+        busy={deleting}
+      />
     </div>
   );
 }

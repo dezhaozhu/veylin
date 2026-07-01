@@ -1,11 +1,16 @@
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 /** Resolve the app-data directory for embedded SurrealDB / LibSQL files. */
 export function resolveDataDir(): string {
   const fromEnv = process.env.VEYLIN_DATA_DIR?.trim();
-  if (fromEnv) return resolve(fromEnv);
+  if (fromEnv) {
+    if (isAbsolute(fromEnv)) return fromEnv;
+    const anchor = process.env.VEYLIN_REPO_ROOT?.trim();
+    if (anchor) return resolve(anchor, fromEnv);
+    return resolve(fromEnv);
+  }
   return join(homedir(), '.veylin');
 }
 

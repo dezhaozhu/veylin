@@ -8,11 +8,13 @@ import {
   PlugIcon,
   PlusIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type FC } from 'react';
+import { useCallback, useState, type FC } from 'react';
 import { useAui, useAuiState } from '@assistant-ui/store';
 import { applyCompactToThread } from '@/lib/compact-context';
 import { getChatSettings } from '@/lib/chat-settings';
+import { commitPendingSkillAtEnd } from '@/lib/composer-pending-skill';
 import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
+import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 import {
   ComposerMenuFlyoutItem,
   ComposerMenuPanel,
@@ -21,6 +23,7 @@ import {
 } from '@/components/assistant-ui/composer-menu-flyout';
 import { ComposerMcpFlyout } from '@/components/assistant-ui/composer-mcp-flyout';
 import { ComposerSkillsFlyout } from '@/components/assistant-ui/composer-skills-flyout';
+import { addComposerFiles } from '@/lib/add-composer-files';
 import { FILE_ATTACHMENT_ACCEPT } from '@/lib/file-attachment-adapter';
 import {
   useAgentContext,
@@ -28,6 +31,7 @@ import {
   usePendingSkill,
   usePlanMode,
 } from '@/lib/use-composer-settings';
+import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 
 type Submenu = 'skills' | 'mcp' | null;
 
@@ -55,6 +59,8 @@ export const ComposerPlusMenu: FC = () => {
     setMcpSearch('');
   }, []);
 
+  useOverlayDismiss(close);
+
   const openImagePicker = useCallback(() => {
     if (!addAttachment) return;
     const input = document.createElement('input');
@@ -65,10 +71,8 @@ export const ComposerPlusMenu: FC = () => {
     document.body.appendChild(input);
     input.onchange = () => {
       const files = input.files;
-      if (files) {
-        for (const file of files) {
-          addAttachment(file);
-        }
+      if (files && files.length > 0) {
+        void addComposerFiles((file) => addAttachment(file), files);
       }
       document.body.removeChild(input);
     };
@@ -86,10 +90,8 @@ export const ComposerPlusMenu: FC = () => {
     document.body.appendChild(input);
     input.onchange = () => {
       const files = input.files;
-      if (files) {
-        for (const file of files) {
-          addAttachment(file);
-        }
+      if (files && files.length > 0) {
+        void addComposerFiles((file) => addAttachment(file), files);
       }
       document.body.removeChild(input);
     };
@@ -97,17 +99,15 @@ export const ComposerPlusMenu: FC = () => {
     close();
   }, [addAttachment, close]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, close]);
-
   const selectSkill = (name: string) => {
-    setPendingSkill(name);
+    const composer = aui.composer();
+    const text = composer.getState().text;
+    commitPendingSkillAtEnd(
+      (next) => composer.setText(next),
+      setPendingSkill,
+      text,
+      name,
+    );
     close();
   };
 
@@ -147,12 +147,7 @@ export const ComposerPlusMenu: FC = () => {
 
       {open && (
         <>
-          <button
-            type="button"
-            className="fixed inset-0 z-40"
-            aria-label="Close menu"
-            onClick={close}
-          />
+          <DismissibleBackdrop ariaLabel="Close menu" onClose={close} className="fixed inset-0 z-40" />
           <div
             className="absolute bottom-full left-0 z-50 mb-2"
             onClick={(e) => e.stopPropagation()}

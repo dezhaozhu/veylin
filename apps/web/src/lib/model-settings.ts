@@ -14,13 +14,6 @@ export type ModelSettings = {
 const KEY = 'veylin-model-settings';
 const EVENT = 'veylin-model-settings';
 
-const LEGACY_BUILTIN_IDS = new Set(['deepseek', 'zenmux']);
-
-const DEFAULTS: ModelSettings = {
-  models: [],
-  enabledModels: {},
-};
-
 function sanitizeEnabledModels(
   models: ModelCatalogEntry[],
   raw: Record<string, boolean> | undefined,
@@ -28,7 +21,7 @@ function sanitizeEnabledModels(
   const validIds = new Set(models.map((m) => m.id));
   const enabledModels: Record<string, boolean> = {};
   for (const [id, on] of Object.entries(raw ?? {})) {
-    if (!LEGACY_BUILTIN_IDS.has(id) && validIds.has(id)) {
+    if (validIds.has(id)) {
       enabledModels[id] = on;
     }
   }
@@ -55,8 +48,8 @@ export function getModelSettings(): ModelSettings {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return { models: [], enabledModels: {} };
-    const parsed = JSON.parse(raw) as Partial<ModelSettings> & { customModels?: ModelCatalogEntry[] };
-    const models = parsed.models ?? parsed.customModels ?? [];
+    const parsed = JSON.parse(raw) as Partial<ModelSettings>;
+    const models = parsed.models ?? [];
     return {
       models,
       enabledModels: sanitizeEnabledModels(models, parsed.enabledModels),

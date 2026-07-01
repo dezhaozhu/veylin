@@ -3,21 +3,21 @@
   "version": "0.1.0",
   "private": false,
   "type": "module",
-  "description": "Veylin — an open-source, self-hosted industrial AI agent desktop app. Complete tool-calling agent, no-code automation, permission/privacy-first, with unified DIY right-side panels (table, web, RAG, knowledge graph, workflow). Embedded SurrealDB, no external services.",
+  "description": "Veylin — an open-source, self-hosted AI agent desktop app. Complete tool-calling agent, no-code automation, permission/privacy-first, with unified DIY right-side panels (table, web, RAG, knowledge graph, workflow). Embedded SurrealDB, no external services.",
   "license": "MIT",
   "author": "Veylin contributors",
-  "homepage": "https://github.com/veylin-ai/veylin#readme",
+  "homepage": "https://github.com/dezhaozhu/veylin#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/veylin-ai/veylin.git"
+    "url": "git+https://github.com/dezhaozhu/veylin.git"
   },
   "bugs": {
-    "url": "https://github.com/veylin-ai/veylin/issues"
+    "url": "https://github.com/dezhaozhu/veylin/issues"
   },
   "keywords": [
     "ai-agent",
     "llm",
-    "industrial",
+    "general-purpose",
     "self-hosted",
     "desktop-app",
     "tauri",
@@ -42,11 +42,11 @@
     "dev:server": "npm run -w @veylin/server dev",
     "dev:web": "npm run -w @veylin/web dev",
     "dev:desktop": "npm run -w @veylin/desktop dev",
-    "dev": "concurrently -n server,web -c blue,green \"npm run dev:server\" \"npm run dev:web\"",
+    "dev": "VEYLIN_REPO_ROOT=. VEYLIN_DATA_DIR=./data concurrently -n server,web -c blue,green \"npm run dev:server\" \"npm run dev:web\"",
     "build": "npm run build --workspaces --if-present",
     "build:desktop": "npm run -w @veylin/desktop build",
     "typecheck": "tsc -b && npm run -w @veylin/web typecheck",
-    "test": "npm run -w @veylin/server test && npm run -w @veylin/web test"
+    "test": "npm run -w @veylin/shared test && npm run -w @veylin/db test && npm run -w @veylin/tools test && npm run -w @veylin/policy test && npm run -w @veylin/runtime test && npm run -w @veylin/server test && npm run -w @veylin/web test"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

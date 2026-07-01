@@ -37,6 +37,7 @@ const EXTERNALS = [
   'surrealdb',
   '@napi-rs/canvas',
   '@mastra/fastembed',
+  '@huggingface/transformers',
   'onnxruntime-node',
   '@libsql/client',
   'libsql',
@@ -99,6 +100,7 @@ const NATIVE_PRUNE = {
       '@napi-rs': ['canvas', 'wasm-runtime', 'canvas-linux-arm64-gnu'],
       '@anush008': ['tokenizers', 'tokenizers-linux-arm64-gnu'],
       '@libsql': ['client', 'core', 'hrana-client', 'isomorphic-ws', 'linux-arm64-gnu'],
+      '@img': ['colour', 'sharp-linux-arm64', 'sharp-libvips-linux-arm64'],
     },
   },
   'x86_64-unknown-linux-gnu': {
@@ -109,6 +111,7 @@ const NATIVE_PRUNE = {
       '@napi-rs': ['canvas', 'wasm-runtime', 'canvas-linux-x64-gnu'],
       '@anush008': ['tokenizers', 'tokenizers-linux-x64-gnu'],
       '@libsql': ['client', 'core', 'hrana-client', 'isomorphic-ws', 'linux-x64-gnu'],
+      '@img': ['colour', 'sharp-linux-x64', 'sharp-libvips-linux-x64'],
     },
   },
   'x86_64-pc-windows-msvc': {
@@ -157,7 +160,7 @@ function pruneMuslSafetyNet(nodeModules, triple) {
     if (!scope.startsWith('@')) continue;
     const scopeDir = join(nodeModules, scope);
     for (const pkg of readdirSync(scopeDir)) {
-      if (pkg.includes('-musl')) {
+      if (pkg.includes('musl')) {
         rmSync(join(scopeDir, pkg), { recursive: true, force: true });
         console.log(`[build-sidecar] removed musl package ${scope}/${pkg}`);
       }
@@ -203,6 +206,31 @@ function pruneOnnxGpuProviders(onnxBinDir) {
   let removed = 0;
 
   walkFiles(onnxBinDir, (file) => {
+    const name = file.split(/[\\/]/).pop() ?? '';
+    if (gpuProviderNames.some((provider) => name.includes(provider))) {
+      rmSync(file, { force: true });
+      removed += 1;
+    }
+  });
+
+  return removed;
+}
+
+/** Remove GPU ONNX Runtime provider libs from every nested onnxruntime-node copy. */
+function pruneAllOnnxGpuProviders(sidecarRoot) {
+  const nodeModules = join(sidecarRoot, 'node_modules');
+  if (!existsSync(nodeModules)) return 0;
+
+  const gpuProviderNames = [
+    'providers_cuda',
+    'providers_tensorrt',
+    'providers_openvino',
+    'providers_rocm',
+  ];
+  let removed = 0;
+
+  walkFiles(nodeModules, (file) => {
+    if (!file.includes('onnxruntime')) return;
     const name = file.split(/[\\/]/).pop() ?? '';
     if (gpuProviderNames.some((provider) => name.includes(provider))) {
       rmSync(file, { force: true });
@@ -284,6 +312,11 @@ function pruneSidecarForTarget(sidecarRoot, triple) {
     }
   }
 
+  const removedNestedGpu = pruneAllOnnxGpuProviders(sidecarRoot);
+  if (removedNestedGpu > 0) {
+    console.log(`[build-sidecar] removed ${removedNestedGpu} nested ONNX Runtime GPU provider binaries`);
+  }
+
   for (const pkg of ['typescript', '@types']) {
     rmSync(join(nodeModules, pkg), { recursive: true, force: true });
   }
@@ -332,28 +365,15 @@ await build({
 
 writeFileSync(join(outDir, 'package.json'), JSON.stringify({ type: 'module', name: 'veylin-server-sidecar' }, null, 2));
 
-// Bundle the stdio MCP servers so they run under the embedded Node (no tsx needed).
-const mcpServersRoot = resolve(repoRoot, 'packages/mcp-servers/src');
-for (const mcpName of ['scheduling-server', 'maintenance-server']) {
-  await build({
-    entryPoints: [join(mcpServersRoot, `${mcpName}.ts`)],
-    outfile: join(outDir, `${mcpName}.mjs`),
-    bundle: true,
-    platform: 'node',
-    format: 'esm',
-    target: 'node22',
-    packages: 'bundle',
-    banner: {
-      js: [
-        "import { createRequire as __ia_createRequire } from 'node:module';",
-        'const require = __ia_createRequire(import.meta.url);',
-      ].join('\n'),
-    },
-    sourcemap: false,
-    logLevel: 'error',
-  });
+const examplesSrc = join(repoRoot, 'examples', 'veylin');
+const examplesDest = join(outDir, 'examples', 'veylin');
+if (existsSync(examplesSrc)) {
+  mkdirSync(join(outDir, 'examples'), { recursive: true });
+  cpSync(examplesSrc, examplesDest, { recursive: true });
+  console.log('[build-sidecar] copied examples/veylin default agent pack');
 }
 
+// Bundled stdio MCP servers removed; remote MCP is configured per tenant.
 // Trace and copy runtime files for the bundled server AND every EXTERNAL package.
 // EXTERNALS are not inlined by esbuild and several (e.g. @mastra/libsql) are loaded
 // via dynamic require, which static analysis from server.mjs alone cannot follow.
@@ -385,7 +405,12 @@ for (const absPath of fileList) {
 // Covers their full package contents (native .node binaries, package.json exports).
 const WHOLE_PACKAGE_COPIES = [
   ...EXTERNALS,
-  '@mastra',
+  '@mastra/core',
+  '@mastra/mcp',
+  '@mastra/memory',
+  '@mastra/ai-sdk',
+  '@mastra/loggers',
+  '@mastra/observability',
   '@surrealdb',
   '@anush008',
   '@libsql',

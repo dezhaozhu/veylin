@@ -9,9 +9,11 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
+    "@veylin/db": "*",
     "@veylin/agent-package": "*",
     "@veylin/policy": "*",
     "@veylin/shared": "*",

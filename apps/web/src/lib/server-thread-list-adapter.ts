@@ -11,7 +11,7 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** Server-backed thread list: persists titles and lists sessions from Postgres. */
+/** Server-backed thread list: persists titles and lists sessions via the local API (SurrealDB). */
 export function createServerThreadListAdapter(): RemoteThreadListAdapter {
   return {
     unstable_Provider: createServerThreadHistoryProvider(),
@@ -48,8 +48,10 @@ export function createServerThreadListAdapter(): RemoteThreadListAdapter {
       });
     },
 
-    async archive() {
-      // Archive not persisted yet; noop keeps sidebar UX working.
+    async archive(remoteId: string) {
+      await apiJson(`/api/threads/${encodeURIComponent(remoteId)}`, {
+        method: 'DELETE',
+      });
     },
 
     async unarchive() {},

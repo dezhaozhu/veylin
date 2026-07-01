@@ -2,14 +2,16 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { useAui } from '@assistant-ui/store';
 import { useTranslation } from 'react-i18next';
 import {
+  Check,
   Clock,
+  Copy,
   FolderGit2,
-  MoreVertical,
   Play,
-  Plus,
   Tag,
+  Workflow,
 } from 'lucide-react';
 import type { Automation, AutomationRun, WebhookEndpoint } from '@/hooks/settings/api';
+import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { settingsApi } from '@/hooks/settings/api';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import {
@@ -20,61 +22,77 @@ import {
 } from '../page-header';
 import { Button } from '@/components/ui/button';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   FormField,
   FormInput,
   FormSelect,
   FormTextarea,
-  SettingsInlineEditor,
+  SettingsFormDialog,
 } from '../settings-form-dialog';
+import {
+  SettingsDeleteButton,
+  SettingsDeleteDialog,
+  SettingsEditButton,
+} from '../settings-item-actions';
 import { cn } from '@/lib/utils';
+import { copyToClipboard } from '@/lib/copy-to-clipboard';
+import { humanizeCronExpression } from '@/lib/cron-expression';
+import {
+  SettingsConnectedList,
+  SettingsListIcon,
+  SettingsListRow,
+} from '../settings-list';
 
 const TEMPLATES = [
   {
     id: 'pr-triage',
     nameKey: 'automate.templates.prTriage.name',
-    categoryKey: 'automate.templates.prTriage.category',
-    icon: 'GH',
     descriptionKey: 'automate.templates.prTriage.description',
     promptKey: 'automate.templates.prTriage.prompt',
   },
   {
     id: 'security-pass',
     nameKey: 'automate.templates.securityPass.name',
-    categoryKey: 'automate.templates.securityPass.category',
-    icon: 'GH',
     descriptionKey: 'automate.templates.securityPass.description',
     promptKey: 'automate.templates.securityPass.prompt',
   },
   {
     id: 'slack-digest',
     nameKey: 'automate.templates.slackDigest.name',
-    categoryKey: 'automate.templates.slackDigest.category',
-    icon: 'SL',
     descriptionKey: 'automate.templates.slackDigest.description',
     promptKey: 'automate.templates.slackDigest.prompt',
   },
   {
     id: 'incident-hook',
     nameKey: 'automate.templates.incidentHook.name',
-    categoryKey: 'automate.templates.incidentHook.category',
-    icon: 'WH',
     descriptionKey: 'automate.templates.incidentHook.description',
     promptKey: 'automate.templates.incidentHook.prompt',
   },
 ] as const;
 
-type CreatedHook = { url: string; secret: string; sourceType: 'github' | 'custom' };
+type CreatedHook = { url: string; secret: string; signatureHeader: string };
 
-function buildWebhookCurl({ url, secret, sourceType }: CreatedHook): string {
-  const sigHeader = sourceType === 'github' ? 'X-Hub-Signature-256' : 'X-Signature-256';
-  const sigValue = sourceType === 'github' ? 'sha256=$SIG' : '$SIG';
+function resolveSignatureHeader(endpoint: Pick<WebhookEndpoint, 'signatureHeader' | 'source'>): string {
+  if (endpoint.signatureHeader) return endpoint.signatureHeader;
+  return endpoint.source === 'github' ? 'X-Hub-Signature-256' : 'X-Signature-256';
+}
+
+function buildWebhookCurl({ url, secret, signatureHeader }: CreatedHook): string {
+  const sigValue = signatureHeader === 'X-Hub-Signature-256' ? 'sha256=$SIG' : '$SIG';
   return [
     `SECRET='${secret}'`,
     `BODY='{"event":"test"}'`,
     `SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.* //')`,
     `curl -X POST '${url}' \\`,
     `  -H 'Content-Type: application/json' \\`,
-    `  -H "${sigHeader}: ${sigValue}" \\`,
+    `  -H "${signatureHeader}: ${sigValue}" \\`,
     `  -d "$BODY"`,
   ].join('\n');
 }
@@ -105,11 +123,15 @@ function AutomationCard({
 }) {
   const { t } = useTranslation();
   const scheduleLabel =
-    automation.kind === 'schedule'
-      ? automation.cron ?? t('automate.scheduled')
+    automation.kind === 'cron'
+      ? (automation.cron
+          ? humanizeCronExpression(automation.cron, t) ?? automation.cron
+          : t('automate.scheduled'))
       : automation.sourceType === 'github'
         ? t('automate.runsOnGithubEvents')
-        : t('automate.eventDriven');
+        : automation.eventOn
+          ? String(automation.eventOn)
+          : t('automate.eventDriven');
 
   return (
     <div
@@ -122,23 +144,9 @@ function AutomationCard({
         <button type="button" className="text-left" onClick={onSelect}>
           <h3 className="font-medium leading-snug">{automation.name}</h3>
         </button>
-        <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          <button
-            type="button"
-            className="text-muted-foreground hover:text-foreground rounded px-1.5 py-1 text-xs"
-            onClick={onEdit}
-            aria-label={t('common.edit')}
-          >
-            {t('common.edit')}
-          </button>
-          <button
-            type="button"
-            className="text-muted-foreground hover:text-foreground rounded p-1"
-            onClick={onDelete}
-            aria-label={t('common.delete')}
-          >
-            <MoreVertical className="size-4" />
-          </button>
+        <div className="flex shrink-0 items-center gap-0.5 opacity-100 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100">
+          <SettingsEditButton onClick={onEdit} />
+          <SettingsDeleteButton onClick={onDelete} />
         </div>
       </div>
       <p className="text-muted-foreground mb-4 line-clamp-2 flex-1 text-sm leading-relaxed">
@@ -171,13 +179,14 @@ function AutomationCard({
 
 const EMPTY_FORM = {
   name: '',
-  kind: 'schedule' as 'schedule' | 'event',
-  agentId: 'veylin',
+  kind: 'cron' as 'cron' | 'event',
+  agentId: DEFAULT_AGENT_ID,
   prompt: '',
   cron: '0 9 * * 1-5',
   timezone: 'UTC',
-  sourceType: 'cron',
-  triggerFilter: '{}',
+  sourceType: 'github',
+  eventOn: '',
+  eventFilter: '',
 };
 
 export function AutomationsSettingsScreen() {
@@ -192,8 +201,37 @@ export function AutomationsSettingsScreen() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [runs, setRuns] = useState<AutomationRun[]>([]);
   const [createdHook, setCreatedHook] = useState<CreatedHook | null>(null);
+  const [copiedCurlId, setCopiedCurlId] = useState<string | null>(null);
+  const [copiedSecretCurl, setCopiedSecretCurl] = useState(false);
   const [hookError, setHookError] = useState<string | null>(null);
+  const [deleteWebhookTarget, setDeleteWebhookTarget] = useState<WebhookEndpoint | null>(null);
+  const [deletingWebhook, setDeletingWebhook] = useState(false);
+  const [deleteAutomationTarget, setDeleteAutomationTarget] = useState<Automation | null>(null);
+  const [deletingAutomation, setDeletingAutomation] = useState(false);
+  const [githubHookDialogOpen, setGithubHookDialogOpen] = useState(false);
+  const [githubHookName, setGithubHookName] = useState('GitHub');
+  const [creatingGithubHook, setCreatingGithubHook] = useState(false);
+  const [customHookDialogOpen, setCustomHookDialogOpen] = useState(false);
+  const [creatingCustomHook, setCreatingCustomHook] = useState(false);
+  const [editHookDialogOpen, setEditHookDialogOpen] = useState(false);
+  const [editingWebhook, setEditingWebhook] = useState<WebhookEndpoint | null>(null);
+  const [savingWebhook, setSavingWebhook] = useState(false);
+  const [editHookForm, setEditHookForm] = useState({
+    name: '',
+    eventKeyExpr: 'type',
+    signatureHeader: 'X-Signature-256',
+  });
+  const [customHookForm, setCustomHookForm] = useState({
+    name: '',
+    source: '',
+    eventKeyExpr: 'type',
+    signatureHeader: 'X-Signature-256',
+  });
   const [form, setForm] = useState({ ...EMPTY_FORM });
+  const cronSummary = useMemo(
+    () => (form.kind === 'cron' ? humanizeCronExpression(form.cron, t) : null),
+    [form.kind, form.cron, t],
+  );
 
   const openRunThread = useCallback(
     async (threadId: string) => {
@@ -231,6 +269,34 @@ export function AutomationsSettingsScreen() {
     void settingsApi.getAutomationRuns(detailId).then((d) => setRuns(d.runs));
   }, [detailId]);
 
+  const confirmDeleteWebhook = useCallback(async () => {
+    if (!deleteWebhookTarget || deletingWebhook) return;
+    setDeletingWebhook(true);
+    setHookError(null);
+    try {
+      await settingsApi.deleteWebhook(deleteWebhookTarget.id);
+      setDeleteWebhookTarget(null);
+      await load();
+    } catch (err) {
+      setHookError(String(err));
+    } finally {
+      setDeletingWebhook(false);
+    }
+  }, [deleteWebhookTarget, deletingWebhook, load]);
+
+  const confirmDeleteAutomation = useCallback(async () => {
+    if (!deleteAutomationTarget || deletingAutomation) return;
+    setDeletingAutomation(true);
+    try {
+      await settingsApi.deleteAutomation(deleteAutomationTarget.id);
+      setDeleteAutomationTarget(null);
+      if (detailId === deleteAutomationTarget.id) setDetailId(null);
+      await load();
+    } finally {
+      setDeletingAutomation(false);
+    }
+  }, [deleteAutomationTarget, deletingAutomation, detailId, load]);
+
   const q = query.trim().toLowerCase();
   const filtered = useMemo(
     () =>
@@ -264,29 +330,35 @@ export function AutomationsSettingsScreen() {
       cron: automation.cron ?? '0 9 * * 1-5',
       timezone: automation.timezone ?? 'UTC',
       sourceType: automation.sourceType ?? (automation.kind === 'event' ? 'github' : 'cron'),
-      triggerFilter: JSON.stringify(automation.triggerFilter ?? {}, null, 2),
+      eventOn: Array.isArray(automation.eventOn)
+        ? automation.eventOn.join(', ')
+        : (automation.eventOn ?? ''),
+      eventFilter: automation.eventFilter ?? '',
     });
     setDialogOpen(true);
   };
 
   const save = async () => {
     if (!form.name.trim() || !form.prompt.trim()) return;
-    let triggerFilter: Record<string, unknown> = {};
-    try {
-      triggerFilter = JSON.parse(form.triggerFilter || '{}') as Record<string, unknown>;
-    } catch {
-      alert(t('automate.triggerFilterJsonError'));
-      return;
-    }
+    const eventOnPatterns = form.eventOn
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
     const body = {
       name: form.name,
       kind: form.kind,
       agentId: form.agentId,
       prompt: form.prompt,
-      cron: form.kind === 'schedule' ? form.cron : undefined,
+      cron: form.kind === 'cron' ? form.cron : undefined,
       timezone: form.timezone,
       sourceType: form.kind === 'event' ? form.sourceType : 'cron',
-      triggerFilter,
+      eventOn:
+        form.kind === 'event' && eventOnPatterns.length === 1
+          ? eventOnPatterns[0]
+          : form.kind === 'event' && eventOnPatterns.length > 1
+            ? eventOnPatterns
+            : undefined,
+      eventFilter: form.kind === 'event' && form.eventFilter.trim() ? form.eventFilter.trim() : undefined,
     };
     if (editingId) await settingsApi.updateAutomation(editingId, body);
     else await settingsApi.createAutomation(body);
@@ -295,14 +367,147 @@ export function AutomationsSettingsScreen() {
     await load();
   };
 
+  const showCreatedHookResult = (r: { endpoint: WebhookEndpoint; secret: string | null }) => {
+    if (r.secret) {
+      setCreatedHook({
+        url: r.endpoint.url,
+        secret: r.secret,
+        signatureHeader: resolveSignatureHeader({
+          ...r.endpoint,
+          source: r.endpoint.source ?? 'github',
+        }),
+      });
+    }
+  };
+
+  const openGithubHookDialog = () => {
+    setHookError(null);
+    setGithubHookName('GitHub');
+    setGithubHookDialogOpen(true);
+  };
+
+  const openCustomHookDialog = () => {
+    setHookError(null);
+    setCustomHookForm({
+      name: '',
+      source: '',
+      eventKeyExpr: 'type',
+      signatureHeader: 'X-Signature-256',
+    });
+    setCustomHookDialogOpen(true);
+  };
+
+  const openEditWebhook = (webhook: WebhookEndpoint) => {
+    setHookError(null);
+    setEditingWebhook(webhook);
+    setEditHookForm({
+      name: webhook.name,
+      eventKeyExpr: webhook.eventKeyExpr || 'type',
+      signatureHeader: resolveSignatureHeader(webhook),
+    });
+    setEditHookDialogOpen(true);
+  };
+
+  const saveEditWebhook = async () => {
+    if (!editingWebhook || savingWebhook || !editHookForm.name.trim()) return;
+    setSavingWebhook(true);
+    setHookError(null);
+    try {
+      await settingsApi.updateWebhook(editingWebhook.id, {
+        name: editHookForm.name.trim(),
+        eventKeyExpr: editHookForm.eventKeyExpr.trim() || 'type',
+        signatureHeader: editHookForm.signatureHeader.trim() || 'X-Signature-256',
+      });
+      setEditHookDialogOpen(false);
+      setEditingWebhook(null);
+      await load();
+    } catch (err) {
+      setHookError(String(err));
+    } finally {
+      setSavingWebhook(false);
+    }
+  };
+
+  const flashCopiedCurl = useCallback((id: string) => {
+    setCopiedCurlId(id);
+    window.setTimeout(() => {
+      setCopiedCurlId((current) => (current === id ? null : current));
+    }, 2000);
+  }, []);
+
+  const handleCopyListCurl = useCallback(
+    async (webhook: WebhookEndpoint) => {
+      const ok = await copyToClipboard(
+        buildWebhookCurl({
+          url: webhook.url,
+          secret: '<SECRET>',
+          signatureHeader: resolveSignatureHeader(webhook),
+        }),
+      );
+      if (ok) flashCopiedCurl(webhook.id);
+    },
+    [flashCopiedCurl],
+  );
+
+  const handleCopySecretCurl = useCallback(async () => {
+    if (!createdHook) return;
+    const ok = await copyToClipboard(buildWebhookCurl(createdHook));
+    if (ok) {
+      setCopiedSecretCurl(true);
+      window.setTimeout(() => setCopiedSecretCurl(false), 2000);
+    }
+  }, [createdHook]);
+
+  const createGithubHook = async () => {
+    if (creatingGithubHook) return;
+    setCreatingGithubHook(true);
+    setHookError(null);
+    try {
+      const r = await settingsApi.createWebhook({
+        preset: 'github',
+        name: githubHookName.trim() || 'GitHub',
+      });
+      setGithubHookDialogOpen(false);
+      showCreatedHookResult(r);
+      await load();
+    } catch (err) {
+      setHookError(String(err));
+    } finally {
+      setCreatingGithubHook(false);
+    }
+  };
+
+  const createCustomHook = async () => {
+    if (creatingCustomHook || !customHookForm.name.trim() || !customHookForm.source.trim()) return;
+    setCreatingCustomHook(true);
+    setHookError(null);
+    try {
+      const r = await settingsApi.createWebhook({
+        name: customHookForm.name.trim(),
+        source: customHookForm.source.trim(),
+        eventKeyExpr: customHookForm.eventKeyExpr.trim() || 'type',
+        signatureHeader: customHookForm.signatureHeader.trim() || 'X-Signature-256',
+      });
+      setCustomHookDialogOpen(false);
+      showCreatedHookResult(r);
+      await load();
+    } catch (err) {
+      setHookError(String(err));
+    } finally {
+      setCreatingCustomHook(false);
+    }
+  };
+
   const applyTemplate = (template: (typeof TEMPLATES)[number]) => {
     setEditingId(null);
     setForm({
       ...EMPTY_FORM,
       name: t(template.nameKey),
       prompt: t(template.promptKey),
-      kind: template.id === 'incident-hook' ? 'event' : 'schedule',
+      kind: template.id === 'incident-hook' ? 'event' : 'cron',
       sourceType: template.id === 'incident-hook' ? 'github' : 'cron',
+      eventOn: template.id === 'incident-hook' ? 'pull_request.opened' : '',
+      eventFilter: '',
     });
     setDialogOpen(true);
   };
@@ -317,16 +522,17 @@ export function AutomationsSettingsScreen() {
 
       <PageSearchBar value={query} onChange={setQuery} placeholder={t('automate.searchPlaceholder')} />
 
-      <SettingsInlineEditor
+      <SettingsFormDialog
         open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) setEditingId(null);
+        }}
         title={editingId ? t('automate.editTitle') : t('automate.addTitle')}
         description={t('automate.editorDescription')}
         submitLabel={editingId ? t('common.saveChanges') : t('common.create')}
         onSubmit={() => void save()}
-        onCancel={() => {
-          setDialogOpen(false);
-          setEditingId(null);
-        }}
+        onCancel={() => setEditingId(null)}
       >
         <FormField label={t('common.name')} required>
           <FormInput
@@ -338,20 +544,24 @@ export function AutomationsSettingsScreen() {
         <FormField label={t('automate.trigger')}>
           <FormSelect
             value={form.kind}
-            onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value as 'schedule' | 'event' }))}
+            onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value as 'cron' | 'event' }))}
           >
-            <option value="schedule">{t('automate.triggerSchedule')}</option>
+            <option value="cron">{t('automate.triggerSchedule')}</option>
             <option value="event">{t('automate.triggerEvent')}</option>
           </FormSelect>
         </FormField>
-        {form.kind === 'schedule' ? (
+        {form.kind === 'cron' ? (
           <>
             <FormField label={t('automate.cron')} hint={t('automate.cronHint')}>
               <FormInput
+                className="font-mono text-sm tracking-wide"
                 placeholder="0 9 * * 1-5"
                 value={form.cron}
                 onChange={(e) => setForm((f) => ({ ...f, cron: e.target.value }))}
               />
+              {cronSummary && (
+                <span className="text-foreground/80 text-xs font-medium">{cronSummary}</span>
+              )}
             </FormField>
             <FormField label={t('automate.timezone')}>
               <FormInput
@@ -363,21 +573,26 @@ export function AutomationsSettingsScreen() {
           </>
         ) : (
           <>
-            <FormField label={t('automate.eventSource')}>
-              <FormSelect
+            <FormField label={t('automate.eventSource')} hint={t('automate.eventSourceHint')}>
+              <FormInput
+                placeholder="github"
                 value={form.sourceType}
                 onChange={(e) => setForm((f) => ({ ...f, sourceType: e.target.value }))}
-              >
-                <option value="github">GitHub</option>
-                <option value="custom">{t('common.custom')}</option>
-              </FormSelect>
+              />
             </FormField>
-            <FormField label={t('automate.triggerFilter')} hint={t('automate.triggerFilterHint')}>
+            <FormField label={t('automate.eventOn')} hint={t('automate.eventOnHint')}>
+              <FormInput
+                placeholder="pull_request.opened"
+                value={form.eventOn}
+                onChange={(e) => setForm((f) => ({ ...f, eventOn: e.target.value }))}
+              />
+            </FormField>
+            <FormField label={t('automate.eventFilter')} hint={t('automate.eventFilterHint')}>
               <FormTextarea
                 className="min-h-20 font-mono text-xs"
-                placeholder="{}"
-                value={form.triggerFilter}
-                onChange={(e) => setForm((f) => ({ ...f, triggerFilter: e.target.value }))}
+                placeholder="glob(repository.full_name, 'org/*')"
+                value={form.eventFilter}
+                onChange={(e) => setForm((f) => ({ ...f, eventFilter: e.target.value }))}
               />
             </FormField>
           </>
@@ -389,7 +604,7 @@ export function AutomationsSettingsScreen() {
             onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))}
           />
         </FormField>
-      </SettingsInlineEditor>
+      </SettingsFormDialog>
 
       <section className="mb-8">
         <SectionHeading title={t('automate.active')} count={active.length} />
@@ -406,9 +621,7 @@ export function AutomationsSettingsScreen() {
                   void settingsApi.updateAutomation(a.id, { enabled: !a.enabled }).then(load)
                 }
                 onEdit={() => openEdit(a)}
-                onDelete={() => {
-                  if (confirm(t('automate.confirmDelete'))) void settingsApi.deleteAutomation(a.id).then(load);
-                }}
+                onDelete={() => setDeleteAutomationTarget(a)}
                 onSelect={() => setDetailId(a.id)}
               />
             ))}
@@ -431,9 +644,7 @@ export function AutomationsSettingsScreen() {
                   void settingsApi.updateAutomation(a.id, { enabled: !a.enabled }).then(load)
                 }
                 onEdit={() => openEdit(a)}
-                onDelete={() => {
-                  if (confirm(t('automate.confirmDelete'))) void settingsApi.deleteAutomation(a.id).then(load);
-                }}
+                onDelete={() => setDeleteAutomationTarget(a)}
                 onSelect={() => setDetailId(a.id)}
               />
             ))}
@@ -447,7 +658,15 @@ export function AutomationsSettingsScreen() {
           <pre className="bg-muted mb-3 whitespace-pre-wrap rounded-lg p-3 text-xs">{detail.prompt}</pre>
           {detail.kind === 'event' && (
             <pre className="bg-muted mb-3 rounded-lg p-3 text-xs">
-              {JSON.stringify(detail.triggerFilter ?? {}, null, 2)}
+              {JSON.stringify(
+                {
+                  source: detail.sourceType,
+                  on: detail.eventOn,
+                  filter: detail.eventFilter,
+                },
+                null,
+                2,
+              )}
             </pre>
           )}
           <SectionHeading title={t('automate.recentRuns')} count={runs.length} />
@@ -483,129 +702,209 @@ export function AutomationsSettingsScreen() {
       )}
 
       <section className="mb-8">
-        <SectionHeading title={t('automate.templatesTitle')} />
-        <div className="grid gap-3 md:grid-cols-2">
-          {TEMPLATES.slice(0, 1).map((template) => (
-            <button
+        <SectionHeading title={t('automate.templatesTitle')} count={TEMPLATES.length} />
+        <SettingsConnectedList>
+          {TEMPLATES.map((template) => (
+            <SettingsListRow
               key={template.id}
-              type="button"
+              asButton
               onClick={() => applyTemplate(template)}
-              className="border-border bg-card hover:bg-accent/20 group rounded-xl border p-4 text-left transition-colors"
-            >
-              <div className="mb-3 flex items-start justify-between">
-                <div className="bg-muted flex size-9 items-center justify-center rounded-lg text-[10px] font-bold">
-                  {template.icon}
-                </div>
-                <Plus className="text-muted-foreground size-4 opacity-0 transition-opacity group-hover:opacity-100" />
-              </div>
-              <div className="text-muted-foreground mb-1 text-[11px] font-medium">{t(template.categoryKey)}</div>
-              <div className="mb-2 font-medium">{t(template.nameKey)}</div>
-              <p className="text-muted-foreground text-xs leading-relaxed">{t(template.descriptionKey)}</p>
-            </button>
+              icon={
+                <SettingsListIcon>
+                  <Workflow className="size-4" />
+                </SettingsListIcon>
+              }
+              title={t(template.nameKey)}
+              subtitle={t(template.descriptionKey)}
+            />
           ))}
-        </div>
+        </SettingsConnectedList>
       </section>
 
       <section className="border-border border-t pt-6">
         <SectionHeading title={t('automate.webhooks')} count={webhooks.length} />
-        <div className="mb-3 flex gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setHookError(null);
-              void settingsApi
-                .createWebhook('github')
-                .then((r) => {
-                  setCreatedHook({ url: r.endpoint.url, secret: r.secret, sourceType: 'github' });
-                  void load();
-                })
-                .catch((err) => setHookError(String(err)));
-            }}
-          >
+        <div className="mb-3 flex flex-wrap gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={openGithubHookDialog}>
             {t('automate.addGithubWebhook')}
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setHookError(null);
-              void settingsApi
-                .createWebhook('custom')
-                .then((r) => {
-                  setCreatedHook({ url: r.endpoint.url, secret: r.secret, sourceType: 'custom' });
-                  void load();
-                })
-                .catch((err) => setHookError(String(err)));
-            }}
-          >
+          <Button type="button" size="sm" variant="outline" onClick={openCustomHookDialog}>
             {t('automate.addCustomWebhook')}
           </Button>
         </div>
         {hookError ? (
           <p className="text-destructive mb-3 text-sm">{hookError}</p>
         ) : null}
-        {createdHook && (
-          <div className="border-amber-500/40 bg-amber-500/10 mb-3 rounded-lg border p-3 text-sm">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <strong>{t('automate.secretShownOnce')}</strong>
-              <button
-                type="button"
-                className="text-xs underline"
-                onClick={() => setCreatedHook(null)}
-              >
-                {t('common.dismiss')}
-              </button>
-            </div>
-            <code className="mb-3 block break-all text-xs">{createdHook.secret}</code>
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-muted-foreground text-xs">{t('automate.testWithCurl')}</span>
-              <button
-                type="button"
-                className="text-xs underline"
-                onClick={() => void navigator.clipboard?.writeText(buildWebhookCurl(createdHook))}
-              >
-                {t('common.copy')}
-              </button>
-            </div>
-            <pre className="bg-background overflow-x-auto rounded-md p-3 text-[11px] leading-relaxed">
-              {buildWebhookCurl(createdHook)}
-            </pre>
-          </div>
-        )}
         {webhooks.map((w) => (
-          <div key={w.id} className="border-border mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
-            <code className="min-w-0 flex-1 truncate text-xs">{w.url}</code>
-            <span className="text-muted-foreground text-xs">{w.sourceType}</span>
-            <button
+          <div key={w.id} className="border-border mb-2 flex items-center gap-1 rounded-lg border px-3 py-2 text-sm">
+            <div className="min-w-0 flex-1 truncate font-medium">{w.name}</div>
+            <SettingsEditButton onClick={() => openEditWebhook(w)} />
+            <Button
               type="button"
-              className="text-xs underline"
-              onClick={() =>
-                void navigator.clipboard?.writeText(
-                  buildWebhookCurl({ url: w.url, secret: '<SECRET>', sourceType: w.sourceType }),
-                )
-              }
+              size="icon"
+              variant="ghost"
+              className="text-muted-foreground hover:text-foreground size-8 shrink-0"
+              data-no-window-drag
+              aria-label={t('automate.copyCurl')}
+              onClick={() => void handleCopyListCurl(w)}
             >
-              {t('automate.copyCurl')}
-            </button>
-            <button
-              type="button"
-              className="text-destructive shrink-0 text-xs underline"
-              onClick={() => {
-                if (!confirm(t('automate.confirmDeleteWebhook'))) return;
-                void settingsApi
-                  .deleteWebhook(w.id)
-                  .then(load)
-                  .catch((err) => setHookError(String(err)));
-              }}
-            >
-              {t('common.delete')}
-            </button>
+              {copiedCurlId === w.id ? <Check className="size-4" /> : <Copy className="size-4" />}
+            </Button>
+            <SettingsDeleteButton onClick={() => {
+                setHookError(null);
+                setDeleteWebhookTarget(w);
+              }} />
           </div>
         ))}
       </section>
+
+      <SettingsFormDialog
+        open={githubHookDialogOpen}
+        onOpenChange={setGithubHookDialogOpen}
+        title={t('automate.addGithubWebhookTitle')}
+        description={t('automate.addGithubWebhookDescription')}
+        submitLabel={t('common.create')}
+        onSubmit={() => void createGithubHook()}
+      >
+        <FormField label={t('common.name')} required>
+          <FormInput
+            value={githubHookName}
+            onChange={(e) => setGithubHookName(e.target.value)}
+          />
+        </FormField>
+      </SettingsFormDialog>
+
+      <SettingsFormDialog
+        open={customHookDialogOpen}
+        onOpenChange={setCustomHookDialogOpen}
+        title={t('automate.addCustomWebhookTitle')}
+        description={t('automate.addCustomWebhookDescription')}
+        submitLabel={t('common.create')}
+        onSubmit={() => void createCustomHook()}
+      >
+        <FormField label={t('common.name')} required>
+          <FormInput
+            value={customHookForm.name}
+            onChange={(e) => setCustomHookForm((f) => ({ ...f, name: e.target.value }))}
+          />
+        </FormField>
+        <FormField label={t('automate.webhookSource')} hint={t('automate.webhookSourceHint')} required>
+          <FormInput
+            placeholder="linear"
+            value={customHookForm.source}
+            onChange={(e) =>
+              setCustomHookForm((f) => ({ ...f, source: e.target.value.toLowerCase() }))
+            }
+          />
+        </FormField>
+        <FormField label={t('automate.eventKeyExpr')} hint={t('automate.eventKeyExprHint')}>
+          <FormInput
+            value={customHookForm.eventKeyExpr}
+            onChange={(e) => setCustomHookForm((f) => ({ ...f, eventKeyExpr: e.target.value }))}
+          />
+        </FormField>
+        <FormField label={t('automate.signatureHeader')}>
+          <FormInput
+            value={customHookForm.signatureHeader}
+            onChange={(e) =>
+              setCustomHookForm((f) => ({ ...f, signatureHeader: e.target.value }))
+            }
+          />
+        </FormField>
+      </SettingsFormDialog>
+
+      <SettingsFormDialog
+        open={editHookDialogOpen}
+        onOpenChange={(open) => {
+          setEditHookDialogOpen(open);
+          if (!open) setEditingWebhook(null);
+        }}
+        title={t('automate.editWebhookTitle')}
+        description={t('automate.editWebhookDescription')}
+        submitLabel={t('common.saveChanges')}
+        onSubmit={() => void saveEditWebhook()}
+        onCancel={() => setEditingWebhook(null)}
+      >
+        <FormField label={t('automate.webhookSource')}>
+          <FormInput value={editingWebhook?.source ?? ''} readOnly disabled />
+        </FormField>
+        <FormField label={t('common.name')} required>
+          <FormInput
+            value={editHookForm.name}
+            onChange={(e) => setEditHookForm((f) => ({ ...f, name: e.target.value }))}
+          />
+        </FormField>
+        <FormField label={t('automate.eventKeyExpr')} hint={t('automate.eventKeyExprHint')}>
+          <FormInput
+            value={editHookForm.eventKeyExpr}
+            onChange={(e) => setEditHookForm((f) => ({ ...f, eventKeyExpr: e.target.value }))}
+          />
+        </FormField>
+        <FormField label={t('automate.signatureHeader')}>
+          <FormInput
+            value={editHookForm.signatureHeader}
+            onChange={(e) =>
+              setEditHookForm((f) => ({ ...f, signatureHeader: e.target.value }))
+            }
+          />
+        </FormField>
+      </SettingsFormDialog>
+
+      <Dialog
+        open={createdHook !== null}
+        onOpenChange={(open) => !open && setCreatedHook(null)}
+      >
+        <DialogContent className="gap-0 p-0 sm:max-w-lg">
+          <DialogHeader className="border-border space-y-1 border-b px-6 py-4 text-left">
+            <DialogTitle className="text-base">{t('automate.secretShownOnce')}</DialogTitle>
+          </DialogHeader>
+          {createdHook ? (
+            <div className="flex max-h-[min(70vh,32rem)] flex-col gap-3 overflow-y-auto px-6 py-4 text-sm">
+              <code className="block break-all text-xs">{createdHook.secret}</code>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground text-xs">{t('automate.testWithCurl')}</span>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="text-muted-foreground hover:text-foreground size-8 shrink-0"
+                  data-no-window-drag
+                  aria-label={t('common.copy')}
+                  onClick={() => void handleCopySecretCurl()}
+                >
+                  {copiedSecretCurl ? <Check className="size-4" /> : <Copy className="size-4" />}
+                </Button>
+              </div>
+              <pre className="bg-muted overflow-x-auto rounded-md p-3 text-[11px] leading-relaxed">
+                {buildWebhookCurl(createdHook)}
+              </pre>
+            </div>
+          ) : null}
+          <DialogFooter className="border-border border-t px-6 py-4">
+            <Button type="button" onClick={() => setCreatedHook(null)}>
+              {t('common.dismiss')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <SettingsDeleteDialog
+        open={deleteAutomationTarget !== null}
+        onOpenChange={(open) => !open && setDeleteAutomationTarget(null)}
+        title={t('automate.deleteAutomationTitle')}
+        description={t('automate.confirmDelete')}
+        onConfirm={confirmDeleteAutomation}
+        busy={deletingAutomation}
+      />
+
+      <SettingsDeleteDialog
+        open={deleteWebhookTarget !== null}
+        onOpenChange={(open) => !open && !deletingWebhook && setDeleteWebhookTarget(null)}
+        title={t('automate.deleteWebhookTitle')}
+        description={t('automate.confirmDeleteWebhook')}
+        onConfirm={confirmDeleteWebhook}
+        busy={deletingWebhook}
+        busyLabel={t('automate.deletingWebhook')}
+      />
     </div>
   );
 }

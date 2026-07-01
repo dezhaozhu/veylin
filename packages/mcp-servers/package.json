@@ -8,11 +8,7 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "bin": {
-    "veylin-mcp-scheduling": "./src/scheduling-server.ts"
-  },
   "scripts": {
-    "start:scheduling": "tsx src/scheduling-server.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -1,5 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import {
@@ -11,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { SettingsSelect } from './settings-select';
 
 export function SettingsFormDialog({
   open,
@@ -65,74 +65,6 @@ export function SettingsFormDialog({
   );
 }
 
-/**
- * full-page inline editor: expands in the settings page instead of a modal.
- * Avoids Radix Dialog portal/z-index issues in Tauri / Electron webviews.
- */
-export function SettingsInlineEditor({
-  open,
-  title,
-  description,
-  children,
-  submitLabel = 'Save',
-  onSubmit,
-  onCancel,
-}: {
-  open: boolean;
-  title: string;
-  description?: string;
-  children: ReactNode;
-  submitLabel?: string;
-  onSubmit: () => void;
-  onCancel: () => void;
-}) {
-  const { t } = useTranslation();
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (open) ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }, [open]);
-
-  if (!open) return null;
-
-  return (
-    <div
-      ref={ref}
-      className="border-border bg-card mb-6 rounded-xl border shadow-sm"
-      role="region"
-      aria-label={title}
-    >
-      <div className="border-border flex items-start justify-between gap-3 border-b px-5 py-4">
-        <div className="min-w-0">
-          <h3 className="text-base font-semibold">{title}</h3>
-          {description ? (
-            <p className="text-muted-foreground mt-1 text-sm leading-relaxed">{description}</p>
-          ) : null}
-        </div>
-        <button
-          type="button"
-          className="text-muted-foreground hover:text-foreground rounded-md p-1"
-          aria-label={t('common.close')}
-          onClick={onCancel}
-        >
-          <X className="size-4" />
-        </button>
-      </div>
-      <div className="flex max-h-[min(70vh,32rem)] flex-col gap-4 overflow-y-auto px-5 py-4">
-        {children}
-      </div>
-      <div className="border-border flex justify-end gap-2 border-t px-5 py-4">
-        <Button type="button" variant="outline" onClick={onCancel}>
-          {t('common.cancel')}
-        </Button>
-        <Button type="button" onClick={onSubmit}>
-          {submitLabel}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 export function FormField({
   label,
   hint,
@@ -175,17 +107,6 @@ export function FormTextarea({
   );
 }
 
-export function FormSelect({
-  className,
-  ...props
-}: React.ComponentProps<'select'>) {
-  return (
-    <select
-      className={cn(
-        'border-input bg-background h-10 w-full rounded-lg border px-3 text-sm outline-none',
-        className,
-      )}
-      {...props}
-    />
-  );
+export function FormSelect(props: React.ComponentProps<typeof SettingsSelect>) {
+  return <SettingsSelect {...props} />;
 }

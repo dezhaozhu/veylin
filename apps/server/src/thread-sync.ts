@@ -1,38 +1,71 @@
 import type { Memory } from '@mastra/memory';
 import {
+  ensureMastraThread,
   mastraMessagesToUi,
+  mastraMessagesToAgentContext,
+  preserveServerTaskNotifications,
+  mergeAgentContextMessages,
   replaceThreadMessages,
   type ThreadIdentity,
   type UiMessage,
 } from './message-sync';
 import { setTodos as setThreadTodosDb, todosFromMessageHistory } from './thread-state';
+import { isDatastoreFailure } from './store-errors';
 
 type StoredMessage = { id?: string; role?: string };
+
+const syncLocks = new Map<string, Promise<unknown>>();
+
+function withThreadSyncLock<T>(threadId: string, run: () => Promise<T>): Promise<T> {
+  const prev = syncLocks.get(threadId) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(run);
+  syncLocks.set(
+    threadId,
+    next.finally(() => {
+      if (syncLocks.get(threadId) === next) syncLocks.delete(threadId);
+    }),
+  );
+  return next;
+}
+
+export function isMemoryStoreFailure(err: unknown): boolean {
+  return isDatastoreFailure(err);
+}
 
 function messageIds(messages: Array<{ id?: string }>): string[] {
   return messages.map((m) => m.id).filter((id): id is string => Boolean(id));
 }
 
+function sharedPrefixLength(storedIds: string[], clientIds: string[]): number {
+  const limit = Math.min(storedIds.length, clientIds.length);
+  let i = 0;
+  while (i < limit && storedIds[i] === clientIds[i]) i++;
+  return i;
+}
+
 /**
- * Heuristic: client truncated history (edit/regenerate) vs normal append.
+ * Whether the AI SDK client snapshot should replace Mastra recall.
+ * Client is authoritative for UI file parts (attachments must persist).
  */
 export function shouldReplaceFromClient(
   stored: StoredMessage[],
   client: UiMessage[],
-  branchEdit?: boolean,
+  forceReplace?: boolean,
 ): boolean {
-  if (branchEdit) return true;
+  if (forceReplace) return true;
   if (client.length === 0) return false;
+  if (stored.length === 0) return true;
   if (client.length < stored.length) return true;
 
   const storedIds = messageIds(stored);
   const clientIds = messageIds(client);
   if (clientIds.length === 0) return false;
 
-  const prefixMatch =
-    clientIds.length <= storedIds.length &&
-    clientIds.every((id, i) => id === storedIds[i]);
-  if (!prefixMatch) return false;
+  const prefix = sharedPrefixLength(storedIds, clientIds);
+  if (prefix === 0 && storedIds.length > 0) return true;
+  if (prefix < storedIds.length) return true;
+
+  if (client.length > stored.length) return true;
 
   if (client.length === stored.length) {
     const lastClient = client.at(-1);
@@ -44,6 +77,7 @@ export function shouldReplaceFromClient(
     ) {
       return true;
     }
+    if (lastClient?.id === lastStored?.id) return true;
   }
 
   return false;
@@ -53,25 +87,32 @@ export async function syncThreadMessagesFromClient(opts: {
   memory: Memory;
   identity: ThreadIdentity;
   clientMessages: UiMessage[];
-  branchEdit?: boolean;
+  forceReplace?: boolean;
 }): Promise<boolean> {
-  const recalled = await opts.memory.recall({
-    threadId: opts.identity.threadId,
-    resourceId: opts.identity.resourceId,
-    perPage: false,
+  return withThreadSyncLock(opts.identity.threadId, async () => {
+    await ensureMastraThread(opts.memory, opts.identity);
+    const recalled = await opts.memory.recall({
+      threadId: opts.identity.threadId,
+      resourceId: opts.identity.resourceId,
+      perPage: false,
+    });
+    const stored = recalled.messages ?? [];
+
+    if (!shouldReplaceFromClient(stored, opts.clientMessages, opts.forceReplace)) {
+      return false;
+    }
+
+    const storedUi = mastraMessagesToAgentContext(stored);
+    const merged = preserveServerTaskNotifications(opts.clientMessages, storedUi);
+    await replaceThreadMessages(opts.memory, opts.identity, merged);
+
+    const todos = todosFromMessageHistory(merged);
+    if (todos != null) {
+      await setThreadTodosDb(opts.identity.threadId, todos);
+    }
+
+    return true;
   });
-  const stored = recalled.messages ?? [];
-
-  if (!shouldReplaceFromClient(stored, opts.clientMessages, opts.branchEdit)) {
-    return false;
-  }
-
-  await replaceThreadMessages(opts.memory, opts.identity, opts.clientMessages);
-
-  const todos = todosFromMessageHistory(opts.clientMessages);
-  if (todos != null) {
-    await setThreadTodosDb(opts.identity.threadId, todos);
-  }
-
-  return true;
 }
+
+export { mastraMessagesToUi, mastraMessagesToAgentContext, mergeAgentContextMessages };

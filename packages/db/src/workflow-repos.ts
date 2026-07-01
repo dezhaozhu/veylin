@@ -1,4 +1,5 @@
 import { getDb } from './client';
+import { parseEventOn, serializeEventOn } from './event-on';
 import { newId, normalizeId, queryRows, createRecord, selectById, deleteById, toDbDatetime } from './query';
 import type { WorkflowRow, WorkflowRunRow } from './types';
 
@@ -14,7 +15,8 @@ function mapWorkflow(r: Record<string, unknown>): WorkflowRow {
     cron: (r.cron as string | null) ?? null,
     timezone: (r.timezone as string | null) ?? null,
     sourceType: (r.source_type as string | null) ?? null,
-    triggerFilter: (r.trigger_filter as Record<string, unknown>) ?? {},
+    eventOn: parseEventOn(r.event_on),
+    eventFilter: (r.event_filter as string | null) ?? null,
     definition: {
       nodes: def.nodes ?? [],
       edges: def.edges ?? [],
@@ -48,10 +50,10 @@ export async function listWorkflowRows(tenantId: string, userId?: string): Promi
   return rows.map(mapWorkflow);
 }
 
-export async function listAllScheduledWorkflowRows(): Promise<WorkflowRow[]> {
+export async function listAllCronWorkflowRows(): Promise<WorkflowRow[]> {
   const rows = await queryRows<Record<string, unknown>>(
     getDb(),
-    "SELECT * FROM workflow WHERE kind = 'schedule' AND enabled = true",
+    "SELECT * FROM workflow WHERE kind = 'cron' AND enabled = true",
   );
   return rows.map(mapWorkflow).filter((w) => !!w.cron);
 }
@@ -67,7 +69,7 @@ export async function listEventWorkflowRows(
   );
   return rows
     .map(mapWorkflow)
-    .filter((w) => (w.sourceType ?? 'custom') === sourceType || w.sourceType === 'custom');
+    .filter((w) => w.sourceType === sourceType);
 }
 
 export async function getWorkflowRow(tenantId: string, id: string): Promise<WorkflowRow | null> {
@@ -91,7 +93,8 @@ export async function insertWorkflow(
     cron: input.cron ?? undefined,
     timezone: input.timezone ?? 'UTC',
     source_type: input.sourceType ?? 'cron',
-    trigger_filter: input.triggerFilter ?? {},
+    event_on: serializeEventOn(input.eventOn),
+    event_filter: input.eventFilter ?? null,
     definition: input.definition ?? { nodes: [], edges: [] },
   });
   return (await getWorkflowRow(tenantId, id))!;
@@ -111,7 +114,8 @@ export async function updateWorkflowRow(
     ['cron', 'cron'],
     ['timezone', 'timezone'],
     ['sourceType', 'source_type'],
-    ['triggerFilter', 'trigger_filter'],
+    ['eventOn', 'event_on'],
+    ['eventFilter', 'event_filter'],
     ['definition', 'definition'],
     ['lastRunAt', 'last_run_at'],
   ] as const) {
@@ -121,7 +125,12 @@ export async function updateWorkflowRow(
         sets.push(`${col} = NONE`);
       } else {
         sets.push(`${col} = $${key}`);
-        vars[key] = col === 'last_run_at' ? toDbDatetime(val) : val;
+        vars[key] =
+          key === 'eventOn'
+            ? serializeEventOn(val as string | string[] | null)
+            : col === 'last_run_at'
+              ? toDbDatetime(val)
+              : val;
       }
     }
   }
@@ -205,4 +214,12 @@ export async function listWorkflowRunRows(
 export async function getWorkflowRunRow(runId: string): Promise<WorkflowRunRow | null> {
   const row = await selectById<Record<string, unknown>>(getDb(), 'workflow_run', runId);
   return row ? mapWorkflowRun(row) : null;
+}
+
+export async function listIncompleteWorkflowRunRows(): Promise<WorkflowRunRow[]> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    "SELECT * FROM workflow_run WHERE status = 'running' OR status = 'queued'",
+  );
+  return rows.map(mapWorkflowRun);
 }

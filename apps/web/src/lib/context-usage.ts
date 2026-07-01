@@ -81,9 +81,7 @@ function partToRoughText(part: unknown): string {
     case 'text':
     case 'reasoning':
       return typeof p.text === 'string' ? p.text : '';
-    case 'tool-call':
-    case 'tool-invocation':
-    case 'tool_use': {
+    case 'tool-call': {
       const toolName = p.toolName ?? p.name ?? '';
       const args =
         typeof p.argsText === 'string'
@@ -95,8 +93,7 @@ function partToRoughText(part: unknown): string {
               : '';
       return [toolName, args].filter(Boolean).join(' ');
     }
-    case 'tool-result':
-    case 'tool_result': {
+    case 'tool-result': {
       const content = p.result ?? p.output ?? p.text;
       if (typeof content === 'string') return content;
       if (content != null) return JSON.stringify(content);
@@ -110,6 +107,12 @@ function partToRoughText(part: unknown): string {
     case 'document':
       return ' '.repeat(2000);
     default:
+      if (typeof p.type === 'string' && p.type.startsWith('tool-')) {
+        const toolName = p.type.slice('tool-'.length);
+        const args = p.input != null ? JSON.stringify(p.input) : '';
+        const output = p.output != null ? JSON.stringify(p.output) : '';
+        return [toolName, args, output].filter(Boolean).join(' ');
+      }
       if (typeof p.text === 'string') return p.text;
       return JSON.stringify(p);
   }
@@ -347,9 +350,29 @@ export function computeContextUsageSnapshot(
 /** Stable primitive for useAuiState — returns estimated token count only. */
 export function measureContextTokenCount(
   messages: readonly unknown[],
-  composerText: string,
+  composerText = '',
 ): number {
   return tokenCountWithEstimation(messages, composerText);
+}
+
+/**
+ * Cheap signature for memoizing {@link measureContextTokenCount} at the React
+ * layer. The full count re-scans and JSON.stringifies the transcript, which can
+ * block the main thread on long conversations if run on every streamed token.
+ * The context ring is an estimate, so recomputing only when the signature
+ * changes (message added/removed, last-message part count, composer length) is
+ * an acceptable trade-off.
+ */
+export function contextUsageSignature(
+  messages: readonly unknown[],
+  composerText = '',
+): string {
+  const last = messages[messages.length - 1] as
+    | { id?: string; parts?: unknown[] }
+    | undefined;
+  const lastId = last?.id ?? '';
+  const lastPartsLen = Array.isArray(last?.parts) ? last.parts.length : 0;
+  return `${messages.length}:${lastId}:${lastPartsLen}:${composerText.length}`;
 }
 
 export function formatTokenCount(n: number): string {

@@ -1,3 +1,4 @@
+import { DEFAULT_WORKING_MEMORY_TEMPLATE } from '@veylin/shared';
 import type { Memory } from '@mastra/memory';
 import type { TodoItem } from '@veylin/tools';
 import {
@@ -5,8 +6,10 @@ import {
   getThreadStateRow,
   insertThreadState,
   listThreadStatesForResource,
+  listThreadStatesForTenant,
   updateThreadState,
 } from '@veylin/db';
+import { isDesktopAuth } from './auth';
 import {
   mergeSkillNamesIntoWorkingMemory,
   replaceThreadMessages,
@@ -15,14 +18,7 @@ import {
   type UiMessage,
 } from './message-sync';
 
-const WM_TEMPLATE = `# Operator & Site Context
-- Operator:
-- Site / Line:
-- Active Work Order:
-- Constraints / Safety Notes:
-- Open Decisions:
-- Activated Skills:
-`;
+const WM_TEMPLATE = DEFAULT_WORKING_MEMORY_TEMPLATE;
 
 export interface ThreadStateRow {
   threadId: string;
@@ -34,6 +30,19 @@ export interface ThreadStateRow {
   workingMemory: string | null;
   title: string | null;
   updatedAt?: Date;
+}
+
+export function ephemeralThreadState(identity: ThreadIdentity): ThreadStateRow {
+  return {
+    threadId: identity.threadId,
+    tenantId: identity.tenantId,
+    resourceId: identity.resourceId,
+    planMode: false,
+    todos: [],
+    activatedSkills: {},
+    workingMemory: null,
+    title: null,
+  };
 }
 
 function toRow(r: Awaited<ReturnType<typeof getThreadStateRow>>): ThreadStateRow | null {
@@ -53,7 +62,22 @@ function toRow(r: Awaited<ReturnType<typeof getThreadStateRow>>): ThreadStateRow
 
 export async function ensureThreadState(identity: ThreadIdentity): Promise<ThreadStateRow> {
   const existing = toRow(await getThreadStateRow(identity.threadId));
-  if (existing) return existing;
+  if (existing) {
+    if (isDesktopAuth) {
+      if (existing.tenantId !== identity.tenantId) {
+        await updateThreadState(identity.threadId, { tenantId: identity.tenantId });
+        existing.tenantId = identity.tenantId;
+      }
+      return existing;
+    }
+    if (
+      existing.tenantId !== identity.tenantId ||
+      existing.resourceId !== identity.resourceId
+    ) {
+      throw new Error('forbidden');
+    }
+    return existing;
+  }
   await insertThreadState({
     threadId: identity.threadId,
     tenantId: identity.tenantId,
@@ -78,6 +102,81 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
 
 export async function getThreadState(threadId: string): Promise<ThreadStateRow | null> {
   return toRow(await getThreadStateRow(threadId));
+}
+
+/** Worker / automation threads — excluded from the sidebar chat list. */
+export function isSidebarChatThreadId(threadId: string): boolean {
+  if (threadId.startsWith('task-')) return false;
+  if (threadId.startsWith('subagent-')) return false;
+  if (threadId.startsWith('cron-')) return false;
+  if (threadId.startsWith('wf-')) return false;
+  return true;
+}
+
+/** Read-only thread resolve: returns null instead of throwing when missing or not owned. */
+export async function resolveThreadForRead(
+  threadId: string,
+  ctx: { tenantId: string; userId: string },
+): Promise<ThreadStateRow | null> {
+  const row = await getThreadState(threadId);
+  if (!row) return null;
+  if (isDesktopAuth) {
+    if (row.tenantId !== ctx.tenantId) {
+      await updateThreadState(threadId, { tenantId: ctx.tenantId });
+      row.tenantId = ctx.tenantId;
+    }
+    return row;
+  }
+  if (row.tenantId !== ctx.tenantId || row.resourceId !== ctx.userId) {
+    return null;
+  }
+  return row;
+}
+
+/** Returns 403 when an existing thread belongs to another tenant/resource. */
+export async function requireThreadOwnership(
+  threadId: string,
+  ctx: { tenantId: string; userId: string },
+): Promise<ThreadStateRow> {
+  const row = await resolveThreadForRead(threadId, ctx);
+  if (!row) {
+    throw new Error('forbidden');
+  }
+  return row;
+}
+
+/** Desktop startup: drop internal worker threads and empty dev leftovers. */
+export async function pruneDesktopThreadClutter(
+  tenantId: string,
+  resourceId: string,
+  memory: Memory,
+): Promise<void> {
+  if (!isDesktopAuth) return;
+
+  const rows = await listThreadStatesForTenant(tenantId);
+  for (const r of rows) {
+    const { threadId } = r;
+    if (!isSidebarChatThreadId(threadId)) {
+      await deleteThreadState(threadId).catch(() => undefined);
+      continue;
+    }
+
+    const recalled = await memory.recall({
+      threadId,
+      resourceId: r.resourceId,
+      perPage: 1,
+    });
+    const hasMessages = (recalled.messages?.length ?? 0) > 0;
+
+    if (!hasMessages) {
+      await deleteThreadState(threadId).catch(() => undefined);
+      continue;
+    }
+
+    if (r.resourceId !== resourceId) {
+      await deleteThreadState(threadId).catch(() => undefined);
+    }
+  }
 }
 
 export async function setPlanMode(threadId: string, planMode: boolean): Promise<void> {
@@ -240,41 +339,33 @@ export type ThreadListEntry = {
 export async function listThreadsForResource(
   tenantId: string,
   resourceId: string,
-  memory?: Memory,
+  _memory?: Memory,
 ): Promise<ThreadListEntry[]> {
-  const rows = await listThreadStatesForResource(tenantId, resourceId);
+  const rows = (await listThreadStatesForResource(tenantId, resourceId)).filter((row) =>
+    isSidebarChatThreadId(row.threadId),
+  );
 
-  if (!memory) {
-    return rows.map((row) => ({
-      remoteId: row.threadId,
-      title: row.title ?? undefined,
-      lastMessageAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
-      status: 'regular' as const,
-    }));
-  }
-
-  const entries: ThreadListEntry[] = [];
-  for (const row of rows) {
-    const recalled = await memory.recall({
-      threadId: row.threadId,
-      resourceId,
-      perPage: 1,
-    });
-    if ((recalled.messages?.length ?? 0) === 0) {
-      await deleteThreadState(row.threadId).catch(() => undefined);
-      continue;
-    }
-    entries.push({
-      remoteId: row.threadId,
-      title: row.title ?? undefined,
-      lastMessageAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
-      status: 'regular' as const,
-    });
-  }
-  return entries;
+  return rows.map((row) => ({
+    remoteId: row.threadId,
+    title: row.title ?? undefined,
+    lastMessageAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
+    status: 'regular' as const,
+  }));
 }
 
-export async function deleteThreadState(threadId: string): Promise<void> {
+export async function deleteThreadState(
+  threadId: string,
+  memory?: Memory,
+): Promise<void> {
+  if (memory) {
+    const recalled = await memory.recall({ threadId, perPage: false });
+    const messageIds = (recalled.messages ?? [])
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (messageIds.length > 0) {
+      await memory.deleteMessages(messageIds);
+    }
+  }
   await deleteThreadStateRow(threadId);
 }
 

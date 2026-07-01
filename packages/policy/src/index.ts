@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { RiskLevel } from '@veylin/shared';
-import { toolRisk, type BuiltinToolId } from '@veylin/tools';
+import { toolRisk, type BuiltinToolId, metaToolRisk } from '@veylin/tools';
 
 export type PolicyDecision = 'allow' | 'approve' | 'deny';
 
@@ -15,7 +15,7 @@ export const policyConfigSchema = z.object({
 
 export type PolicyConfig = z.infer<typeof policyConfigSchema>;
 
-/** Conservative industrial default: read freely, network with approval, mutations with approval. */
+/** Conservative default: read freely, network with approval, mutations with approval. */
 export const defaultPolicy: PolicyConfig = {
   byRisk: { safe: 'allow', caution: 'approve', dangerous: 'approve' },
   toolOverrides: {},
@@ -24,7 +24,7 @@ export const defaultPolicy: PolicyConfig = {
 
 /** Plan Mode: read/plan only; mutations and background tasks denied. */
 export const planModePolicy: PolicyConfig = {
-  byRisk: { safe: 'allow', caution: 'approve', dangerous: 'deny' },
+  byRisk: { safe: 'allow', caution: 'deny', dangerous: 'deny' },
   toolOverrides: {
     ask_user_question: 'allow',
     todo_write: 'allow',
@@ -32,12 +32,18 @@ export const planModePolicy: PolicyConfig = {
     enter_plan_mode: 'allow',
     exit_plan_mode: 'allow',
     skill: 'allow',
+    web_fetch: 'allow',
+    read_open_page: 'allow',
   },
   allowedPathPrefixes: [],
 };
 
 export function riskOf(toolId: string): RiskLevel {
-  return (toolRisk as Record<string, RiskLevel>)[toolId] ?? 'caution';
+  return (
+    (toolRisk as Record<string, RiskLevel>)[toolId] ??
+    metaToolRisk[toolId] ??
+    'caution'
+  );
 }
 
 export function evaluateTool(toolId: string, policy: PolicyConfig): PolicyDecision {

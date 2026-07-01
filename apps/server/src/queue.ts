@@ -14,6 +14,9 @@ export interface SubagentJob {
   parentResource?: string;
   label?: string;
   taskId?: string;
+  subagentType?: string;
+  fork?: boolean;
+  directive?: string;
 }
 
 export interface AutomationJob {
@@ -66,7 +69,8 @@ type TrackedJob = {
 };
 
 export function createInProcQueue(): QueuePort {
-  const subagentQueue = new PQueue({ concurrency: 2 });
+  const concurrency = Math.max(1, Number(process.env.SUBAGENT_CONCURRENCY ?? 4) || 4);
+  const subagentQueue = new PQueue({ concurrency });
   const jobs = new Map<string, TrackedJob>();
   const cronTasks = new Map<string, ScheduledTask>();
   let subagentHandler: ((job: SubagentJob) => Promise<void>) | null = null;
@@ -176,13 +180,6 @@ export function createInProcQueue(): QueuePort {
   return port;
 }
 
-/** @deprecated Use createInProcQueue; kept for import compatibility. */
-export async function createQueue(_connectionString?: string): Promise<QueuePort> {
-  const q = createInProcQueue();
-  await q.start();
-  return q;
-}
-
 export async function registerWorkers(
   boss: QueuePort,
   handler: (job: SubagentJob) => Promise<void>,
@@ -190,16 +187,8 @@ export async function registerWorkers(
   await boss.registerWorkers(handler);
 }
 
-export async function registerSchedules(boss: QueuePort, schedules: ScheduleSpec[]): Promise<void> {
-  await boss.registerSchedules(schedules);
-}
-
-export function automationScheduleName(automationId: string): string {
-  return `auto:${automationId}`;
-}
-
-export function workflowScheduleName(workflowId: string): string {
-  return `wf:${workflowId}`;
+export async function registerSchedules(queue: QueuePort, schedules: ScheduleSpec[]): Promise<void> {
+  await queue.registerSchedules(schedules);
 }
 
 export async function registerAutomationSchedule(

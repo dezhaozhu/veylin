@@ -1,12 +1,11 @@
 export type MembershipRole = 'owner' | 'admin' | 'member';
 export type TaskStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
-export type AutomationKind = 'schedule' | 'event';
-export type WorkflowKind = 'manual' | 'schedule' | 'event';
+export type AutomationKind = 'cron' | 'event';
+export type WorkflowKind = 'manual' | 'cron' | 'event';
 export type WorkflowRunStatus = 'queued' | 'running' | 'done' | 'failed';
 export type AutomationRunStatus = 'queued' | 'running' | 'done' | 'failed';
 export type RuleTrigger = 'always' | 'keyword';
 export type McpTransport = 'sse' | 'http';
-export type WebhookSourceType = 'github' | 'custom';
 
 export interface TenantRow {
   id: string;
@@ -50,6 +49,10 @@ export interface TaskRow {
   label?: string | null;
   result?: string | null;
   jobId?: string | null;
+  workerThreadId?: string | null;
+  subagentType?: string | null;
+  totalTokens?: number | null;
+  durationMs?: number | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -133,7 +136,8 @@ export interface AutomationRow {
   cron?: string | null;
   timezone?: string | null;
   sourceType?: string | null;
-  triggerFilter: Record<string, unknown>;
+  eventOn?: string | string[] | null;
+  eventFilter?: string | null;
   createdAt?: string;
   lastRunAt?: string | null;
 }
@@ -153,19 +157,22 @@ export interface AutomationRunRow {
 export interface WebhookEndpointRow {
   id: string;
   tenantId: string;
-  token: string;
+  name: string;
+  source: string;
   secret: string;
-  sourceType: WebhookSourceType;
+  eventKeyExpr: string;
+  signatureHeader: string;
+  enabled: boolean;
   createdAt?: string;
 }
 
-export interface ScheduleSheetRow {
+export interface TableSheetRow {
   id: string;
   name: string;
   builtin: boolean;
 }
 
-export interface ScheduleColumnRow {
+export interface TableColumnRow {
   sheetId: string;
   key: string;
   name: string;
@@ -174,9 +181,10 @@ export interface ScheduleColumnRow {
   frozen?: boolean;
   deletable: boolean;
   position: number;
+  statusOptions?: string[];
 }
 
-export interface ScheduleRowRecord {
+export interface TableRowRecord {
   sheetId: string;
   rowKey: string;
   data: Record<string, string | number>;
@@ -207,8 +215,29 @@ export interface EntityRow {
   id: string;
   tenantId: string;
   name: string;
+  nameKey: string;
   type: string;
+  description?: string | null;
   documentId?: string | null;
+}
+
+export interface AgentCitationRow {
+  id: string;
+  tenantId: string;
+  threadId?: string | null;
+  query: string;
+  references: KnowledgeReference[];
+  createdAt?: string;
+}
+
+export interface KnowledgeReference {
+  refIndex: number;
+  chunkId: string;
+  documentId: string;
+  source: string;
+  text: string;
+  offset: number;
+  score?: number;
 }
 
 export interface RelatesRow {
@@ -230,7 +259,8 @@ export interface WorkflowRow {
   cron?: string | null;
   timezone?: string | null;
   sourceType?: string | null;
-  triggerFilter: Record<string, unknown>;
+  eventOn?: string | string[] | null;
+  eventFilter?: string | null;
   definition: { nodes: unknown[]; edges: unknown[] };
   createdAt?: string;
   lastRunAt?: string | null;

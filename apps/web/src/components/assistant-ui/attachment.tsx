@@ -225,7 +225,7 @@ const ImageAttachmentTile: FC = () => {
     <Tooltip>
       <AttachmentPrimitive.Root
         className={cn(
-          "aui-attachment-root relative",
+          "aui-attachment-root relative shrink-0",
           !isComposer && "aui-attachment-root-message only:*:first:size-24",
         )}
       >
@@ -255,7 +255,7 @@ const ImageAttachmentTile: FC = () => {
   );
 };
 
-const AttachmentUI: FC = () => {
+export const AttachmentUI: FC = () => {
   const isDocument = useAuiState(
     (s) => s.attachment.type === "document" || s.attachment.type === "file",
   );
@@ -266,7 +266,7 @@ const AttachmentUI: FC = () => {
 
 export const UserMessageAttachments: FC = () => {
   return (
-    <div className="aui-user-message-attachments-end flex w-full flex-row flex-wrap justify-end gap-2">
+    <div className="aui-user-message-attachments-end flex w-full flex-row flex-nowrap justify-end gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <MessagePrimitive.Attachments>
         {() => <AttachmentUI />}
       </MessagePrimitive.Attachments>
@@ -276,7 +276,7 @@ export const UserMessageAttachments: FC = () => {
 
 export const ComposerAttachments: FC = () => {
   return (
-    <div className="aui-composer-attachments flex w-full flex-row flex-wrap items-center gap-2 empty:hidden">
+    <div className="aui-composer-attachments flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto empty:hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <ComposerPrimitive.Attachments>
         {() => <AttachmentUI />}
       </ComposerPrimitive.Attachments>

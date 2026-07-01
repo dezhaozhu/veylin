@@ -1,6 +1,18 @@
 import * as XLSX from 'xlsx';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import i18n from '@/i18n';
+import { apiUrl } from '@/lib/api-base';
+
+/** Keep in sync with server `RAG_UPLOAD_MAX_BYTES` (default 32 MiB). */
+const RAG_UPLOAD_MAX_BYTES = 32 * 1024 * 1024;
+const RAG_UPLOAD_MAX_MB = RAG_UPLOAD_MAX_BYTES / (1024 * 1024);
+
+function assertUploadSize(file: File): void {
+  if (file.size > RAG_UPLOAD_MAX_BYTES) {
+    throw new Error(
+      i18n.t('extract.fileTooLarge', { name: file.name, maxMb: RAG_UPLOAD_MAX_MB }),
+    );
+  }
+}
 
 const TEXT_EXTENSIONS = new Set([
   'txt',
@@ -61,28 +73,28 @@ function extractSpreadsheet(file: File, buffer: ArrayBuffer): string {
     .join('\n\n');
 }
 
+/** PDF text extraction runs on the server (unpdf) — avoids pdfjs ReadableStream issues in WebKit/Tauri. */
 async function extractPdf(file: File): Promise<string> {
-  const pdfjs = await import('pdfjs-dist');
-  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
-
-  const data = new Uint8Array(await file.arrayBuffer());
-  const doc = await pdfjs.getDocument({ data }).promise;
-  const pages: string[] = [];
-
-  for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
-    const page = await doc.getPage(pageNum);
-    const content = await page.getTextContent();
-    const text = content.items
-      .map((item) => ('str' in item && typeof item.str === 'string' ? item.str : ''))
-      .join(' ')
-      .trim();
-    if (text) pages.push(text);
+  assertUploadSize(file);
+  const res = await fetch(apiUrl('/api/rag/extract-pdf'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/octet-stream' },
+    body: await file.arrayBuffer(),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(detail || `PDF extract failed (${res.status})`);
   }
-
-  return pages.join('\n\n').trim();
+  const data = (await res.json()) as { text?: string; message?: string };
+  const text = data.text?.trim() ?? '';
+  if (!text) {
+    throw new Error(data.message || i18n.t('extract.noTextPdf', { name: file.name }));
+  }
+  return text;
 }
 
 export async function extractTextFromFile(file: File): Promise<{ text: string; mimeType: string }> {
+  assertUploadSize(file);
   const ext = extOf(file.name);
   const mimeType = file.type || 'application/octet-stream';
 

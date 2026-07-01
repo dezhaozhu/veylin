@@ -6,6 +6,7 @@ import {
   hasStreamFinished,
   isPermanentHttpStatus,
   isPostSuccess,
+  isResumableStreamGone,
   postChatWithRetry,
   POST_MAX_RETRIES,
   shouldRetryPost,
@@ -44,12 +45,18 @@ test('hasStreamFinished detects AI SDK finish marker', () => {
   assert.equal(hasStreamFinished('{"type":"text-delta"}'), false);
 });
 
+test('isResumableStreamGone treats 204/404 as terminal resume', () => {
+  assert.equal(isResumableStreamGone(204), true);
+  assert.equal(isResumableStreamGone(404), true);
+  assert.equal(isResumableStreamGone(200), false);
+});
+
 test('postChatWithRetry retries 503 then succeeds', async () => {
   let calls = 0;
   const delays: number[] = [];
 
   const response = await postChatWithRetry(
-    async () => {
+    async (_signal) => {
       calls += 1;
       if (calls === 1) return new Response('', { status: 503 });
       return new Response('ok', { status: 200 });
@@ -68,7 +75,7 @@ test('postChatWithRetry retries 503 then succeeds', async () => {
 
 test('postChatWithRetry does not retry 401', async () => {
   let calls = 0;
-  const response = await postChatWithRetry(async () => {
+  const response = await postChatWithRetry(async (_signal) => {
     calls += 1;
     return new Response('denied', { status: 401 });
   });
@@ -83,7 +90,7 @@ test('postChatWithRetry does not retry user abort', async () => {
 
   await assert.rejects(
     postChatWithRetry(
-      async () => {
+      async (_signal) => {
         calls += 1;
         return new Response('ok', { status: 200 });
       },
@@ -98,7 +105,7 @@ test('postChatWithRetry exhausts after POST_MAX_RETRIES on network errors', asyn
   let calls = 0;
   await assert.rejects(
     postChatWithRetry(
-      async () => {
+      async (_signal) => {
         calls += 1;
         throw new TypeError('fetch failed');
       },

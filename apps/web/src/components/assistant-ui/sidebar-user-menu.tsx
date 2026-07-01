@@ -18,7 +18,16 @@ function initials(name: string): string {
 export function SidebarUserMenu() {
   const { user } = useSession();
   const { openAppSettings } = useSettingsPanel();
-  const { updateAvailable, installing, installUpdate } = useAppUpdater();
+  const {
+    updateAvailable,
+    version,
+    installing,
+    checkError,
+    installError,
+    installUpdate,
+    refresh,
+    clearErrors,
+  } = useAppUpdater();
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -43,21 +52,26 @@ export function SidebarUserMenu() {
     };
   }, [open, close]);
 
-  useEffect(() => {
-    const onShortcut = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
-        e.preventDefault();
-        openAppSettings();
-      }
-    };
-    window.addEventListener('keydown', onShortcut);
-    return () => window.removeEventListener('keydown', onShortcut);
-  }, [openAppSettings]);
-
   return (
     <div ref={rootRef} className="relative">
       {open && (
         <div className="bg-popover text-popover-foreground absolute bottom-full left-0 z-50 mb-2 w-full min-w-[220px] overflow-hidden rounded-xl border p-1 shadow-lg">
+          {(checkError || installError) && (
+            <div className="text-destructive px-2.5 py-2 text-xs leading-snug">
+              <p className="font-medium">{t('userMenu.updateFailed')}</p>
+              <p className="text-destructive/90 mt-0.5">{installError ?? checkError}</p>
+              <button
+                type="button"
+                className="text-primary mt-1 underline"
+                onClick={() => {
+                  clearErrors();
+                  void refresh();
+                }}
+              >
+                {t('splash.retry')}
+              </button>
+            </div>
+          )}
           <button
             type="button"
             className="hover:bg-accent flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm"
@@ -68,7 +82,6 @@ export function SidebarUserMenu() {
           >
             <Settings className="text-muted-foreground size-4" />
             <span className="flex-1">{t('userMenu.settings')}</span>
-            <span className="text-muted-foreground text-xs">⌘ ,</span>
           </button>
           <div className="bg-border my-1 h-px" />
           <button
@@ -103,6 +116,7 @@ export function SidebarUserMenu() {
                 role="button"
                 tabIndex={0}
                 aria-disabled={installing}
+                title={version ? t('userMenu.updateTo', { version }) : undefined}
                 className={cn(
                   buttonVariants({ variant: 'default', size: 'xs' }),
                   'shrink-0',

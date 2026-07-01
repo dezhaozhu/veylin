@@ -3,7 +3,7 @@ import {
   getAutomationRow,
   insertAutomation,
   insertAutomationRun,
-  listAllScheduledAutomationRows,
+  listAllCronAutomationRows,
   listAutomationRows,
   listAutomationRunRows,
   listEventAutomationRows,
@@ -11,6 +11,7 @@ import {
   updateAutomationRunRow,
 } from '@veylin/db';
 import type { Automation, AutomationInput, AutomationRun } from '@veylin/shared';
+import { validateWebhookFilter } from './webhook-filter';
 
 function rowToAutomation(row: NonNullable<Awaited<ReturnType<typeof getAutomationRow>>>): Automation {
   return {
@@ -25,7 +26,8 @@ function rowToAutomation(row: NonNullable<Awaited<ReturnType<typeof getAutomatio
     cron: row.cron,
     timezone: row.timezone,
     sourceType: (row.sourceType as Automation['sourceType']) ?? 'cron',
-    triggerFilter: row.triggerFilter ?? {},
+    eventOn: row.eventOn ?? undefined,
+    eventFilter: row.eventFilter ?? undefined,
     createdAt: row.createdAt,
     lastRunAt: row.lastRunAt,
   };
@@ -50,8 +52,8 @@ export async function listAutomations(tenantId: string, userId?: string): Promis
   return rows.map(rowToAutomation);
 }
 
-export async function listAllScheduledAutomations(): Promise<Automation[]> {
-  const rows = await listAllScheduledAutomationRows();
+export async function listAllCronAutomations(): Promise<Automation[]> {
+  const rows = await listAllCronAutomationRows();
   return rows.map(rowToAutomation);
 }
 
@@ -65,6 +67,10 @@ export async function createAutomation(
   userId: string,
   input: AutomationInput,
 ): Promise<Automation> {
+  if (input.eventFilter?.trim()) {
+    const filterResult = validateWebhookFilter(input.eventFilter);
+    if (!filterResult.ok) throw new Error(filterResult.error);
+  }
   const row = await insertAutomation(tenantId, userId, {
     name: input.name.trim(),
     kind: input.kind,
@@ -73,8 +79,9 @@ export async function createAutomation(
     enabled: input.enabled ?? true,
     cron: input.cron ?? null,
     timezone: input.timezone ?? 'UTC',
-    sourceType: input.sourceType ?? (input.kind === 'event' ? 'custom' : 'cron'),
-    triggerFilter: input.triggerFilter ?? {},
+    sourceType: input.sourceType ?? (input.kind === 'event' ? 'github' : 'cron'),
+    eventOn: input.eventOn ?? null,
+    eventFilter: input.eventFilter ?? null,
   });
   return rowToAutomation(row);
 }
@@ -84,6 +91,10 @@ export async function updateAutomation(
   id: string,
   patch: Partial<AutomationInput> & { enabled?: boolean },
 ): Promise<Automation | null> {
+  if (patch.eventFilter !== undefined && patch.eventFilter?.trim()) {
+    const filterResult = validateWebhookFilter(patch.eventFilter);
+    if (!filterResult.ok) throw new Error(filterResult.error);
+  }
   const row = await updateAutomationRow(tenantId, id, {
     ...(patch.name != null ? { name: patch.name.trim() } : {}),
     ...(patch.kind != null ? { kind: patch.kind } : {}),
@@ -93,7 +104,8 @@ export async function updateAutomation(
     ...(patch.cron !== undefined ? { cron: patch.cron ?? null } : {}),
     ...(patch.timezone != null ? { timezone: patch.timezone } : {}),
     ...(patch.sourceType != null ? { sourceType: patch.sourceType } : {}),
-    ...(patch.triggerFilter != null ? { triggerFilter: patch.triggerFilter } : {}),
+    ...(patch.eventOn !== undefined ? { eventOn: patch.eventOn ?? null } : {}),
+    ...(patch.eventFilter !== undefined ? { eventFilter: patch.eventFilter ?? null } : {}),
   });
   return row ? rowToAutomation(row) : null;
 }
@@ -103,7 +115,7 @@ export async function deleteAutomation(tenantId: string, id: string): Promise<bo
 }
 
 export async function touchAutomationLastRun(automationId: string): Promise<void> {
-  const rows = await listAllScheduledAutomationRows();
+  const rows = await listAllCronAutomationRows();
   const hit = rows.find((r) => r.id === automationId);
   if (!hit) return;
   await updateAutomationRow(hit.tenantId, automationId, {
@@ -141,21 +153,7 @@ export function automationScheduleName(automationId: string): string {
   return `auto:${automationId}`;
 }
 
-export function matchesEventFilter(
-  filter: Record<string, unknown>,
-  payload: Record<string, unknown>,
-): boolean {
-  if (Object.keys(filter).length === 0) return true;
-  for (const [key, expected] of Object.entries(filter)) {
-    const actual = payload[key];
-    if (Array.isArray(expected)) {
-      if (!expected.includes(actual as never)) return false;
-    } else if (actual !== expected) {
-      return false;
-    }
-  }
-  return true;
-}
+export { matchesEventTrigger, matchesEventKey } from './event-trigger-matcher';
 
 export async function listEventAutomations(tenantId: string, sourceType: string) {
   const rows = await listEventAutomationRows(tenantId, sourceType);

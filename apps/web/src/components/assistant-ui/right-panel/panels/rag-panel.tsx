@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d';
+import { useAuiState } from '@assistant-ui/react';
 import {
   BookOpen,
   CheckCircle2,
@@ -19,11 +20,15 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SettingsDeleteDialog } from '@/components/features/settings/settings-item-actions';
 import { cn } from '@/lib/utils';
 import { extractTextFromFile, RAG_UPLOAD_ACCEPT } from '@/lib/extract-file-text';
+import { getChatSettings } from '@/lib/chat-settings';
 import type { PanelContentProps } from '../panel-types';
+import { RagLocalModelsCard, type RagLocalModelsCardHandle } from './rag-local-models-card';
 
 type Reference = {
+  refIndex: number;
   chunkId: string;
   documentId: string;
   source: string;
@@ -42,8 +47,21 @@ type DocumentRow = {
   createdAt?: string;
 };
 
-type GraphNode = { id: string; name: string; type: string; documentId?: string | null };
+type GraphNode = {
+  id: string;
+  name: string;
+  type: string;
+  description?: string | null;
+  documentId?: string | null;
+};
 type GraphEdge = { source: string; target: string; relation: string; documentId?: string | null };
+type LocalModelsRefreshResult = {
+  models?: Array<{
+    id: string;
+    installed: boolean;
+    download: { phase: string; progress: number };
+  }>;
+} | null;
 
 type Tab = 'search' | 'documents' | 'graph' | 'citations';
 
@@ -152,28 +170,43 @@ function StatCard({
   );
 }
 
-export function RagPanel(_props: PanelContentProps) {
+export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
   const { t } = useTranslation();
+  const threadId = useAuiState((s) => s.threadListItem.id);
   const [tab, setTab] = useState<Tab>('search');
+  const [highlightRefIndex, setHighlightRefIndex] = useState<number | null>(null);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
-  const [references, setReferences] = useState<Reference[]>([]);
   const [searchResults, setSearchResults] = useState<Reference[]>([]);
+  const [agentCitations, setAgentCitations] = useState<{
+    query: string | null;
+    references: Reference[];
+    at: number | null;
+  }>({ query: null, references: [], at: null });
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [graph, setGraph] = useState<{ nodes: GraphNode[]; links: GraphEdge[] }>({
     nodes: [],
     links: [],
   });
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [selectedNodeChunks, setSelectedNodeChunks] = useState<Reference[]>([]);
+  const [loadingNodeChunks, setLoadingNodeChunks] = useState(false);
   const [graphSize, setGraphSize] = useState({ width: 520, height: 420 });
   const graphFgRef = useRef<ForceGraphMethods | undefined>(undefined);
   const graphRef = useRef<HTMLDivElement>(null);
   const graphSigRef = useRef<string>('');
   const fitTimerRef = useRef<number | undefined>(undefined);
+  const localModelsRef = useRef<RagLocalModelsCardHandle>(null);
   const [uploading, setUploading] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; filename: string } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [embeddingNotice, setEmbeddingNotice] = useState<{
+    phase: string;
+    progress: number;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [queryError, setQueryError] = useState<string | null>(null);
 
   const fitGraphView = useCallback(() => {
     const fg = graphFgRef.current;
@@ -216,15 +249,34 @@ export function RagPanel(_props: PanelContentProps) {
     const { showError = false, attempts = 1 } = options;
     setRefreshing(true);
     try {
-      const [refs, docs, kg] = await withRetry(
-        () => Promise.all([
-          fetchJson<{ references: Reference[] }>('/api/rag/references'),
-          fetchJson<{ documents: DocumentRow[] }>('/api/rag/documents'),
-          fetchJson<{ entities: GraphNode[]; edges: GraphEdge[] }>('/api/kg'),
-        ]),
+      const refsUrl = threadId
+        ? `/api/rag/references?threadId=${encodeURIComponent(threadId)}`
+        : '/api/rag/references';
+      const [refs, docs, kg, localModels] = await withRetry(
+        () =>
+          Promise.all([
+            fetchJson<{ query?: string | null; references: Reference[]; at?: number | null }>(refsUrl),
+            fetchJson<{ documents: DocumentRow[] }>('/api/rag/documents'),
+            fetchJson<{ entities: GraphNode[]; edges: GraphEdge[] }>('/api/kg'),
+            localModelsRef.current?.refresh() ?? Promise.resolve(null),
+          ]),
         attempts,
       );
-      setReferences(refs.references ?? []);
+      const localModelStatus = localModels as LocalModelsRefreshResult;
+      const embedding = localModelStatus?.models?.find((m) => m.id === 'embedding');
+      if (embedding && (!embedding.installed || embedding.download.phase === 'downloading')) {
+        setEmbeddingNotice({
+          phase: embedding.download.phase,
+          progress: embedding.download.progress,
+        });
+      } else {
+        setEmbeddingNotice(null);
+      }
+      setAgentCitations({
+        query: refs.query ?? null,
+        references: refs.references ?? [],
+        at: refs.at ?? null,
+      });
       setDocuments(docs.documents ?? []);
 
       // Only replace graph data (which restarts the force simulation) when the
@@ -239,7 +291,13 @@ export function RagPanel(_props: PanelContentProps) {
       if (signature !== graphSigRef.current) {
         graphSigRef.current = signature;
         setGraph({
-          nodes: entities.map((e) => ({ id: e.id, name: e.name, type: e.type })),
+          nodes: entities.map((e) => ({
+            id: e.id,
+            name: e.name,
+            type: e.type,
+            description: e.description ?? null,
+            documentId: e.documentId ?? null,
+          })),
           links: edges.map((e) => ({
             source: e.source,
             target: e.target,
@@ -259,11 +317,60 @@ export function RagPanel(_props: PanelContentProps) {
     }
   }
 
+  const ragFocusAt = (panelTab.state?.ragFocus as { at?: number } | undefined)?.at;
+  useEffect(() => {
+    const ragFocus = panelTab.state?.ragFocus as
+      | { refIndex?: number; chunkId?: string; at?: number }
+      | undefined;
+    const ragSubTab = panelTab.state?.ragSubTab as Tab | undefined;
+    if (!ragFocusAt || !ragFocus) return;
+    if (ragSubTab === 'search' || ragSubTab === 'citations' || ragSubTab === 'documents' || ragSubTab === 'graph') {
+      setTab(ragSubTab);
+    } else {
+      setTab('citations');
+    }
+    setHighlightRefIndex(ragFocus.refIndex ?? null);
+    updateState({ ragFocus: undefined });
+  }, [ragFocusAt, panelTab.state?.ragSubTab, panelTab.state?.ragFocus, updateState]);
+
   useEffect(() => {
     void refresh({ attempts: 6 });
-    const t = setInterval(() => void refresh(), 8000);
-    return () => clearInterval(t);
-  }, []);
+    const timer = setInterval(() => void refresh(), 8000);
+    return () => clearInterval(timer);
+  }, [threadId]);
+
+  useEffect(() => {
+    if (highlightRefIndex == null) return;
+    const timer = window.setTimeout(() => setHighlightRefIndex(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [highlightRefIndex]);
+
+  useEffect(() => {
+    if (!selectedNode) {
+      setSelectedNodeChunks([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingNodeChunks(true);
+    void fetchJson<{ ok: boolean; chunks: Array<Omit<Reference, 'refIndex'>> }>(
+      `/api/kg/entities/${encodeURIComponent(selectedNode.id)}/chunks`,
+    )
+      .then((result) => {
+        if (cancelled) return;
+        setSelectedNodeChunks(
+          (result.chunks ?? []).map((chunk, index) => ({ ...chunk, refIndex: index + 1 })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedNodeChunks([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingNodeChunks(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNode?.id]);
 
   useEffect(() => {
     if (tab !== 'graph') return;
@@ -310,6 +417,7 @@ export function RagPanel(_props: PanelContentProps) {
             filename: file.name,
             mimeType,
             text,
+            model: getChatSettings().model || 'default',
           }),
         });
         if ((result.graphEntities ?? 0) > 0) addedGraph = true;
@@ -323,12 +431,14 @@ export function RagPanel(_props: PanelContentProps) {
     }
   }
 
-  async function onDelete(documentId: string, filename: string) {
-    if (!window.confirm(t('rag.confirmDelete', { filename }))) return;
-    setDeletingId(documentId);
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    const { id } = deleteTarget;
+    setDeletingId(id);
     setError(null);
     try {
-      await fetchJson(`/api/rag/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' });
+      await fetchJson(`/api/rag/documents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      setDeleteTarget(null);
       await refresh({ showError: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -340,10 +450,11 @@ export function RagPanel(_props: PanelContentProps) {
   async function runSearch() {
     const value = query.trim();
     if (!value) {
-      setError(t('rag.enterQuery'));
+      setQueryError(t('rag.enterQuery'));
       return;
     }
     setSearching(true);
+    setQueryError(null);
     setError(null);
     try {
       const result = await fetchJson<{ references: Reference[] }>('/api/rag/search', {
@@ -352,7 +463,6 @@ export function RagPanel(_props: PanelContentProps) {
         body: JSON.stringify({ query: value }),
       });
       setSearchResults(result.references ?? []);
-      setReferences(result.references ?? []);
       setTab('search');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -362,7 +472,7 @@ export function RagPanel(_props: PanelContentProps) {
   }
 
   function copyReference(ref: Reference) {
-    const text = `${ref.source} (offset ${ref.offset})\n${ref.text}`;
+    const text = `[${ref.refIndex}] ${ref.source} (offset ${ref.offset})\n${ref.text}`;
     void navigator.clipboard?.writeText(text);
   }
 
@@ -410,27 +520,39 @@ export function RagPanel(_props: PanelContentProps) {
           </div>
         </div>
 
-        <div className="mt-3 flex gap-2">
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void runSearch();
-            }}
-            placeholder={t('rag.searchPlaceholder')}
-            className="h-8 text-xs"
-            disabled={searching}
-          />
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 px-3 text-xs"
-            disabled={searching}
-            onClick={() => void runSearch()}
-          >
-            {searching ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
-            {t('rag.search')}
-          </Button>
+        <div className="mt-3">
+          <div className="flex gap-2">
+            <Input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (queryError) setQueryError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void runSearch();
+              }}
+              placeholder={t('rag.searchPlaceholder')}
+              className={cn('h-8 text-xs', queryError && 'border-destructive')}
+              disabled={searching}
+              aria-invalid={queryError ? true : undefined}
+              aria-describedby={queryError ? 'rag-query-error' : undefined}
+            />
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 px-3 text-xs"
+              disabled={searching}
+              onClick={() => void runSearch()}
+            >
+              {searching ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+              {t('rag.search')}
+            </Button>
+          </div>
+          {queryError ? (
+            <p id="rag-query-error" className="text-destructive mt-1 px-0.5 text-[11px]">
+              {queryError}
+            </p>
+          ) : null}
         </div>
 
         <div className="mt-3 grid grid-cols-3 gap-2">
@@ -465,13 +587,25 @@ export function RagPanel(_props: PanelContentProps) {
         </div>
       </div>
 
+      {embeddingNotice ? (
+        <div className="border-amber-500/25 bg-amber-500/10 text-amber-900 dark:text-amber-200 mx-3 mt-3 rounded-lg border px-3 py-2 text-xs">
+          {embeddingNotice.phase === 'downloading'
+            ? t('rag.embeddingDownloading', { progress: embeddingNotice.progress })
+            : t('rag.embeddingPreparing')}
+        </div>
+      ) : null}
+
       {error ? (
         <div className="border-destructive/20 bg-destructive/10 text-destructive mx-3 mt-3 rounded-lg border px-3 py-2 text-xs">
           {error}
         </div>
       ) : null}
 
-      <div className={cn('min-h-0 flex-1', tab === 'graph' ? 'flex flex-col overflow-hidden p-3' : 'overflow-auto p-3')}>
+      <div className={cn('min-h-0 flex-1', tab === 'graph' ? 'flex flex-col overflow-hidden' : 'overflow-auto')}>
+        <div className={cn('px-3 pt-3', tab === 'graph' ? 'shrink-0' : '')}>
+          <RagLocalModelsCard ref={localModelsRef} />
+        </div>
+        <div className={cn(tab === 'graph' ? 'min-h-0 flex-1 overflow-hidden p-3 pt-0' : 'p-3 pt-2')}>
         {tab === 'search' ? (
           <div className="space-y-3">
             {searchResults.length === 0 ? (
@@ -549,10 +683,38 @@ export function RagPanel(_props: PanelContentProps) {
                   </div>
                 </div>
                 {selectedNode ? (
-                  <div className="border-border rounded-xl border p-3">
-                    <div className="text-xs font-medium">{t('rag.selectedEntity')}</div>
-                    <div className="mt-2 text-sm font-semibold">{selectedNode.name}</div>
-                    <div className="text-muted-foreground mt-1 text-xs">{selectedNode.type}</div>
+                  <div className="border-border space-y-3 rounded-xl border p-3">
+                    <div>
+                      <div className="text-xs font-medium">{t('rag.selectedEntity')}</div>
+                      <div className="mt-2 text-sm font-semibold">{selectedNode.name}</div>
+                      <div className="text-muted-foreground mt-1 text-xs">{selectedNode.type}</div>
+                      {selectedNode.description ? (
+                        <div className="text-muted-foreground mt-2 text-xs leading-relaxed">
+                          {selectedNode.description}
+                        </div>
+                      ) : null}
+                    </div>
+                    {loadingNodeChunks ? (
+                      <div className="text-muted-foreground flex items-center gap-2 text-xs">
+                        <Loader2 className="size-3.5 animate-spin" />
+                        {t('rag.loadingEntityChunks')}
+                      </div>
+                    ) : selectedNodeChunks.length > 0 ? (
+                      <div>
+                        <div className="text-xs font-medium">{t('rag.entitySourceChunks')}</div>
+                        <ul className="mt-2 space-y-2">
+                          {selectedNodeChunks.map((chunk) => (
+                            <li
+                              key={chunk.chunkId}
+                              className="text-muted-foreground rounded-lg bg-muted/30 p-2 text-xs leading-relaxed"
+                            >
+                              <div className="text-foreground font-medium">{chunk.source}</div>
+                              <div className="mt-1 line-clamp-3 whitespace-pre-wrap">{chunk.text}</div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -561,14 +723,29 @@ export function RagPanel(_props: PanelContentProps) {
         ) : null}
 
         {tab === 'citations' ? (
-          references.length === 0 ? (
+          agentCitations.references.length === 0 ? (
             <EmptyState
               icon={<Copy className="size-7" />}
               title={t('rag.citationsEmptyTitle')}
               description={t('rag.citationsEmptyDesc')}
             />
           ) : (
-            <ReferenceList references={references} onCopy={copyReference} />
+            <div className="space-y-3">
+              {agentCitations.query ? (
+                <div className="border-border bg-muted/20 rounded-xl border px-3 py-2.5 text-xs">
+                  <div className="text-muted-foreground">{t('rag.citationsQueryLabel')}</div>
+                  <div className="mt-1 font-medium leading-relaxed">{agentCitations.query}</div>
+                </div>
+              ) : null}
+              <div className="text-muted-foreground text-xs">
+                {t('rag.citationsSnippetCount', { count: agentCitations.references.length })}
+              </div>
+              <ReferenceList
+                references={agentCitations.references}
+                onCopy={copyReference}
+                highlightRefIndex={highlightRefIndex}
+              />
+            </div>
           )
         ) : null}
 
@@ -614,7 +791,8 @@ export function RagPanel(_props: PanelContentProps) {
                           size="icon-xs"
                           title={t('rag.delete')}
                           disabled={deletingId === d.id}
-                          onClick={() => void onDelete(d.id, d.filename)}
+                          data-no-window-drag
+                          onClick={() => setDeleteTarget({ id: d.id, filename: d.filename })}
                         >
                           {deletingId === d.id ? (
                             <Loader2 className="size-3.5 animate-spin" />
@@ -635,7 +813,21 @@ export function RagPanel(_props: PanelContentProps) {
             </div>
           )
         ) : null}
+        </div>
       </div>
+
+      <SettingsDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && !deletingId && setDeleteTarget(null)}
+        title={t('rag.delete')}
+        description={
+          deleteTarget
+            ? t('rag.confirmDelete', { filename: deleteTarget.filename })
+            : ''
+        }
+        onConfirm={confirmDelete}
+        busy={deletingId !== null}
+      />
     </div>
   );
 }
@@ -665,19 +857,35 @@ function EmptyState({
 function ReferenceList({
   references,
   onCopy,
+  highlightRefIndex,
 }: {
   references: Reference[];
   onCopy: (ref: Reference) => void;
+  highlightRefIndex?: number | null;
 }) {
   const { t } = useTranslation();
+  const highlightRef = useRef<HTMLLIElement | null>(null);
+
+  useEffect(() => {
+    if (highlightRefIndex == null) return;
+    highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [highlightRefIndex, references]);
+
   return (
     <ul className="space-y-3">
-      {references.map((r, index) => (
-        <li key={`${r.chunkId}-${index}`} className="border-border bg-card/40 rounded-xl border p-3 text-xs">
+      {references.map((r) => (
+        <li
+          key={`${r.chunkId}-${r.refIndex}`}
+          ref={r.refIndex === highlightRefIndex ? highlightRef : undefined}
+          className={cn(
+            'border-border bg-card/40 rounded-xl border p-3 text-xs transition-colors',
+            r.refIndex === highlightRefIndex && 'border-primary bg-primary/5 ring-primary/30 ring-2',
+          )}
+        >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <div className="font-medium" title={r.source}>
-                {truncateFilename(r.source, 42)}
+                [{r.refIndex}] {truncateFilename(r.source, 42)}
               </div>
               <div className="text-muted-foreground mt-0.5">
                 offset {r.offset}

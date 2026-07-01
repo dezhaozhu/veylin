@@ -3,6 +3,7 @@ mod web_view;
 
 use sidecar::Sidecar;
 use tauri::{Manager, RunEvent, WindowEvent};
+use web_view::ActiveWebTab;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,11 +12,15 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sidecar::new())
+        .manage(ActiveWebTab(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
+            web_view::close_web_view,
             web_view::hide_web_view,
             web_view::open_web_view,
             web_view::read_web_view,
             web_view::resize_web_view,
+            web_view::show_web_view,
+            sidecar::get_sidecar_status,
         ])
         .on_window_event(|window, event| {
             if window.label() != "main" {

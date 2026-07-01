@@ -2,6 +2,10 @@ import { parse as parseYaml } from 'yaml';
 import { promises as fs } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { agentDefinitionSchema, type AgentDefinition } from '@veylin/shared';
+import {
+  formatSkillCatalogDescription,
+  parseSkillFrontmatter,
+} from '@veylin/shared';
 
 export interface Skill {
   name: string;
@@ -9,6 +13,8 @@ export interface Skill {
   /** Full SKILL.md body, injected into the system prompt when activated. */
   content: string;
   path: string;
+  disableModelInvocation: boolean;
+  userInvocable: boolean;
 }
 
 /** Load and validate an agent.yaml into an AgentDefinition. */
@@ -19,8 +25,8 @@ export async function loadAgentDefinition(yamlPath: string): Promise<AgentDefini
 }
 
 /**
- * Load skills from a directory. Each skill is a subfolder containing SKILL.md
- * whose first heading is the name and first paragraph the description.
+ * Load skills from a directory. Each skill is a subfolder containing SKILL.md.
+ * Uses YAML frontmatter when present, otherwise falls back to heading / first line.
  */
 export async function loadSkillsDir(dir: string): Promise<Skill[]> {
   const root = resolve(dir);
@@ -40,13 +46,20 @@ export async function loadSkillsDir(dir: string): Promise<Skill[]> {
     } catch {
       continue;
     }
+    const frontmatter = parseSkillFrontmatter(content);
     const nameMatch = content.match(/^#\s+(.+)$/m);
-    const descMatch = content.split('\n').find((l) => l.trim() && !l.startsWith('#'));
+    const descMatch = content
+      .split('\n')
+      .find((l) => l.trim() && !l.startsWith('#') && !l.startsWith('---'));
+    const fallbackName = nameMatch?.[1]?.trim() ?? entry.name;
+    const fallbackDescription = descMatch?.trim() ?? '';
     skills.push({
-      name: nameMatch?.[1]?.trim() ?? entry.name,
-      description: descMatch?.trim() ?? '',
+      name: frontmatter.name ?? fallbackName,
+      description: formatSkillCatalogDescription(frontmatter, fallbackDescription),
       content,
       path: skillFile,
+      disableModelInvocation: frontmatter.disableModelInvocation ?? false,
+      userInvocable: frontmatter.userInvocable ?? true,
     });
   }
   return skills;

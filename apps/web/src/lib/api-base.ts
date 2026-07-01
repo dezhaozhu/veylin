@@ -23,9 +23,14 @@ export function installApiFetchShim(): void {
           : input.url;
     if (!url.startsWith('/api')) return nativeFetch(input, init);
     const resolved = apiUrl(url);
-    if (typeof input === 'string') return nativeFetch(resolved, init);
-    if (input instanceof URL) return nativeFetch(new URL(resolved), init);
-    return nativeFetch(new Request(resolved, input), init);
+    const fallback = () => nativeFetch(input, init);
+    if (typeof input === 'string') {
+      return nativeFetch(resolved, init).catch(fallback);
+    }
+    if (input instanceof URL) {
+      return nativeFetch(new URL(resolved), init).catch(fallback);
+    }
+    return nativeFetch(new Request(resolved, input), init).catch(fallback);
   };
   g.__veylinApiFetchShim = true;
 }

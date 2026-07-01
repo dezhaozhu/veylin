@@ -1,5 +1,6 @@
 import { NotebookPenIcon, XIcon } from 'lucide-react';
 import type { FC, ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { usePlanMode } from '@/lib/use-composer-settings';
 
@@ -34,19 +35,18 @@ function ModeChip({
 }
 
 export const ComposerModeChips: FC = () => {
+  const { t } = useTranslation();
   const { planMode, setPlanMode } = usePlanMode();
 
   if (!planMode) return null;
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1">
-      {planMode && (
-        <ModeChip
-          label="Plan"
-          icon={<NotebookPenIcon className="size-3.5" />}
-          onRemove={() => setPlanMode(false)}
-        />
-      )}
+      <ModeChip
+        label={t('slash.plan')}
+        icon={<NotebookPenIcon className="size-3.5" />}
+        onRemove={() => setPlanMode(false)}
+      />
     </div>
   );
 };

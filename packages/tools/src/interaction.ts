@@ -59,23 +59,28 @@ const annotationSchema = z.object({
   notes: z.string().optional(),
 });
 
-const resumeSchema = z.object({
-  answers: z.record(z.string(), z.string()),
-  annotations: z.record(z.string(), annotationSchema).optional(),
-});
-
-const suspendSchema = z.object({
-  questions: z.array(questionSchema).min(1).max(4),
-});
-
-type AskToolContext = {
-  suspend?: (payload: z.infer<typeof suspendSchema>) => Promise<void>;
-  resumeData?: z.infer<typeof resumeSchema>;
-};
+/** Client-completed tools suspend until the chat run is stopped (user answered on UI). */
+function awaitClientToolCompletion(ctx: { requestContext?: { get: (key: string) => unknown } } | undefined): Promise<never> {
+  const signal = ctx?.requestContext?.get('runAbortSignal') as AbortSignal | undefined;
+  return new Promise((_resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    if (!signal) return;
+    signal.addEventListener(
+      'abort',
+      () => {
+        reject(new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true },
+    );
+  });
+}
 
 /**
  * Ask the user structured multiple-choice questions (the agent AskUserQuestionTool).
- * Suspends the run until the host resumes with answers.
+ * Completed on the client; the server blocks this execute until the run is aborted.
  */
 export const askUserQuestion = createTool({
   id: 'ask_user_question',
@@ -90,55 +95,14 @@ export const askUserQuestion = createTool({
     answers: z.record(z.string(), z.string()),
     annotations: z.record(z.string(), annotationSchema).optional(),
   }),
-  suspendSchema,
-  resumeSchema,
-  execute: async (input, ctx) => {
-    const c = ctx as AskToolContext | undefined;
-    const resume = c?.resumeData;
-    if (resume?.answers) {
-      return {
-        questions: input.questions,
-        answers: resume.answers,
-        annotations: resume.annotations,
-      };
-    }
-    await c?.suspend?.({
-      questions: input.questions.map((q) => ({
-        ...q,
-        multiSelect: q.multiSelect ?? false,
-        options: q.options.map((o) => ({ ...o, description: o.description ?? '' })),
-      })),
-    });
-    return {
-      questions: input.questions,
-      answers: {},
-    };
+  execute: async (_input, ctx) => {
+    await awaitClientToolCompletion(ctx);
   },
 });
 
-const readPageModeSchema = z.enum(['text', 'html']).default('text');
-
-const readPageResumeSchema = z.object({
-  url: z.string().optional(),
-  title: z.string().optional(),
-  content: z.string().optional(),
-  truncated: z.boolean().optional(),
-  error: z.string().optional(),
-});
-
-const readPageSuspendSchema = z.object({
-  mode: readPageModeSchema,
-  maxChars: z.number().int().positive().default(50_000),
-});
-
-type ReadOpenPageContext = {
-  suspend?: (payload: z.infer<typeof readPageSuspendSchema>) => Promise<void>;
-  resumeData?: z.infer<typeof readPageResumeSchema>;
-};
-
 /**
  * Read the currently open page in the desktop docked web view (intranet / logged-in DOM).
- * Suspends until the Tauri host extracts innerText or outerHTML via eval_with_callback.
+ * Completed on the client via the desktop web view.
  */
 export const readOpenPage = createTool({
   id: 'read_open_page',
@@ -149,7 +113,8 @@ export const readOpenPage = createTool({
     'Do NOT use web_fetch for that case (web_fetch has no login session). ' +
     'Requires the desktop app and an open web-view window.',
   inputSchema: z.object({
-    mode: readPageModeSchema
+    mode: z
+      .enum(['text', 'html'])
       .optional()
       .describe('text = body innerText (default); html = document outerHTML'),
     maxChars: z
@@ -160,20 +125,15 @@ export const readOpenPage = createTool({
       .optional()
       .describe('Max characters to return (default 50000)'),
   }),
-  outputSchema: readPageResumeSchema.extend({
-    mode: readPageModeSchema.optional(),
+  outputSchema: z.object({
+    mode: z.enum(['text', 'html']).optional(),
+    url: z.string().optional(),
+    title: z.string().optional(),
+    content: z.string().optional(),
+    truncated: z.boolean().optional(),
+    error: z.string().optional(),
   }),
-  suspendSchema: readPageSuspendSchema,
-  resumeSchema: readPageResumeSchema,
-  execute: async (input, ctx) => {
-    const c = ctx as ReadOpenPageContext | undefined;
-    const resume = c?.resumeData;
-    if (resume?.content !== undefined || resume?.error) {
-      return { mode: input.mode ?? 'text', ...resume };
-    }
-    const mode = input.mode ?? 'text';
-    const maxChars = input.maxChars ?? 50_000;
-    await c?.suspend?.({ mode, maxChars });
-    return { mode, error: 'awaiting desktop web view read' };
+  execute: async (_input, ctx) => {
+    await awaitClientToolCompletion(ctx);
   },
 });

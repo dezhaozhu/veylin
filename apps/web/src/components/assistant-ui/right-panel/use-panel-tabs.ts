@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { closeWebView, isTauri } from '@/lib/tauri-web-view';
 import { getPanelKindDef } from './panel-registry';
 import type { PanelKind, PanelTab } from './panel-types';
 
@@ -69,10 +70,14 @@ export interface PanelTabsApi {
   close: (id: string) => void;
   activate: (id: string) => void;
   updateState: (id: string, patch: Record<string, unknown>) => void;
+  /** Focus a web tab and show it in the docked browser (for @ context). */
+  focusWebTab: (id: string) => Promise<void>;
+  /** Open/focus the knowledge panel and highlight a citation excerpt. */
+  focusRagCitation: (focus: { refIndex?: number; chunkId?: string }) => void;
 }
 
-/** Right-panel tab store. Mount once (single consumer); persists to localStorage. */
-export function usePanelTabs(): PanelTabsApi {
+/** Right-panel tab store. Use via PanelTabsProvider / usePanelTabs(). */
+export function usePanelTabsState(): PanelTabsApi {
   const [state, setState] = useState<StoredState>(() => readState());
 
   const commit = useCallback((next: StoredState) => {
@@ -90,6 +95,10 @@ export function usePanelTabs(): PanelTabsApi {
 
   const close = useCallback(
     (id: string) => {
+      const closing = state.tabs.find((t) => t.id === id);
+      if (closing?.kind === 'web' && isTauri()) {
+        void closeWebView(id);
+      }
       const idx = state.tabs.findIndex((t) => t.id === id);
       if (idx === -1) return;
       const tabs = state.tabs.filter((t) => t.id !== id);
@@ -114,15 +123,54 @@ export function usePanelTabs(): PanelTabsApi {
 
   const updateState = useCallback(
     (id: string, patch: Record<string, unknown>) => {
-      const tabs = state.tabs.map((t) =>
-        t.id === id ? { ...t, state: { ...t.state, ...patch } } : t,
-      );
+      const tabs = state.tabs.map((t) => {
+        if (t.id !== id) return t;
+        const next: PanelTab = {
+          ...t,
+          state: { ...t.state, ...patch },
+        };
+        if (typeof patch.title === 'string' && patch.title.trim()) {
+          next.title = patch.title.trim();
+        }
+        return next;
+      });
       commit({ tabs, activeId: state.activeId });
     },
     [state.tabs, state.activeId, commit],
   );
 
   const activeTab = state.tabs.find((t) => t.id === state.activeId) ?? null;
+
+  const focusWebTab = useCallback(
+    async (id: string) => {
+      const tab = state.tabs.find((t) => t.id === id);
+      if (!tab || tab.kind !== 'web') return;
+      if (id !== state.activeId) {
+        commit({ tabs: state.tabs, activeId: id });
+      }
+    },
+    [state.tabs, state.activeId, commit],
+  );
+
+  const focusRagCitation = useCallback(
+    (focus: { refIndex?: number; chunkId?: string }) => {
+      const existing = state.tabs.find((t) => t.kind === 'rag');
+      const ragFocus = { ...focus, at: Date.now() };
+      if (existing) {
+        const tabs = state.tabs.map((t) =>
+          t.id === existing.id
+            ? { ...t, state: { ...t.state, ragFocus, ragSubTab: 'citations' } }
+            : t,
+        );
+        commit({ tabs, activeId: existing.id });
+        return;
+      }
+      const tab = createTab('rag');
+      tab.state = { ragFocus, ragSubTab: 'citations' };
+      commit({ tabs: [...state.tabs, tab], activeId: tab.id });
+    },
+    [state.tabs, commit],
+  );
 
   return {
     tabs: state.tabs,
@@ -132,5 +180,7 @@ export function usePanelTabs(): PanelTabsApi {
     close,
     activate,
     updateState,
+    focusWebTab,
+    focusRagCitation,
   };
 }

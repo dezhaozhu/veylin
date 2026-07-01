@@ -1,6 +1,7 @@
 import { makeAssistantToolUI } from '@assistant-ui/react';
 
 type KnowledgeReference = {
+  refIndex: number;
   chunkId: string;
   documentId: string;
   source: string;

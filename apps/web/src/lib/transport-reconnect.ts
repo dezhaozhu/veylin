@@ -17,6 +17,8 @@ export const PERMANENT_HTTP_CODES = new Set([401, 403, 404]);
 export const POST_MAX_RETRIES = 10;
 export const POST_BASE_DELAY_MS = 500;
 export const POST_MAX_DELAY_MS = 8_000;
+/** Abort hung POST attempts so write retries can proceed (agent write has no infinite wait). */
+export const POST_FETCH_TIMEOUT_MS = 90_000;
 
 const FINISH_MARKER = '"type":"finish"';
 
@@ -81,14 +83,54 @@ export function sleepMs(
   });
 }
 
+export function mergeAbortSignals(
+  outer?: AbortSignal | null,
+  inner?: AbortSignal | null,
+): AbortSignal | undefined {
+  if (!outer) return inner ?? undefined;
+  if (!inner) return outer;
+  if (typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([outer, inner]);
+  }
+  const merged = new AbortController();
+  const abort = () => merged.abort();
+  if (outer.aborted || inner.aborted) {
+    merged.abort();
+    return merged.signal;
+  }
+  outer.addEventListener('abort', abort, { once: true });
+  inner.addEventListener('abort', abort, { once: true });
+  return merged.signal;
+}
+
+function postFetchTimeoutSignal(
+  outer?: AbortSignal | null,
+  timeoutMs = POST_FETCH_TIMEOUT_MS,
+): { signal: AbortSignal; clear: () => void } {
+  const timeout = new AbortController();
+  const timer = globalThis.setTimeout(() => timeout.abort(), timeoutMs);
+  const signal = mergeAbortSignals(outer, timeout.signal)!;
+  return {
+    signal,
+    clear: () => globalThis.clearTimeout(timer),
+  };
+}
+
 export function hasStreamFinished(accumulator: string): boolean {
   return accumulator.includes(FINISH_MARKER);
+}
+
+/** Resume target is gone (finished, expired, or server restarted) — not a user-facing failure. */
+export function isResumableStreamGone(status: number): boolean {
+  return status === 204 || status === 404;
 }
 
 export type PostWithRetryOptions = {
   signal?: AbortSignal | null;
   sleep?: (ms: number, signal?: AbortSignal | null) => Promise<void>;
   onRetry?: (info: { attempt: number; delayMs: number; reason: string }) => void;
+  /** Per-attempt fetch timeout (default {@link POST_FETCH_TIMEOUT_MS}). */
+  fetchTimeoutMs?: number;
 };
 
 /**
@@ -96,18 +138,20 @@ export type PostWithRetryOptions = {
  * (the agent SSETransport.write).
  */
 export async function postChatWithRetry(
-  fetcher: () => Promise<Response>,
+  fetcher: (signal: AbortSignal) => Promise<Response>,
   options: PostWithRetryOptions = {},
 ): Promise<Response> {
   const sleep = options.sleep ?? sleepMs;
+  const fetchTimeoutMs = options.fetchTimeoutMs ?? POST_FETCH_TIMEOUT_MS;
 
   for (let attempt = 1; attempt <= POST_MAX_RETRIES; attempt += 1) {
     if (options.signal?.aborted) {
       throw new DOMException('Aborted', 'AbortError');
     }
 
+    const timeout = postFetchTimeoutSignal(options.signal, fetchTimeoutMs);
     try {
-      const response = await fetcher();
+      const response = await fetcher(timeout.signal);
 
       if (isPostSuccess(response.status)) {
         return response;
@@ -117,11 +161,7 @@ export async function postChatWithRetry(
         return response;
       }
 
-      if (
-        response.status >= 400 &&
-        response.status < 500 &&
-        response.status !== 429
-      ) {
+      if (response.status >= 400 && response.status < 500 && !shouldRetryPost(response.status)) {
         return response;
       }
 
@@ -137,16 +177,25 @@ export async function postChatWithRetry(
       });
       await sleep(delayMs, options.signal);
     } catch (error) {
-      if (isAbortError(error)) throw error;
-      if (attempt === POST_MAX_RETRIES) throw error;
+      if (isAbortError(error)) {
+        if (options.signal?.aborted) throw error;
+        if (attempt === POST_MAX_RETRIES) throw new Error('post_fetch_timeout');
+      } else if (attempt === POST_MAX_RETRIES) {
+        throw error;
+      }
 
       const delayMs = getPostRetryDelay(attempt);
+      const msg = error instanceof Error ? error.message : '';
       options.onRetry?.({
         attempt,
         delayMs,
-        reason: error instanceof Error ? error.message : 'network_error',
+        reason: /fetch failed|Failed to fetch|ECONNREFUSED/i.test(msg)
+          ? 'network_unreachable'
+          : 'disconnected',
       });
       await sleep(delayMs, options.signal);
+    } finally {
+      timeout.clear();
     }
   }
 

@@ -7,12 +7,17 @@ import {
   MarkdownTextPrimitive,
   unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
   useIsMarkdownCodeBlock,
+  type SyntaxHighlighterProps,
 } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
 import { type FC, memo, useEffect, useRef, useState } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { MermaidDiagram } from "@/components/assistant-ui/mermaid-diagram";
+import { CitationMarkdownLink } from "@/components/assistant-ui/citation-markdown-link";
+import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { remarkInlineCitations } from "@/lib/remark-inline-citations";
 import { cn } from "@/lib/utils";
 
 const MarkdownTextImpl = () => {
@@ -21,12 +26,27 @@ const MarkdownTextImpl = () => {
       remarkPlugins={[remarkGfm]}
       className="aui-md"
       components={defaultComponents}
+      componentsByLanguage={markdownComponentsByLanguage}
       defer
     />
   );
 };
 
 export const MarkdownText = memo(MarkdownTextImpl);
+
+const AssistantMarkdownTextImpl = () => {
+  return (
+    <MarkdownTextPrimitive
+      remarkPlugins={[remarkGfm, remarkInlineCitations]}
+      className="aui-md"
+      components={assistantComponents}
+      componentsByLanguage={markdownComponentsByLanguage}
+      defer
+    />
+  );
+};
+
+export const AssistantMarkdownText = memo(AssistantMarkdownTextImpl);
 
 const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   const { isCopied, copyToClipboard } = useCopyToClipboard();
@@ -66,23 +86,30 @@ const useCopyToClipboard = ({
     };
   }, []);
 
-  const copyToClipboard = (value: string) => {
-    if (!value || typeof navigator === "undefined" || !navigator.clipboard) {
-      return;
-    }
-
-    navigator.clipboard.writeText(value).then(
-      () => {
-        setIsCopied(true);
-        if (timerRef.current) clearTimeout(timerRef.current);
-        timerRef.current = setTimeout(() => setIsCopied(false), copiedDuration);
-      },
-      () => {},
-    );
+  const copyToClipboardValue = async (value: string) => {
+    if (!value || isCopied) return;
+    const ok = await copyToClipboard(value);
+    if (!ok) return;
+    setIsCopied(true);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setIsCopied(false), copiedDuration);
   };
 
-  return { isCopied, copyToClipboard };
+  return { isCopied, copyToClipboard: copyToClipboardValue };
 };
+
+const MermaidSyntaxHighlighter: FC<SyntaxHighlighterProps> = ({ code }) => (
+  <MermaidDiagram code={code} />
+);
+
+const MermaidCodeHeader: FC<CodeHeaderProps> = () => null;
+
+const markdownComponentsByLanguage = {
+  mermaid: {
+    SyntaxHighlighter: MermaidSyntaxHighlighter,
+    CodeHeader: MermaidCodeHeader,
+  },
+} as const;
 
 const defaultComponents = memoizeMarkdownComponents({
   h1: ({ className, ...props }) => (
@@ -241,15 +268,19 @@ const defaultComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
-  pre: ({ className, ...props }) => (
-    <pre
-      className={cn(
-        "aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-t-none rounded-b-xl border border-t-0 p-3.5 text-[13px] leading-relaxed",
-        className,
-      )}
-      {...props}
-    />
-  ),
+  pre: function Pre({ className, children, ...props }) {
+    return (
+      <pre
+        className={cn(
+          "aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-t-none rounded-b-xl border border-t-0 p-3.5 text-[13px] leading-relaxed",
+          className,
+        )}
+        {...props}
+      >
+        {children}
+      </pre>
+    );
+  },
   code: function Code({ className, ...props }) {
     const isCodeBlock = useIsMarkdownCodeBlock();
     return (
@@ -264,4 +295,28 @@ const defaultComponents = memoizeMarkdownComponents({
     );
   },
   CodeHeader,
+});
+
+const assistantComponents = memoizeMarkdownComponents({
+  ...defaultComponents,
+  a: ({ className, href, children, ...props }) => {
+    if (href?.startsWith("rag-citation://")) {
+      const refIndex = Number(href.slice("rag-citation://".length));
+      if (Number.isFinite(refIndex) && refIndex > 0) {
+        return <CitationMarkdownLink refIndex={refIndex}>{children}</CitationMarkdownLink>;
+      }
+    }
+    return (
+      <a
+        className={cn(
+          "aui-md-a text-primary hover:text-primary/80 underline underline-offset-2",
+          className,
+        )}
+        href={href}
+        {...props}
+      >
+        {children}
+      </a>
+    );
+  },
 });

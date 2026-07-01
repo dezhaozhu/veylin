@@ -6,11 +6,11 @@ describe('model availability', () => {
   it('derives a catalog entry from saved provider settings when local catalog is empty', () => {
     const models = listConfiguredModels({
       configured: true,
-      modelName: 'deepseek-v4-flash',
+      modelName: 'gpt-4o-mini',
     });
     assert.equal(models.length, 1);
-    assert.equal(models[0]?.id, 'deepseek-v4-flash');
-    assert.equal(models[0]?.label, 'deepseek-v4-flash');
+    assert.equal(models[0]?.id, 'gpt-4o-mini');
+    assert.equal(models[0]?.label, 'gpt-4o-mini');
   });
 
   it('returns nothing when provider is not configured', () => {

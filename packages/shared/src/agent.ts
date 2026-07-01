@@ -9,20 +9,24 @@ export const agentDefinitionSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().default(''),
-  model: z.enum(['deepseek', 'zenmux']).default('deepseek'),
+  model: z.string().default('default'),
   instructions: z.string(),
   skills: z.array(z.string()).default([]),
   tools: z.array(z.string()).default([]),
+  /** Builtin tool ids this agent must not use (denylist). */
+  disallowedTools: z.array(z.string()).default([]),
   mcpServers: z.array(z.string()).default([]),
   /** Tools listed here always require human approval before execution. */
   approvalRequired: z.array(z.string()).default([]),
-  /** Sub-agents this agent may route to (for AgentNetwork). */
+  /** Registered agent ids this agent may dispatch via the `task` tool (empty = any). */
   subAgents: z.array(z.string()).default([]),
   /**
    * When true, the agent always runs with the full set of policy-permitted
    * builtin tools (no tool_search discovery gating). Used by the main agent.
    */
   fullToolset: z.boolean().default(false),
+  /** Demo / vertical agent packs — not loaded unless VEYLIN_LOAD_OPTIONAL_AGENTS=1. */
+  optional: z.boolean().default(false),
   /** Optional cron schedules: run this agent automatically on a cron expression. */
   schedules: z
     .array(

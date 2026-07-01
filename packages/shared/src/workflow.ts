@@ -7,14 +7,10 @@ import { z } from 'zod';
  *   Transform→ set / template / code
  *   Integrate→ http_request
  *   AI       → run_agent / knowledge_retrieval
- *   Data     → dataset_read / dataset_write
+ *   Data     → table_read / table_write
  *   Output   → end
- *
- * Legacy kinds (trigger/condition/knowledge_search/schedule_read/schedule_write/output)
- * remain accepted for backward compatibility and are normalized by the runner.
  */
 export const workflowNodeKindSchema = z.enum([
-  // v2
   'start',
   'if_else',
   'set',
@@ -23,16 +19,9 @@ export const workflowNodeKindSchema = z.enum([
   'http_request',
   'knowledge_retrieval',
   'run_agent',
-  'dataset_read',
-  'dataset_write',
+  'table_read',
+  'table_write',
   'end',
-  // legacy aliases
-  'trigger',
-  'condition',
-  'knowledge_search',
-  'schedule_read',
-  'schedule_write',
-  'output',
 ]);
 
 export type WorkflowNodeKind = z.infer<typeof workflowNodeKindSchema>;
@@ -81,7 +70,7 @@ export const workflowCaseSchema = z.object({
 
 export type WorkflowCase = z.infer<typeof workflowCaseSchema>;
 
-export const workflowKindSchema = z.enum(['manual', 'schedule', 'event']);
+export const workflowKindSchema = z.enum(['manual', 'cron', 'event']);
 export type WorkflowKind = z.infer<typeof workflowKindSchema>;
 
 export const workflowRunStatusSchema = z.enum(['queued', 'running', 'done', 'failed']);
@@ -128,8 +117,9 @@ export const workflowSchema = z.object({
   enabled: z.boolean(),
   cron: z.string().nullable().optional(),
   timezone: z.string().nullable().optional(),
-  sourceType: z.enum(['cron', 'github', 'custom']).optional(),
-  triggerFilter: z.record(z.string(), z.unknown()).default({}),
+  sourceType: z.union([z.literal('cron'), z.string().min(1)]).optional(),
+  eventOn: z.union([z.string(), z.array(z.string())]).optional(),
+  eventFilter: z.string().optional(),
   definition: workflowDefinitionSchema,
   createdAt: z.string().optional(),
   lastRunAt: z.string().nullable().optional(),
@@ -143,8 +133,9 @@ export const workflowInputSchema = z.object({
   enabled: z.boolean().default(true),
   cron: z.string().optional(),
   timezone: z.string().default('UTC'),
-  sourceType: z.enum(['cron', 'github', 'custom']).optional(),
-  triggerFilter: z.record(z.string(), z.unknown()).default({}),
+  sourceType: z.union([z.literal('cron'), z.string().min(1)]).optional(),
+  eventOn: z.union([z.string(), z.array(z.string())]).optional(),
+  eventFilter: z.string().optional(),
   definition: workflowDefinitionSchema.default({ nodes: [], edges: [] }),
 });
 
@@ -170,28 +161,27 @@ export const workflowRunSchema = z.object({
   eventContext: z.record(z.string(), z.unknown()).default({}),
   startedAt: z.string(),
   finishedAt: z.string().nullable().optional(),
+  /** Derived from the end node (or last ok step) for Result panels. */
+  finalOutput: z.unknown().optional(),
 });
 
 export type WorkflowRun = z.infer<typeof workflowRunSchema>;
 
-/** Normalize legacy node kinds → v2 kinds. */
-export function normalizeWorkflowNodeKind(kind: string): WorkflowNodeKind {
-  switch (kind) {
-    case 'trigger':
-      return 'start';
-    case 'condition':
-      return 'if_else';
-    case 'knowledge_search':
-      return 'knowledge_retrieval';
-    case 'schedule_read':
-      return 'dataset_read';
-    case 'schedule_write':
-      return 'dataset_write';
-    case 'output':
-      return 'end';
-    default:
-      return kind as WorkflowNodeKind;
+/** Pick workflow Result output from a run log (Dify-style). */
+export function deriveFinalOutput(log: WorkflowRunLogEntry[]): unknown {
+  for (let i = log.length - 1; i >= 0; i--) {
+    const entry = log[i]!;
+    if (entry.kind === 'end' && entry.status === 'ok' && entry.output !== undefined) {
+      return entry.output;
+    }
   }
+  for (let i = log.length - 1; i >= 0; i--) {
+    const entry = log[i]!;
+    if (entry.status === 'ok' && entry.output !== undefined) {
+      return entry.output;
+    }
+  }
+  return undefined;
 }
 
 /** Node metadata for UI palettes (label + category). */
@@ -210,7 +200,7 @@ export const WORKFLOW_NODE_META: WorkflowNodeMeta[] = [
   { kind: 'http_request', label: 'HTTP request', category: 'integration' },
   { kind: 'run_agent', label: 'Run agent', category: 'ai' },
   { kind: 'knowledge_retrieval', label: 'Knowledge retrieval', category: 'ai' },
-  { kind: 'dataset_read', label: 'Read dataset', category: 'data' },
-  { kind: 'dataset_write', label: 'Write dataset', category: 'data' },
+  { kind: 'table_read', label: 'Read table', category: 'data' },
+  { kind: 'table_write', label: 'Write table', category: 'data' },
   { kind: 'end', label: 'Output', category: 'output' },
 ];

@@ -1,8 +1,15 @@
 /** Desktop / embedded mode: single-tenant, no login required. */
 export const isDesktopAuth =
-  process.env.VEYLIN_DESKTOP_AUTH === '1' ||
-  process.env.VEYLIN_SKIP_AUTH === '1' ||
-  !process.env.AUTH_SECRET;
+  process.env.VEYLIN_DESKTOP_AUTH === '1' || process.env.VEYLIN_SKIP_AUTH === '1';
+
+export function assertHostedAuthConfig(): void {
+  if (isDesktopAuth) return;
+  if (!process.env.AUTH_SECRET?.trim()) {
+    throw new Error(
+      'AUTH_SECRET is required when VEYLIN_DESKTOP_AUTH is not enabled (hosted/self-hosted mode)',
+    );
+  }
+}
 
 type SessionUser = { id: string; name?: string | null };
 type SessionResult = { user: SessionUser } | null;

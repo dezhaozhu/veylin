@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import i18n from '@/i18n';
-import { POST_MAX_RETRIES } from '@/lib/transport-reconnect';
 
 export type NetworkBannerKind =
   | 'offline'
@@ -50,6 +49,7 @@ function reasonLabel(reason: string): string {
   const t = i18n.t.bind(i18n);
   if (reason === 'liveness_timeout') return t('reconnect.livenessTimeout');
   if (reason === 'network_offline') return t('reconnect.networkOffline');
+  if (reason === 'network_unreachable') return t('reconnect.networkUnreachable');
   if (reason === 'stream_resume') return t('reconnect.streamResume');
   if (reason.startsWith('http_'))
     return t('reconnect.serviceUnavailable', { code: reason.replace('http_', '') });
@@ -84,7 +84,6 @@ export const useNetworkReconnectStore = create<NetworkReconnectStore>((set, get)
       elapsedSec,
       message: i18n.t('reconnect.reconnectingMsg', {
         reason: reasonLabel(reason),
-        attempt,
         elapsed: elapsedSec,
         seconds,
       }),
@@ -99,8 +98,6 @@ export const useNetworkReconnectStore = create<NetworkReconnectStore>((set, get)
       elapsedSec: 0,
       message: i18n.t('reconnect.postRetryMsg', {
         reason: reasonLabel(reason),
-        attempt,
-        max: POST_MAX_RETRIES,
         seconds,
       }),
     });

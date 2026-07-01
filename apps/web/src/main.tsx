@@ -1,13 +1,70 @@
 import { Component, StrictMode, useEffect, useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { createRoot } from 'react-dom/client';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { apiUrl, installApiFetchShim } from '@/lib/api-base';
+import { probeVeylinHealth } from '@/lib/health-probe';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
-import '@/i18n';
+import { installDesktopRecoveryShortcut, installDesktopReloadShortcut } from '@/lib/desktop-reload-shortcut';
+import { fetchSidecarStatus } from '@/lib/sidecar-status';
+import { startupCheckpoint } from '@/lib/startup-profiler';
+import { ModuleRegistry } from 'ag-grid-community';
+// Register AG-Grid Community modules at startup (order-safe regardless of how the
+// grid component is bundled — don't rely on table-grid.tsx's side-effect import).
+import './components/assistant-ui/ag-grid-modules';
+import { getAgGridLicenseKey, hasProEntitlement } from '@/lib/ag-grid-license';
+import {
+  markAgGridEnterpriseReady,
+  setEnterpriseBootstrap,
+  whenEnterpriseSettled,
+} from '@/lib/ag-grid-enterprise-state';
+import i18n from '@/i18n';
 import { App } from './App';
 import './index.css';
 
 installApiFetchShim();
+installDesktopReloadShortcut();
+installDesktopRecoveryShortcut();
+startupCheckpoint('react_shell');
+
+// AG-Grid: Community (MIT) is the default — no Enterprise in the default bundle.
+// Enterprise is loaded ONLY here, dynamically, when the operator's key is injected
+// AND the user is Pro-entitled. The startup gate awaits this before rendering, so
+// any grid mounts with a deterministic Enterprise-ready state.
+{
+  const _agKey = getAgGridLicenseKey();
+  if (_agKey && hasProEntitlement()) {
+    // Dynamic import keeps ag-grid-enterprise out of the default chunk.
+    const bootstrap = import('ag-grid-enterprise')
+      .then((ent) => {
+        // AllEnterpriseModule already includes AllCommunityModule; re-registering is safe.
+        ModuleRegistry.registerModules([ent.AllEnterpriseModule]);
+        ent.LicenseManager.setLicenseKey(_agKey);
+        markAgGridEnterpriseReady();
+      })
+      .catch(() => {
+        // Fall back to Community silently.
+      });
+    setEnterpriseBootstrap(bootstrap);
+  }
+}
+
+if (import.meta.env.DEV) {
+  void import('./lib/dev-test-hooks').then((m) => m.installDevTestHooks());
+}
+
+// Surface fatal module/load errors on the static splash (before React mounts).
+window.addEventListener('error', (event) => {
+  const message = event.error instanceof Error ? event.error.message : event.message;
+  if (!message) return;
+  setSplashHint(i18n.t('splash.uiLoadFailed', { message }));
+});
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  const message = reason instanceof Error ? reason.message : String(reason ?? '');
+  if (!message) return;
+  setSplashHint(i18n.t('splash.uiLoadFailed', { message }));
+});
 
 // Child web-views are native layers above the UI; clear any leftover instance on load
 // (e.g. Vite HMR) so the splash screen is not partially covered.
@@ -19,17 +76,51 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function healthCheckUrls(): string[] {
+  return [apiUrl('/health')];
+}
+
+function setSplashHint(text: string): void {
+  const hint = document.getElementById('splash-hint');
+  if (hint && hint.dataset.errorBound !== '1') {
+    hint.textContent = text;
+  }
+}
+
+async function probeHealth(url: string): Promise<boolean> {
+  const ac = new AbortController();
+  const timer = window.setTimeout(() => ac.abort(), 5_000);
+  try {
+    return await probeVeylinHealth(url, { signal: ac.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 async function waitForApiReady(signal: { cancelled: boolean }): Promise<void> {
   let lastError: unknown;
-  for (let i = 0; i < 120 && !signal.cancelled; i++) {
-    try {
-      const res = await fetch(apiUrl('/health'), { cache: 'no-store' });
-      if (res.ok) return;
-      lastError = new Error(`HTTP ${res.status}`);
-    } catch (err) {
-      lastError = err;
+  const urls = healthCheckUrls();
+  for (let i = 0; i < 90 && !signal.cancelled; i++) {
+    const sidecar = await fetchSidecarStatus();
+    if (sidecar && !sidecar.spawnOk) {
+      throw new Error(sidecar.error ?? i18n.t('splash.sidecarSpawnFailed'));
     }
-    await sleep(i < 30 ? 150 : 400);
+
+    for (const url of urls) {
+      try {
+        if (await probeHealth(url)) {
+          startupCheckpoint('health_ok');
+          return;
+        }
+        lastError = new Error(`Veylin health check failed (${url})`);
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (i > 0 && i % 5 === 0) {
+      setSplashHint(i18n.t('splash.startingServiceProgress', { count: i + 1 }));
+    }
+    await sleep(i < 20 ? 200 : 500);
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
@@ -45,12 +136,14 @@ function setSplashError(message: string, onRetry: () => void): void {
   const hint = document.getElementById('splash-hint');
   if (!hint || hint.dataset.errorBound === '1') return;
   hint.dataset.errorBound = '1';
+  const serviceNotReady = i18n.t('splash.serviceNotReady', { message });
+  const retryLabel = i18n.t('splash.retry');
   hint.innerHTML =
-    `<span style="color:#f87171">本地服务暂未就绪：${message}</span>` +
-    ` · <button id="splash-retry" style="background:none;border:none;color:#a855f7;cursor:pointer;font:inherit;text-decoration:underline">重试</button>`;
+    `<span style="color:#f87171">${serviceNotReady}</span>` +
+    ` · <button id="splash-retry" style="background:none;border:none;color:#a855f7;cursor:pointer;font:inherit;text-decoration:underline">${retryLabel}</button>`;
   document.getElementById('splash-retry')?.addEventListener('click', () => {
     hint.dataset.errorBound = '';
-    hint.textContent = '正在启动本地服务…';
+    hint.textContent = i18n.t('splash.startingService');
     onRetry();
   });
 }
@@ -64,39 +157,55 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error
 
   render() {
     if (this.state.error) {
-      return (
-        <div className="bg-background text-foreground flex min-h-dvh flex-col items-center justify-center gap-3 p-8 text-center">
-          <p className="text-lg font-medium">界面加载失败</p>
-          <p className="text-muted-foreground max-w-md text-sm">{this.state.error.message}</p>
-          <button
-            type="button"
-            className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm"
-            onClick={() => window.location.reload()}
-          >
-            重新加载
-          </button>
-        </div>
-      );
+      return <AppErrorFallback error={this.state.error} />;
     }
     return this.props.children;
   }
 }
 
-function StartupError({ message, onRetry }: { message: string; onRetry: () => void }) {
+function AppErrorFallback({ error }: { error: Error }) {
+  const { t } = useTranslation();
   return (
     <div className="bg-background text-foreground flex min-h-dvh flex-col items-center justify-center gap-3 p-8 text-center">
-      <p className="text-lg font-medium">本地服务暂未就绪</p>
+      <p className="text-lg font-medium">{t('splash.uiLoadFailedTitle')}</p>
+      <p className="text-muted-foreground max-w-md text-sm">{error.message}</p>
+      <button
+        type="button"
+        className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm"
+        onClick={() => window.location.reload()}
+      >
+        {t('splash.reload')}
+      </button>
+    </div>
+  );
+}
+
+function StartupError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="bg-background text-foreground flex min-h-dvh flex-col items-center justify-center gap-3 p-8 text-center">
+      <p className="text-lg font-medium">{t('splash.serviceNotReadyTitle')}</p>
       <p className="text-muted-foreground max-w-md text-sm">{message}</p>
-      <p className="text-muted-foreground max-w-md text-xs">
-        桌面端请用 <code className="font-mono">npm run -w @veylin/desktop dev</code> 启动；仅 Web 开发请确认 8787 端口上的 server 已运行。
-      </p>
+      <p
+        className="text-muted-foreground max-w-md text-xs"
+        dangerouslySetInnerHTML={{ __html: t('splash.desktopHint') }}
+      />
       <button
         type="button"
         className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm"
         onClick={onRetry}
       >
-        重试
+        {t('splash.retry')}
       </button>
+    </div>
+  );
+}
+
+function StartupLoading() {
+  const { t } = useTranslation();
+  return (
+    <div className="bg-background text-foreground flex min-h-dvh items-center justify-center p-8">
+      <p className="text-muted-foreground text-sm">{t('splash.startingService')}</p>
     </div>
   );
 }
@@ -108,13 +217,15 @@ function StartupGate() {
 
   useEffect(() => {
     const signal = { cancelled: false };
+    const failsafe = window.setTimeout(() => removeSplash(), 45_000);
     setStartupError(null);
     void waitForApiReady(signal)
+      // Ensure AG-Grid Enterprise (if entitled) has settled before mounting any grid,
+      // so master-detail props are only set once the module is registered.
+      .then(() => whenEnterpriseSettled())
       .then(() => {
-        if (!signal.cancelled) {
-          setReady(true);
-          removeSplash();
-        }
+        if (signal.cancelled) return;
+        setReady(true);
       })
       .catch((err) => {
         if (!signal.cancelled) {
@@ -125,10 +236,24 @@ function StartupGate() {
       });
     return () => {
       signal.cancelled = true;
+      window.clearTimeout(failsafe);
     };
   }, [attempt]);
 
+  useEffect(() => {
+    if (!ready) return;
+    startupCheckpoint('react_mount');
+    const id = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        removeSplash();
+        startupCheckpoint('assistant_ready');
+      });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [ready]);
+
   if (startupError) {
+    removeSplash();
     return <StartupError message={startupError} onRetry={() => setAttempt((value) => value + 1)} />;
   }
 
@@ -140,7 +265,7 @@ function StartupGate() {
     );
   }
 
-  return null;
+  return <StartupLoading />;
 }
 
 const root = document.getElementById('root');

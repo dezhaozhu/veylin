@@ -2,6 +2,7 @@ import { Surreal } from 'surrealdb';
 import { surrealdbNodeEngines } from '@surrealdb/node';
 import { ensureDataDir, surrealKvUrl } from './paths';
 import { initSchema } from './init-schema';
+import { ensureChunkVectorIndex } from './vector-index';
 
 let db: Surreal | undefined;
 let initPromise: Promise<Surreal> | undefined;
@@ -16,6 +17,7 @@ export async function connectDb(): Promise<Surreal> {
     await instance.connect(surrealKvUrl(dataDir));
     await instance.use({ namespace: 'ia', database: 'main' });
     await initSchema(instance);
+    await ensureChunkVectorIndex(instance);
     db = instance;
     console.log('[db] SurrealDB ready at', dataDir);
     return instance;

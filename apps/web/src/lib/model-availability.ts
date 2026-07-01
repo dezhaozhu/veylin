@@ -5,6 +5,7 @@ import {
   listEnabledModels,
   type ModelCatalogEntry,
 } from '@/lib/model-settings';
+import { getServerModelCatalog, isServerModelCatalogActive } from '@/hooks/use-server-model-catalog';
 import { settingsApi, type ModelProviderSettings } from '@/hooks/settings/api';
 
 export const MODEL_PROVIDER_CHANGE_EVENT = 'veylin-model-provider-change';
@@ -14,6 +15,10 @@ export type ProviderCatalogContext = Pick<ModelProviderSettings, 'configured' | 
 /** Models available when provider settings are saved (user catalog only). */
 export function listConfiguredModels(provider: ProviderCatalogContext): ModelCatalogEntry[] {
   if (!provider.configured) return [];
+
+  if (isServerModelCatalogActive()) {
+    return getServerModelCatalog();
+  }
 
   const enabled = listEnabledModels();
   if (enabled.length > 0) return enabled;

@@ -1,18 +1,18 @@
 import vm from 'node:vm';
 import type { Runtime } from '@veylin/runtime';
 import {
-  normalizeWorkflowNodeKind,
   type WorkflowCase,
   type WorkflowEdge,
   type WorkflowNode,
   type WorkflowNodeKind,
   type WorkflowRunLogEntry,
+  DEFAULT_AGENT_ID,
 } from '@veylin/shared';
 import type { WorkflowJob, QueuePort } from './queue';
 import { WORKFLOW_QUEUE } from './queue';
 import { runAgentPrompt } from './agent-run';
 import { searchKnowledge } from './rag-store';
-import { listSchedule, updateScheduleRow, DEFAULT_SCHEDULE_SHEET } from './schedule-store';
+import { listTableRows, updateTableRow, DEFAULT_TABLE_SHEET } from './table-store';
 import { ensureThreadState, setThreadTitle } from './thread-state';
 import {
   evaluateCase,
@@ -177,7 +177,7 @@ async function executeNode(
     case 'run_agent': {
       const prompt = interpolate(String(data.prompt ?? ''), ctx);
       if (!prompt.trim()) throw new Error('run_agent requires prompt');
-      const agentId = String(data.agentId ?? 'veylin');
+      const agentId = String(data.agentId ?? DEFAULT_AGENT_ID);
       const threadId = `wf-${crypto.randomUUID()}`;
       await ensureThreadState({ threadId, tenantId, resourceId: userId });
       await setThreadTitle(threadId, `[Workflow] ${workflowName}`);
@@ -194,19 +194,19 @@ async function executeNode(
       return { text: result.text };
     }
 
-    case 'dataset_read': {
-      const sheetId = String(data.sheetId ?? DEFAULT_SCHEDULE_SHEET);
-      const rows = listSchedule(sheetId);
+    case 'table_read': {
+      const sheetId = String(data.sheetId ?? DEFAULT_TABLE_SHEET);
+      const rows = listTableRows(sheetId);
       return { sheetId, rows, count: rows.length };
     }
 
-    case 'dataset_write': {
-      const sheetId = String(data.sheetId ?? DEFAULT_SCHEDULE_SHEET);
+    case 'table_write': {
+      const sheetId = String(data.sheetId ?? DEFAULT_TABLE_SHEET);
       const rowKey = interpolate(String(data.rowKey ?? ''), ctx);
       const rawPatch = (data.patch as Record<string, unknown>) ?? {};
       const patch = interpolateDeep(rawPatch, ctx) as Record<string, string | number>;
-      if (!rowKey) throw new Error('dataset_write requires rowKey');
-      const updated = await updateScheduleRow(rowKey, patch, sheetId);
+      if (!rowKey) throw new Error('table_write requires rowKey');
+      const updated = await updateTableRow(rowKey, patch, sheetId);
       if (!updated) throw new Error(`dataset row not found: ${rowKey}`);
       return { sheetId, row: updated };
     }
@@ -307,10 +307,7 @@ export async function runWorkflowJob(runtime: Runtime, job: WorkflowJob): Promis
 
   const { nodes, edges } = workflow.definition;
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
-  const roots = nodes.filter((n) => {
-    const k = normalizeWorkflowNodeKind(n.kind);
-    return k === 'start';
-  });
+  const roots = nodes.filter((n) => n.kind === 'start');
   const startNodes = roots.length > 0 ? roots : nodes.filter((n) => !edges.some((e) => e.target === n.id));
 
   if (startNodes.length === 0) {
@@ -337,7 +334,7 @@ export async function runWorkflowJob(runtime: Runtime, job: WorkflowJob): Promis
       const node = queue.shift()!;
       if (visited.has(node.id)) continue;
       visited.add(node.id);
-      const kind = normalizeWorkflowNodeKind(node.kind);
+      const kind = node.kind as WorkflowNodeKind;
 
       try {
         const { output, outcome } = await runNode(

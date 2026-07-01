@@ -1,3 +1,4 @@
+import { parseEventOn, serializeEventOn } from './event-on';
 import type { Surreal } from 'surrealdb';
 import { getDb } from './client';
 import { newId, normalizeId, queryRows, createRecord, upsertById, selectById, deleteById, toDbDatetime } from './query';
@@ -59,6 +60,10 @@ function mapTask(r: Record<string, unknown>): TaskRow {
     label: (r.label as string | null) ?? null,
     result: (r.result as string | null) ?? null,
     jobId: (r.job_id as string | null) ?? null,
+    workerThreadId: (r.worker_thread_id as string | null) ?? null,
+    subagentType: (r.subagent_type as string | null) ?? null,
+    totalTokens: r.total_tokens != null ? Number(r.total_tokens) : null,
+    durationMs: r.duration_ms != null ? Number(r.duration_ms) : null,
     createdAt: r.created_at ? String(r.created_at) : undefined,
     updatedAt: r.updated_at ? String(r.updated_at) : undefined,
   };
@@ -110,14 +115,15 @@ function mapAutomation(r: Record<string, unknown>): AutomationRow {
     tenantId: String(r.tenant_id ?? ''),
     userId: String(r.user_id ?? ''),
     name: String(r.name ?? ''),
-    kind: (r.kind as AutomationRow['kind']) ?? 'schedule',
+    kind: (r.kind as AutomationRow['kind']) ?? 'cron',
     agentId: String(r.agent_id ?? ''),
     prompt: String(r.prompt ?? ''),
     enabled: Boolean(r.enabled ?? true),
     cron: (r.cron as string | null) ?? null,
     timezone: (r.timezone as string | null) ?? null,
     sourceType: (r.source_type as string | null) ?? null,
-    triggerFilter: (r.trigger_filter as Record<string, unknown>) ?? {},
+    eventOn: parseEventOn(r.event_on),
+    eventFilter: (r.event_filter as string | null) ?? null,
     createdAt: r.created_at ? String(r.created_at) : undefined,
     lastRunAt: r.last_run_at ? String(r.last_run_at) : null,
   };
@@ -138,12 +144,18 @@ function mapAutomationRun(r: Record<string, unknown>): AutomationRunRow {
 }
 
 function mapWebhook(r: Record<string, unknown>): WebhookEndpointRow {
+  const source = String(r.source ?? 'custom');
   return {
     id: normalizeId(r.id),
     tenantId: String(r.tenant_id ?? ''),
-    token: String(r.token ?? ''),
+    name: String(r.name ?? source),
+    source,
     secret: String(r.secret ?? ''),
-    sourceType: (r.source_type as WebhookEndpointRow['sourceType']) ?? 'custom',
+    eventKeyExpr: String(r.event_key_expr ?? 'type'),
+    signatureHeader: String(
+      r.signature_header ?? (source === 'github' ? 'X-Hub-Signature-256' : 'X-Signature-256'),
+    ),
+    enabled: r.enabled !== false,
     createdAt: r.created_at ? String(r.created_at) : undefined,
   };
 }
@@ -246,6 +258,14 @@ export async function updateThreadState(
     sets.push('title = $title');
     vars.title = patch.title;
   }
+  if (patch.tenantId !== undefined) {
+    sets.push('tenant_id = $tenantId');
+    vars.tenantId = patch.tenantId;
+  }
+  if (patch.resourceId !== undefined) {
+    sets.push('resource_id = $resourceId');
+    vars.resourceId = patch.resourceId;
+  }
   await getDb().query(
     `UPDATE thread_state SET ${sets.join(', ')} WHERE thread_id = $threadId`,
     vars,
@@ -260,6 +280,15 @@ export async function listThreadStatesForResource(
     getDb(),
     'SELECT * FROM thread_state WHERE tenant_id = $tenantId AND resource_id = $resourceId ORDER BY updated_at DESC',
     { tenantId, resourceId },
+  );
+  return rows.map(mapThreadState);
+}
+
+export async function listThreadStatesForTenant(tenantId: string): Promise<ThreadStateRow[]> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    'SELECT * FROM thread_state WHERE tenant_id = $tenantId ORDER BY updated_at DESC',
+    { tenantId },
   );
   return rows.map(mapThreadState);
 }
@@ -287,23 +316,39 @@ export async function getTenantSettingsRow(tenantId: string): Promise<TenantSett
   };
 }
 
+function isTransactionReadConflict(err: unknown): boolean {
+  return String(err).includes('Transaction read conflict');
+}
+
 export async function upsertTenantSettings(
   tenantId: string,
   patch: Partial<Pick<TenantSettingsRow, 'disabledSkills' | 'disabledMcpServers' | 'modelSettings'>>,
 ): Promise<void> {
-  const existing = (await getTenantSettingsRow(tenantId)) ?? {
-    tenantId,
-    disabledSkills: [],
-    disabledMcpServers: [],
-    modelSettings: undefined,
-  };
-  await upsertById(getDb(), 'tenant_settings', tenantId, {
-    tenant_id: tenantId,
-    disabled_skills: patch.disabledSkills ?? existing.disabledSkills,
-    disabled_mcp_servers: patch.disabledMcpServers ?? existing.disabledMcpServers,
-    model_settings: patch.modelSettings ?? existing.modelSettings,
-    updated_at: new Date(),
-  });
+  const maxAttempts = 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const existing = (await getTenantSettingsRow(tenantId)) ?? {
+        tenantId,
+        disabledSkills: [],
+        disabledMcpServers: [],
+        modelSettings: undefined,
+      };
+      await upsertById(getDb(), 'tenant_settings', tenantId, {
+        tenant_id: tenantId,
+        disabled_skills: patch.disabledSkills ?? existing.disabledSkills,
+        disabled_mcp_servers: patch.disabledMcpServers ?? existing.disabledMcpServers,
+        model_settings: patch.modelSettings ?? existing.modelSettings,
+        updated_at: new Date(),
+      });
+      return;
+    } catch (err) {
+      if (attempt < maxAttempts - 1 && isTransactionReadConflict(err)) {
+        await new Promise((resolve) => setTimeout(resolve, 40 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 export async function listCustomSkills(tenantId: string): Promise<CustomSkillRow[]> {
@@ -521,6 +566,10 @@ export async function insertTask(
     label: row.label ?? null,
     result: row.result ?? null,
     job_id: row.jobId ?? null,
+    worker_thread_id: row.workerThreadId ?? null,
+    subagent_type: row.subagentType ?? null,
+    total_tokens: row.totalTokens ?? null,
+    duration_ms: row.durationMs ?? null,
     updated_at: new Date(),
   });
   return (await getTaskRow(id))!;
@@ -552,6 +601,10 @@ export async function updateTaskRow(
     ['result', 'result'],
     ['jobId', 'job_id'],
     ['prompt', 'prompt'],
+    ['workerThreadId', 'worker_thread_id'],
+    ['subagentType', 'subagent_type'],
+    ['totalTokens', 'total_tokens'],
+    ['durationMs', 'duration_ms'],
   ] as const) {
     const val = patch[key];
     if (val !== undefined) {
@@ -579,10 +632,10 @@ export async function listAutomationRows(tenantId: string, userId?: string): Pro
   return rows.map(mapAutomation);
 }
 
-export async function listAllScheduledAutomationRows(): Promise<AutomationRow[]> {
+export async function listAllCronAutomationRows(): Promise<AutomationRow[]> {
   const rows = await queryRows<Record<string, unknown>>(
     getDb(),
-    "SELECT * FROM automation WHERE kind = 'schedule' AND enabled = true",
+    "SELECT * FROM automation WHERE kind = 'cron' AND enabled = true",
   );
   return rows.map(mapAutomation).filter((a) => !!a.cron);
 }
@@ -610,7 +663,8 @@ export async function insertAutomation(
     cron: input.cron ?? null,
     timezone: input.timezone ?? 'UTC',
     source_type: input.sourceType ?? 'cron',
-    trigger_filter: input.triggerFilter ?? {},
+    event_on: serializeEventOn(input.eventOn),
+    event_filter: input.eventFilter ?? null,
   });
   return (await getAutomationRow(tenantId, id))!;
 }
@@ -631,13 +685,19 @@ export async function updateAutomationRow(
     ['cron', 'cron'],
     ['timezone', 'timezone'],
     ['sourceType', 'source_type'],
-    ['triggerFilter', 'trigger_filter'],
+    ['eventOn', 'event_on'],
+    ['eventFilter', 'event_filter'],
     ['lastRunAt', 'last_run_at'],
   ] as const) {
     const val = patch[key];
     if (val !== undefined) {
       sets.push(`${col} = $${key}`);
-      vars[key] = col === 'last_run_at' ? toDbDatetime(val) : val;
+      vars[key] =
+        key === 'eventOn'
+          ? serializeEventOn(val as string | string[] | null)
+          : col === 'last_run_at'
+            ? toDbDatetime(val)
+            : val;
     }
   }
   if (sets.length === 0) return getAutomationRow(tenantId, id);
@@ -725,7 +785,7 @@ export async function listEventAutomationRows(
   );
   return rows
     .map(mapAutomation)
-    .filter((a) => (a.sourceType ?? 'custom') === sourceType || a.sourceType === 'custom');
+    .filter((a) => a.sourceType === sourceType);
 }
 
 // ---- Webhooks ----
@@ -739,14 +799,19 @@ export async function listWebhookRows(tenantId: string): Promise<WebhookEndpoint
   return rows.map(mapWebhook);
 }
 
-export async function insertWebhook(row: Omit<WebhookEndpointRow, 'id' | 'createdAt'>): Promise<WebhookEndpointRow> {
+export async function insertWebhook(
+  row: Omit<WebhookEndpointRow, 'id' | 'createdAt'>,
+): Promise<WebhookEndpointRow> {
   const id = newId();
   await createRecord(getDb(), 'webhook_endpoint', {
     id,
     tenant_id: row.tenantId,
-    token: row.token,
+    name: row.name,
+    source: row.source,
     secret: row.secret,
-    source_type: row.sourceType,
+    event_key_expr: row.eventKeyExpr,
+    signature_header: row.signatureHeader,
+    enabled: row.enabled,
   });
   return mapWebhook((await selectById<Record<string, unknown>>(getDb(), 'webhook_endpoint', id))!);
 }
@@ -758,11 +823,44 @@ export async function deleteWebhookRow(tenantId: string, id: string): Promise<bo
   return true;
 }
 
-export async function getWebhookByTokenRow(token: string): Promise<WebhookEndpointRow | null> {
+export async function updateWebhookRow(
+  tenantId: string,
+  id: string,
+  patch: Partial<Pick<WebhookEndpointRow, 'name' | 'eventKeyExpr' | 'signatureHeader' | 'enabled'>>,
+): Promise<WebhookEndpointRow | null> {
+  const sets: string[] = [];
+  const vars: Record<string, unknown> = { id, tenantId };
+  for (const [key, col] of [
+    ['name', 'name'],
+    ['eventKeyExpr', 'event_key_expr'],
+    ['signatureHeader', 'signature_header'],
+    ['enabled', 'enabled'],
+  ] as const) {
+    const val = patch[key];
+    if (val !== undefined) {
+      sets.push(`${col} = $${key}`);
+      vars[key] = val;
+    }
+  }
+  if (sets.length === 0) return null;
+  const existing = await selectById<Record<string, unknown>>(getDb(), 'webhook_endpoint', id);
+  if (!existing || String(existing.tenant_id) !== tenantId) return null;
+  await getDb().query(`UPDATE type::thing($table, $id) SET ${sets.join(', ')}`, {
+    ...vars,
+    table: 'webhook_endpoint',
+  });
+  const row = await selectById<Record<string, unknown>>(getDb(), 'webhook_endpoint', id);
+  return row ? mapWebhook(row) : null;
+}
+
+export async function getWebhookBySourceRow(
+  tenantId: string,
+  source: string,
+): Promise<WebhookEndpointRow | null> {
   const rows = await queryRows<Record<string, unknown>>(
     getDb(),
-    'SELECT * FROM webhook_endpoint WHERE token = $token LIMIT 1',
-    { token },
+    'SELECT * FROM webhook_endpoint WHERE tenant_id = $tenantId AND source = $source LIMIT 1',
+    { tenantId, source },
   );
   return rows[0] ? mapWebhook(rows[0]) : null;
 }

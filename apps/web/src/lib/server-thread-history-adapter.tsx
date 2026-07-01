@@ -13,15 +13,24 @@ import { RuntimeAdapterProvider } from '@assistant-ui/core/react';
 import { type AssistantClient, useAui } from '@assistant-ui/store';
 import { generateId, type UIMessage } from 'ai';
 import { extractSentAtFromParts, stampMessageWithSentAt } from '@/lib/message-timestamp';
+import {
+  extractTranscriptEnvelope,
+  dedupeAssistantMessageParts,
+  normalizeAssistantMessageParts,
+  isObsoleteUiMessagePart,
+  sanitizeUiMessagePartsForDisplay,
+  coerceSanitizableUiParts,
+} from '@veylin/shared';
 
 type StoredUiMessage = {
   id?: string;
   role: string;
   content?: string;
   parts?: unknown[];
+  metadata?: unknown;
 };
 
-async function fetchThreadMessages(remoteId: string): Promise<StoredUiMessage[]> {
+export async function fetchThreadMessages(remoteId: string): Promise<StoredUiMessage[]> {
   const res = await fetch(`/api/threads/${encodeURIComponent(remoteId)}/messages`, {
     credentials: 'include',
   });
@@ -67,19 +76,33 @@ export function storedMessageToUiMessage(msg: StoredUiMessage): UIMessage {
       : msg.content
         ? [{ type: 'text' as const, text: msg.content }]
         : [];
-  const parts = rawParts.map(normalizePart).filter((part) => {
+  const { parts: envelopeParts, meta } = extractTranscriptEnvelope(
+    coerceSanitizableUiParts(rawParts.map(normalizePart)),
+  );
+  const parts = normalizeAssistantMessageParts(
+    sanitizeUiMessagePartsForDisplay(
+      envelopeParts as Parameters<typeof sanitizeUiMessagePartsForDisplay>[0],
+    ),
+    { mode: 'display' },
+  ).filter((part) => {
     if (!part || typeof part !== 'object') return false;
+    if (isObsoleteUiMessagePart(part)) return false;
     const p = part as { type?: string; text?: string };
+    if (p.type === 'data-veylin-pendingSkill') return true;
     if (p.type === 'text' || p.type === 'reasoning') {
       return (p.text ?? '').trim().length > 0;
     }
     return true;
   });
-  const sentAt = extractSentAtFromParts(rawParts);
+  const sentAt =
+    meta?.sentAt ??
+    extractSentAtFromParts(rawParts) ??
+    (msg.metadata as { custom?: { sentAt?: number } } | undefined)?.custom?.sentAt;
   const uiMessage: UIMessage = {
     id: msg.id ?? generateId(),
     role: msg.role as UIMessage['role'],
     parts: parts as UIMessage['parts'],
+    ...(msg.metadata != null ? { metadata: msg.metadata as UIMessage['metadata'] } : {}),
   };
   return sentAt != null ? stampMessageWithSentAt(uiMessage, sentAt) : uiMessage;
 }

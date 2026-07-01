@@ -31,17 +31,30 @@ export type McpServer = {
   enabled: boolean;
 };
 
+export type McpServerHealth = {
+  name: string;
+  connected: boolean;
+  toolCount: number;
+  lastError?: string;
+};
+
+export type McpHealthSnapshot = {
+  lastError?: string;
+  servers: McpServerHealth[];
+};
+
 export type Automation = {
   id: string;
   name: string;
-  kind: 'schedule' | 'event';
+  kind: 'cron' | 'event';
   agentId: string;
   prompt: string;
   enabled: boolean;
   cron?: string | null;
   timezone?: string | null;
   sourceType?: string;
-  triggerFilter?: Record<string, unknown>;
+  eventOn?: string | string[];
+  eventFilter?: string;
   lastRunAt?: string | null;
 };
 
@@ -56,10 +69,23 @@ export type AutomationRun = {
 
 export type WebhookEndpoint = {
   id: string;
-  token: string;
-  sourceType: 'github' | 'custom';
+  name: string;
+  source: string;
   url: string;
+  eventKeyExpr: string;
+  signatureHeader: string;
+  enabled: boolean;
 };
+
+export type WebhookCreateBody =
+  | { preset: 'github'; name?: string }
+  | {
+      name: string;
+      source: string;
+      eventKeyExpr?: string;
+      signatureHeader?: string;
+      webhookSecret?: string;
+    };
 
 import { normalizeModelProviderSettings } from '@/lib/model-provider-settings';
 
@@ -146,9 +172,16 @@ export const settingsApi = {
   deleteRule: (id: string) => apiFetch(`/api/rules/${id}`, { method: 'DELETE' }),
 
   getMcpServers: () =>
-    apiFetch<{ bundled: string[]; remote: McpServer[]; disabledMcp: string[] }>(
-      '/api/mcp-servers',
-    ),
+    apiFetch<{
+      bundled: string[];
+      remote: McpServer[];
+      disabledMcp: string[];
+      health: McpHealthSnapshot | null;
+    }>('/api/mcp-servers'),
+  reconnectMcpServers: () =>
+    apiFetch<{ ok: boolean; health: McpHealthSnapshot | null }>('/api/mcp-servers/reconnect', {
+      method: 'POST',
+    }),
   saveDisabledMcp: (disabledMcp: string[]) =>
     apiFetch('/api/mcp-servers/disabled', {
       method: 'POST',
@@ -170,13 +203,14 @@ export const settingsApi = {
     apiFetch<{ runs: AutomationRun[] }>(`/api/automations/${id}/runs`),
   createAutomation: (body: {
     name: string;
-    kind: 'schedule' | 'event';
+    kind: 'cron' | 'event';
     agentId?: string;
     prompt: string;
     cron?: string;
     timezone?: string;
     sourceType?: string;
-    triggerFilter?: Record<string, unknown>;
+    eventOn?: string | string[];
+    eventFilter?: string;
     enabled?: boolean;
   }) => apiFetch('/api/automations', { method: 'POST', body: JSON.stringify(body) }),
   updateAutomation: (id: string, body: Record<string, unknown>) =>
@@ -186,10 +220,23 @@ export const settingsApi = {
     apiFetch(`/api/automations/${id}/trigger`, { method: 'POST' }),
 
   getWebhooks: () => apiFetch<{ endpoints: WebhookEndpoint[] }>('/api/webhooks'),
-  createWebhook: (sourceType: 'github' | 'custom') =>
-    apiFetch<{ endpoint: WebhookEndpoint; secret: string }>('/api/webhooks', {
+  createWebhook: (body: WebhookCreateBody) =>
+    apiFetch<{ endpoint: WebhookEndpoint; secret: string | null }>('/api/webhooks', {
       method: 'POST',
-      body: JSON.stringify({ sourceType }),
+      body: JSON.stringify(body),
     }),
   deleteWebhook: (id: string) => apiFetch(`/api/webhooks/${id}`, { method: 'DELETE' }),
+  updateWebhook: (
+    id: string,
+    body: {
+      name?: string;
+      eventKeyExpr?: string;
+      signatureHeader?: string;
+      enabled?: boolean;
+    },
+  ) =>
+    apiFetch<{ endpoint: WebhookEndpoint }>(`/api/webhooks/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
 };

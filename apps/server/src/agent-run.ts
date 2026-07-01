@@ -9,6 +9,8 @@ import {
 import { listRules, buildRulesMemoryBlock } from './rules-store';
 import { createMcpClient, listActiveMcpServerNames } from './mcp-store';
 import { applyTenantModelSettings } from './model-settings-store';
+import { refreshAgentPackages, requireAgent } from './agent-packages-sync';
+import { buildAgentRunSystemBlocks } from './chat-system-blocks';
 
 export interface RunAgentOptions {
   runtime: Runtime;
@@ -41,6 +43,7 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
   const identity = { threadId, tenantId, resourceId: userId };
   await ensureThreadState(identity);
   await applyTenantModelSettings(tenantId);
+  await refreshAgentPackages(runtime);
 
   const eventBlock =
     eventContext && Object.keys(eventContext).length > 0
@@ -53,7 +56,7 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
   const rules = await listRules(tenantId, userId, agentId);
   const skillsCatalog = buildSkillsCatalogBlock(mergedSkills);
   const rulesBlock = buildRulesMemoryBlock(rules, userPrompt);
-  const systemBlocks = [skillsCatalog, rulesBlock].filter(Boolean).join('\n\n');
+  const systemBlocks = await buildAgentRunSystemBlocks({ skillsCatalog, rulesBlock });
 
   const declaredMcp = runtime.definitions.get(agentId)?.definition.mcpServers ?? [];
   const activeMcp = await listActiveMcpServerNames(tenantId, declaredMcp);
@@ -62,11 +65,19 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
   if (activeMcp.length > 0) {
     try {
       mcpClient = await createMcpClient(tenantId);
-      const all = (await mcpClient.listToolsets().catch(() => ({}))) as Record<string, unknown>;
-      mcpToolsets = Object.fromEntries(
-        Object.entries(all).filter(([server]) => activeMcp.includes(server)),
-      );
-    } catch {
+      try {
+        const all = (await mcpClient.listToolsets()) as Record<string, unknown>;
+        mcpToolsets = Object.fromEntries(
+          Object.entries(all).filter(([server]) => activeMcp.includes(server)),
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[mcp] listToolsets failed during agent run: ${message}`);
+        mcpToolsets = {};
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[mcp] client connect failed during agent run: ${message}`);
       mcpToolsets = {};
     }
   }
@@ -89,7 +100,7 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
     await syncWorkingMemory(runtime.memory, identity, skills, null);
   });
 
-  const agent = runtime.getAgent(agentId) ?? runtime.mastra.getAgent('veylin');
+  const agent = requireAgent(runtime, agentId);
   const messages = systemBlocks
     ? [
         { role: 'system', content: systemBlocks },

@@ -7,6 +7,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+const hostTriple =
+  process.env.CARGO_BUILD_TARGET ??
+  process.env.TAURI_ENV_TARGET_TRIPLE ??
+  execSync('rustc --print host-tuple', { encoding: 'utf8' }).trim();
 
 execSync('npm run -w @veylin/web build', {
   cwd: repoRoot,
@@ -17,4 +21,5 @@ execSync('npm run -w @veylin/web build', {
 execSync('npm run -w @veylin/server build:sidecar', {
   cwd: repoRoot,
   stdio: 'inherit',
+  env: { ...process.env, CARGO_BUILD_TARGET: hostTriple },
 });

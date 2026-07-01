@@ -1,4 +1,5 @@
 import { useAuiState } from '@assistant-ui/react';
+import { useTranslation } from 'react-i18next';
 import { POST_MAX_RETRIES } from '@/lib/transport-reconnect';
 import {
   useNetworkReconnectStore,
@@ -15,6 +16,7 @@ function isInlineReconnectKind(kind: NetworkBannerKind): boolean {
 }
 
 function NetworkReconnectStatus() {
+  const { t } = useTranslation();
   const kind = useNetworkReconnectStore((s) => s.kind);
   const attempt = useNetworkReconnectStore((s) => s.reconnectAttempt);
   const title = useNetworkReconnectStore((s) => s.title);
@@ -22,45 +24,47 @@ function NetworkReconnectStatus() {
 
   if (!kind || !isInlineReconnectKind(kind)) return null;
 
+  let line = title ?? '';
+
   if (kind === 'reconnecting' || kind === 'post_retrying') {
-    const max = kind === 'post_retrying' ? POST_MAX_RETRIES : 5;
-    return (
-      <div
-        role="status"
-        className="text-muted-foreground fade-in animate-in text-sm duration-200"
-      >
-        Reconnecting... {attempt}/{max}
-      </div>
-    );
+    const label =
+      title ||
+      (kind === 'post_retrying'
+        ? t('reconnect.postRetryTitle')
+        : t('reconnect.reconnectingTitle'));
+    if (kind === 'post_retrying') {
+      line = `${label} (${attempt}/${POST_MAX_RETRIES})`;
+      if (message) line = `${line} · ${message}`;
+    } else {
+      line = message ? `${label} · ${message}` : label;
+    }
+  } else if (message) {
+    line = line ? `${line} · ${message}` : message;
   }
 
-  if (kind === 'offline') {
-    return (
-      <div role="status" className="text-muted-foreground text-sm">
-        {title}
-        {message ? ` · ${message}` : null}
-      </div>
-    );
-  }
+  if (!line) return null;
 
-  if (kind === 'connection_error') {
-    return (
-      <div role="alert" className="text-destructive text-sm">
-        {title}
-        {message ? ` · ${message}` : null}
-      </div>
-    );
-  }
+  const className =
+    kind === 'connection_error'
+      ? 'text-destructive text-sm'
+      : 'text-muted-foreground fade-in animate-in text-sm duration-200';
 
-  return null;
+  return (
+    <div role={kind === 'connection_error' ? 'alert' : 'status'} className={className}>
+      {line}
+    </div>
+  );
 }
 
 /** Reconnect status on the next line of the active assistant reply. */
 export function NetworkReconnectInAssistant() {
   const isLast = useAuiState((s) => s.message.isLast);
+  const isRunning = useAuiState((s) => s.thread.isRunning);
   const kind = useNetworkReconnectStore((s) => s.kind);
 
   if (!isLast || !isInlineReconnectKind(kind)) return null;
+  // Stale banners from another thread must not decorate settled history.
+  if (!isRunning && kind !== 'offline') return null;
 
   return <NetworkReconnectStatus />;
 }
@@ -71,9 +75,11 @@ export function NetworkReconnectInAssistant() {
  */
 export function NetworkReconnectThreadFallback() {
   const lastRole = useAuiState((s) => s.thread.messages.at(-1)?.role);
+  const isRunning = useAuiState((s) => s.thread.isRunning);
   const kind = useNetworkReconnectStore((s) => s.kind);
 
   if (lastRole !== 'user' || !isInlineReconnectKind(kind)) return null;
+  if (!isRunning && kind !== 'offline') return null;
 
   return (
     <div

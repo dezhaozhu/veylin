@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { SettingsSwitch } from '../settings-switch';
 import { Input } from '@/components/ui/input';
@@ -55,7 +55,8 @@ export function ModelsSettingsScreen() {
     hasApiKey: false,
     configured: false,
   });
-  const { provider: liveProvider, refresh: refreshProvider } = useModelProvider();
+  const { provider: liveProvider, loading: providerLoading, refresh: refreshProvider } =
+    useModelProvider();
   const [modelNameDraft, setModelNameDraft] = useState('');
   const [requestUrlDraft, setRequestUrlDraft] = useState('');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
@@ -64,21 +65,14 @@ export function ModelsSettingsScreen() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ModelCatalogEntry | null>(null);
   const [deletingModel, setDeletingModel] = useState(false);
-
-  const loadProvider = useCallback(async () => {
-    try {
-      const { settings: next } = await settingsApi.getModelSettings();
-      applyProviderToDrafts(next, setProvider, setModelNameDraft, setRequestUrlDraft);
-      setSaveError(null);
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
+  const hydratedProviderRef = useRef(false);
 
   useEffect(() => onModelSettingsChange(setSettings), []);
   useEffect(() => {
-    void loadProvider();
-  }, [loadProvider]);
+    if (providerLoading || hydratedProviderRef.current) return;
+    applyProviderToDrafts(liveProvider, setProvider, setModelNameDraft, setRequestUrlDraft);
+    hydratedProviderRef.current = true;
+  }, [liveProvider, providerLoading]);
 
   const catalogContext = provider.configured ? provider : liveProvider;
 
@@ -134,15 +128,11 @@ export function ModelsSettingsScreen() {
     setDeletingModel(true);
     setSaveError(null);
     try {
-      const { settings: next } = await settingsApi.clearModelSettings();
-      applyProviderToDrafts(next, setProvider, setModelNameDraft, setRequestUrlDraft);
-      notifyModelProviderChange(next);
       removeCatalogModel(deleteTarget.id);
+      const next = liveProvider.configured ? liveProvider : provider;
       ensureActiveModelConfigured(next);
-      setApiKeyDraft('');
-      await refreshProvider();
       if (activeModel === deleteTarget.id) {
-        const nextModel = listConfiguredModels(next)[0];
+        const nextModel = listConfiguredModels(next).find((m) => m.id !== deleteTarget.id);
         if (nextModel) {
           setActiveModel(nextModel.id);
           setChatSettings({ model: nextModel.id });
@@ -179,8 +169,7 @@ export function ModelsSettingsScreen() {
       }
 
       setProvider(next);
-      setModelNameDraft('');
-      setRequestUrlDraft('');
+      applyProviderToDrafts(next, setProvider, setModelNameDraft, setRequestUrlDraft);
       setApiKeyDraft('');
       const entry = upsertCatalogModel(next.modelName);
       setActiveModel(entry.id);
