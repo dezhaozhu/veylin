@@ -107,13 +107,28 @@ interface TableGridTotals {
 
 type FilterState = { query: string };
 
+const STATUS_GREEN = 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300';
+const STATUS_AMBER = 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300';
+const STATUS_RED = 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300';
+const STATUS_SLATE = 'bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-300';
+
 const STATUS_STYLE: Record<string, string> = {
-  open: 'bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-300',
-  in_progress: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
-  done: 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300',
-  normal: 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300',
-  tight: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
-  overdue: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300',
+  open: STATUS_SLATE,
+  in_progress: STATUS_AMBER,
+  done: STATUS_GREEN,
+  normal: STATUS_GREEN,
+  tight: STATUS_AMBER,
+  overdue: STATUS_RED,
+  // Compass 排产状态 (schedule_status)
+  solved: STATUS_GREEN,
+  derived: STATUS_AMBER,
+  infeasible: STATUS_RED,
+  unscheduled: STATUS_SLATE,
+  not_scheduled: STATUS_SLATE,
+  // Compass 执行状态 (exec_status, 三级 status)
+  已完工: STATUS_GREEN,
+  已开工: STATUS_AMBER,
+  未开工: STATUS_SLATE,
 };
 
 function statusClass(value: string): string {

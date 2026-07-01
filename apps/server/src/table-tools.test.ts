@@ -91,3 +91,36 @@ describe('table_get pagination', () => {
     assert.equal(rows.length, 3);
   });
 });
+
+describe('importTableSheet with column descriptors (B1: friendly headers + badges)', () => {
+  it('keeps the source key, uses the display name, and preserves custom status options', () => {
+    const result = importTableSheet(
+      'main',
+      [], // names path unused when descriptors are provided
+      [
+        { order_id: 'O1', schedule_status: 'derived' },
+        { order_id: 'O2', schedule_status: 'solved' },
+      ],
+      undefined,
+      [
+        { key: 'order_id', name: '订单号', type: 'text' },
+        { key: 'schedule_status', name: '排产状态', type: 'status', statusOptions: ['derived', 'solved', 'unscheduled'] },
+      ],
+    );
+    assert.ok(result);
+    const cols = listTableColumns('main');
+    const byKey = Object.fromEntries(cols.map((c) => [c.key, c]));
+    // key stays English (matches row data), NOT slugified from the Chinese name
+    assert.ok(byKey['order_id'] && byKey['schedule_status']);
+    assert.equal(byKey['order_id']!.name, '订单号');
+    assert.equal(byKey['schedule_status']!.name, '排产状态');
+    assert.equal(byKey['schedule_status']!.type, 'status');
+    assert.deepEqual(byKey['schedule_status']!.statusOptions, ['derived', 'solved', 'unscheduled']);
+    // custom statuses survive the sanitizer (not blanked)
+    const rows = listTableRows('main');
+    assert.deepEqual(
+      rows.map((r) => r['schedule_status']),
+      ['derived', 'solved'],
+    );
+  });
+});

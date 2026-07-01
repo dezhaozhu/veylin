@@ -356,7 +356,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
 
       const payload = unwrapMcpPayload(res);
 
-      const columns = (payload['columns'] as Array<Record<string, string>> | undefined) ?? [];
+      const columns = (payload['columns'] as Array<Record<string, unknown>> | undefined) ?? [];
       const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
 
       // Ensure the 'schedule' sheet exists (create on first use; fire-and-forget persist is fine)
@@ -365,21 +365,32 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
         createTableSheet(SCHEDULE_SHEET_ID);
       }
 
-      // Preserve Compass's NUMBER columns (alignment + number editor). Map status→text:
-      // a Veylin 'status' column sanitizes values to its own option set, which would
-      // blank Compass's custom statuses (derived/solved/…); keep them as readable text.
-      // (Proper colored badges would need the column's statusOptions seeded from the data.)
-      const columnTypes: Record<string, 'text' | 'number' | 'status'> = {};
-      for (const c of columns) {
-        const key = c['key'];
-        if (key) columnTypes[key] = c['type'] === 'number' ? 'number' : 'text';
-      }
+      // Build rich column descriptors from Compass's typed columns: friendly display
+      // name + type + (for status columns) the real option set — so the grid shows
+      // readable headers and colored status badges without blanking derived/solved.
+      const descriptors = columns
+        .map((c) => {
+          const key = String(c['key'] ?? '');
+          if (!key) return null;
+          const rawType = c['type'];
+          const type: 'text' | 'number' | 'status' =
+            rawType === 'number' ? 'number' : rawType === 'status' ? 'status' : 'text';
+          const opts = c['options'];
+          return {
+            key,
+            name: String(c['name'] ?? key),
+            type,
+            statusOptions: type === 'status' && Array.isArray(opts) ? (opts as string[]) : undefined,
+          };
+        })
+        .filter((d): d is NonNullable<typeof d> => d !== null);
 
       const result = importTableSheet(
         SCHEDULE_SHEET_ID,
-        columns.map((c) => c['key'] ?? '').filter(Boolean),
+        [],
         rows as Array<Record<string, string | number>>,
-        columnTypes,
+        undefined,
+        descriptors,
       );
 
       return {
