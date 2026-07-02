@@ -154,7 +154,8 @@
     "selectedFaces": "Selected faces: {{ids}}",
     "promptConfirm": "Confirm",
     "promptCancel": "Cancel",
-    "promptHint": "Pick faces on the model, then confirm."
+    "promptHint": "Pick faces on the model, then confirm.",
+    "promptNoModel": "No model is shown yet — ask the agent to display one first, or cancel this request."
   },
   "web": {
     "enterUrl": "Please enter a URL",

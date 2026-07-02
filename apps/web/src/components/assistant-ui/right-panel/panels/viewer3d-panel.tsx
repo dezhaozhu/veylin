@@ -61,6 +61,27 @@ export const Viewer3dPanel: FC<PanelContentProps> = () => {
   const [overlayError, setOverlayError] = useState<string | null>(null);
   const overlayRequestRef = useRef(0);
   const selectionRequest = useViewer3dSelectionRequest();
+  // Double-submit guard, mirrors composer-ask-panel.tsx's `submitting` pattern: a second
+  // click while addResult is being delivered must not call confirm/cancel again.
+  const [submitting, setSubmitting] = useState(false);
+
+  // Reset the guard whenever the pending request changes: a new request arrives
+  // (different toolCallId) or the current one is cleared (undefined).
+  useEffect(() => {
+    setSubmitting(false);
+  }, [selectionRequest?.toolCallId]);
+
+  const confirmSelectionRequest = useCallback(() => {
+    if (!selectionRequest || submitting) return;
+    setSubmitting(true);
+    selectionRequest.confirm(selection);
+  }, [selectionRequest, submitting, selection]);
+
+  const cancelSelectionRequest = useCallback(() => {
+    if (!selectionRequest || submitting) return;
+    setSubmitting(true);
+    selectionRequest.cancel();
+  }, [selectionRequest, submitting]);
 
   const resync = useCallback(async (resetSelection: boolean) => {
     try {
@@ -132,48 +153,65 @@ export const Viewer3dPanel: FC<PanelContentProps> = () => {
     void postSelection(faceIds);
   }, []);
 
-  // Contract §5: no model yet — keep Task 1's empty state.
+  const hasModel = Boolean(state?.model);
+
+  // Rendered independently of the no-model empty state: an out-of-order
+  // request_3d_selection (before any viewer3d_show_model) must still surface the
+  // prompt bar — as a cancel-only variant — instead of deadlocking the tool call.
+  // Once a model arrives (modelReplace → resync), the bar upgrades in place.
+  const promptBar = selectionRequest ? (
+    <div className="border-primary/30 bg-primary/5 mx-3 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs">
+      <div className="flex min-w-0 items-start gap-2">
+        <Layers3Icon className="text-primary mt-0.5 size-3.5 shrink-0" />
+        <div className="min-w-0">
+          <p className="text-foreground font-medium">{selectionRequest.prompt}</p>
+          <p className="text-muted-foreground mt-0.5">
+            {hasModel ? t('viewer3d.promptHint') : t('viewer3d.promptNoModel')}
+          </p>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs"
+          disabled={submitting}
+          onClick={cancelSelectionRequest}
+        >
+          {t('viewer3d.promptCancel')}
+        </Button>
+        {hasModel ? (
+          <Button
+            type="button"
+            variant="default"
+            size="sm"
+            className="h-7 px-3 text-xs"
+            disabled={submitting}
+            onClick={confirmSelectionRequest}
+          >
+            {t('viewer3d.promptConfirm')}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
+  // Contract §5: no model yet — keep Task 1's empty state (plus the prompt bar above it).
   if (!state?.model) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        等待模型——让 agent 导入 STEP 模型后,此处将显示 3D 视图
+      <div className="flex h-full flex-col">
+        {promptBar}
+        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+          等待模型——让 agent 导入 STEP 模型后,此处将显示 3D 视图
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex h-full flex-col">
-      {selectionRequest ? (
-        <div className="border-primary/30 bg-primary/5 mx-3 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs">
-          <div className="flex min-w-0 items-start gap-2">
-            <Layers3Icon className="text-primary mt-0.5 size-3.5 shrink-0" />
-            <div className="min-w-0">
-              <p className="text-foreground font-medium">{selectionRequest.prompt}</p>
-              <p className="text-muted-foreground mt-0.5">{t('viewer3d.promptHint')}</p>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => selectionRequest.cancel()}
-            >
-              {t('viewer3d.promptCancel')}
-            </Button>
-            <Button
-              type="button"
-              variant="default"
-              size="sm"
-              className="h-7 px-3 text-xs"
-              onClick={() => selectionRequest.confirm(selection)}
-            >
-              {t('viewer3d.promptConfirm')}
-            </Button>
-          </div>
-        </div>
-      ) : null}
+      {promptBar}
       {overlayError ? (
         <div className="border-destructive/20 bg-destructive/10 text-destructive mx-3 mt-3 rounded-lg border px-3 py-2 text-xs">
           {overlayError}

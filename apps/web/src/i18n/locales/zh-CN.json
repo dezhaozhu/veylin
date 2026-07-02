@@ -154,7 +154,8 @@
     "selectedFaces": "已选中的面：{{ids}}",
     "promptConfirm": "确认",
     "promptCancel": "取消",
-    "promptHint": "在模型上点选面，然后点击确认。"
+    "promptHint": "在模型上点选面，然后点击确认。",
+    "promptNoModel": "当前面板没有模型，请先让 agent 显示模型，或取消此请求。"
   },
   "web": {
     "enterUrl": "请输入网址",
