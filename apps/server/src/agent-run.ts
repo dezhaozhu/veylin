@@ -64,7 +64,7 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
   let mcpClient: Awaited<ReturnType<typeof createMcpClient>> | null = null;
   if (activeMcp.length > 0) {
     try {
-      mcpClient = await createMcpClient(tenantId);
+      mcpClient = await createMcpClient(tenantId, 'run');
       try {
         const all = (await mcpClient.listToolsets()) as Record<string, unknown>;
         mcpToolsets = Object.fromEntries(

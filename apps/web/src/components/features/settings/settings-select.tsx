@@ -102,9 +102,13 @@ export function SettingsSelect({
     open && menuPos
       ? createPortal(
           <>
-            <DismissibleBackdrop ariaLabel="Close menu" onClose={close} />
+            <DismissibleBackdrop
+              ariaLabel="Close menu"
+              onClose={close}
+              className="fixed inset-0 z-[209] cursor-default bg-transparent"
+            />
             <div
-              className="bg-popover text-popover-foreground fixed z-[201] max-h-60 overflow-y-auto rounded-lg border p-1 shadow-lg"
+              className="bg-popover text-popover-foreground fixed z-[210] max-h-60 overflow-y-auto rounded-lg border p-1 shadow-lg"
               style={{
                 top: menuPos.top,
                 bottom: menuPos.bottom,

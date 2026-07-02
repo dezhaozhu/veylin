@@ -36,7 +36,7 @@ import { buildMcpHealthSnapshot, type McpHealthSnapshot } from './mcp-health';
 import { startupCheckpoint } from './startup-profiler';
 import { ensureDevTenant, DEV_TENANT_ID } from './tenant';
 import { refreshAgentPackages } from './agent-packages-sync';
-import { createMcpClient, listActiveMcpServerNames } from './mcp-store';
+import { createMcpClient, listActiveMcpServerNames, seedMcpServersFromEnvIfMissing } from './mcp-store';
 import { listAllCronAutomations } from './automation-store';
 import { runAutomationJob } from './automation-worker';
 import { buildWorkspaceConfigTool } from './workspace-config-tool';
@@ -44,7 +44,7 @@ import { listAllCronWorkflows, sweepInterruptedWorkflowRuns } from './workflow-s
 import { runWorkflowJob } from './workflow-runner';
 import { ensureEmbeddingModelOnStartup } from './embedding-service';
 import { buildWorkflowTools } from './workflow-tools';
-import { applyTenantModelSettings } from './model-settings-store';
+import { applyTenantModelSettings, seedModelSettingsFromEnvIfEmpty } from './model-settings-store';
 import { buildKnowledgeSearchTool } from './rag-store';
 import { RAG_UPLOAD_MAX_BYTES } from './rag-limits';
 import {
@@ -102,6 +102,7 @@ async function main() {
   await initResumableChatStreams();
   await initTableStore();
   await ensureDevTenant();
+  await seedModelSettingsFromEnvIfEmpty(DEV_TENANT_ID);
 
   console.info('[veylin] VEYLIN_DATA_DIR=%s', DATA_DIR);
   ensureEmbeddingModelOnStartup();
@@ -119,7 +120,12 @@ async function main() {
   async function rebuildMcp(tenantId: string) {
     const activeNames = await listActiveMcpServerNames(tenantId);
     let listError: string | undefined;
+    mcpCacheByTenant.delete(tenantId);
     try {
+      if (mcp) {
+        await mcp.disconnect().catch(() => undefined);
+        mcp = null;
+      }
       mcp = await createMcpClient(tenantId);
       try {
         mcpToolsets = (await mcp.listToolsets()) as Record<string, unknown>;
@@ -246,6 +252,7 @@ async function main() {
   };
   await registerApiRoutes(app, deps);
 
+  await seedMcpServersFromEnvIfMissing(DEV_TENANT_ID);
   // Connect MCP servers; expose their tools to chat as a toolset.
   await rebuildMcp(DEV_TENANT_ID);
 
@@ -343,6 +350,10 @@ async function main() {
     try {
       await queue.stop();
       await waitForActiveChatDrain(Number(process.env.SHUTDOWN_DRAIN_MS ?? 30_000));
+      if (mcp) {
+        await mcp.disconnect().catch(() => undefined);
+        mcp = null;
+      }
       await closeDb();
       await app.close();
     } catch (err) {

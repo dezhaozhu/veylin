@@ -531,6 +531,7 @@
     "importSuccess": "Imported {{count}} row(s)",
     "exportSuccess": "Exported to {{path}}",
     "loading": "Loading table data…",
+    "loadingCompass": "Loading schedule data from Compass…",
     "loadError": "Failed to load table data: {{error}}",
     "deleteSheet": "Delete sheet {{name}}",
     "newSheet": "New sheet",
