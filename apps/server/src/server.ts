@@ -37,7 +37,7 @@ import { buildMcpHealthSnapshot, type McpHealthSnapshot } from './mcp-health';
 import { startupCheckpoint } from './startup-profiler';
 import { ensureDevTenant, DEV_TENANT_ID } from './tenant';
 import { refreshAgentPackages } from './agent-packages-sync';
-import { createMcpClient, listActiveMcpServerNames } from './mcp-store';
+import { createMcpClient, listActiveMcpServerNames, sanitizeMcpToolsets } from './mcp-store';
 import { listAllCronAutomations } from './automation-store';
 import { runAutomationJob } from './automation-worker';
 import { buildWorkspaceConfigTool } from './workspace-config-tool';
@@ -123,7 +123,7 @@ async function main() {
     try {
       mcp = await createMcpClient(tenantId);
       try {
-        mcpToolsets = (await mcp.listToolsets()) as Record<string, unknown>;
+        mcpToolsets = sanitizeMcpToolsets((await mcp.listToolsets()) as Record<string, unknown>);
       } catch (err) {
         listError = err instanceof Error ? err.message : String(err);
         mcpToolsets = {};

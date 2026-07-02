@@ -98,3 +98,67 @@ export async function listActiveMcpServerNames(
     declaredMcp.length > 0 ? declaredMcp : remote.map((s) => s.name);
   return [...new Set(candidates.filter((s) => !disabledBundled.has(s) && !disabledRemote.has(s)))];
 }
+
+/**
+ * Recursively rewrite JSON Schema draft-07/06-style tuple validation
+ * (`items` as an array of per-position schemas) into the single-schema
+ * `items` form accepted by strict draft-2020-12 validators. Providers such
+ * as litellm reject the *entire* tool-calling request — every tool in the
+ * call, not just the offending one — when any one function's parameter
+ * schema fails their metaschema check, so a single legacy-style schema from
+ * one remote MCP server would otherwise stall every chat run.
+ */
+function sanitizeJsonSchemaNode(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(sanitizeJsonSchemaNode);
+  if (!node || typeof node !== 'object') return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    if (key === 'items' && Array.isArray(value)) {
+      const serialized = value.map((item) => JSON.stringify(item));
+      out.items =
+        value.length === 0
+          ? {}
+          : serialized.every((s) => s === serialized[0])
+            ? sanitizeJsonSchemaNode(value[0])
+            : { anyOf: value.map((item) => sanitizeJsonSchemaNode(item)) };
+      continue;
+    }
+    out[key] = sanitizeJsonSchemaNode(value);
+  }
+  return out;
+}
+
+interface McpToolLike {
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+}
+
+function sanitizeToolSchema(schema: unknown): void {
+  const jsonSchema = (
+    schema as { ['~standard']?: { jsonSchema?: Record<string, unknown> } } | undefined
+  )?.['~standard']?.jsonSchema;
+  if (!jsonSchema) return;
+  for (const fnKey of ['input', 'output'] as const) {
+    const original = jsonSchema[fnKey];
+    if (typeof original !== 'function') continue;
+    const boundOriginal = (original as (...args: unknown[]) => unknown).bind(jsonSchema);
+    jsonSchema[fnKey] = (...args: unknown[]) => sanitizeJsonSchemaNode(boundOriginal(...args));
+  }
+}
+
+/**
+ * Patch every MCP tool's JSON Schema in place (mutating the toolsets returned
+ * by `MCPClient#listToolsets`) so malformed schemas from any single remote
+ * server degrade that tool's schema precision instead of breaking every
+ * chat run. Idempotent and cheap — safe to call on every rebuild.
+ */
+export function sanitizeMcpToolsets<T extends Record<string, unknown>>(toolsets: T): T {
+  for (const tools of Object.values(toolsets)) {
+    if (!tools || typeof tools !== 'object') continue;
+    for (const tool of Object.values(tools as Record<string, McpToolLike>)) {
+      sanitizeToolSchema(tool?.inputSchema);
+      sanitizeToolSchema(tool?.outputSchema);
+    }
+  }
+  return toolsets;
+}

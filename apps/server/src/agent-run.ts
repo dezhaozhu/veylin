@@ -7,7 +7,7 @@ import {
   buildSkillsCatalogBlock,
 } from './skills-store';
 import { listRules, buildRulesMemoryBlock } from './rules-store';
-import { createMcpClient, listActiveMcpServerNames } from './mcp-store';
+import { createMcpClient, listActiveMcpServerNames, sanitizeMcpToolsets } from './mcp-store';
 import { applyTenantModelSettings } from './model-settings-store';
 import { refreshAgentPackages, requireAgent } from './agent-packages-sync';
 import { buildAgentRunSystemBlocks } from './chat-system-blocks';
@@ -66,7 +66,7 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
     try {
       mcpClient = await createMcpClient(tenantId);
       try {
-        const all = (await mcpClient.listToolsets()) as Record<string, unknown>;
+        const all = sanitizeMcpToolsets((await mcpClient.listToolsets()) as Record<string, unknown>);
         mcpToolsets = Object.fromEntries(
           Object.entries(all).filter(([server]) => activeMcp.includes(server)),
         );
