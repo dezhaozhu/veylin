@@ -66,6 +66,19 @@ const PREVIEW_COLUMNS: Array<{ key: string; labelKey: string }> = [
   { key: 'due_at', labelKey: 'table.previewColDueAt' },
 ];
 
+// honest_status → i18n key for the preview dialog's summary line; falls back
+// to the raw value for statuses we don't have a translation for.
+const PREVIEW_STATUS_KEYS: Record<string, string> = {
+  feasible: 'table.previewStatusFeasible',
+  infeasible: 'table.previewStatusInfeasible',
+  not_scheduled: 'table.previewStatusNotScheduled',
+};
+
+function honestStatusLabel(t: (key: string) => string, raw: unknown): string {
+  const key = PREVIEW_STATUS_KEYS[String(raw ?? '')];
+  return key ? t(key) : String(raw ?? '-');
+}
+
 const SCHEDULE_DETAIL_COLUMN_DEFS: ColDef[] = [
   { field: 'op_seq', headerName: '工序号', maxWidth: 90 },
   { field: 'op_name', headerName: '工序' },
@@ -1691,11 +1704,11 @@ export function TableGrid() {
             <DialogTitle>{t('table.previewTitle')}</DialogTitle>
             <DialogDescription>
               {previewLoading
-                ? '…'
+                ? t('table.previewLoading')
                 : previewData && previewData.rows.length === 0
                   ? t('table.previewEmpty')
                   : previewData
-                    ? `${t('table.previewStatus')}: ${String(previewData.diagnosis['honest_status'] ?? '-')} · ${t('table.previewUnscheduled')}: ${String(previewData.diagnosis['unscheduled'] ?? 0)}`
+                    ? `${t('table.previewStatus')}: ${honestStatusLabel(t, previewData.diagnosis['honest_status'])} · ${t('table.previewUnscheduled')}: ${String(previewData.diagnosis['unscheduled'] ?? 0)}`
                     : ''}
             </DialogDescription>
           </DialogHeader>

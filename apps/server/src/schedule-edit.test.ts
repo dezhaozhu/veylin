@@ -67,6 +67,17 @@ describe('proposeScheduleEdit', () => {
     assert.equal(out.ok, false);
     if (!out.ok) assert.match(String(out.error), /not connected/);
   });
+
+  it('errors cleanly (does not throw) when the MCP transport rejects', async () => {
+    const get = toolsetsWith({
+      propose_schedule_edit: async () => {
+        throw new Error('socket hang up');
+      },
+    });
+    const out = await proposeScheduleEdit(get, { field: 'resource', job_id: 'J1', value: 'M1' });
+    assert.equal(out.ok, false);
+    if (!out.ok) assert.match(String(out.error), /socket hang up/);
+  });
 });
 
 describe('previewScheduleEdit', () => {
@@ -114,6 +125,20 @@ describe('commitScheduleEdit', () => {
     const out = await commitScheduleEdit(get);
     assert.equal(out.ok, false);
     if (!out.ok) assert.equal(out.conflict, true);
+  });
+
+  it('maps a rejected transport → ok:false timeout:true with a friendly message', async () => {
+    const get = toolsetsWith({
+      commit_schedule_edit: async () => {
+        throw new Error('socket hang up');
+      },
+    });
+    const out = await commitScheduleEdit(get);
+    assert.equal(out.ok, false);
+    if (!out.ok) {
+      assert.equal(out.timeout, true);
+      assert.ok(out.message && out.message.length > 0);
+    }
   });
 });
 

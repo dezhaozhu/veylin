@@ -55,7 +55,12 @@ export async function proposeScheduleEdit(
   if (!tool) {
     return { ok: false, error: 'compass MCP not connected (no propose_schedule_edit)' };
   }
-  const payload = unwrapMcpResult(await tool.execute(body));
+  let payload: Record<string, unknown>;
+  try {
+    payload = unwrapMcpResult(await tool.execute(body));
+  } catch (err) {
+    return { ok: false, error: String((err as Error)?.message ?? err) };
+  }
   if (payload['refused']) return { ok: false, refused: String(payload['refused']) };
   if (payload['error']) return { ok: false, error: String(payload['error']) };
   return { ok: true, ops: Number(payload['ops'] ?? 0), note: payload['note'] };
@@ -71,7 +76,12 @@ export async function previewScheduleEdit(
   if (!tool) {
     return { ok: false, error: 'compass MCP not connected (no preview_schedule_edit)' };
   }
-  const payload = unwrapMcpResult(await tool.execute({}));
+  let payload: Record<string, unknown>;
+  try {
+    payload = unwrapMcpResult(await tool.execute({}));
+  } catch (err) {
+    return { ok: false, error: String((err as Error)?.message ?? err) };
+  }
   return {
     ok: true,
     rows: (payload['rows'] as unknown[] | undefined) ?? [],
@@ -92,13 +102,23 @@ export async function commitScheduleEdit(
       status: string;
       unscheduled: number;
     }
-  | { ok: false; conflict?: true; error?: string; message?: string }
+  | { ok: false; conflict?: true; timeout?: true; error?: string; message?: string }
 > {
   const tool = compassTool(getToolsets, 'commit_schedule_edit');
   if (!tool) {
     return { ok: false, error: 'compass MCP not connected (no commit_schedule_edit)' };
   }
-  const payload = unwrapMcpResult(await tool.execute({}));
+  let payload: Record<string, unknown>;
+  try {
+    payload = unwrapMcpResult(await tool.execute({}));
+  } catch (err) {
+    return {
+      ok: false,
+      timeout: true,
+      error: String((err as Error)?.message ?? err),
+      message: '提交耗时较长，排产可能仍在后台重算——请稍后在提案/排产页刷新确认，不要重复提交。',
+    };
+  }
   if (payload['conflict']) {
     return {
       ok: false,
@@ -126,7 +146,12 @@ export async function discardScheduleEdits(
   if (!tool) {
     return { ok: false, error: 'compass MCP not connected (no discard_schedule_edits)' };
   }
-  const payload = unwrapMcpResult(await tool.execute({}));
+  let payload: Record<string, unknown>;
+  try {
+    payload = unwrapMcpResult(await tool.execute({}));
+  } catch (err) {
+    return { ok: false, error: String((err as Error)?.message ?? err) };
+  }
   return { ok: Boolean(payload['discarded']) };
 }
 

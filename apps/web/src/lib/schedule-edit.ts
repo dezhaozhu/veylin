@@ -14,8 +14,10 @@ export type GovernedEditBody = {
   field: string;
   job_id?: string;
   order_id?: string;
-  value: string | number;
+  value: string | number | boolean;
 };
+
+const TRUTHY_STRINGS = new Set(['true', '1', 'yes', '是', 'y']);
 
 export function buildGovernedEditBody(
   row: Record<string, unknown>,
@@ -30,6 +32,11 @@ export function buildGovernedEditBody(
   }
   const jobId = row['job_id'];
   if (jobId == null || jobId === '') return null;
-  const coerced = columnKey === 'std_duration_days' ? Number(value) : value;
+  const coerced =
+    columnKey === 'std_duration_days'
+      ? Number(value)
+      : columnKey === 'is_bottleneck'
+        ? TRUTHY_STRINGS.has(String(value).trim().toLowerCase())
+        : value;
   return { field: columnKey, job_id: String(jobId), value: coerced };
 }

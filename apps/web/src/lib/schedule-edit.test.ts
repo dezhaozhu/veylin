@@ -24,6 +24,18 @@ describe('buildGovernedEditBody', () => {
     });
   });
 
+  it('is_bottleneck coerces truthy strings to boolean true', () => {
+    assert.deepEqual(buildGovernedEditBody(row, 'is_bottleneck', '是'), {
+      field: 'is_bottleneck', job_id: 'J1', value: true,
+    });
+  });
+
+  it('is_bottleneck coerces other strings to boolean false', () => {
+    assert.deepEqual(buildGovernedEditBody(row, 'is_bottleneck', 'false'), {
+      field: 'is_bottleneck', job_id: 'J1', value: false,
+    });
+  });
+
   it('due_at carries order_id', () => {
     assert.deepEqual(buildGovernedEditBody(row, 'due_at', '2026-09-01'), {
       field: 'due_at', order_id: 'O1', value: '2026-09-01',
