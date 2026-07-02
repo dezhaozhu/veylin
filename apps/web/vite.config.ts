@@ -8,7 +8,7 @@ export default defineConfig({
   resolve: {
     // Ensure a single React copy so AG-Grid's hooks share the app's
     // React instance (otherwise: "Invalid hook call / more than one copy").
-    dedupe: ['react', 'react-dom'],
+    dedupe: ['react', 'react-dom', 'three'],
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       '@/vendor/assistant-ui': fileURLToPath(

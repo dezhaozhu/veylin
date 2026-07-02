@@ -4,7 +4,8 @@
     "table": { "label": "表格", "desc": "可编辑的多工作表数据表格" },
     "web": { "label": "网页", "desc": "内嵌浏览器，访问内网页面和工具" },
     "rag": { "label": "知识库", "desc": "本地文档检索、引用追踪和知识图谱" },
-    "workflow": { "label": "工作流", "desc": "可视化工作流编排" }
+    "workflow": { "label": "工作流", "desc": "可视化工作流编排" },
+    "3d": { "label": "3D 模型", "desc": "CAD 模型查看、面点选与结果云图" }
   },
   "subagent": {
     "dispatching": "正在派发 {{label}}…",

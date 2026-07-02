@@ -4,7 +4,8 @@
     "table": { "label": "Table", "desc": "Editable multi-sheet spreadsheet" },
     "web": { "label": "Web", "desc": "Embedded browser for internal pages and tools" },
     "rag": { "label": "Knowledge", "desc": "Local document retrieval, citations and knowledge graph" },
-    "workflow": { "label": "Workflow", "desc": "Visual workflow orchestration" }
+    "workflow": { "label": "Workflow", "desc": "Visual workflow orchestration" },
+    "3d": { "label": "3D", "desc": "CAD model viewer with face picking and result overlay" }
   },
   "subagent": {
     "dispatching": "Dispatching {{label}}…",

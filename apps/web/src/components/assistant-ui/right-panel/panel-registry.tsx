@@ -11,12 +11,13 @@
  *
  * label/description/defaultTitle hold i18n keys, resolved with t() at render.
  */
-import { BookOpen, Globe, Table, Workflow } from 'lucide-react';
+import { BookOpen, Box, Globe, Table, Workflow } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { TableGrid } from '@/components/assistant-ui/table-grid';
 import { WebBrowserPanel } from '@/components/assistant-ui/right-panel/panels/web-browser-panel';
 import { RagPanel } from '@/components/assistant-ui/right-panel/panels/rag-panel';
 import { WorkflowPanel } from '@/components/assistant-ui/right-panel/panels/workflow-panel';
+import { Viewer3dPanel } from '@/components/assistant-ui/right-panel/panels/viewer3d-panel';
 import type { PanelContentProps, PanelKind, PanelKindDef } from './panel-types';
 
 function TablePanel(_props: PanelContentProps) {
@@ -33,6 +34,10 @@ function RagPanelEntry(props: PanelContentProps) {
 
 function WorkflowPanelEntry(props: PanelContentProps) {
   return <WorkflowPanel {...props} />;
+}
+
+function Viewer3dPanelEntry(props: PanelContentProps) {
+  return <Viewer3dPanel {...props} />;
 }
 
 /** All registered panel kinds. Order drives the "+" menu. */
@@ -70,6 +75,14 @@ export const PANEL_KINDS: PanelKindDef[] = [
     defaultTitle: 'panels.workflow.label',
     createState: () => ({ workflowId: undefined }),
     Component: WorkflowPanelEntry,
+  },
+  {
+    kind: '3d',
+    label: 'panels.3d.label',
+    description: 'panels.3d.desc',
+    icon: <Box className="size-4" />,
+    defaultTitle: 'panels.3d.label',
+    Component: Viewer3dPanelEntry,
   },
 ];
 
