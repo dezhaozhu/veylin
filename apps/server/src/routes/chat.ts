@@ -31,6 +31,7 @@ import {
 import { listDispatchableCustomAgentIds } from '../agent-task-runner.js';
 import { scheduleDreamConsolidation } from '../dream-service.js';
 import { buildTableContextBlock } from '../table-store.js';
+import { scheduleEditGuidanceBlock } from '../schedule-edit.js';
 import {
   activateSkill,
   ensureThreadState,
@@ -321,7 +322,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     });
     const planModeBlock = planMode ? buildPlanModeBlock() : '';
     // Live workspace awareness (table + knowledge base + right-panel focus).
-    const tableBlock = planMode ? '' : buildTableContextBlock();
+    const tableBlockBase = planMode ? '' : buildTableContextBlock();
+    const editGuidance = planMode ? '' : scheduleEditGuidanceBlock(deps.getMcpToolsets);
+    const tableBlock = [tableBlockBase, editGuidance].filter(Boolean).join('\n\n');
     const knowledgeBlock = planMode
       ? ''
       : await withDatastoreFallback(() => buildKnowledgeContextBlock(ctx.tenantId), '');

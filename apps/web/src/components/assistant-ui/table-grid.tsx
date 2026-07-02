@@ -31,6 +31,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { exportTableToExcel, parseTableExcelFile } from '@/lib/table-excel';
+import { buildGovernedEditBody, GOVERNED_EDIT_FIELDS } from '@/lib/schedule-edit';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 
 type TableColumnType = 'text' | 'number' | 'status';
@@ -55,6 +56,28 @@ type TableEvent =
 // The schedule sheet's 二级 rows expand to their 三级 (设备级) ops, fetched on
 // demand from /api/schedule-detail (→ Compass get_workorder_rows). Read-only.
 const SCHEDULE_SHEET_ID = 'schedule';
+
+// Columns worth showing in the B2 preview dialog (filtered by presence in the payload)
+const PREVIEW_COLUMNS: Array<{ key: string; labelKey: string }> = [
+  { key: 'order_id', labelKey: 'table.previewColOrder' },
+  { key: 'workshop', labelKey: 'table.previewColWorkshop' },
+  { key: 'schedule_status', labelKey: 'table.previewColStatus' },
+  { key: 'planned_end', labelKey: 'table.previewColPlannedEnd' },
+  { key: 'due_at', labelKey: 'table.previewColDueAt' },
+];
+
+// honest_status → i18n key for the preview dialog's summary line; falls back
+// to the raw value for statuses we don't have a translation for.
+const PREVIEW_STATUS_KEYS: Record<string, string> = {
+  feasible: 'table.previewStatusFeasible',
+  infeasible: 'table.previewStatusInfeasible',
+  not_scheduled: 'table.previewStatusNotScheduled',
+};
+
+function honestStatusLabel(t: (key: string) => string, raw: unknown): string {
+  const key = PREVIEW_STATUS_KEYS[String(raw ?? '')];
+  return key ? t(key) : String(raw ?? '-');
+}
 
 const SCHEDULE_DETAIL_COLUMN_DEFS: ColDef[] = [
   { field: 'op_seq', headerName: '工序号', maxWidth: 90 },
@@ -107,13 +130,28 @@ interface TableGridTotals {
 
 type FilterState = { query: string };
 
+const STATUS_GREEN = 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300';
+const STATUS_AMBER = 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300';
+const STATUS_RED = 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300';
+const STATUS_SLATE = 'bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-300';
+
 const STATUS_STYLE: Record<string, string> = {
-  open: 'bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-300',
-  in_progress: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
-  done: 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300',
-  normal: 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300',
-  tight: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
-  overdue: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300',
+  open: STATUS_SLATE,
+  in_progress: STATUS_AMBER,
+  done: STATUS_GREEN,
+  normal: STATUS_GREEN,
+  tight: STATUS_AMBER,
+  overdue: STATUS_RED,
+  // Compass 排产状态 (schedule_status)
+  solved: STATUS_GREEN,
+  derived: STATUS_AMBER,
+  infeasible: STATUS_RED,
+  unscheduled: STATUS_SLATE,
+  not_scheduled: STATUS_SLATE,
+  // Compass 执行状态 (exec_status, 三级 status)
+  已完工: STATUS_GREEN,
+  已开工: STATUS_AMBER,
+  未开工: STATUS_SLATE,
 };
 
 function statusClass(value: string): string {
@@ -391,6 +429,16 @@ export function TableGrid() {
   const [newSheetName, setNewSheetName] = useState('');
   const [addingSheet, setAddingSheet] = useState(false);
 
+  // B2 governed schedule draft (Compass-side; count is grid-known ops)
+  const [draftOps, setDraftOps] = useState(0);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewData, setPreviewData] = useState<{
+    rows: Array<Record<string, unknown>>;
+    diagnosis: Record<string, unknown>;
+  } | null>(null);
+  const [committing, setCommitting] = useState(false);
+
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 3500);
@@ -432,6 +480,9 @@ export function TableGrid() {
     setSelectedColumnKey(null);
     selectedColumnKeyRef.current = null;
     lastSerialized.current = '';
+    setDraftOps(0);
+    setPreviewOpen(false);
+    setPreviewData(null);
   }, []);
 
   const applyPayload = useCallback((data: SchedulePayload, initial: boolean) => {
@@ -619,6 +670,116 @@ export function TableGrid() {
     [activeSheetId],
   );
 
+  // B2: send one governed cell edit into the Compass draft
+  const proposeGovernedEdit = useCallback(
+    async (row: Record<string, unknown>, columnKey: string, value: string | number) => {
+      const body = buildGovernedEditBody(row, columnKey, value);
+      if (!body) return;
+      try {
+        const res = await fetch('/api/schedule-edit/propose', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await readJsonResponse<{ ok?: boolean; ops?: number; refused?: string; error?: string }>(res);
+        if (!res.ok || !data.ok) {
+          showToast(
+            data.refused
+              ? t('table.draftRefused', { message: data.refused })
+              : (data.error ?? t('table.draftProposeFailed')),
+            'error',
+          );
+          editingUntil.current = 0;
+          void load(activeSheetId, false);
+          return;
+        }
+        setDraftOps(data.ops ?? 0);
+      } catch (e: unknown) {
+        showToast(e instanceof Error ? e.message : t('table.draftProposeFailed'), 'error');
+      }
+    },
+    [activeSheetId, load, showToast, t],
+  );
+
+  const openPreview = useCallback(async () => {
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewData(null);
+    try {
+      const res = await fetch('/api/schedule-edit/preview', { method: 'POST' });
+      const data = await readJsonResponse<{
+        ok?: boolean;
+        rows?: Array<Record<string, unknown>>;
+        diagnosis?: Record<string, unknown>;
+        error?: string;
+      }>(res);
+      if (!res.ok || !data.ok) {
+        showToast(data.error ?? t('table.draftProposeFailed'), 'error');
+        setPreviewOpen(false);
+        return;
+      }
+      setPreviewData({ rows: data.rows ?? [], diagnosis: data.diagnosis ?? {} });
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : t('table.draftProposeFailed'), 'error');
+      setPreviewOpen(false);
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [showToast, t]);
+
+  const commitDraft = useCallback(async () => {
+    if (committing) return;
+    setCommitting(true);
+    try {
+      const res = await fetch('/api/schedule-edit/commit', { method: 'POST' });
+      const data = await readJsonResponse<{
+        ok?: boolean;
+        committed?: number;
+        deferred?: number;
+        conflict?: boolean;
+        message?: string;
+        error?: string;
+      }>(res);
+      if (!res.ok || !data.ok) {
+        showToast(
+          data.conflict ? t('table.commitConflict') : (data.message ?? data.error ?? t('table.draftProposeFailed')),
+          'error',
+        );
+        return;
+      }
+      showToast(
+        t('table.commitDone', { committed: data.committed ?? 0, deferred: data.deferred ?? 0 }),
+        'success',
+      );
+      setDraftOps(0);
+      setPreviewOpen(false);
+      editingUntil.current = 0;
+      void load(activeSheetId, false);
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : t('table.draftProposeFailed'), 'error');
+    } finally {
+      setCommitting(false);
+    }
+  }, [activeSheetId, committing, load, showToast, t]);
+
+  const discardDraft = useCallback(async () => {
+    try {
+      const res = await fetch('/api/schedule-edit/discard', { method: 'POST' });
+      const data = await readJsonResponse<{ ok?: boolean; error?: string }>(res);
+      if (!res.ok || !data.ok) {
+        showToast(data.error ?? t('table.draftProposeFailed'), 'error');
+        return;
+      }
+      showToast(t('table.discardDone'), 'success');
+      setDraftOps(0);
+      setPreviewOpen(false);
+      editingUntil.current = 0;
+      void load(activeSheetId, false);
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : t('table.draftProposeFailed'), 'error');
+    }
+  }, [activeSheetId, load, showToast, t]);
+
   const pushHistory = useCallback((batch: HistoryBatch) => {
     if (batch.length === 0) return;
     setUndoStack((prev) => {
@@ -698,8 +859,17 @@ export function TableGrid() {
         rowKey(r) === rowKey(updatedRow) ? updatedRow : r,
       );
       commitRows(merged, new Set([rowKey(updatedRow)]));
+
+      // B2: on the schedule sheet, governed edits also go into the Compass draft
+      if (activeSheetId === SCHEDULE_SHEET_ID) {
+        void proposeGovernedEdit(
+          updatedRow as unknown as Record<string, unknown>,
+          columnKey,
+          newValue as string | number,
+        );
+      }
     },
-    [commitRows, editableKeys, pushHistory],
+    [activeSheetId, commitRows, editableKeys, proposeGovernedEdit, pushHistory],
   );
 
   // AG-Grid keyboard handler: undo/redo + Community-safe copy/paste
@@ -857,7 +1027,8 @@ export function TableGrid() {
         resizable: true,
         sortable: true,
         pinned: def.frozen ? ('left' as const) : undefined,
-        editable: true,
+        editable:
+          activeSheetId === SCHEDULE_SHEET_ID ? GOVERNED_EDIT_FIELDS.has(def.key) : true,
         cellDataType: false,
         suppressHeaderFilterButton: true,
         valueFormatter: (params: ValueFormatterParams<TableRow>) => {
@@ -909,7 +1080,7 @@ export function TableGrid() {
     }
 
     return defs;
-  }, [columnDefs, statusOptionsByKey, selectColumn, proMasterDetail]);
+  }, [activeSheetId, columnDefs, statusOptionsByKey, selectColumn, proMasterDetail]);
 
   // AG-Grid v36 row selection config (object form)
   const rowSelection = useMemo(
@@ -1317,6 +1488,26 @@ export function TableGrid() {
         </div>
       </div>
 
+      {/* B2 draft bar — schedule sheet only, when Compass draft has pending ops */}
+      {activeSheetId === SCHEDULE_SHEET_ID && draftOps > 0 ? (
+        <div className="border-border bg-muted/50 flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
+          <span className="text-muted-foreground">
+            {t('table.draftBar', { count: draftOps })}
+          </span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => void openPreview()}>
+              {t('table.draftPreview')}
+            </Button>
+            <Button type="button" size="sm" className="h-6 px-2 text-xs" disabled={committing} onClick={() => void commitDraft()}>
+              {t('table.draftCommit')}
+            </Button>
+            <Button type="button" variant="outline" size="sm" className="text-destructive hover:text-destructive h-6 px-2 text-xs" onClick={() => void discardDraft()}>
+              {t('table.draftDiscard')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {filteredRows.length === 0 ? (
         <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-sm">
           <span>
@@ -1502,6 +1693,56 @@ export function TableGrid() {
             </Button>
             <Button type="button" disabled={importing} onClick={confirmImport}>
               {t('table.import')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t('table.previewTitle')}</DialogTitle>
+            <DialogDescription>
+              {previewLoading
+                ? t('table.previewLoading')
+                : previewData && previewData.rows.length === 0
+                  ? t('table.previewEmpty')
+                  : previewData
+                    ? `${t('table.previewStatus')}: ${honestStatusLabel(t, previewData.diagnosis['honest_status'])} · ${t('table.previewUnscheduled')}: ${String(previewData.diagnosis['unscheduled'] ?? 0)}`
+                    : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {previewData && previewData.rows.length > 0 ? (
+            <div className="max-h-80 overflow-auto text-xs">
+              <div className="text-muted-foreground mb-1">
+                {t('table.previewAffected', { count: previewData.rows.length })}
+              </div>
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-border border-b text-left">
+                    {PREVIEW_COLUMNS.filter((c) => c.key in (previewData.rows[0] ?? {})).map((c) => (
+                      <th key={c.key} className="px-2 py-1 font-medium">{t(c.labelKey)}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewData.rows.slice(0, 50).map((r, i) => (
+                    <tr key={i} className="border-border/50 border-b">
+                      {PREVIEW_COLUMNS.filter((c) => c.key in (previewData.rows[0] ?? {})).map((c) => (
+                        <td key={c.key} className="px-2 py-1">{String(r[c.key] ?? '')}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" size="sm" onClick={() => setPreviewOpen(false)}>
+              {t('common.close')}
+            </Button>
+            <Button type="button" size="sm" disabled={committing || previewLoading} onClick={() => void commitDraft()}>
+              {t('table.draftCommit')}
             </Button>
           </DialogFooter>
         </DialogContent>

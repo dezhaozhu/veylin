@@ -567,6 +567,38 @@ function inferColumnType(name: string): TableColumnType {
   return 'text';
 }
 
+/**
+ * Rich column descriptor from a typed source (e.g. Compass get_schedule_rows):
+ * key (matches row data — kept verbatim, NOT slugified), a friendly display name,
+ * type, and — for status columns — the real option set so the sanitizer keeps
+ * custom statuses (derived/solved/…) and the grid can render colored badges.
+ */
+export interface TableColumnDescriptor {
+  key: string;
+  name: string;
+  type: TableColumnType;
+  statusOptions?: string[];
+}
+
+function buildColumnsFromDescriptors(descriptors: TableColumnDescriptor[]): TableColumnDef[] {
+  const columns: TableColumnDef[] = [];
+  for (const d of descriptors) {
+    if (!d.key) continue;
+    const col: TableColumnDef = {
+      key: d.key,
+      name: (d.name ?? '').trim() || d.key,
+      width: 110,
+      type: d.type,
+      deletable: true,
+    };
+    if (d.type === 'status' && d.statusOptions?.length) {
+      col.statusOptions = [...d.statusOptions];
+    }
+    columns.push(col);
+  }
+  return columns;
+}
+
 function buildColumnsFromNames(
   names: string[],
   types?: Record<string, TableColumnType>,
@@ -596,6 +628,7 @@ export function importTableSheet(
   columnNames: string[],
   importedRows: TableRowPatch[],
   columnTypes?: Record<string, TableColumnType>,
+  columnDescriptors?: TableColumnDescriptor[],
 ): { columns: TableColumnDef[]; rows: TableRowData[] } | null {
   const resolved = resolveTableSheetId(sheetId);
   const sheet = getSheet(resolved);
@@ -604,7 +637,11 @@ export function importTableSheet(
   const fresh = getSheet(resolved);
   if (!fresh) return null;
 
-  fresh.columns = buildColumnsFromNames(columnNames, columnTypes);
+  // Rich descriptors (typed source like Compass) win — friendly names + status
+  // options; otherwise the Excel-import path builds columns from names.
+  fresh.columns = columnDescriptors?.length
+    ? buildColumnsFromDescriptors(columnDescriptors)
+    : buildColumnsFromNames(columnNames, columnTypes);
 
   fresh.rows = importedRows.map((raw) => {
     const base = emptyRow();
