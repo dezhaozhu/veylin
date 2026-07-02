@@ -155,6 +155,7 @@
     "promptConfirm": "确认",
     "promptCancel": "取消",
     "promptHint": "在模型上点选面，然后点击确认。",
+    "promptPickFirst": "请先在模型上点选至少一个面。",
     "promptNoModel": "当前面板没有模型，请先让 agent 显示模型，或取消此请求。"
   },
   "web": {

@@ -72,7 +72,9 @@ export const Viewer3dPanel: FC<PanelContentProps> = () => {
   }, [selectionRequest?.toolCallId]);
 
   const confirmSelectionRequest = useCallback(() => {
-    if (!selectionRequest || submitting) return;
+    // Empty selection must go through cancel, never confirm: the agent cannot act on
+    // an empty face_ids array (the Confirm button is also disabled in that state).
+    if (!selectionRequest || submitting || selection.length === 0) return;
     setSubmitting(true);
     selectionRequest.confirm(selection);
   }, [selectionRequest, submitting, selection]);
@@ -87,7 +89,15 @@ export const Viewer3dPanel: FC<PanelContentProps> = () => {
     try {
       const next = await fetchViewer3dState();
       setState(next);
-      setSelection(resetSelection ? [] : (next.selection?.faceIds ?? []));
+      setSelection((prev) => {
+        if (resetSelection) return []; // modelReplace: stale faceIds must not survive
+        // Initialize-only restore: the panel unmounts when the right sidebar collapses,
+        // losing local selection state — on remount, seed it from the server mirror.
+        // Once the user has picked locally, local stays authoritative (contract §2/§3):
+        // a mid-session resync (SSE reconnect, overlayUpdate) must not clobber it.
+        if (prev.length > 0) return prev;
+        return next.selection?.faceIds ?? [];
+      });
     } catch {
       // keep last known state; the next SSE reconnect (onopen) retries the resync
     }
@@ -168,6 +178,9 @@ export const Viewer3dPanel: FC<PanelContentProps> = () => {
           <p className="text-muted-foreground mt-0.5">
             {hasModel ? t('viewer3d.promptHint') : t('viewer3d.promptNoModel')}
           </p>
+          {hasModel && selection.length === 0 ? (
+            <p className="text-muted-foreground mt-0.5">{t('viewer3d.promptPickFirst')}</p>
+          ) : null}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
@@ -187,7 +200,8 @@ export const Viewer3dPanel: FC<PanelContentProps> = () => {
             variant="default"
             size="sm"
             className="h-7 px-3 text-xs"
-            disabled={submitting}
+            disabled={submitting || selection.length === 0}
+            title={selection.length === 0 ? t('viewer3d.promptPickFirst') : undefined}
             onClick={confirmSelectionRequest}
           >
             {t('viewer3d.promptConfirm')}

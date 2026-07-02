@@ -155,6 +155,7 @@
     "promptConfirm": "Confirm",
     "promptCancel": "Cancel",
     "promptHint": "Pick faces on the model, then confirm.",
+    "promptPickFirst": "Pick at least one face on the model first.",
     "promptNoModel": "No model is shown yet — ask the agent to display one first, or cancel this request."
   },
   "web": {
