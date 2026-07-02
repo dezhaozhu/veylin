@@ -49,6 +49,89 @@ export function unwrapMcpPayload(res: unknown): Record<string, unknown> {
 export type ToolsetsGetter = () => Record<string, unknown>;
 
 /**
+ * Fetch schedule rows from the Compass `get_schedule_rows` MCP tool and import
+ * them into the `schedule` sheet. Shared by the load_compass_schedule agent tool
+ * and the /api/schedule-edit commit/discard routes (grid refresh after a draft
+ * lands or is rolled back).
+ */
+export const SCHEDULE_SHEET_ID = 'schedule';
+
+export async function importCompassScheduleSheet(
+  getMcpToolsets: ToolsetsGetter | undefined,
+  input: { limit?: number; workshop?: string; status?: string; order_id?: string },
+): Promise<
+  | { ok: true; sheet: string; imported: number; total: number; columns: number }
+  | { ok: false; error: string }
+> {
+  // Resolve live toolsets via the getter (not a snapshot — rebuildMcp re-assigns the var)
+  const toolsets = getMcpToolsets?.() ?? {};
+  const compass = toolsets['compass'] as
+    | Record<string, { execute: (args: unknown) => Promise<unknown> }>
+    | undefined;
+  const tool = compass?.['get_schedule_rows'];
+  if (!tool) {
+    return {
+      ok: false as const,
+      error: 'compass MCP server not connected (no get_schedule_rows)',
+    };
+  }
+
+  const res: unknown = await tool.execute({
+    limit: input.limit ?? 500,
+    workshop: input.workshop,
+    status: input.status,
+    order_id: input.order_id,
+  });
+
+  const payload = unwrapMcpPayload(res);
+
+  const columns = (payload['columns'] as Array<Record<string, unknown>> | undefined) ?? [];
+  const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
+
+  // Ensure the 'schedule' sheet exists (create on first use; fire-and-forget persist is fine)
+  const existingSheets = listTableSheets();
+  if (!existingSheets.find((s) => s.id === SCHEDULE_SHEET_ID)) {
+    createTableSheet(SCHEDULE_SHEET_ID);
+  }
+
+  // Build rich column descriptors from Compass's typed columns: friendly display
+  // name + type + (for status columns) the real option set — so the grid shows
+  // readable headers and colored status badges without blanking derived/solved.
+  const descriptors = columns
+    .map((c) => {
+      const key = String(c['key'] ?? '');
+      if (!key) return null;
+      const rawType = c['type'];
+      const type: 'text' | 'number' | 'status' =
+        rawType === 'number' ? 'number' : rawType === 'status' ? 'status' : 'text';
+      const opts = c['options'];
+      return {
+        key,
+        name: String(c['name'] ?? key),
+        type,
+        statusOptions: type === 'status' && Array.isArray(opts) ? (opts as string[]) : undefined,
+      };
+    })
+    .filter((d): d is NonNullable<typeof d> => d !== null);
+
+  const result = importTableSheet(
+    SCHEDULE_SHEET_ID,
+    [],
+    rows as Array<Record<string, string | number>>,
+    undefined,
+    descriptors,
+  );
+
+  return {
+    ok: true as const,
+    sheet: SCHEDULE_SHEET_ID,
+    imported: rows.length,
+    total: (payload['total'] as number | undefined) ?? rows.length,
+    columns: result?.columns?.length ?? columns.length,
+  };
+}
+
+/**
  * Generic spreadsheet/table tools backed by the multi-sheet grid store.
  */
 export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
@@ -320,8 +403,6 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
     execute: async () => ({ sheets: listTableSheets() }),
   });
 
-  const SCHEDULE_SHEET_ID = 'schedule';
-
   const loadCompassSchedule = createTool({
     id: 'load_compass_schedule',
     description:
@@ -333,74 +414,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
       status: z.string().optional().describe('按状态过滤'),
       order_id: z.string().optional().describe('按订单号过滤'),
     }),
-    execute: async (input) => {
-      // Resolve live toolsets via the getter (not a snapshot — rebuildMcp re-assigns the var)
-      const toolsets = getMcpToolsets?.() ?? {};
-      const compass = toolsets['compass'] as
-        | Record<string, { execute: (args: unknown) => Promise<unknown> }>
-        | undefined;
-      const tool = compass?.['get_schedule_rows'];
-      if (!tool) {
-        return {
-          ok: false as const,
-          error: 'compass MCP server not connected (no get_schedule_rows)',
-        };
-      }
-
-      const res: unknown = await tool.execute({
-        limit: input.limit ?? 500,
-        workshop: input.workshop,
-        status: input.status,
-        order_id: input.order_id,
-      });
-
-      const payload = unwrapMcpPayload(res);
-
-      const columns = (payload['columns'] as Array<Record<string, unknown>> | undefined) ?? [];
-      const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
-
-      // Ensure the 'schedule' sheet exists (create on first use; fire-and-forget persist is fine)
-      const existingSheets = listTableSheets();
-      if (!existingSheets.find((s) => s.id === SCHEDULE_SHEET_ID)) {
-        createTableSheet(SCHEDULE_SHEET_ID);
-      }
-
-      // Build rich column descriptors from Compass's typed columns: friendly display
-      // name + type + (for status columns) the real option set — so the grid shows
-      // readable headers and colored status badges without blanking derived/solved.
-      const descriptors = columns
-        .map((c) => {
-          const key = String(c['key'] ?? '');
-          if (!key) return null;
-          const rawType = c['type'];
-          const type: 'text' | 'number' | 'status' =
-            rawType === 'number' ? 'number' : rawType === 'status' ? 'status' : 'text';
-          const opts = c['options'];
-          return {
-            key,
-            name: String(c['name'] ?? key),
-            type,
-            statusOptions: type === 'status' && Array.isArray(opts) ? (opts as string[]) : undefined,
-          };
-        })
-        .filter((d): d is NonNullable<typeof d> => d !== null);
-
-      const result = importTableSheet(
-        SCHEDULE_SHEET_ID,
-        [],
-        rows as Array<Record<string, string | number>>,
-        undefined,
-        descriptors,
-      );
-
-      return {
-        ok: true as const,
-        sheet: SCHEDULE_SHEET_ID,
-        imported: rows.length,
-        total: (payload['total'] as number | undefined) ?? rows.length,
-        columns: result?.columns?.length ?? columns.length,
-      };
-    },
+    execute: async (input) => importCompassScheduleSheet(getMcpToolsets, input),
   });
 
   return {
