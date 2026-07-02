@@ -131,7 +131,12 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     }
     // Refresh the schedule sheet from Compass so the grid shows the new run
     // (importTableSheet emits sheetReplace → SSE → client refetch).
-    await importCompassScheduleSheet(deps.getMcpToolsets, {});
+    // Best-effort: the commit already happened — never turn a refresh failure into an error response.
+    try {
+      await importCompassScheduleSheet(deps.getMcpToolsets, {});
+    } catch {
+      /* best-effort refresh; grid converges on next manual load */
+    }
     return out;
   });
 
@@ -143,7 +148,12 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       return out;
     }
     // Re-import to revert the grid's optimistic cell echoes back to canonical.
-    await importCompassScheduleSheet(deps.getMcpToolsets, {});
+    // Best-effort: the discard already happened — never turn a refresh failure into an error response.
+    try {
+      await importCompassScheduleSheet(deps.getMcpToolsets, {});
+    } catch {
+      /* best-effort refresh; grid converges on next manual load */
+    }
     return out;
   });
 
