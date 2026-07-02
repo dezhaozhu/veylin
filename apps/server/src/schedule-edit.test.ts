@@ -100,6 +100,7 @@ describe('commitScheduleEdit', () => {
       assert.equal(out.committed, 2);
       assert.equal(out.deferred, 1);
       assert.deepEqual(out.proposal_ids, ['p1']);
+      assert.deepEqual(out.deferred_ids, ['due O1']);
       assert.equal(out.status, 'feasible');
     }
   });

@@ -87,6 +87,7 @@ export async function commitScheduleEdit(
       committed: number;
       deferred: number;
       proposal_ids: unknown[];
+      deferred_ids: unknown[];
       run_id: unknown;
       status: string;
       unscheduled: number;
@@ -111,6 +112,7 @@ export async function commitScheduleEdit(
     committed: Number(payload['committed'] ?? 0),
     deferred: Number(payload['deferred'] ?? 0),
     proposal_ids: (payload['proposal_ids'] as unknown[] | undefined) ?? [],
+    deferred_ids: (payload['deferred_ids'] as unknown[] | undefined) ?? [],
     run_id: payload['run_id'] ?? null,
     status: String(payload['status'] ?? ''),
     unscheduled: Number(payload['unscheduled'] ?? 0),
