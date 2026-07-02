@@ -18,7 +18,14 @@ import {
   type TableEvent,
 } from '../table-store.js';
 import type { ServerDeps } from './types.js';
-import { unwrapMcpPayload } from '../table-tools.js';
+import { unwrapMcpPayload, importCompassScheduleSheet } from '../table-tools.js';
+import {
+  proposeScheduleEdit,
+  previewScheduleEdit,
+  commitScheduleEdit,
+  discardScheduleEdits,
+  type ProposeEditBody,
+} from '../schedule-edit.js';
 
 export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // Editable multi-sheet table dataset for the right-panel data grid.
@@ -93,6 +100,51 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       rows: payload['rows'] ?? [],
       total: payload['total'] ?? 0,
     };
+  });
+
+  // ------------------------------------------------------------------
+  // B2 governed schedule editing: grid cell edits & panel actions go through
+  // Compass's draft lane (propose → preview → commit/discard). The draft lives
+  // in Compass keyed by the server's OBO principal — never a silent live write.
+  // ------------------------------------------------------------------
+  app.post('/api/schedule-edit/propose', async (req, reply) => {
+    await deps.resolveContext(req.headers);
+    const body = (req.body ?? {}) as ProposeEditBody;
+    const out = await proposeScheduleEdit(deps.getMcpToolsets, body);
+    if (!out.ok) reply.code('refused' in out && out.refused ? 403 : 503);
+    return out;
+  });
+
+  app.post('/api/schedule-edit/preview', async (req, reply) => {
+    await deps.resolveContext(req.headers);
+    const out = await previewScheduleEdit(deps.getMcpToolsets);
+    if (!out.ok) reply.code(503);
+    return out;
+  });
+
+  app.post('/api/schedule-edit/commit', async (req, reply) => {
+    await deps.resolveContext(req.headers);
+    const out = await commitScheduleEdit(deps.getMcpToolsets);
+    if (!out.ok) {
+      reply.code('conflict' in out && out.conflict ? 409 : 503);
+      return out;
+    }
+    // Refresh the schedule sheet from Compass so the grid shows the new run
+    // (importTableSheet emits sheetReplace → SSE → client refetch).
+    await importCompassScheduleSheet(deps.getMcpToolsets, {});
+    return out;
+  });
+
+  app.post('/api/schedule-edit/discard', async (req, reply) => {
+    await deps.resolveContext(req.headers);
+    const out = await discardScheduleEdits(deps.getMcpToolsets);
+    if (!out.ok) {
+      reply.code(503);
+      return out;
+    }
+    // Re-import to revert the grid's optimistic cell echoes back to canonical.
+    await importCompassScheduleSheet(deps.getMcpToolsets, {});
+    return out;
   });
 
   app.post('/api/table/sheets', async (req, reply) => {
