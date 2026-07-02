@@ -147,6 +147,15 @@
     "urlLabel": "URL: ",
     "truncated": "Content truncated to {{chars}} characters"
   },
+  "viewer3d": {
+    "awaitingSelection": "Waiting for you to pick faces on the 3D panel: {{prompt}}",
+    "selectionConfirmed": "Selection confirmed",
+    "selectionCancelled": "Selection cancelled",
+    "selectedFaces": "Selected faces: {{ids}}",
+    "promptConfirm": "Confirm",
+    "promptCancel": "Cancel",
+    "promptHint": "Pick faces on the model, then confirm."
+  },
   "web": {
     "enterUrl": "Please enter a URL",
     "urlPlaceholder": "https://internal-address or localhost:8080",

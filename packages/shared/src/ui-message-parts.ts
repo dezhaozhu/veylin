@@ -8,10 +8,14 @@ const MISPARSED_TOOL_SUFFIXES = new Set(['call']);
 const ASK_USER_CONTINUATION_RE =
   /User has answered your questions:[\s\S]*?You can now continue with the user's answers in mind\.?/gi;
 
-/** Model-only continuation copy from answered ask_user_question (not for chat UI). */
+const VIEWER3D_SELECTION_CONTINUATION_RE =
+  /User selected these faces on the 3D panel:[\s\S]*?You can now continue with this selection in mind\.?|User cancelled the 3D face selection\. You can now continue accordingly\.?/gi;
+
+/** Model-only continuation copy from answered ask_user_question / request_3d_selection (not for chat UI). */
 export function stripInternalModelContinuationText(text: string): string {
   return text
     .replace(ASK_USER_CONTINUATION_RE, '')
+    .replace(VIEWER3D_SELECTION_CONTINUATION_RE, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

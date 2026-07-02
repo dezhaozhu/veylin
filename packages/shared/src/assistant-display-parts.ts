@@ -9,6 +9,7 @@
 const FRONTEND_SUSPEND_TOOL_TYPES = new Set([
   'tool-ask_user_question',
   'tool-read_open_page',
+  'tool-request_3d_selection',
 ]);
 
 export type NormalizeAssistantPartsMode = 'persist' | 'display';

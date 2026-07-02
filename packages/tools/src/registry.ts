@@ -3,7 +3,7 @@ import type { RiskLevel } from '@veylin/shared';
 // import { fileRead, fileWrite, fileEdit, listDir, grep, glob } from './fs';
 // import { bash } from './shell';
 import { webFetch } from './web';
-import { todoWrite, askUserQuestion, readOpenPage } from './interaction';
+import { todoWrite, askUserQuestion, readOpenPage, request3dSelection } from './interaction';
 import { enterPlanMode, exitPlanMode } from './plan-mode';
 
 export const builtinTools = {
@@ -18,6 +18,7 @@ export const builtinTools = {
   todo_write: todoWrite,
   ask_user_question: askUserQuestion,
   read_open_page: readOpenPage,
+  request_3d_selection: request3dSelection,
   enter_plan_mode: enterPlanMode,
   exit_plan_mode: exitPlanMode,
 } as const;
@@ -30,6 +31,7 @@ export const toolRisk: Record<BuiltinToolId, RiskLevel> = {
   todo_write: 'safe',
   ask_user_question: 'safe',
   read_open_page: 'caution',
+  request_3d_selection: 'safe',
   enter_plan_mode: 'safe',
   exit_plan_mode: 'safe',
 };
@@ -46,6 +48,7 @@ export const toolKeywords: Record<BuiltinToolId, string[]> = {
   todo_write: ['todo', 'plan', 'task', 'checklist'],
   ask_user_question: ['ask', 'question', 'clarify', 'choose'],
   read_open_page: ['page', 'current', 'dom', 'read', 'open', '网页', '当前页', '内网', 'browser'],
+  request_3d_selection: ['3d', 'select', 'face', '选面', '点选'],
   enter_plan_mode: ['plan', 'planning', 'explore', 'read-only'],
   exit_plan_mode: ['execute', 'exit plan', 'implement'],
 };

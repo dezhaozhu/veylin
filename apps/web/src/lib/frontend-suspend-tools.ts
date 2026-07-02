@@ -3,7 +3,11 @@ import { isToolUIPart, lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
 import { assistantDispatchedBackgroundWorkers } from './background-task-continuation';
 
 /** Tools completed on the client; the server must not finish the same run. */
-export const FRONTEND_SUSPEND_TOOL_NAMES = ['ask_user_question', 'read_open_page'] as const;
+export const FRONTEND_SUSPEND_TOOL_NAMES = [
+  'ask_user_question',
+  'read_open_page',
+  'request_3d_selection',
+] as const;
 
 export type FrontendSuspendToolName = (typeof FRONTEND_SUSPEND_TOOL_NAMES)[number];
 
@@ -65,6 +69,9 @@ export function hasFrontendToolOutput(
   output: unknown,
 ): boolean {
   if (toolName === 'ask_user_question') return hasAskUserAnswers(output);
+  if (toolName === 'request_3d_selection') {
+    return Array.isArray((output as { face_ids?: unknown } | null)?.face_ids);
+  }
   if (!output || typeof output !== 'object') return false;
   const result = output as { content?: string; error?: string };
   return Boolean(result.content?.length || result.error?.length);

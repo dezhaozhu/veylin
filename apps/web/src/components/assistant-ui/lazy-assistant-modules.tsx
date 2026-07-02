@@ -11,6 +11,11 @@ const ReadOpenPageToolUI = lazy(() =>
     default: m.ReadOpenPageToolUI,
   })),
 );
+const Request3dSelectionToolUI = lazy(() =>
+  import('@/components/assistant-ui/request-3d-selection').then((m) => ({
+    default: m.Request3dSelectionToolUI,
+  })),
+);
 const TodoWriteToolUI = lazy(() =>
   import('@/components/assistant-ui/todo-write').then((m) => ({ default: m.TodoWriteToolUI })),
 );
@@ -72,6 +77,7 @@ export function LazyAssistantToolUIs() {
         <TaskTools />
         <KnowledgeSearchToolUI />
         <ReadOpenPageToolUI />
+        <Request3dSelectionToolUI />
       </Suspense>
     </>
   );

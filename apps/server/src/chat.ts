@@ -80,6 +80,18 @@ export function textOfMessage(msg: UiMessage | undefined): string {
           if (!header && !body) return [];
           return [[header, body].filter(Boolean).join('\n')];
         }
+        if (p.type === 'tool-request_3d_selection') {
+          const output = (p as { output?: { face_ids?: number[]; cancelled?: boolean } }).output;
+          if (!output) return [];
+          if (output.cancelled) {
+            return ["User cancelled the 3D face selection. You can now continue accordingly."];
+          }
+          const ids = output.face_ids ?? [];
+          if (ids.length === 0) return [];
+          return [
+            `User selected these faces on the 3D panel: ${ids.join(', ')}. You can now continue with this selection in mind.`,
+          ];
+        }
         return [];
       })
       .join('\n') ?? ''
@@ -226,6 +238,7 @@ async function fileParts(msg: UiMessage, vision: boolean): Promise<ContentPart[]
 const FRONTEND_SUSPEND_TOOL_PART_TYPES = new Set([
   'tool-ask_user_question',
   'tool-read_open_page',
+  'tool-request_3d_selection',
 ]);
 
 function messageHasModelToolParts(messages: UiMessage[]): boolean {

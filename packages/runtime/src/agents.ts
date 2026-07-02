@@ -20,6 +20,7 @@ const ALWAYS_ON_TOOLS: BuiltinToolId[] = [
   'todo_write',
   'ask_user_question',
   'read_open_page',
+  'request_3d_selection',
   'enter_plan_mode',
   'exit_plan_mode',
 ];

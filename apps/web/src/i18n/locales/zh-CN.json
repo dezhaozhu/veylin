@@ -147,6 +147,15 @@
     "urlLabel": "URL：",
     "truncated": "内容已截断至 {{chars}} 字符"
   },
+  "viewer3d": {
+    "awaitingSelection": "等待你在 3D 面板选面：{{prompt}}",
+    "selectionConfirmed": "已确认选择",
+    "selectionCancelled": "已取消选择",
+    "selectedFaces": "已选中的面：{{ids}}",
+    "promptConfirm": "确认",
+    "promptCancel": "取消",
+    "promptHint": "在模型上点选面，然后点击确认。"
+  },
   "web": {
     "enterUrl": "请输入网址",
     "urlPlaceholder": "https://内网地址 或 localhost:8080",

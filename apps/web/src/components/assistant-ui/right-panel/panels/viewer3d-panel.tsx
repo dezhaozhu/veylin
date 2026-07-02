@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Viewer, type OverlayJson } from '@caliper/viewer';
+import { Layers3Icon } from 'lucide-react';
 import type { FC } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Button } from '@/components/ui/button';
+import { useViewer3dSelectionRequest } from '@/lib/viewer3d-selection-session';
 import type { PanelContentProps } from '../panel-types';
 
 interface Viewer3dModel {
@@ -50,11 +54,13 @@ async function postSelection(faceIds: number[]): Promise<void> {
 }
 
 export const Viewer3dPanel: FC<PanelContentProps> = () => {
+  const { t } = useTranslation();
   const [state, setState] = useState<Viewer3dState | null>(null);
   const [selection, setSelection] = useState<number[]>([]);
   const [overlayData, setOverlayData] = useState<OverlayJson | null>(null);
   const [overlayError, setOverlayError] = useState<string | null>(null);
   const overlayRequestRef = useRef(0);
+  const selectionRequest = useViewer3dSelectionRequest();
 
   const resync = useCallback(async (resetSelection: boolean) => {
     try {
@@ -137,8 +143,37 @@ export const Viewer3dPanel: FC<PanelContentProps> = () => {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Task 5 接入点: useViewer3dSelectionSession() 的挂起请求提示条("{prompt} —— 选好后点确认" +
-          确认/取消按钮)将插在这里,依赖尚未创建的前端 session 桥,本任务不实现(契约 §4)。 */}
+      {selectionRequest ? (
+        <div className="border-primary/30 bg-primary/5 mx-3 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs">
+          <div className="flex min-w-0 items-start gap-2">
+            <Layers3Icon className="text-primary mt-0.5 size-3.5 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-foreground font-medium">{selectionRequest.prompt}</p>
+              <p className="text-muted-foreground mt-0.5">{t('viewer3d.promptHint')}</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => selectionRequest.cancel()}
+            >
+              {t('viewer3d.promptCancel')}
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              className="h-7 px-3 text-xs"
+              onClick={() => selectionRequest.confirm(selection)}
+            >
+              {t('viewer3d.promptConfirm')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {overlayError ? (
         <div className="border-destructive/20 bg-destructive/10 text-destructive mx-3 mt-3 rounded-lg border px-3 py-2 text-xs">
           {overlayError}

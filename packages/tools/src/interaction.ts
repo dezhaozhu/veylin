@@ -101,6 +101,27 @@ export const askUserQuestion = createTool({
 });
 
 /**
+ * Request the user to pick faces on the 3D panel (e.g. fixed faces / load faces).
+ * Completed on the client; the server blocks this execute until the run is aborted.
+ */
+export const request3dSelection = createTool({
+  id: 'request_3d_selection',
+  description:
+    '请求用户在 3D 面板上点选面(如固定面/受力面)。面板会显示提示条,阻塞直到用户确认。' +
+    '返回用户选中的 faceId 列表。仅在需要用户"现在去点选"时使用;读取既有选择用 viewer3d_get_selection。',
+  inputSchema: z.object({
+    prompt: z.string().describe('给用户看的提示,如"请点选要施加 500N 的面"'),
+  }),
+  outputSchema: z.object({
+    face_ids: z.array(z.number()),
+    cancelled: z.boolean().optional(),
+  }),
+  execute: async (_input, ctx) => {
+    await awaitClientToolCompletion(ctx);
+  },
+});
+
+/**
  * Read the currently open page in the desktop docked web view (intranet / logged-in DOM).
  * Completed on the client via the desktop web view.
  */
