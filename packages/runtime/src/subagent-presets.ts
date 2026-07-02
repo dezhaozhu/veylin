@@ -22,6 +22,7 @@ const SUBAGENT_DENIED: BuiltinToolId[] = [
   'enter_plan_mode',
   'exit_plan_mode',
   'ask_user_question',
+  'request_3d_selection',
 ];
 
 const READ_ONLY_TOOLS: BuiltinToolId[] = ['web_fetch', 'read_open_page'];
