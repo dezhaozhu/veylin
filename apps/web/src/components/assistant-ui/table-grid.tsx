@@ -58,12 +58,12 @@ type TableEvent =
 const SCHEDULE_SHEET_ID = 'schedule';
 
 // Columns worth showing in the B2 preview dialog (filtered by presence in the payload)
-const PREVIEW_COLUMNS: Array<{ key: string; label: string }> = [
-  { key: 'order_id', label: '订单' },
-  { key: 'workshop', label: '分厂' },
-  { key: 'schedule_status', label: '状态' },
-  { key: 'planned_end', label: '计划完成' },
-  { key: 'due_at', label: '交期' },
+const PREVIEW_COLUMNS: Array<{ key: string; labelKey: string }> = [
+  { key: 'order_id', labelKey: 'table.previewColOrder' },
+  { key: 'workshop', labelKey: 'table.previewColWorkshop' },
+  { key: 'schedule_status', labelKey: 'table.previewColStatus' },
+  { key: 'planned_end', labelKey: 'table.previewColPlannedEnd' },
+  { key: 'due_at', labelKey: 'table.previewColDueAt' },
 ];
 
 const SCHEDULE_DETAIL_COLUMN_DEFS: ColDef[] = [
@@ -676,6 +676,7 @@ export function TableGrid() {
               : (data.error ?? t('table.draftProposeFailed')),
             'error',
           );
+          editingUntil.current = 0;
           void load(activeSheetId, false);
           return;
         }
@@ -739,6 +740,7 @@ export function TableGrid() {
       );
       setDraftOps(0);
       setPreviewOpen(false);
+      editingUntil.current = 0;
       void load(activeSheetId, false);
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : t('table.draftProposeFailed'), 'error');
@@ -758,6 +760,7 @@ export function TableGrid() {
       showToast(t('table.discardDone'), 'success');
       setDraftOps(0);
       setPreviewOpen(false);
+      editingUntil.current = 0;
       void load(activeSheetId, false);
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : t('table.draftProposeFailed'), 'error');
@@ -1705,7 +1708,7 @@ export function TableGrid() {
                 <thead>
                   <tr className="border-border border-b text-left">
                     {PREVIEW_COLUMNS.filter((c) => c.key in (previewData.rows[0] ?? {})).map((c) => (
-                      <th key={c.key} className="px-2 py-1 font-medium">{c.label}</th>
+                      <th key={c.key} className="px-2 py-1 font-medium">{t(c.labelKey)}</th>
                     ))}
                   </tr>
                 </thead>
