@@ -31,6 +31,7 @@ import {
 import { listDispatchableCustomAgentIds } from '../agent-task-runner.js';
 import { scheduleDreamConsolidation } from '../dream-service.js';
 import { buildTableContextBlock } from '../table-store.js';
+import { buildViewer3dContextBlock } from '../viewer3d-store.js';
 import { scheduleEditGuidanceBlock } from '../schedule-edit.js';
 import {
   activateSkill,
@@ -325,6 +326,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const tableBlockBase = planMode ? '' : buildTableContextBlock();
     const editGuidance = planMode ? '' : scheduleEditGuidanceBlock(deps.getMcpToolsets);
     const tableBlock = [tableBlockBase, editGuidance].filter(Boolean).join('\n\n');
+    const viewer3dBlock = planMode ? '' : buildViewer3dContextBlock();
     const knowledgeBlock = planMode
       ? ''
       : await withDatastoreFallback(() => buildKnowledgeContextBlock(ctx.tenantId), '');
@@ -348,6 +350,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       rulesBlock,
       planModeBlock,
       tableBlock,
+      viewer3dBlock,
       knowledgeBlock,
       workspacePanelBlock,
       reminderBlock,
@@ -380,6 +383,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
                 declaredBuiltinTools,
               ),
               ...(deps.getTaskToolset().table ? { table: deps.getTaskToolset().table } : {}),
+              ...(deps.getTaskToolset().viewer3d ? { viewer3d: deps.getTaskToolset().viewer3d } : {}),
               ...(deps.getTaskToolset().knowledge ? { knowledge: deps.getTaskToolset().knowledge } : {}),
             };
     const streamId = crypto.randomUUID();

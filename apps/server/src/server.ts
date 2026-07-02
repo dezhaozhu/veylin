@@ -25,6 +25,7 @@ import {
 import { buildAgentTaskTools } from './agent-task-tool';
 import { executeSubagentJob, CancelledTaskError } from './agent-task-runner';
 import { buildTableTools } from './table-tools';
+import { buildViewer3dTools } from './viewer3d-tools';
 import { initTableStore } from './table-store';
 import { pruneDesktopThreadClutter } from './thread-state';
 import {
@@ -250,6 +251,7 @@ async function main() {
   await rebuildMcp(DEV_TENANT_ID);
 
   const tableTools = buildTableTools(() => mcpToolsets);
+  const viewer3dTools = buildViewer3dTools();
   const workspaceConfig = buildWorkspaceConfigTool({
     runtime,
     queue,
@@ -260,6 +262,7 @@ async function main() {
   taskToolset = {
     agent: agentTaskTools,
     table: tableTools,
+    viewer3d: viewer3dTools,
     knowledge: { knowledge_search: buildKnowledgeSearchTool() },
     config: { workspace_config: workspaceConfig },
     workflow: workflowTools,

@@ -11,6 +11,7 @@ export type ChatSystemBlockInput = {
   rulesBlock: string;
   planModeBlock: string;
   tableBlock: string;
+  viewer3dBlock?: string;
   knowledgeBlock: string;
   workspacePanelBlock: string;
   reminderBlock: string;
@@ -33,6 +34,7 @@ export async function buildChatSystemBlocks(input: ChatSystemBlockInput): Promis
     uncachedSystemPromptSection('rules', () => blockOrNull(input.rulesBlock)),
     uncachedSystemPromptSection('plan_mode', () => blockOrNull(input.planModeBlock)),
     uncachedSystemPromptSection('table_context', () => blockOrNull(input.tableBlock)),
+    uncachedSystemPromptSection('viewer3d_context', () => blockOrNull(input.viewer3dBlock ?? '')),
     uncachedSystemPromptSection('knowledge_context', () => blockOrNull(input.knowledgeBlock)),
     uncachedSystemPromptSection('workspace_panel', () => blockOrNull(input.workspacePanelBlock)),
     uncachedSystemPromptSection('reminders', () => blockOrNull(input.reminderBlock)),
