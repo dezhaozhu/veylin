@@ -119,18 +119,25 @@ async function main() {
 
   async function rebuildMcp(tenantId: string) {
     const activeNames = await listActiveMcpServerNames(tenantId);
+    // Keep the previous good toolsets when a rebuild fails or stalls: one
+    // misbehaving remote server must not wipe (or block) every other server's
+    // tools for the whole process. @mastra already isolates per-server connect
+    // failures inside listToolsets(); this guard covers total failures and
+    // pathological servers that hang past the SDK's own timeouts.
+    const previous = mcpCacheByTenant.get(tenantId);
     let listError: string | undefined;
     try {
       mcp = await createMcpClient(tenantId);
-      try {
-        mcpToolsets = sanitizeMcpToolsets((await mcp.listToolsets()) as Record<string, unknown>);
-      } catch (err) {
-        listError = err instanceof Error ? err.message : String(err);
-        mcpToolsets = {};
-      }
+      const listed = (await Promise.race([
+        mcp.listToolsets(),
+        new Promise((_resolve, reject) =>
+          setTimeout(() => reject(new Error('listToolsets timed out after 15s')), 15_000),
+        ),
+      ])) as Record<string, unknown>;
+      mcpToolsets = sanitizeMcpToolsets(listed);
     } catch (err) {
       listError = err instanceof Error ? err.message : String(err);
-      mcpToolsets = {};
+      mcpToolsets = previous ? previous.toolsets : {};
     }
     mcpToolIndex = indexMcpTools(mcpToolsets);
     mcpCacheByTenant.set(tenantId, { toolsets: mcpToolsets, index: mcpToolIndex });
