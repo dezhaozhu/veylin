@@ -35,7 +35,20 @@ type MenuPos = {
   bottom?: number;
   left: number;
   width: number;
+  inDialog: boolean;
+  portalTarget: HTMLElement;
 };
+
+function resolvePortalTarget(button: HTMLButtonElement | null): {
+  container: HTMLElement;
+  inDialog: boolean;
+} {
+  const dialog = button?.closest('[data-slot="dialog-content"]');
+  if (dialog instanceof HTMLElement) {
+    return { container: dialog, inDialog: true };
+  }
+  return { container: document.body, inDialog: false };
+}
 
 export function SettingsSelect({
   value = '',
@@ -65,14 +78,37 @@ export function SettingsSelect({
   const updateMenuPos = useCallback(() => {
     const el = btnRef.current;
     if (!el) return;
+    const { container, inDialog } = resolvePortalTarget(el);
     const rect = el.getBoundingClientRect();
     const estimatedHeight = options.length * 36 + 8;
+
+    if (inDialog) {
+      const containerRect = container.getBoundingClientRect();
+      const left = rect.left - containerRect.left;
+      const width = rect.width;
+      const spaceBelow = containerRect.bottom - rect.bottom;
+      const openUp = spaceBelow < estimatedHeight && rect.top - containerRect.top > spaceBelow;
+
+      setMenuPos({
+        left,
+        width,
+        inDialog: true,
+        portalTarget: container,
+        ...(openUp
+          ? { bottom: containerRect.bottom - rect.top + 4 }
+          : { top: rect.bottom - containerRect.top + 4 }),
+      });
+      return;
+    }
+
     const spaceBelow = window.innerHeight - rect.bottom;
     const openUp = spaceBelow < estimatedHeight && rect.top > spaceBelow;
 
     setMenuPos({
       left: rect.left,
       width: rect.width,
+      inDialog: false,
+      portalTarget: document.body,
       ...(openUp ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
     });
   }, [options.length]);
@@ -105,10 +141,16 @@ export function SettingsSelect({
             <DismissibleBackdrop
               ariaLabel="Close menu"
               onClose={close}
-              className="fixed inset-0 z-[209] cursor-default bg-transparent"
+              className={cn(
+                'inset-0 cursor-default bg-transparent',
+                menuPos.inDialog ? 'absolute z-50' : 'fixed z-[209]',
+              )}
             />
             <div
-              className="bg-popover text-popover-foreground fixed z-[210] max-h-60 overflow-y-auto rounded-lg border p-1 shadow-lg"
+              className={cn(
+                'bg-popover text-popover-foreground pointer-events-auto max-h-60 overflow-y-auto rounded-lg border p-1 shadow-lg',
+                menuPos.inDialog ? 'absolute z-50' : 'fixed z-[210]',
+              )}
               style={{
                 top: menuPos.top,
                 bottom: menuPos.bottom,
@@ -142,7 +184,7 @@ export function SettingsSelect({
               })}
             </div>
           </>,
-          document.body,
+          menuPos.portalTarget,
         )
       : null;
 

@@ -1,26 +1,33 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useRightSidebar, useSidebar } from '@/components/ui/sidebar';
 import {
   chatRatioToRightWidth,
   readChatPanelRatio,
+  readChatWorkspaceWidth,
+  resolveRightPanelOpenWidth,
+  rightPanelWidthMax,
   rightWidthToChatRatio,
   writeChatPanelRatio,
 } from '@/lib/chat-panel-ratio';
 
 const RIGHT_SIDEBAR_WIDTH_MIN = 280;
 
-function rightSidebarWidthMax() {
-  if (typeof window === 'undefined') return 1200;
-  return Math.min(1200, Math.floor(window.innerWidth * 0.85));
-}
-
 function workspaceAvailableWidth(leftOpen: boolean, leftWidth: number): number {
-  const left = leftOpen ? leftWidth : 0;
-  return Math.max(320, window.innerWidth - left);
+  const estimated = Math.max(
+    320,
+    window.innerWidth - (leftOpen ? leftWidth : 0),
+  );
+  const measured = readChatWorkspaceWidth();
+  // Prefer estimate right after the left rail opens — layout may lag one frame.
+  if (leftOpen && measured > estimated + 8) {
+    return estimated;
+  }
+  if (measured > 0) return measured;
+  return estimated;
 }
 
 /**
- * Keeps chat_panel_ratio and right sidebar width in sync (30–80% chat share).
+ * Keeps chat_panel_ratio and right sidebar width in sync (0–95% chat share).
  * Mount once inside SidebarProvider + RightSidebarProvider.
  */
 export function ChatPanelRatioSync() {
@@ -36,16 +43,19 @@ export function ChatPanelRatioSync() {
     }
     if (syncedRef.current) return;
     const avail = workspaceAvailableWidth(leftOpen, leftWidth);
-    const ratio = readChatPanelRatio();
-    const target = chatRatioToRightWidth(
-      ratio,
-      avail,
-      RIGHT_SIDEBAR_WIDTH_MIN,
-      rightSidebarWidthMax(),
-    );
-    setWidth(target);
+    setWidth(resolveRightPanelOpenWidth(avail, RIGHT_SIDEBAR_WIDTH_MIN));
     syncedRef.current = true;
   }, [rightOpen, leftOpen, leftWidth, setWidth]);
+
+  // When the left rail opens, shrink an oversized right panel so the thread list stays visible.
+  useLayoutEffect(() => {
+    if (!rightOpen) return;
+    const avail = workspaceAvailableWidth(leftOpen, leftWidth);
+    const max = rightPanelWidthMax(avail, RIGHT_SIDEBAR_WIDTH_MIN);
+    if (rightWidth > max) {
+      setWidth(max);
+    }
+  }, [rightOpen, leftOpen, leftWidth, rightWidth, setWidth]);
 
   // Re-apply ratio when the window or left sidebar width changes.
   useEffect(() => {
@@ -58,7 +68,7 @@ export function ChatPanelRatioSync() {
           ratio,
           avail,
           RIGHT_SIDEBAR_WIDTH_MIN,
-          rightSidebarWidthMax(),
+          rightPanelWidthMax(avail, RIGHT_SIDEBAR_WIDTH_MIN),
         ),
       );
     };

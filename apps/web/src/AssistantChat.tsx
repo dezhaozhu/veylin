@@ -42,7 +42,7 @@ import { ThreadListSidebar } from '@/components/assistant-ui/threadlist-sidebar'
 import { PanelTabsProvider } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import { SettingsPanelProvider, useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { WorkspaceNavigationProvider } from '@/hooks/use-workspace-navigation';
-import { WorkspacePanelDragOverlay } from '@/components/features/workspace-panel-drag-overlay';
+import { WorkspaceViewFrame } from '@/components/features/workspace-view-frame';
 import { cn } from '@/lib/utils';
 import {
   RightSidebarProvider,
@@ -89,6 +89,7 @@ function ChatShell() {
             <ThreadListSidebar />
             <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               <div
+                data-slot="chat-workspace"
                 className={cn(
                   'flex min-h-0 min-w-0 flex-1 overflow-hidden',
                   view !== 'chat' && 'hidden',
@@ -103,22 +104,19 @@ function ChatShell() {
                 <LazyThreadRightSidebar />
               </div>
               {view === 'customize' && (
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                  <WorkspacePanelDragOverlay />
+                <WorkspaceViewFrame>
                   <LazyCustomizeWorkspace />
-                </div>
+                </WorkspaceViewFrame>
               )}
               {view === 'automate' && (
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                  <WorkspacePanelDragOverlay />
+                <WorkspaceViewFrame>
                   <LazyAutomateWorkspace />
-                </div>
+                </WorkspaceViewFrame>
               )}
               {view === 'settings' && (
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                  <WorkspacePanelDragOverlay />
+                <WorkspaceViewFrame>
                   <LazySettingsWorkspace />
-                </div>
+                </WorkspaceViewFrame>
               )}
             </div>
           </div>
