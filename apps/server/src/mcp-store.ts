@@ -99,6 +99,9 @@ export async function listActiveMcpServerNames(
   return [...new Set(candidates.filter((s) => !disabledBundled.has(s) && !disabledRemote.has(s)))];
 }
 
+/** Keywords whose value is JSON *data*, not a nested schema — must not be walked as one. */
+const DATA_VALUE_SCHEMA_KEYS = new Set(['default', 'examples', 'const', 'enum']);
+
 /**
  * Recursively rewrite JSON Schema draft-07/06-style tuple validation
  * (`items` as an array of per-position schemas) into the single-schema
@@ -107,12 +110,26 @@ export async function listActiveMcpServerNames(
  * call, not just the offending one — when any one function's parameter
  * schema fails their metaschema check, so a single legacy-style schema from
  * one remote MCP server would otherwise stall every chat run.
+ *
+ * Data-value keywords (`default`/`examples`/`const`/`enum`) are copied through
+ * unmodified — their values are JSON data, not schemas, and may legitimately
+ * contain shapes (e.g. an `items` array of literals) that look like schema
+ * keywords but must not be rewritten as such.
  */
-function sanitizeJsonSchemaNode(node: unknown): unknown {
+export function sanitizeJsonSchemaNode(node: unknown): unknown {
   if (Array.isArray(node)) return node.map(sanitizeJsonSchemaNode);
   if (!node || typeof node !== 'object') return node;
+  const obj = node as Record<string, unknown>;
+  const hasTupleItems = Array.isArray(obj.items);
   const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(obj)) {
+    if (DATA_VALUE_SCHEMA_KEYS.has(key)) {
+      out[key] = value;
+      continue;
+    }
+    // draft-07 tuple keyword, meaningless (and rejected by strict validators) once
+    // `items` above is rewritten to a single schema.
+    if (key === 'additionalItems' && hasTupleItems) continue;
     if (key === 'items' && Array.isArray(value)) {
       const serialized = value.map((item) => JSON.stringify(item));
       out.items =
@@ -133,11 +150,20 @@ interface McpToolLike {
   outputSchema?: unknown;
 }
 
-function sanitizeToolSchema(schema: unknown): void {
+function sanitizeToolSchema(schema: unknown, name: string): void {
   const jsonSchema = (
     schema as { ['~standard']?: { jsonSchema?: Record<string, unknown> } } | undefined
   )?.['~standard']?.jsonSchema;
-  if (!jsonSchema) return;
+  if (!jsonSchema) {
+    // fail-open: leave the tool schema untouched rather than throw. Most MCP tools
+    // simply have no outputSchema (mastra never wraps that one — stays `undefined`),
+    // which is expected and not worth logging; only warn when a schema *was* present
+    // but didn't have the `~standard.jsonSchema` shape we know how to sanitize.
+    if (schema != null) {
+      console.warn('[mcp] tool schema shape unrecognized, sanitize skipped:', name);
+    }
+    return;
+  }
   for (const fnKey of ['input', 'output'] as const) {
     const original = jsonSchema[fnKey];
     if (typeof original !== 'function') continue;
@@ -155,9 +181,9 @@ function sanitizeToolSchema(schema: unknown): void {
 export function sanitizeMcpToolsets<T extends Record<string, unknown>>(toolsets: T): T {
   for (const tools of Object.values(toolsets)) {
     if (!tools || typeof tools !== 'object') continue;
-    for (const tool of Object.values(tools as Record<string, McpToolLike>)) {
-      sanitizeToolSchema(tool?.inputSchema);
-      sanitizeToolSchema(tool?.outputSchema);
+    for (const [name, tool] of Object.entries(tools as Record<string, McpToolLike>)) {
+      sanitizeToolSchema(tool?.inputSchema, name);
+      sanitizeToolSchema(tool?.outputSchema, name);
     }
   }
   return toolsets;

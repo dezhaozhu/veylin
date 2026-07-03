@@ -20,9 +20,10 @@ export function resetToolContinuationAttemptTracker(
 
 /**
  * Whether the chat runtime should fire a follow-up POST to continue the run.
- * Only client-side suspend tools (ask_user_question, read_open_page) and
- * server-tool resume need this. Subagents run synchronously inside the server
- * stream now, so background-task synthesis is no longer a continuation trigger.
+ * Only client-side suspend tools (ask_user_question, read_open_page,
+ * request_3d_selection) and server-tool resume need this. Subagents run
+ * synchronously inside the server stream now, so background-task synthesis is
+ * no longer a continuation trigger.
  */
 export function canAutoContinueChat(
   messages: UIMessage[],
