@@ -543,6 +543,7 @@
     "importSuccess": "已导入 {{count}} 行",
     "exportSuccess": "已导出 {{path}}",
     "loading": "加载表格数据…",
+    "loadingCompass": "正在从 Compass 加载排产数据…",
     "loadError": "表格数据加载失败：{{error}}",
     "deleteSheet": "删除工作表 {{name}}",
     "newSheet": "新建工作表",

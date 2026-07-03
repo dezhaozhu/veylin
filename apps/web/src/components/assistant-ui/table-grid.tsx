@@ -393,6 +393,8 @@ export function TableGrid() {
   const [columnDefs, setColumnDefs] = useState<TableColumnDef[]>([]);
   const [rows, setRows] = useState<TableRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [bootstrapped, setBootstrapped] = useState(false);
+  const [compassLoading, setCompassLoading] = useState(true);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
   const [undoStack, setUndoStack] = useState<HistoryBatch[]>([]);
@@ -606,9 +608,40 @@ export function TableGrid() {
     }
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setCompassLoading(true);
+      try {
+        const res = await fetch('/api/table/load-compass-schedule', { method: 'POST' });
+        const data = await readJsonResponse<{
+          ok?: boolean;
+          sheet?: string;
+          error?: string;
+          imported?: number;
+        }>(res);
+        if (cancelled) return;
+        if (data.ok && data.sheet) {
+          setActiveSheetId(data.sheet);
+        }
+      } catch {
+        // Compass MCP unavailable — show the default empty sheet.
+      } finally {
+        if (!cancelled) {
+          setCompassLoading(false);
+          setBootstrapped(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Live sync: SSE push + row-level deltas replaces the old 4s full-sheet poll, so
   // update cost is independent of sheet size (loading the full 30k-row schedule is cheap).
   useEffect(() => {
+    if (!bootstrapped) return;
     void load(activeSheetId, true);
     const es = new EventSource('/api/table/stream');
     es.onopen = () => {
@@ -645,7 +678,7 @@ export function TableGrid() {
       }
     };
     return () => es.close();
-  }, [activeSheetId, load]);
+  }, [activeSheetId, load, bootstrapped]);
 
   // Pre-filter rows in React; AG-Grid handles sort natively via comparator
   const filteredRows = useMemo(() => applyFilters(rows, filters), [rows, filters]);
@@ -1302,10 +1335,10 @@ export function TableGrid() {
 
   const hasActiveFilters = filters.query.trim() !== '';
 
-  if (loading && rows.length === 0 && columnDefs.length === 0) {
+  if ((compassLoading || loading) && rows.length === 0 && columnDefs.length === 0) {
     return (
       <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
-        {t('table.loading')}
+        {compassLoading ? t('table.loadingCompass') : t('table.loading')}
       </div>
     );
   }

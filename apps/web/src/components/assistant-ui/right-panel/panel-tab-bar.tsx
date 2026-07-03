@@ -7,9 +7,15 @@ import {
   ComposerMenuRow,
 } from '@/components/assistant-ui/composer-menu-flyout';
 import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
-import { RightSidebarTrigger } from '@/components/ui/sidebar';
+import { RightSidebarTrigger, useRightSidebar, useSidebar } from '@/components/ui/sidebar';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
+import { readChatWorkspaceWidth, rightPanelWidthMax } from '@/lib/chat-panel-ratio';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
+import {
+  collapsedSidebarTriggerReservePx,
+  isRightPanelNearlyMaximized,
+  panelTabBarPaddingLeft,
+} from '@/lib/titlebar-layout';
 import { cn } from '@/lib/utils';
 import { startWindowDrag } from '@/lib/window-drag';
 import { PANEL_KINDS, getPanelKindDef } from './panel-registry';
@@ -33,6 +39,16 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   onOpen,
 }) => {
   const { t } = useTranslation();
+  const { open: sidebarOpen } = useSidebar();
+  const { open: rightOpen, width: rightWidth } = useRightSidebar();
+  const workspaceWidth = readChatWorkspaceWidth();
+  const rightMax = rightPanelWidthMax(workspaceWidth);
+  const showCollapsedChrome =
+    !sidebarOpen &&
+    isRightPanelNearlyMaximized(rightOpen, rightWidth, workspaceWidth, rightMax);
+  const tabBarPaddingLeft = showCollapsedChrome
+    ? collapsedSidebarTriggerReservePx()
+    : panelTabBarPaddingLeft();
   const [menuOpen, setMenuOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement>(null);
   const menuWasOpen = useRef(false);
@@ -116,7 +132,10 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
 
   return (
     <>
-      <div className="border-border bg-background flex h-8 shrink-0 items-center border-b pl-2 pr-1.5">
+      <div
+        className="border-border bg-background flex h-8 shrink-0 items-center border-b pr-1.5"
+        style={{ paddingLeft: tabBarPaddingLeft }}
+      >
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {tabs.map((tab) => {
             const active = activeId === tab.id;

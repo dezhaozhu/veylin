@@ -6,6 +6,7 @@ import {
 } from '@veylin/shared';
 import {
   isModelProviderConfigured,
+  loadModelCatalog,
   setRuntimeModelOverrides,
 } from '@veylin/runtime';
 
@@ -73,6 +74,32 @@ export async function updateModelSettings(
 export async function applyTenantModelSettings(tenantId: string): Promise<void> {
   const stored = await loadStoredSettings(tenantId);
   applyModelSettingsToRuntime(stored);
+}
+
+function envModelSettings(): ModelProviderSettingsStored | null {
+  const modelName = process.env.VEYLIN_MODEL?.trim() ?? '';
+  const requestUrl = process.env.VEYLIN_BASE_URL?.trim() ?? '';
+  const apiKey = process.env.VEYLIN_API_KEY?.trim() ?? '';
+  if (!modelName || !requestUrl || !apiKey) return null;
+  return normalize({ modelName, requestUrl, apiKey });
+}
+
+/** Seed tenant model settings from VEYLIN_MODEL / VEYLIN_BASE_URL / VEYLIN_API_KEY when DB is empty. */
+export async function seedModelSettingsFromEnvIfEmpty(tenantId: string): Promise<void> {
+  if (loadModelCatalog().length > 0) return;
+
+  const stored = await loadStoredSettings(tenantId);
+  if (isModelProviderConfigured(stored)) {
+    applyModelSettingsToRuntime(stored);
+    return;
+  }
+
+  const fromEnv = envModelSettings();
+  if (!fromEnv) return;
+
+  await upsertTenantSettings(tenantId, { modelSettings: fromEnv });
+  applyModelSettingsToRuntime(fromEnv);
+  console.info('[veylin] model settings seeded from VEYLIN_* env vars');
 }
 
 function applyModelSettingsToRuntime(settings: ModelProviderSettingsStored): void {

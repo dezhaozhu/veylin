@@ -1,21 +1,39 @@
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { SidebarTrigger } from '@/components/ui/sidebar';
+import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { useWorkspaceNavigation } from '@/hooks/use-workspace-navigation';
 import { startWindowDrag } from '@/lib/window-drag';
+import { titlebarLeadingInset, titlebarOverlayWidth } from '@/lib/titlebar-layout';
 
 /**
- * Desktop titlebar chrome (sidebar toggle, back/forward, drag region).
- * Lives outside the collapsible Sidebar panel so the toggle stays clickable
- * when the left rail is off-canvas.
+ * Desktop titlebar chrome for the left thread-list rail.
+ * When collapsed, keeps a global sidebar trigger so every workspace can reopen the rail.
  */
 export function AppTitlebarControls() {
   const { t } = useTranslation();
   const { canGoBack, canGoForward, goBack, goForward } = useWorkspaceNavigation();
+  const { open: sidebarOpen, width: sidebarWidth } = useSidebar();
+
+  if (!sidebarOpen) {
+    return (
+      <div
+        className="pointer-events-none fixed left-0 top-0 z-50 flex h-8 items-center bg-transparent"
+        style={{ paddingLeft: titlebarLeadingInset(false) }}
+      >
+        <SidebarTrigger className="pointer-events-auto size-7" />
+      </div>
+    );
+  }
 
   return (
-    <div className="pointer-events-none fixed left-0 top-0 z-50 flex h-8 w-[min(560px,calc(100vw-96px))] items-center gap-0.5 bg-transparent pl-[86px] pr-2">
+    <div
+      className="pointer-events-none fixed left-0 top-0 z-50 flex h-8 items-center gap-0.5 bg-transparent pr-2"
+      style={{
+        width: titlebarOverlayWidth(true, sidebarWidth),
+        paddingLeft: titlebarLeadingInset(true),
+      }}
+    >
       <SidebarTrigger className="pointer-events-auto size-7" />
       <Button
         type="button"

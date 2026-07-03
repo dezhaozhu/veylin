@@ -1,19 +1,34 @@
 import { useAuiState } from '@assistant-ui/react';
 import { useTranslation } from 'react-i18next';
-import { RightSidebarTrigger, useRightSidebar, useSidebar } from '@/components/ui/sidebar';
+import {
+  RightSidebarTrigger,
+  useRightSidebar,
+  useSidebar,
+} from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
+import { collapsedSidebarTriggerReservePx } from '@/lib/titlebar-layout';
 import { startWindowDrag } from '@/lib/window-drag';
 
 export function ThreadHeaderToolbar() {
   const { t } = useTranslation();
-  const { state } = useSidebar();
+  const { state, open: sidebarOpen } = useSidebar();
   const { state: rightState } = useRightSidebar();
   const title = useAuiState((s) => s.threadListItem.title);
   const displayTitle = title?.trim() || t('header.newChat');
 
   return (
-    <header className="flex h-8 shrink-0 items-center gap-0.5 bg-background px-2">
-      {state === 'expanded' && (
+    <header
+      className="flex h-8 shrink-0 items-center gap-0.5 bg-background pr-2"
+      style={{ paddingLeft: sidebarOpen ? 8 : collapsedSidebarTriggerReservePx() }}
+    >
+      {!sidebarOpen && (
+        <div
+          data-tauri-drag-region
+          className="min-w-8 flex-1 self-stretch"
+          onMouseDown={startWindowDrag}
+        />
+      )}
+      {sidebarOpen && state === 'expanded' && (
         <h1
           data-tauri-drag-region
           onMouseDown={startWindowDrag}

@@ -157,6 +157,23 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     return out;
   });
 
+  app.post('/api/table/load-compass-schedule', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    await deps.ensureMcpForTenant(ctx.tenantId);
+    const body = (req.body ?? {}) as {
+      limit?: number;
+      workshop?: string;
+      status?: string;
+      order_id?: string;
+    };
+    const result = await importCompassScheduleSheet(deps.getMcpToolsets, body);
+    if (!result.ok) {
+      reply.code(result.error.includes('not connected') ? 503 : 400);
+      return result;
+    }
+    return result;
+  });
+
   app.post('/api/table/sheets', async (req, reply) => {
     await deps.resolveContext(req.headers);
     const { name } = (req.body ?? {}) as { name?: string };

@@ -6,7 +6,7 @@ import {
   updateMcpServerRow,
 } from '@veylin/db';
 import { mcpServerConfigs } from '@veylin/mcp-servers';
-import type { McpServer, McpServerInput } from '@veylin/shared';
+import { mcpServerInputSchema, type McpServer, type McpServerInput } from '@veylin/shared';
 import { getDisabledMcpServers } from './skills-store';
 
 export type McpServerConfig = Record<string, unknown>;
@@ -59,6 +59,51 @@ export async function deleteRemoteMcpServer(tenantId: string, id: string): Promi
   return deleteMcpServerRow(tenantId, id);
 }
 
+/** Parse VEYLIN_MCP_SERVERS JSON array from env (dev/bootstrap). */
+export function parseMcpServersFromEnv(
+  raw = process.env.VEYLIN_MCP_SERVERS?.trim() ?? '',
+): McpServerInput[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      console.warn('[veylin] VEYLIN_MCP_SERVERS must be a JSON array; skipping MCP seed');
+      return [];
+    }
+    const out: McpServerInput[] = [];
+    for (const item of parsed) {
+      const result = mcpServerInputSchema.safeParse(item);
+      if (result.success) out.push(result.data);
+      else console.warn('[veylin] skipping invalid VEYLIN_MCP_SERVERS entry:', result.error.message);
+    }
+    return out;
+  } catch {
+    console.warn('[veylin] VEYLIN_MCP_SERVERS is not valid JSON; skipping MCP seed');
+    return [];
+  }
+}
+
+/** Insert env-declared MCP servers when missing from DB (by name). */
+export async function seedMcpServersFromEnvIfMissing(tenantId: string): Promise<number> {
+  const fromEnv = parseMcpServersFromEnv();
+  if (fromEnv.length === 0) return 0;
+
+  const existing = await listRemoteMcpServers(tenantId);
+  const existingNames = new Set(existing.map((s) => s.name));
+  let seeded = 0;
+  for (const input of fromEnv) {
+    const name = input.name.trim();
+    if (existingNames.has(name)) continue;
+    await createRemoteMcpServer(tenantId, input);
+    existingNames.add(name);
+    seeded += 1;
+  }
+  if (seeded > 0) {
+    console.info(`[veylin] seeded ${seeded} MCP server(s) from VEYLIN_MCP_SERVERS`);
+  }
+  return seeded;
+}
+
 export async function buildMcpServerConfigs(tenantId: string): Promise<McpServerConfig> {
   const remote = await listRemoteMcpServers(tenantId);
   const active = new Set(await listActiveMcpServerNames(tenantId));
@@ -78,9 +123,15 @@ export async function buildMcpServerConfigs(tenantId: string): Promise<McpServer
   return configs;
 }
 
-export async function createMcpClient(tenantId: string): Promise<MCPClient> {
+export async function createMcpClient(
+  tenantId: string,
+  scope: 'server' | 'run' = 'server',
+): Promise<MCPClient> {
   const servers = await buildMcpServerConfigs(tenantId);
-  return new MCPClient({ servers: servers as never });
+  return new MCPClient({
+    id: `veylin-mcp-${scope}-${tenantId}`,
+    servers: servers as never,
+  });
 }
 
 export function listBundledMcpServerNames(): string[] {
