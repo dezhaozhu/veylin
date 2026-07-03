@@ -16,6 +16,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -128,6 +129,13 @@ const NATIVE_PRUNE = {
 
 function dirSizeMb(root) {
   try {
+    if (process.platform === 'win32') {
+      let bytes = 0;
+      walkFiles(root, (path) => {
+        bytes += statSync(path).size;
+      });
+      return bytes / (1024 * 1024);
+    }
     const out = execSync(`du -sk ${JSON.stringify(root)}`, { encoding: 'utf8' });
     return Number.parseInt(out.split(/\s+/)[0], 10) / 1024;
   } catch {
@@ -559,7 +567,11 @@ async function embedNodeRuntime(platform, destRoot) {
     await downloadFileWithRetry(url, archivePath);
 
     if (isWin) {
-      execSync(`unzip -q -o "${archivePath}" -d "${cacheRoot}"`, { stdio: 'inherit' });
+      execSync(
+        `powershell -NoProfile -Command "Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${cacheRoot.replace(/'/g, "''")}' -Force"`,
+        { stdio: 'inherit' },
+      );
+      mkdirSync(dirname(cachedNode), { recursive: true });
       cpSync(join(cacheRoot, archiveName, 'node.exe'), cachedNode);
     } else {
       execSync(`tar -xzf "${archivePath}" -C "${cacheRoot}" --strip-components=1`, { stdio: 'inherit' });

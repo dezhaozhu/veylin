@@ -50,6 +50,25 @@
     "stopGenerating": "Stop generating",
     "assistantWorking": "Assistant is working"
   },
+  "reasoning": {
+    "thought": "Thought",
+    "thoughtDuration": "Thought, {{seconds}} seconds"
+  },
+  "toolSearch": {
+    "searching": "Searching tools for \"{{query}}\"…",
+    "title": "Tool search: {{query}}",
+    "noResults": "No tools matched \"{{query}}\"",
+    "noResultsHint": "Check that MCP servers are connected and enabled, or try different keywords."
+  },
+  "toolGroup": {
+    "readFiles": "Read {{count}} file(s)",
+    "editedFiles": "Edited {{count}} file(s)",
+    "exploredFiles": "Explored {{count}} file(s)",
+    "ranCommands": "Ran {{count}} command(s)",
+    "searchedTools": "Searched tools {{count}} time(s)",
+    "toolCalls": "{{count}} tool call(s)",
+    "summaryJoin": ", "
+  },
   "mention": {
     "title": "Add context",
     "close": "Close menu",
@@ -544,6 +563,8 @@
     "exportSuccess": "Exported to {{path}}",
     "loading": "Loading table data…",
     "loadingCompass": "Loading schedule data from Compass…",
+    "compassUnavailable": "Compass schedule not loaded (MCP disconnected or unavailable); showing default empty sheet",
+    "sseDisconnected": "Live table sync disconnected; data may be stale",
     "loadError": "Failed to load table data: {{error}}",
     "deleteSheet": "Delete sheet {{name}}",
     "newSheet": "New sheet",
@@ -591,6 +612,10 @@
     "indexedSize": "{{size}} indexed",
     "graphEmptyTitle": "No graph data yet",
     "graphEmptyDesc": "Entities and relations are extracted automatically after uploading documents, forming a browsable knowledge graph.",
+    "graphEmptyDescNoModel": "Graph extraction requires a chat LLM configured under Settings → Models (API key). Re-upload documents after configuring.",
+    "graphEmptyDescHasDocs": "Documents are uploaded but no entities were extracted. Confirm the chat model works and try richer documents.",
+    "refreshFailed": "Knowledge base refresh failed: {{message}}",
+    "confirmDelete": "Delete document \"{{filename}}\"?",
     "graphStats": "Graph stats",
     "entityTypes": "Entity types",
     "selectedEntity": "Selected entity",

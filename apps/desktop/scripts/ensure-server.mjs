@@ -137,12 +137,14 @@ async function main() {
 
   if (!sidecarBundleReady()) {
     const serverRoot = resolve(repoRoot, 'apps/server');
+    const tsx = resolve(repoRoot, `node_modules/.bin/tsx${process.platform === 'win32' ? '.cmd' : ''}`);
     console.log(`[ensure-server] bundled sidecar incomplete — starting tsx server on :${port}...`);
-    const child = spawn('npx', ['tsx', 'src/server.ts'], {
+    const child = spawn(tsx, ['src/server.ts'], {
       cwd: serverRoot,
       env: serverEnv,
       stdio: 'ignore',
       detached: true,
+      shell: process.platform === 'win32',
     });
     child.unref();
     await waitForHealth();

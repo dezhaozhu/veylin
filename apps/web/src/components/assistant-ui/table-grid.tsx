@@ -395,6 +395,7 @@ export function TableGrid() {
   const [loading, setLoading] = useState(true);
   const [bootstrapped, setBootstrapped] = useState(false);
   const [compassLoading, setCompassLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
   const [undoStack, setUndoStack] = useState<HistoryBatch[]>([]);
@@ -411,6 +412,7 @@ export function TableGrid() {
   const selectedColumnKeyRef = useRef<string | null>(null);
   // Ref mirror of rows — used in async paste handler to avoid stale closure
   const rowsRef = useRef<TableRow[]>(rows);
+  const sseErrorNotified = useRef(false);
 
   useEffect(() => {
     rowsRef.current = rows;
@@ -506,19 +508,23 @@ export function TableGrid() {
         try {
           const data = await fetchSchedule(sheetId);
           applyPayload(data, initial);
+          if (initial) setLoadError(null);
           return;
-        } catch {
+        } catch (err) {
           if (i < attempts - 1) {
             await sleep(400 * (i + 1));
             continue;
           }
           if (initial) {
+            const message = err instanceof Error ? err.message : t('table.loadFailedGeneric');
+            setLoadError(message);
+            showToast(t('table.loadError', { error: message }), 'error');
             applyPayload(emptySchedulePayload(sheetId), true);
           }
         }
       }
     },
-    [applyPayload],
+    [applyPayload, showToast, t],
   );
 
   const switchSheet = useCallback(
@@ -623,9 +629,13 @@ export function TableGrid() {
         if (cancelled) return;
         if (data.ok && data.sheet) {
           setActiveSheetId(data.sheet);
+        } else if (!data.ok) {
+          showToast(data.error ?? t('table.compassUnavailable'), 'error');
         }
       } catch {
-        // Compass MCP unavailable — show the default empty sheet.
+        if (!cancelled) {
+          showToast(t('table.compassUnavailable'), 'error');
+        }
       } finally {
         if (!cancelled) {
           setCompassLoading(false);
@@ -636,7 +646,7 @@ export function TableGrid() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [showToast, t]);
 
   // Live sync: SSE push + row-level deltas replaces the old 4s full-sheet poll, so
   // update cost is independent of sheet size (loading the full 30k-row schedule is cheap).
@@ -645,6 +655,7 @@ export function TableGrid() {
     void load(activeSheetId, true);
     const es = new EventSource('/api/table/stream');
     es.onopen = () => {
+      sseErrorNotified.current = false;
       // (re)connected — one full resync catches anything missed while disconnected.
       void load(activeSheetId, false);
     };
@@ -677,8 +688,13 @@ export function TableGrid() {
         void load(activeSheetId, false); // bulk import / column change — full refetch
       }
     };
+    es.onerror = () => {
+      if (sseErrorNotified.current) return;
+      sseErrorNotified.current = true;
+      showToast(t('table.sseDisconnected'), 'error');
+    };
     return () => es.close();
-  }, [activeSheetId, load, bootstrapped]);
+  }, [activeSheetId, load, bootstrapped, showToast, t]);
 
   // Pre-filter rows in React; AG-Grid handles sort natively via comparator
   const filteredRows = useMemo(() => applyFilters(rows, filters), [rows, filters]);
@@ -1345,6 +1361,14 @@ export function TableGrid() {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
+      {loadError ? (
+        <div
+          role="alert"
+          className="border-destructive/30 bg-destructive/10 text-destructive shrink-0 border-b px-3 py-2 text-xs"
+        >
+          {t('table.loadError', { error: loadError })}
+        </div>
+      ) : null}
       {toast ? (
         <div
           role="status"

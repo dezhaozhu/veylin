@@ -1,4 +1,6 @@
-const TOOL_VERB: Record<string, 'read' | 'edited' | 'explored' | 'ran'> = {
+import i18n from '@/i18n';
+
+const TOOL_VERB: Record<string, 'read' | 'edited' | 'explored' | 'ran' | 'searched'> = {
   read_file: 'read',
   Read: 'read',
   read: 'read',
@@ -14,27 +16,33 @@ const TOOL_VERB: Record<string, 'read' | 'edited' | 'explored' | 'ran'> = {
   codebase_search: 'explored',
   bash: 'ran',
   shell: 'ran',
+  tool_search: 'searched',
 };
 
-function labelForVerb(verb: 'read' | 'edited' | 'explored' | 'ran', count: number): string {
+function labelForVerb(
+  verb: 'read' | 'edited' | 'explored' | 'ran' | 'searched',
+  count: number,
+): string {
   switch (verb) {
     case 'read':
-      return `Read ${count} file${count === 1 ? '' : 's'}`;
+      return i18n.t('toolGroup.readFiles', { count });
     case 'edited':
-      return `Edited ${count} file${count === 1 ? '' : 's'}`;
+      return i18n.t('toolGroup.editedFiles', { count });
     case 'explored':
-      return `Explored ${count} file${count === 1 ? '' : 's'}`;
+      return i18n.t('toolGroup.exploredFiles', { count });
     case 'ran':
-      return `Ran ${count} command${count === 1 ? '' : 's'}`;
+      return i18n.t('toolGroup.ranCommands', { count });
+    case 'searched':
+      return i18n.t('toolGroup.searchedTools', { count });
   }
 }
 
 /** Collapsed summary line for a tool-call group (Cursor / agent-style). */
 export function summarizeToolCalls(toolNames: string[]): string {
-  if (toolNames.length === 0) return '0 tool calls';
-  if (toolNames.length === 1) return '1 tool call';
+  if (toolNames.length === 0) return i18n.t('toolGroup.toolCalls', { count: 0 });
+  if (toolNames.length === 1) return i18n.t('toolGroup.toolCalls', { count: 1 });
 
-  const buckets = new Map<'read' | 'edited' | 'explored' | 'ran', number>();
+  const buckets = new Map<'read' | 'edited' | 'explored' | 'ran' | 'searched', number>();
   let unknown = 0;
 
   for (const name of toolNames) {
@@ -47,13 +55,15 @@ export function summarizeToolCalls(toolNames: string[]): string {
   }
 
   const parts: string[] = [];
-  for (const verb of ['edited', 'explored', 'read', 'ran'] as const) {
+  for (const verb of ['edited', 'explored', 'read', 'ran', 'searched'] as const) {
     const count = buckets.get(verb);
     if (count) parts.push(labelForVerb(verb, count));
   }
   if (unknown > 0) {
-    parts.push(`${unknown} tool call${unknown === 1 ? '' : 's'}`);
+    parts.push(i18n.t('toolGroup.toolCalls', { count: unknown }));
   }
 
-  return parts.length > 0 ? parts.join(', ') : `${toolNames.length} tool calls`;
+  return parts.length > 0
+    ? parts.join(i18n.t('toolGroup.summaryJoin'))
+    : i18n.t('toolGroup.toolCalls', { count: toolNames.length });
 }

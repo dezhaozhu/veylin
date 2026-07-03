@@ -218,6 +218,11 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
       </div>
 
       {error && <p className="text-destructive text-xs whitespace-pre-wrap">{error}</p>}
+      {!isTauri() ? (
+        <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-xs leading-relaxed">
+          {t('web.requiresDesktopOpen')}
+        </p>
+      ) : null}
       <div
         className="border-border bg-muted/20 relative min-h-0 flex-1 overflow-hidden rounded-lg border"
         aria-label={t('panels.web.label')}
