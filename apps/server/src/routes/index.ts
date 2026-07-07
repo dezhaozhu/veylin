@@ -13,6 +13,7 @@ import { registerThreadsRoutes } from './threads.js';
 import { registerChatRoutes } from './chat.js';
 import { registerRagRoutes } from './rag.js';
 import { registerViewer3dRoutes } from './viewer3d.js';
+import { registerMcpAppsRoutes } from './mcp-apps.js';
 
 export async function registerApiRoutes(app: FastifyInstance, deps: ServerDeps): Promise<void> {
   registerHealthRoutes(app, deps);
@@ -28,4 +29,5 @@ export async function registerApiRoutes(app: FastifyInstance, deps: ServerDeps):
   registerChatRoutes(app, deps);
   registerRagRoutes(app, deps);
   registerViewer3dRoutes(app, deps);
+  registerMcpAppsRoutes(app, deps);
 }
