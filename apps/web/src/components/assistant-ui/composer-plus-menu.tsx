@@ -8,7 +8,8 @@ import {
   PlugIcon,
   PlusIcon,
 } from 'lucide-react';
-import { useCallback, useState, type FC } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type FC, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { useAui, useAuiState } from '@assistant-ui/store';
 import { applyCompactToThread } from '@/lib/compact-context';
 import { getChatSettings } from '@/lib/chat-settings';
@@ -32,15 +33,50 @@ import {
   usePlanMode,
 } from '@/lib/use-composer-settings';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
+import type { MenuAnchor } from '@/components/assistant-ui/composer-mention/composer-menu-shared';
 
 type Submenu = 'skills' | 'mcp' | null;
 
+function usePlusMenuAnchor(open: boolean, anchorRef: RefObject<HTMLElement | null>) {
+  const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setAnchor(null);
+      return;
+    }
+
+    const updateAnchor = () => {
+      const el = anchorRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setAnchor({
+        left: rect.left,
+        width: Math.max(240, rect.width),
+        bottom: window.innerHeight - rect.top + 8,
+      });
+    };
+
+    updateAnchor();
+    window.addEventListener('resize', updateAnchor);
+    window.addEventListener('scroll', updateAnchor, true);
+    return () => {
+      window.removeEventListener('resize', updateAnchor);
+      window.removeEventListener('scroll', updateAnchor, true);
+    };
+  }, [open, anchorRef]);
+
+  return anchor;
+}
+
 export const ComposerPlusMenu: FC = () => {
+  const anchorRef = useRef<HTMLDivElement>(null);
   const aui = useAui();
   const threadId = useAuiState(
     (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
   );
   const [open, setOpen] = useState(false);
+  const anchor = usePlusMenuAnchor(open, anchorRef);
   const [submenu, setSubmenu] = useState<Submenu>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [mcpSearch, setMcpSearch] = useState('');
@@ -130,7 +166,7 @@ export const ComposerPlusMenu: FC = () => {
   const mcpServers = context?.mcpServers ?? [];
 
   return (
-    <div className="relative shrink-0">
+    <div ref={anchorRef} className="relative shrink-0">
       <TooltipIconButton
         tooltip="Add context"
         side="bottom"
@@ -145,86 +181,94 @@ export const ComposerPlusMenu: FC = () => {
         <PlusIcon className="size-4.5 stroke-[1.5px]" />
       </TooltipIconButton>
 
-      {open && (
-        <>
-          <DismissibleBackdrop ariaLabel="Close menu" onClose={close} className="fixed inset-0 z-40" />
-          <div
-            className="absolute bottom-full left-0 z-50 mb-2"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <ComposerMenuPanel className="min-w-[240px]">
-              <div className="px-1 pb-1">
-                <input
-                  type="search"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Add context, tools..."
-                  className="border-input bg-background placeholder:text-muted-foreground h-8 w-full rounded-md border px-2.5 text-xs outline-none"
+      {open &&
+        anchor &&
+        createPortal(
+          <>
+            <DismissibleBackdrop ariaLabel="Close menu" onClose={close} />
+            <div
+              className="fixed z-[201]"
+              style={{
+                left: anchor.left,
+                width: anchor.width,
+                bottom: anchor.bottom,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ComposerMenuPanel className="min-w-[240px]">
+                <div className="px-1 pb-1">
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Add context, tools..."
+                    className="border-input bg-background placeholder:text-muted-foreground h-8 w-full rounded-md border px-2.5 text-xs outline-none"
+                  />
+                </div>
+
+                <ComposerMenuRow
+                  icon={<NotebookPenIcon className="size-4" />}
+                  label="Plan"
+                  pressed={planMode}
+                  onClick={() => {
+                    togglePlanMode();
+                    close();
+                  }}
                 />
-              </div>
+                <ComposerMenuSeparator />
 
-              <ComposerMenuRow
-                icon={<NotebookPenIcon className="size-4" />}
-                label="Plan"
-                pressed={planMode}
-                onClick={() => {
-                  togglePlanMode();
-                  close();
-                }}
-              />
-              <ComposerMenuSeparator />
-
-              <ComposerMenuRow
-                icon={<ImageIcon className="size-4" />}
-                label="Image"
-                onClick={openImagePicker}
-              />
-              <ComposerMenuRow
-                icon={<FileTextIcon className="size-4" />}
-                label="Document"
-                onClick={openDocumentPicker}
-              />
-
-              <ComposerMenuFlyoutItem
-                icon={<BookOpenIcon className="size-4" />}
-                label="Skills"
-                active={submenu === 'skills'}
-                onOpen={() => setSubmenu('skills')}
-              >
-                <ComposerSkillsFlyout
-                  skills={skills}
-                  query={searchQuery}
-                  onSelect={selectSkill}
+                <ComposerMenuRow
+                  icon={<ImageIcon className="size-4" />}
+                  label="Image"
+                  onClick={openImagePicker}
                 />
-              </ComposerMenuFlyoutItem>
-
-              <ComposerMenuFlyoutItem
-                icon={<PlugIcon className="size-4" />}
-                label="MCP Servers"
-                active={submenu === 'mcp'}
-                onOpen={() => setSubmenu('mcp')}
-              >
-                <ComposerMcpFlyout
-                  servers={mcpServers}
-                  query={mcpSearch}
-                  onQueryChange={setMcpSearch}
-                  isEnabled={isServerEnabled}
-                  onToggle={setServerEnabled}
+                <ComposerMenuRow
+                  icon={<FileTextIcon className="size-4" />}
+                  label="Document"
+                  onClick={openDocumentPicker}
                 />
-              </ComposerMenuFlyoutItem>
 
-              <ComposerMenuRow
-                icon={<Minimize2Icon className="size-4" />}
-                label={compacting ? 'Compressing…' : 'Compact context'}
-                onClick={() => {
-                  if (!threadId || compacting) return;
-                  void compactContext();
-                }}
-              />
-            </ComposerMenuPanel>
-          </div>
-        </>
-      )}
+                <ComposerMenuFlyoutItem
+                  icon={<BookOpenIcon className="size-4" />}
+                  label="Skills"
+                  active={submenu === 'skills'}
+                  onOpen={() => setSubmenu('skills')}
+                >
+                  <ComposerSkillsFlyout
+                    skills={skills}
+                    query={searchQuery}
+                    onSelect={selectSkill}
+                  />
+                </ComposerMenuFlyoutItem>
+
+                <ComposerMenuFlyoutItem
+                  icon={<PlugIcon className="size-4" />}
+                  label="MCP Servers"
+                  active={submenu === 'mcp'}
+                  onOpen={() => setSubmenu('mcp')}
+                >
+                  <ComposerMcpFlyout
+                    servers={mcpServers}
+                    query={mcpSearch}
+                    onQueryChange={setMcpSearch}
+                    isEnabled={isServerEnabled}
+                    onToggle={setServerEnabled}
+                  />
+                </ComposerMenuFlyoutItem>
+
+                <ComposerMenuRow
+                  icon={<Minimize2Icon className="size-4" />}
+                  label={compacting ? 'Compressing…' : 'Compact context'}
+                  onClick={() => {
+                    if (!threadId || compacting) return;
+                    void compactContext();
+                  }}
+                />
+              </ComposerMenuPanel>
+            </div>
+          </>,
+          document.body,
+        )}
     </div>
   );
 };
