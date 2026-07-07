@@ -11,7 +11,8 @@
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@caliper/viewer": ["./src/shims/caliper-viewer.tsx"]
     }
   },
   "include": ["src"],

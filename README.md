@@ -30,8 +30,13 @@ Veylin is a ground-up redesign of a general-purpose agent platform. It runs on a
 ```bash
 cp .env.example .env          # add your model key; data goes to ./data by default
 npm install
-npm run dev                   # server :8787 + web :5174 (data initializes itself, no Docker)
+npm run dev                   # waits for server /health, then web (:8787 + :5174)
+npm run dev:stop              # free ports 8787 / 5174
 ```
+
+`npm run dev` sets `VEYLIN_LAZY_MCP_BOOT=1` (background MCP) and `VEYLIN_HOT_RELOAD_AGENTS=1` (reload agent.yaml on chat). Desktop builds and `npm run dev:server` alone are unchanged.
+
+Slow startup? Set `VEYLIN_PROFILE_STARTUP=1` (server) and `VITE_VEYLIN_PROFILE_STARTUP=1` (web).
 
 The data directory is set by `VEYLIN_DATA_DIR` (default `~/.veylin`); on first run it creates the SurrealDB schema and seed data automatically. In desktop mode, `VEYLIN_DESKTOP_AUTH=1` enables single-tenant, no-login access.
 

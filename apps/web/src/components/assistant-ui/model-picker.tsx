@@ -70,16 +70,16 @@ export function ModelPicker({ className }: { className?: string }) {
   }
 
   return (
-    <div className={cn('relative', className)}>
+    <div className={cn('relative min-w-0', className)}>
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        className="text-muted-foreground h-7 gap-0.5 whitespace-nowrap rounded-full px-2 text-xs font-normal"
+        className="text-muted-foreground h-7 min-w-0 max-w-[5.5rem] gap-0.5 rounded-full px-2 text-xs font-normal sm:max-w-[7.5rem]"
         onClick={() => setOpen((o) => !o)}
       >
-        {current.label}
-        <ChevronDownIcon className="size-3 opacity-60" />
+        <span className="truncate">{current.label}</span>
+        <ChevronDownIcon className="size-3 shrink-0 opacity-60" />
       </Button>
       {open && (
         <>

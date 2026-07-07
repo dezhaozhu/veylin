@@ -11,6 +11,14 @@ export function useSession() {
 
   useEffect(() => {
     let cancelled = false;
+
+    // Desktop mode has no /api/auth routes — skip the round-trip (404 spam in logs).
+    if (import.meta.env.VITE_VEYLIN_DESKTOP_AUTH === '1') {
+      setUser({ name: 'Dev User' });
+      setLoading(false);
+      return;
+    }
+
     fetch('/api/auth/get-session', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { user?: { name?: string; email?: string } } | null) => {

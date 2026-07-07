@@ -18,8 +18,8 @@ If you deploy Veylin in any **shared or hosted** environment:
 - Set `VEYLIN_DESKTOP_AUTH=0`.
 - Set a strong, random `AUTH_SECRET`. When `AUTH_SECRET` is unset the server
   falls back to no-auth mode, which is only safe on a trusted localhost.
-- Put the server behind TLS and tighten CORS (`origin` is permissive by
-  default for local development).
+- Put the server behind TLS and tighten CORS when `VEYLIN_DESKTOP_AUTH=0`
+  (`CORS_ALLOWED_ORIGINS=http://localhost:5174,...`; desktop mode keeps permissive CORS).
 
 ## Data & secrets
 

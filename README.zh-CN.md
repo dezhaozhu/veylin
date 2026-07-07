@@ -33,8 +33,13 @@ Tauri 壳 (apps/desktop)
 ```bash
 cp .env.example .env          # 填模型 key；数据默认落 ./data
 npm install
-npm run dev                   # server :8787 + web :5174（数据自动初始化，无需 Docker）
+npm run dev                   # 先等 server /health，再起 web（:8787 + :5174）
+npm run dev:stop              # 释放 8787 / 5174 端口
 ```
+
+`npm run dev` 默认启用 `VEYLIN_LAZY_MCP_BOOT=1`（MCP 后台连接）与 `VEYLIN_HOT_RELOAD_AGENTS=1`（改 agent.yaml 后 chat 自动生效）；桌面打包与 `npm run dev:server` 单独启动不受影响。
+
+排查慢启动：服务端 `VEYLIN_PROFILE_STARTUP=1`，前端 `VITE_VEYLIN_PROFILE_STARTUP=1`。
 
 数据目录由 `VEYLIN_DATA_DIR` 指定（默认 `~/.veylin`），首启自动建 SurrealDB schema 与种子数据。桌面模式 `VEYLIN_DESKTOP_AUTH=1` 单租户免登录。
 

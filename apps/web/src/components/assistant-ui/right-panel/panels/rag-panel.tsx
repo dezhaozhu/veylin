@@ -348,9 +348,13 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
 
   useEffect(() => {
     void refresh({ attempts: 6 });
-    const timer = setInterval(() => void refresh(), 8000);
+    const hasPendingWork =
+      embeddingNotice != null ||
+      documents.some((doc) => doc.status === 'processing' || doc.status === 'pending');
+    const pollMs = hasPendingWork ? 8000 : 30000;
+    const timer = setInterval(() => void refresh(), pollMs);
     return () => clearInterval(timer);
-  }, [threadId]);
+  }, [threadId, embeddingNotice, documents]);
 
   useEffect(() => {
     if (highlightRefIndex == null) return;

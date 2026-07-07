@@ -43,6 +43,7 @@
     "dev:web": "npm run -w @veylin/web dev",
     "dev:desktop": "npm run -w @veylin/desktop dev",
     "dev": "node scripts/dev.mjs",
+    "dev:stop": "node scripts/dev-stop.mjs",
     "build": "npm run build --workspaces --if-present",
     "build:desktop": "npm run -w @veylin/desktop build",
     "typecheck": "tsc -b && npm run -w @veylin/web typecheck",

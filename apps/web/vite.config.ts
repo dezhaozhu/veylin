@@ -17,6 +17,9 @@ export default defineConfig({
       'secure-json-parse': fileURLToPath(
         new URL('./src/shims/secure-json-parse.ts', import.meta.url),
       ),
+      '@caliper/viewer': fileURLToPath(
+        new URL('./src/shims/caliper-viewer.tsx', import.meta.url),
+      ),
     },
   },
   optimizeDeps: {
