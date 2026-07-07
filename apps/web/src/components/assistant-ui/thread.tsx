@@ -6,6 +6,7 @@ import {
   ReasoningGroupBlock,
 } from "@/components/assistant-ui/reasoning";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
+import { McpAppToolFallback } from "@/components/assistant-ui/mcp-app-tool";
 import { ToolGroupBlock } from "@/components/assistant-ui/tool-group";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { ComposerContextUsage } from "@/components/assistant-ui/composer-context-usage";
@@ -343,7 +344,7 @@ const MessageError: FC = () => {
 const AssistantMessage: FC = () => {
   const { t } = useTranslation();
   const {
-    ToolFallback: ToolFallbackComponent = ToolFallback,
+    ToolFallback: ToolFallbackComponent = McpAppToolFallback,
     ToolGroup,
     ReasoningGroup,
   } = useContext(ThreadComponentsContext);
