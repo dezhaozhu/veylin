@@ -38,6 +38,7 @@ import {
   activateSkill,
   ensureThreadState,
   ephemeralThreadState,
+  ensureThreadTitleIfMissing,
   getSkillMemoryBlock,
   getThreadState,
   type ThreadStateRow,
@@ -173,6 +174,16 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       return reply.status(400).send({
         error: 'model_not_configured',
         message: 'Model API key is not configured. Open Settings -> Models and add your own API key.',
+      });
+    }
+
+    if (threadStoreOk && !threadRow.title?.trim()) {
+      void ensureThreadTitleIfMissing(threadId, messages, {
+        memory: deps.runtime.memory,
+        resourceId: ctx.userId,
+        modelKey,
+      }).catch((err) => {
+        app.log.warn({ err, threadId }, 'thread title generation failed');
       });
     }
 

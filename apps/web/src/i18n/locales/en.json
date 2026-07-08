@@ -46,6 +46,8 @@
     "composerPlaceholder": "Ask anything…",
     "composerAriaLabel": "Message input",
     "scrollToBottom": "Scroll to bottom",
+    "questionRailLabel": "Conversation questions",
+    "selectionAsk": "Ask",
     "sendMessage": "Send message",
     "stopGenerating": "Stop generating",
     "assistantWorking": "Assistant is working"

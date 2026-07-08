@@ -17,8 +17,9 @@ type MessageLike = {
 /** Extract first user message text from assistant-ui ThreadMessage[] or UI messages. */
 export function firstUserText(messages: readonly unknown[]): string {
   for (const raw of messages) {
-    const m = raw as MessageLike;
+    const m = raw as MessageLike & { content?: string };
     if (m.role !== 'user') continue;
+    if (typeof m.content === 'string' && m.content.trim()) return m.content.trim();
     if (Array.isArray(m.content)) {
       const text = m.content.find((p) => p.type === 'text' && p.text)?.text;
       if (text?.trim()) return text.trim();

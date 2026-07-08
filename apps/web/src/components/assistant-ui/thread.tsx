@@ -26,6 +26,8 @@ import {
   NetworkReconnectThreadFallback,
 } from "@/components/assistant-ui/network-reconnect-inline";
 import { ModelPicker } from "@/components/assistant-ui/model-picker";
+import { ThreadQuestionRail } from "@/components/assistant-ui/thread-question-rail";
+import { ThreadSelectionAskToolbar } from "@/components/assistant-ui/thread-selection-ask-toolbar";
 import { MessageTimestamp } from "@/components/assistant-ui/message-timestamp";
 import { MessageKnowledgeCitations } from "@/components/assistant-ui/message-knowledge-citations";
 import { Button } from "@/components/ui/button";
@@ -196,6 +198,8 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
             <ComposerStatusBar />
           </ThreadPrimitive.ViewportFooter>
         </div>
+        <ThreadQuestionRail />
+        <ThreadSelectionAskToolbar />
       </ThreadPrimitive.Viewport>
     </ThreadPrimitive.Root>
   );
@@ -477,6 +481,7 @@ const AssistantActionBar: FC = () => {
 };
 
 const UserMessage: FC = () => {
+  const messageId = useAuiState((s) => s.message.id);
   const text = useAuiState((s) =>
     s.message.content
       .filter((part): part is { type: "text"; text: string } => part.type === "text")
@@ -494,7 +499,8 @@ const UserMessage: FC = () => {
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
-      className="fade-in slide-in-from-bottom-1 animate-in flex flex-col items-end gap-2 px-2 duration-150 [contain-intrinsic-size:auto_60px] [content-visibility:auto]"
+      data-question-id={messageId}
+      className="fade-in slide-in-from-bottom-1 animate-in flex scroll-mt-24 flex-col items-end gap-2 px-2 duration-150 [contain-intrinsic-size:auto_60px] [content-visibility:auto]"
       data-role="user"
     >
       <UserMessageChipsRow />
@@ -503,6 +509,7 @@ const UserMessage: FC = () => {
         <div className="aui-user-message-content-wrapper flex max-w-[85%] flex-col items-end">
           <div className="relative w-max max-w-full">
             <div
+              data-slot="aui_user-message-content"
               className={cn(
                 "aui-user-message-content bg-muted text-foreground rounded-3xl px-4 py-2 wrap-break-word",
                 !hasDisplayText && "min-h-[2.25rem]",

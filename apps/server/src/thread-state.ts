@@ -13,10 +13,17 @@ import { isDesktopAuth } from './auth';
 import {
   mergeSkillNamesIntoWorkingMemory,
   replaceThreadMessages,
+  mastraMessagesToUi,
   type ThreadIdentity,
   type ThreadSnapshot,
   type UiMessage,
 } from './message-sync';
+import {
+  firstUserText,
+  generateThreadTitle,
+  truncateTitle,
+} from './thread-title.js';
+import type { ModelKey } from '@veylin/runtime';
 
 const WM_TEMPLATE = DEFAULT_WORKING_MEMORY_TEMPLATE;
 
@@ -325,6 +332,57 @@ export async function setThreadTitle(threadId: string, title: string): Promise<v
   await updateThreadState(threadId, { title: title.trim() || null });
 }
 
+async function deriveThreadTitleFromMemory(
+  memory: Memory,
+  threadId: string,
+  resourceId: string,
+): Promise<string | null> {
+  try {
+    const recalled = await memory.recall({ threadId, resourceId, perPage: false });
+    const ui = mastraMessagesToUi(recalled.messages ?? []);
+    const text = firstUserText(ui);
+    return text ? truncateTitle(text) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Set a sidebar title on first chat turn; backfills from memory when needed. */
+export async function ensureThreadTitleIfMissing(
+  threadId: string,
+  requestMessages: readonly unknown[],
+  options?: {
+    memory?: Memory;
+    resourceId?: string;
+    modelKey?: ModelKey;
+  },
+): Promise<string | null> {
+  const existing = await getThreadState(threadId);
+  if (existing?.title?.trim()) return existing.title;
+
+  let source: readonly unknown[] = requestMessages;
+  if (!firstUserText(source) && options?.memory && options.resourceId) {
+    try {
+      const recalled = await options.memory.recall({
+        threadId,
+        resourceId: options.resourceId,
+        perPage: false,
+      });
+      source = mastraMessagesToUi(recalled.messages ?? []);
+    } catch {
+      // ignore recall failures — fall through to request messages
+    }
+  }
+
+  const prompt = firstUserText(source);
+  if (!prompt) return null;
+
+  const title = await generateThreadTitle(source, options?.modelKey ?? 'default');
+  const resolved = title === 'New Chat' ? truncateTitle(prompt) : title;
+  await setThreadTitle(threadId, resolved);
+  return resolved;
+}
+
 export async function touchThreadActivity(threadId: string): Promise<void> {
   await updateThreadState(threadId, {});
 }
@@ -339,18 +397,31 @@ export type ThreadListEntry = {
 export async function listThreadsForResource(
   tenantId: string,
   resourceId: string,
-  _memory?: Memory,
+  memory?: Memory,
 ): Promise<ThreadListEntry[]> {
   const rows = (await listThreadStatesForResource(tenantId, resourceId)).filter((row) =>
     isSidebarChatThreadId(row.threadId),
   );
 
-  return rows.map((row) => ({
-    remoteId: row.threadId,
-    title: row.title ?? undefined,
-    lastMessageAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
-    status: 'regular' as const,
-  }));
+  return Promise.all(
+    rows.map(async (row) => {
+      let title = row.title?.trim() || undefined;
+      if (!title && memory) {
+        const derived = await deriveThreadTitleFromMemory(memory, row.threadId, resourceId);
+        if (derived) {
+          title = derived;
+          await setThreadTitle(row.threadId, derived);
+        }
+      }
+
+      return {
+        remoteId: row.threadId,
+        title,
+        lastMessageAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
+        status: 'regular' as const,
+      };
+    }),
+  );
 }
 
 export async function deleteThreadState(
