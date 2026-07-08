@@ -50,7 +50,8 @@ type TableEvent =
   | { type: 'rowsDelete'; sheet: string; keys: string[] }
   | { type: 'sheetReplace'; sheet: string }
   | { type: 'schemaChange'; sheet: string }
-  | { type: 'sheetsChange' };
+  | { type: 'sheetsChange' }
+  | { type: 'chart'; sheet: string; columns: string[]; chartType: string; aggFunc?: string };
 
 // ── 二三级 master-detail (Pro / AG-Grid Enterprise) ──────────────────────────
 // The schedule sheet's 二级 rows expand to their 三级 (设备级) ops, fetched on
@@ -413,6 +414,42 @@ export function TableGrid() {
   // Ref mirror of rows — used in async paste handler to avoid stale closure
   const rowsRef = useRef<TableRow[]>(rows);
   const sseErrorNotified = useRef(false);
+  // Agent-requested chart waiting for the target sheet's rows to be on screen
+  const pendingChartRef = useRef<{
+    sheet: string;
+    columns: string[];
+    chartType: string;
+    aggFunc?: string;
+  } | null>(null);
+
+  const drawPendingChart = useCallback((attempt = 0) => {
+    const pending = pendingChartRef.current;
+    if (!pending) return;
+    // Re-read the api every attempt: switching to the target sheet REMOUNTS the
+    // grid (schedule↔other changes the master-detail key), so the api captured
+    // when the request arrived is destroyed — the fresh grid's onGridReady
+    // repopulates gridApiRef. Retry until a live grid with rows is present.
+    const api = gridApiRef.current;
+    const ready =
+      api &&
+      typeof api.createRangeChart === 'function' &&
+      !api.isDestroyed?.() &&
+      (api.getDisplayedRowCount?.() ?? 0) > 0;
+    if (!ready) {
+      if (attempt < 20) setTimeout(() => drawPendingChart(attempt + 1), 150);
+      return;
+    }
+    pendingChartRef.current = null;
+    try {
+      api.createRangeChart({
+        cellRange: { columns: pending.columns },
+        chartType: pending.chartType as 'groupedColumn',
+        ...(pending.aggFunc ? { aggFunc: pending.aggFunc } : {}),
+      });
+    } catch {
+      /* Enterprise/charts unavailable — ignore */
+    }
+  }, []);
 
   useEffect(() => {
     rowsRef.current = rows;
@@ -670,6 +707,16 @@ export function TableGrid() {
         void load(activeSheetId, false);
         return;
       }
+      if (e.type === 'chart') {
+        // Not sheet-scoped: the chart request carries its own target sheet and
+        // switches to it (drawing once that sheet's rows are on screen). Must be
+        // handled BEFORE the active-sheet filter below, or a chart aimed at an
+        // inactive sheet is silently dropped.
+        pendingChartRef.current = e;
+        if (e.sheet === activeSheetId) drawPendingChart();
+        else setActiveSheetId(e.sheet);
+        return;
+      }
       if (e.sheet !== activeSheetId) return; // sheet-scoped events for the active sheet only
       if (e.type === 'rowUpsert') {
         const incoming = e.row;
@@ -695,6 +742,13 @@ export function TableGrid() {
     };
     return () => es.close();
   }, [activeSheetId, load, bootstrapped, showToast, t]);
+
+  // A pending agent chart draws once its target sheet's rows have loaded.
+  useEffect(() => {
+    if (pendingChartRef.current?.sheet === activeSheetId && rows.length > 0) {
+      drawPendingChart();
+    }
+  }, [rows, activeSheetId, drawPendingChart]);
 
   // Pre-filter rows in React; AG-Grid handles sort natively via comparator
   const filteredRows = useMemo(() => applyFilters(rows, filters), [rows, filters]);

@@ -49,7 +49,10 @@ export type TableEvent =
   | { type: 'rowsDelete'; sheet: string; keys: string[] }
   | { type: 'sheetReplace'; sheet: string } // bulk import — client refetches the sheet
   | { type: 'schemaChange'; sheet: string } // column add/delete — client refetches columns
-  | { type: 'sheetsChange' }; // sheet create/delete — client refetches the sheet list
+  | { type: 'sheetsChange' } // sheet create/delete — client refetches the sheet list
+  // agent-requested integrated chart over sheet columns (client calls
+  // AG-Grid createRangeChart; needs Enterprise — silently ignored otherwise)
+  | { type: 'chart'; sheet: string; columns: string[]; chartType: string; aggFunc?: string };
 
 const tableEvents = new EventEmitter();
 tableEvents.setMaxListeners(0); // one listener per open SSE connection; no arbitrary cap
@@ -64,6 +67,11 @@ export function onTableEvent(cb: (event: TableEvent) => void): () => void {
 
 function emitTable(event: TableEvent): void {
   tableEvents.emit('change', event);
+}
+
+/** Ask connected clients to render an integrated chart over sheet columns. */
+export function emitTableChart(event: Extract<TableEvent, { type: 'chart' }>): void {
+  emitTable(event);
 }
 
 export const DEFAULT_TABLE_SHEET = 'main';

@@ -8,6 +8,7 @@ import {
   deleteTableColumn,
   deleteTableRows,
   deleteTableSheet,
+  emitTableChart,
   importTableSheet,
   listTableColumns,
   listTableRowsPage,
@@ -446,6 +447,47 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
     execute: async (input) => importCompassScheduleSheet(getMcpToolsets, input),
   });
 
+  const tableChart = createTool({
+    id: 'table_chart',
+    description:
+      '在表格面板上就地生成一张图表（AG-Grid 集成图表）。给定 sheet 与列名，' +
+      '第一列作为类目轴，其余数值列作为序列。适合"画个各资源负荷图"这类请求。',
+    inputSchema: z.object({
+      sheet: z.string().optional().describe('sheet 名（默认当前主 sheet）'),
+      columns: z
+        .array(z.string())
+        .min(2)
+        .describe('参与图表的列 key（第一列=类目，如 ["resource","load_days"]）'),
+      chart_type: z
+        .enum(['column', 'bar', 'line', 'area', 'pie'])
+        .optional()
+        .describe('图表类型，默认 column'),
+      agg_func: z
+        .enum(['sum', 'avg', 'min', 'max', 'count'])
+        .optional()
+        .describe('数值聚合（配合分组时用）'),
+    }),
+    execute: async (input) => {
+      const sheet = resolveTableSheetId(input.sheet);
+      const known = new Set(listTableColumns(sheet).map((c) => c.key));
+      const missing = input.columns.filter((c) => !known.has(c));
+      if (missing.length) {
+        return {
+          ok: false as const,
+          error: `sheet '${sheet}' 没有这些列: ${missing.join(', ')}. 可用列: ${[...known].join(', ')}`,
+        };
+      }
+      emitTableChart({
+        type: 'chart',
+        sheet,
+        columns: input.columns,
+        chartType: input.chart_type ?? 'column',
+        aggFunc: input.agg_func,
+      });
+      return { ok: true as const, sheet, columns: input.columns, chart: input.chart_type ?? 'column' };
+    },
+  });
+
   const loadCompassResources = createTool({
     id: 'load_compass_resources',
     description:
@@ -468,5 +510,6 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
     table_list_sheets: tableListSheets,
     load_compass_schedule: loadCompassSchedule,
     load_compass_resources: loadCompassResources,
+    table_chart: tableChart,
   };
 }
