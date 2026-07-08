@@ -25,6 +25,7 @@
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@veylin/shared": "*",
     "@xyflow/react": "^12.11.1",
+    "ag-charts-enterprise": "^14.0.0",
     "ag-grid-community": "^36.0.0",
     "ag-grid-enterprise": "^36.0.0",
     "ag-grid-react": "^36.0.0",

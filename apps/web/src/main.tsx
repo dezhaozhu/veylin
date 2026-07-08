@@ -31,11 +31,17 @@ startupCheckpoint('react_shell');
 {
   const _agKey = getAgGridLicenseKey();
   if (_agKey && hasProEntitlement()) {
-    // Dynamic import keeps ag-grid-enterprise out of the default chunk.
-    const bootstrap = import('ag-grid-enterprise')
-      .then((ent) => {
+    // Dynamic import keeps ag-grid-enterprise (and ag-charts) out of the default chunk.
+    const bootstrap = Promise.all([import('ag-grid-enterprise'), import('ag-charts-enterprise')])
+      .then(([ent, charts]) => {
         // AllEnterpriseModule already includes AllCommunityModule; re-registering is safe.
-        ModuleRegistry.registerModules([ent.AllEnterpriseModule]);
+        // IntegratedCharts + Sparklines are chart-backed and must be bound to the
+        // ag-charts runtime explicitly (they are NOT part of AllEnterpriseModule).
+        ModuleRegistry.registerModules([
+          ent.AllEnterpriseModule,
+          ent.IntegratedChartsModule.with(charts.AgChartsEnterpriseModule),
+          ent.SparklinesModule.with(charts.AgChartsEnterpriseModule),
+        ]);
         ent.LicenseManager.setLicenseKey(_agKey);
         markAgGridEnterpriseReady();
       })

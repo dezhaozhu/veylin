@@ -1017,8 +1017,34 @@ export function TableGrid() {
   // AG-Grid column definitions: row-number + typed data columns
   // 二三级 master-detail (Pro): only on the schedule sheet, only when entitled AND
   // Enterprise modules are loaded (setting masterDetail props otherwise → module error).
-  const proMasterDetail =
-    activeSheetId === SCHEDULE_SHEET_ID && hasProEntitlement() && isAgGridEnterpriseReady();
+  const proEnterprise = hasProEntitlement() && isAgGridEnterpriseReady();
+  const proMasterDetail = activeSheetId === SCHEDULE_SHEET_ID && proEnterprise;
+
+  // Generic Enterprise affordances for EVERY sheet (no sheet-specific logic —
+  // Veylin stays a generic host): drag-to-group row grouping, columns/filters
+  // side panels, cell range selection, "Chart Range" from the context menu, and
+  // a selection-aggregation status bar. Only when Enterprise is licensed+loaded.
+  const proGridProps = useMemo(() => {
+    if (!proEnterprise) return {};
+    return {
+      rowGroupPanelShow: 'always' as const,
+      cellSelection: true,
+      enableCharts: true,
+      // allow any data column to be dragged into the group panel / aggregated
+      defaultColDef: { enableRowGroup: true, enableValue: true },
+      sideBar: {
+        toolPanels: ['columns', 'filters'],
+        hiddenByDefault: false,
+        defaultToolPanel: '',
+      },
+      statusBar: {
+        statusPanels: [
+          { statusPanel: 'agSelectedRowCountComponent', align: 'left' },
+          { statusPanel: 'agAggregationComponent', align: 'right' },
+        ],
+      },
+    };
+  }, [proEnterprise]);
 
   const agColDefs = useMemo<ColDef<TableRow>[]>(() => {
     const defs: ColDef<TableRow>[] = [];
@@ -1601,6 +1627,7 @@ export function TableGrid() {
               onCellValueChanged={onCellValueChanged}
               onCellKeyDown={onGridCellKeyDown}
               onSelectionChanged={onSelectionChanged}
+              {...proGridProps}
             />
           </div>
           <TableGridFooter totals={totals} />
