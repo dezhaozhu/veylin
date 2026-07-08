@@ -34,7 +34,7 @@ import { exportTableToExcel, parseTableExcelFile } from '@/lib/table-excel';
 import { buildGovernedEditBody, GOVERNED_EDIT_FIELDS } from '@/lib/schedule-edit';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 
-type TableColumnType = 'text' | 'number' | 'status';
+type TableColumnType = 'text' | 'number' | 'status' | 'sparkline';
 
 type TableRow = Record<string, string | number> & { row_id?: string };
 
@@ -1131,6 +1131,24 @@ export function TableGrid() {
           ...baseColDef,
           cellEditor: 'agNumberCellEditor',
           cellStyle: { textAlign: 'center', fontVariantNumeric: 'tabular-nums' },
+        });
+      } else if (def.type === 'sparkline' && proEnterprise) {
+        // Cell holds a comma-separated numeric series ("3,5,2,…") → in-cell bar
+        // trend via AG-Grid Sparklines. Read-only; falls to the text branch when
+        // Enterprise isn't licensed/loaded.
+        defs.push({
+          ...baseColDef,
+          editable: false,
+          sortable: false,
+          valueGetter: (params) => {
+            const raw = params.data?.[def.key];
+            if (typeof raw !== 'string' || raw.trim() === '') return [];
+            return raw.split(',').map((s) => Number(s.trim()) || 0);
+          },
+          cellRenderer: 'agSparklineCellRenderer',
+          cellRendererParams: {
+            sparklineOptions: { type: 'bar', direction: 'vertical' },
+          },
         });
       } else if (def.type === 'status') {
         const options = statusOptionsByKey.get(def.key) ?? [];

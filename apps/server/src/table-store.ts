@@ -15,7 +15,9 @@ import {
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 import { EventEmitter } from 'node:events';
 
-export type TableColumnType = 'text' | 'number' | 'status';
+// 'sparkline': cell holds a comma-separated numeric series ("3,5,2,…") rendered
+// as an in-cell trend chart when AG-Grid Enterprise is licensed (plain text otherwise).
+export type TableColumnType = 'text' | 'number' | 'status' | 'sparkline';
 
 export interface TableColumnDef {
   key: string;

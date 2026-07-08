@@ -4,7 +4,15 @@
  * as a JSON string. Returns the parsed payload object (or {} on failure).
  */
 export function unwrapMcpPayload(res: unknown): Record<string, unknown> {
-  if (res != null && typeof res === 'object' && 'columns' in (res as object)) {
+  // Already the typed payload: any direct object that is NOT a content/text
+  // transport wrapper — e.g. {columns,rows,…} or {resources:[…]}.
+  if (
+    res != null &&
+    typeof res === 'object' &&
+    !Array.isArray(res) &&
+    !('content' in (res as object)) &&
+    !('text' in (res as object))
+  ) {
     return res as Record<string, unknown>;
   }
   try {

@@ -109,6 +109,57 @@ export async function importCompassScheduleSheet(
   };
 }
 
+export const RESOURCES_SHEET_ID = 'resources';
+
+export async function importCompassResourceSheet(
+  getMcpToolsets: ToolsetsGetter | undefined,
+): Promise<
+  | { ok: true; sheet: string; imported: number }
+  | { ok: false; error: string }
+> {
+  const toolsets = getMcpToolsets?.() ?? {};
+  const compass = toolsets['compass'] as
+    | Record<string, { execute: (args: unknown) => Promise<unknown> }>
+    | undefined;
+  const tool = compass?.['get_resources'];
+  if (!tool) {
+    return { ok: false as const, error: 'compass MCP server not connected (no get_resources)' };
+  }
+
+  const res: unknown = await tool.execute({});
+  const payload = unwrapMcpPayload(res);
+  const resources =
+    (payload['resources'] as Array<Record<string, unknown>> | undefined) ?? [];
+
+  if (!listTableSheets().find((s) => s.id === RESOURCES_SHEET_ID)) {
+    createTableSheet(RESOURCES_SHEET_ID);
+  }
+
+  // Compass's per-resource `trend` is a 12-month forward load series (array);
+  // store it as the sparkline column's comma-separated form.
+  const rows = resources.map((r) => ({
+    resource: String(r['resource'] ?? ''),
+    trend: Array.isArray(r['trend']) ? (r['trend'] as number[]).join(',') : '',
+    current_k: (r['current_k'] as number | null) ?? '',
+    suggested_min_k: (r['suggested_min_k'] as number | null) ?? '',
+    jobs: (r['jobs'] as number | null) ?? '',
+    load_days: (r['load_days'] as number | null) ?? '',
+    source: String(r['source'] ?? ''),
+  }));
+
+  const descriptors = [
+    { key: 'resource', name: '资源', type: 'text' as const },
+    { key: 'trend', name: '负荷趋势(12月)', type: 'sparkline' as const },
+    { key: 'current_k', name: '当前K', type: 'number' as const },
+    { key: 'suggested_min_k', name: '建议最小K', type: 'number' as const },
+    { key: 'jobs', name: '工序数', type: 'number' as const },
+    { key: 'load_days', name: '负荷(天)', type: 'number' as const },
+    { key: 'source', name: '来源', type: 'text' as const },
+  ];
+  importTableSheet(RESOURCES_SHEET_ID, [], rows, undefined, descriptors);
+  return { ok: true as const, sheet: RESOURCES_SHEET_ID, imported: rows.length };
+}
+
 /**
  * Generic spreadsheet/table tools backed by the multi-sheet grid store.
  */
@@ -395,6 +446,15 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
     execute: async (input) => importCompassScheduleSheet(getMcpToolsets, input),
   });
 
+  const loadCompassResources = createTool({
+    id: 'load_compass_resources',
+    description:
+      '从 Compass 拉取本租户的资源负荷台账（每资源：当前K/建议K/负荷 + 未来12个月负荷趋势），' +
+      '写入名为 resources 的表 sheet 供展示（趋势列为迷你图）。需要 Compass MCP 服务器已连接。',
+    inputSchema: z.object({}),
+    execute: async () => importCompassResourceSheet(getMcpToolsets),
+  });
+
   return {
     table_get: tableGet,
     table_update_row: tableUpdateRow,
@@ -407,5 +467,6 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
     table_delete_sheet: tableDeleteSheet,
     table_list_sheets: tableListSheets,
     load_compass_schedule: loadCompassSchedule,
+    load_compass_resources: loadCompassResources,
   };
 }

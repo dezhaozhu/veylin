@@ -101,7 +101,7 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
         case 'tools/call': {
           const name = params?.name;
           if (!name) return reply.code(400).send({ error: 'missing tool name' });
-          const toolsets = (await client.listToolsets()) as Record<
+          const toolsets = (await client.listToolsets()) as unknown as Record<
             string,
             Record<string, { execute: (a: { context: unknown }) => Promise<unknown> }>
           >;
