@@ -35,8 +35,8 @@ import { subscribeTaskEvents } from './task-events';
 import { buildMcpHealthSnapshot, type McpHealthSnapshot } from './mcp-health';
 import { startupCheckpoint } from './startup-profiler';
 import { ensureDevTenant, DEV_TENANT_ID } from './tenant';
-import { refreshAgentPackages } from './agent-packages-sync';
-import { createMcpClient, listActiveMcpServerNames } from './mcp-store';
+import { refreshAgentPackages, isAgentHotReloadEnabled } from './agent-packages-sync';
+import { createMcpClient, listActiveMcpServerNames, seedMcpServersFromEnvIfMissing } from './mcp-store';
 import { listAllCronAutomations } from './automation-store';
 import { runAutomationJob } from './automation-worker';
 import { buildWorkspaceConfigTool } from './workspace-config-tool';
@@ -44,7 +44,7 @@ import { listAllCronWorkflows, sweepInterruptedWorkflowRuns } from './workflow-s
 import { runWorkflowJob } from './workflow-runner';
 import { ensureEmbeddingModelOnStartup } from './embedding-service';
 import { buildWorkflowTools } from './workflow-tools';
-import { applyTenantModelSettings } from './model-settings-store';
+import { applyTenantModelSettings, seedModelSettingsFromEnvIfEmpty } from './model-settings-store';
 import { buildKnowledgeSearchTool } from './rag-store';
 import { RAG_UPLOAD_MAX_BYTES } from './rag-limits';
 import {
@@ -64,6 +64,40 @@ import { createReadTaskSnapshot } from './routes/threads.js';
 const DATA_DIR = ensureDataDir();
 const PORT = Number(process.env.PORT ?? 8787);
 const LISTEN_HOST = process.env.HOST ?? '127.0.0.1';
+
+function isLazyMcpBoot(): boolean {
+  return process.env.VEYLIN_LAZY_MCP_BOOT === '1';
+}
+
+function resolveCorsOrigin(): boolean | string | string[] {
+  if (isDesktopAuth) return true;
+  const raw = process.env.CORS_ALLOWED_ORIGINS?.trim();
+  if (!raw) return true;
+  const origins = raw.split(',').map((entry) => entry.trim()).filter(Boolean);
+  if (origins.length === 0) return true;
+  if (origins.length === 1) return origins[0]!;
+  return origins;
+}
+
+async function listenWithRetry(
+  app: Awaited<ReturnType<typeof Fastify>>,
+  port: number,
+  host: string,
+): Promise<void> {
+  const retries = Number(process.env.VEYLIN_LISTEN_RETRIES ?? 5);
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      await app.listen({ port, host });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== 'EADDRINUSE' || attempt >= retries - 1) throw err;
+      const delayMs = 400 * (attempt + 1);
+      console.warn(`[server] port ${port} in use, retry in ${delayMs}ms (${attempt + 1}/${retries})`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
 
 // Agent definitions (agent.yaml + skills). Dev: repo examples/; sidecar: copied beside server.mjs.
 function resolveAgentsDir(): string {
@@ -102,6 +136,7 @@ async function main() {
   await initResumableChatStreams();
   await initTableStore();
   await ensureDevTenant();
+  await seedModelSettingsFromEnvIfEmpty(DEV_TENANT_ID);
 
   console.info('[veylin] VEYLIN_DATA_DIR=%s', DATA_DIR);
   ensureEmbeddingModelOnStartup();
@@ -119,7 +154,12 @@ async function main() {
   async function rebuildMcp(tenantId: string) {
     const activeNames = await listActiveMcpServerNames(tenantId);
     let listError: string | undefined;
+    mcpCacheByTenant.delete(tenantId);
     try {
+      if (mcp) {
+        await mcp.disconnect().catch(() => undefined);
+        mcp = null;
+      }
       mcp = await createMcpClient(tenantId);
       try {
         mcpToolsets = (await mcp.listToolsets()) as Record<string, unknown>;
@@ -184,12 +224,20 @@ async function main() {
   if (isDesktopAuth) {
     await pruneDesktopThreadClutter(DEV_TENANT_ID, 'dev-user', runtime.memory);
   }
-  app.log.info({ agentsDir: AGENTS_DIR }, 'agent packages reload on each customize/chat request');
+  app.log.info(
+    {
+      agentsDir: AGENTS_DIR,
+      hotReloadAgents: isAgentHotReloadEnabled(),
+    },
+    isAgentHotReloadEnabled()
+      ? 'agent packages reload on each customize/chat request'
+      : 'agent packages loaded at startup (set VEYLIN_HOT_RELOAD_AGENTS=1 to reload on chat)',
+  );
   const queue = createInProcQueue();
   await queue.start();
 
   await app.register(cors, {
-    origin: true,
+    origin: resolveCorsOrigin(),
     credentials: true,
   });
 
@@ -246,8 +294,11 @@ async function main() {
   };
   await registerApiRoutes(app, deps);
 
+  await seedMcpServersFromEnvIfMissing(DEV_TENANT_ID);
   // Connect MCP servers; expose their tools to chat as a toolset.
-  await rebuildMcp(DEV_TENANT_ID);
+  if (!isLazyMcpBoot()) {
+    await rebuildMcp(DEV_TENANT_ID);
+  }
 
   const tableTools = buildTableTools();
   const workspaceConfig = buildWorkspaceConfigTool({
@@ -331,9 +382,15 @@ async function main() {
     app.log.info(`registered ${schedules.length} cron schedule(s)`);
   }
 
-  await app.listen({ port: PORT, host: LISTEN_HOST });
+  await listenWithRetry(app, PORT, LISTEN_HOST);
   startupCheckpoint('listen_ready');
   app.log.info(`veylin server on ${LISTEN_HOST}:${PORT}`);
+
+  if (isLazyMcpBoot()) {
+    void rebuildMcp(DEV_TENANT_ID)
+      .then(() => app.log.info('MCP toolsets ready (background boot)'))
+      .catch((err) => app.log.warn({ err }, 'background MCP boot failed'));
+  }
 
   let shuttingDown = false;
   const gracefulShutdown = async (signal: string) => {
@@ -343,6 +400,10 @@ async function main() {
     try {
       await queue.stop();
       await waitForActiveChatDrain(Number(process.env.SHUTDOWN_DRAIN_MS ?? 30_000));
+      if (mcp) {
+        await mcp.disconnect().catch(() => undefined);
+        mcp = null;
+      }
       await closeDb();
       await app.close();
     } catch (err) {

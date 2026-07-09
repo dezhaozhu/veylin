@@ -16,7 +16,6 @@ import {
 } from '@veylin/shared';
 import { dirname } from 'node:path';
 import type { Runtime } from '@veylin/runtime';
-import { refreshAgentPackages } from './agent-packages-sync';
 
 export async function getDisabledSkills(tenantId: string): Promise<string[]> {
   const row = await getTenantSettingsRow(tenantId);
@@ -91,7 +90,6 @@ export async function listMergedSkills(
   tenantId: string,
   agentId?: string,
 ): Promise<SkillListItem[]> {
-  await refreshAgentPackages(runtime);
   const ctx = runtime.getAgentContext(agentId);
   const disabled = new Set(await getDisabledSkills(tenantId));
   const custom = await listCustomSkills(tenantId);

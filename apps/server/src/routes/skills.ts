@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { customSkillInputSchema } from '@veylin/shared';
+import { refreshAgentPackages } from '../agent-packages-sync.js';
 import {
   createCustomSkill,
   deleteCustomSkill,
@@ -15,6 +16,7 @@ export function registerSkillsRoutes(app: FastifyInstance, deps: ServerDeps): vo
   app.get('/api/skills', async (req) => {
     const ctx = await deps.resolveContext(req.headers);
     const { agentId } = req.query as { agentId?: string };
+    await refreshAgentPackages(deps.runtime, { force: true });
     const skills = await listMergedSkills(deps.runtime, ctx.tenantId, agentId);
     const disabledSkills = await getDisabledSkills(ctx.tenantId);
     return { skills, disabledSkills };

@@ -439,13 +439,14 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
 
   useEffect(() => {
     if (!workflowId) return;
-    if (!showLogs && !pollFast) return;
+    const hasActiveRun = runs.some((r) => r.status === 'running' || r.status === 'queued');
+    if (!showLogs && !hasActiveRun) return;
     const poll = () => loadRuns(workflowId).catch(() => undefined);
     void poll();
-    const ms = pollFast ? 1200 : 2500;
+    const ms = hasActiveRun ? (pollFast ? 1200 : 2500) : 15000;
     const timer = setInterval(() => void poll(), ms);
     return () => clearInterval(timer);
-  }, [workflowId, showLogs, pollFast]);
+  }, [workflowId, showLogs, pollFast, runs]);
 
   const onConnect = useCallback(
     (connection: Connection) =>

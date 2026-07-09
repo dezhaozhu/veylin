@@ -56,7 +56,7 @@ export function registerModelSettingsRoutes(app: FastifyInstance, deps: ServerDe
   app.get('/api/agent-context', async (req) => {
     const { agentId } = req.query as { agentId?: string };
     const ctx = await deps.resolveContext(req.headers);
-    await refreshAgentPackages(deps.runtime);
+    await refreshAgentPackages(deps.runtime, { force: true });
     const base = deps.runtime.getAgentContext(agentId);
     const resolvedAgentId = agentId ?? base.agentId;
     const mergedSkills = await listMergedSkills(deps.runtime, ctx.tenantId, resolvedAgentId);

@@ -164,7 +164,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
       >
         <div
           className={cn(
-            "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4",
+            "mx-auto flex w-full min-w-0 max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4",
             isEmpty && "justify-center",
           )}
         >
@@ -242,13 +242,13 @@ const Composer: FC = () => {
   const onKeyDown = useComposerSubmitKeys();
 
   return (
-    <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
+    <ComposerPrimitive.Root className="aui-composer-root relative flex w-full min-w-0 flex-col">
       <ComposerAttachmentDropzone asChild>
-        <div className="flex w-full flex-col gap-2 data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:border-ring data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:border-dashed data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]">
+        <div className="flex w-full min-w-0 flex-col gap-2 data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:border-ring data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:border-dashed data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]">
           <ComposerQueue />
           <div
             data-slot="aui_composer-shell"
-            className="border-border/60 focus-within:border-border dark:border-muted-foreground/15 dark:focus-within:border-muted-foreground/30 flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] focus-within:shadow-[0_6px_24px_-8px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.05)] dark:shadow-none"
+            className="border-border/60 focus-within:border-border dark:border-muted-foreground/15 dark:focus-within:border-muted-foreground/30 flex w-full min-w-0 flex-col gap-2 overflow-hidden rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] focus-within:shadow-[0_6px_24px_-8px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.05)] dark:shadow-none"
           >
             <ComposerChipsRow />
             <ComposerMentionInput
@@ -286,7 +286,7 @@ const ComposerAction: FC = () => {
               type="button"
               variant="default"
               size="icon"
-              className="aui-composer-send size-7 rounded-full"
+              className="aui-composer-send size-7 shrink-0 rounded-full"
               aria-label={t("thread.sendMessage")}
             >
               <ArrowUpIcon className="aui-composer-send-icon size-4.5" />
@@ -299,7 +299,7 @@ const ComposerAction: FC = () => {
               type="button"
               variant="default"
               size="icon"
-              className="aui-composer-cancel size-7 rounded-full"
+              className="aui-composer-cancel size-7 shrink-0 rounded-full"
               aria-label={t("thread.stopGenerating")}
             >
               <SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" />
