@@ -207,6 +207,7 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
+  const [modelConfigured, setModelConfigured] = useState<boolean | null>(null);
 
   const fitGraphView = useCallback(() => {
     const fg = graphFgRef.current;
@@ -245,6 +246,13 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
   }, [graph.nodes]);
 
+  const graphEmptyDescription = useMemo(() => {
+    if (stats.documents === 0) return t('rag.graphEmptyDesc');
+    if (modelConfigured === false) return t('rag.graphEmptyDescNoModel');
+    if (stats.ready > 0 && stats.entities === 0) return t('rag.graphEmptyDescHasDocs');
+    return t('rag.graphEmptyDesc');
+  }, [modelConfigured, stats.documents, stats.entities, stats.ready, t]);
+
   async function refresh(options: { showError?: boolean; attempts?: number } = {}) {
     const { showError = false, attempts = 1 } = options;
     setRefreshing(true);
@@ -252,13 +260,16 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
       const refsUrl = threadId
         ? `/api/rag/references?threadId=${encodeURIComponent(threadId)}`
         : '/api/rag/references';
-      const [refs, docs, kg, localModels] = await withRetry(
+      const [refs, docs, kg, localModels, modelSettings] = await withRetry(
         () =>
           Promise.all([
             fetchJson<{ query?: string | null; references: Reference[]; at?: number | null }>(refsUrl),
             fetchJson<{ documents: DocumentRow[] }>('/api/rag/documents'),
             fetchJson<{ entities: GraphNode[]; edges: GraphEdge[] }>('/api/kg'),
             localModelsRef.current?.refresh() ?? Promise.resolve(null),
+            fetchJson<{ settings?: { configured?: boolean } }>('/api/model-settings').catch(
+              () => ({ settings: { configured: false } }),
+            ),
           ]),
         attempts,
       );
@@ -278,6 +289,7 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
         at: refs.at ?? null,
       });
       setDocuments(docs.documents ?? []);
+      setModelConfigured(modelSettings.settings?.configured === true);
 
       // Only replace graph data (which restarts the force simulation) when the
       // entities/edges actually changed; otherwise leave the current layout alone
@@ -307,10 +319,11 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
       }
       setError(null);
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       if (showError) {
-        setError(err instanceof Error ? err.message : String(err));
-      } else {
-        setError(null);
+        setError(message);
+      } else if (documents.length > 0 || graph.nodes.length > 0) {
+        setError(t('rag.refreshFailed', { message }));
       }
     } finally {
       setRefreshing(false);
@@ -631,7 +644,7 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
             <EmptyState
               icon={<Network className="size-7" />}
               title={t('rag.graphEmptyTitle')}
-              description={t('rag.graphEmptyDesc')}
+              description={graphEmptyDescription}
             />
           ) : (
             <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[1fr_180px]">

@@ -24,6 +24,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { useTranslation } from "react-i18next";
 import { summarizeToolCalls } from "@/lib/summarize-tool-calls";
 import { cn } from "@/lib/utils";
 
@@ -134,9 +135,10 @@ function ToolGroupTrigger({
   summary?: string;
   active?: boolean;
 }) {
+  const { t } = useTranslation();
   const { isOpen } = useCollapsiblePanel();
   const collapsedLabel =
-    summary ?? `${count} tool ${count === 1 ? "call" : "calls"}`;
+    summary ?? t("toolGroup.toolCalls", { count });
 
   return (
     <CollapsibleTrigger

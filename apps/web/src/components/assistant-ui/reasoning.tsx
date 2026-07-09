@@ -19,6 +19,7 @@ import {
   type ReasoningMessagePartComponent,
   type ReasoningGroupComponent,
 } from "@assistant-ui/react";
+import { useTranslation } from "react-i18next";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import {
   CollapsiblePanelContext,
@@ -171,12 +172,13 @@ function ReasoningTrigger({
   active?: boolean;
   duration?: number;
 }) {
+  const { t } = useTranslation();
   const { isOpen } = useCollapsiblePanel();
-  const label = "Thought";
+  const label = t("reasoning.thought");
   const ariaLabel =
     duration != null && duration > 0
-      ? `Thought, ${duration} seconds`
-      : "Thought";
+      ? t("reasoning.thoughtDuration", { seconds: duration })
+      : label;
 
   return (
     <CollapsibleTrigger

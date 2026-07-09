@@ -49,6 +49,25 @@
     "stopGenerating": "停止生成",
     "assistantWorking": "助手正在处理"
   },
+  "reasoning": {
+    "thought": "思考",
+    "thoughtDuration": "思考，{{seconds}} 秒"
+  },
+  "toolSearch": {
+    "searching": "正在搜索工具「{{query}}」…",
+    "title": "工具搜索：{{query}}",
+    "noResults": "未找到匹配「{{query}}」的工具",
+    "noResultsHint": "请检查 MCP 是否已连接并启用，或换关键词再试。"
+  },
+  "toolGroup": {
+    "readFiles": "读取 {{count}} 个文件",
+    "editedFiles": "编辑 {{count}} 个文件",
+    "exploredFiles": "探索 {{count}} 个文件",
+    "ranCommands": "运行 {{count}} 条命令",
+    "searchedTools": "搜索工具 {{count}} 次",
+    "toolCalls": "{{count}} 次工具调用",
+    "summaryJoin": "，"
+  },
   "mention": {
     "title": "添加上下文",
     "close": "关闭菜单",
@@ -508,6 +527,7 @@
     "importSuccess": "已导入 {{count}} 行",
     "exportSuccess": "已导出 {{path}}",
     "loading": "加载表格数据…",
+    "sseDisconnected": "表格实时同步已断开，数据可能不是最新",
     "loadError": "表格数据加载失败：{{error}}",
     "deleteSheet": "删除工作表 {{name}}",
     "newSheet": "新建工作表",
@@ -555,6 +575,10 @@
     "indexedSize": "{{size}} 已索引",
     "graphEmptyTitle": "暂无图谱数据",
     "graphEmptyDesc": "上传文档后会自动抽取实体与关系，形成可浏览的知识图谱。",
+    "graphEmptyDescNoModel": "图谱抽取需要先在「设置 → 模型」配置聊天 LLM（API Key），然后重新上传文档。",
+    "graphEmptyDescHasDocs": "文档已上传但未抽取到实体。请确认聊天模型可用，并上传内容更丰富的文档后重试。",
+    "refreshFailed": "知识库刷新失败：{{message}}",
+    "confirmDelete": "删除文档「{{filename}}」？",
     "graphStats": "图谱统计",
     "entityTypes": "实体类型",
     "selectedEntity": "选中实体",

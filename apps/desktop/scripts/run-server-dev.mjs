@@ -59,13 +59,19 @@ async function probe() {
   }
 }
 
+function tsxCommand(repoRoot) {
+  const ext = process.platform === 'win32' ? '.cmd' : '';
+  return resolve(repoRoot, `node_modules/.bin/tsx${ext}`);
+}
+
 function spawnServer() {
   if (shuttingDown) return;
   logLine(`starting tsx watch server on :${port} (log: ${logPath})`);
-  child = spawn('npx', ['tsx', 'watch', 'src/server.ts'], {
+  child = spawn(tsxCommand(repoRoot), ['watch', 'src/server.ts'], {
     cwd: serverRoot,
     env: serverEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
+    shell: process.platform === 'win32',
   });
 
   child.stdout?.on('data', writeLog);

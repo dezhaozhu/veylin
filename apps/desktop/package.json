@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "tauri": "tauri",
-    "dev": "node scripts/prep-dev.mjs && VEYLIN_SKIP_SIDECAR=1 node scripts/ensure-sidecar.mjs && VEYLIN_SKIP_SIDECAR=1 node scripts/ensure-server.mjs && VEYLIN_SKIP_SIDECAR=1 npm run tauri -- dev",
+    "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs"
   },
   "devDependencies": {
