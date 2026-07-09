@@ -33,19 +33,16 @@ export function useDesktopInteractionGuard(options: {
 
   useEffect(() => {
     if (!isTauri()) return;
-
+    // Hide when the app is minimized or fully backgrounded — NOT on window blur:
+    // opening the native panel webview steals focus from the main window and would
+    // otherwise flash-then-hide the page immediately.
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') void hideWebView();
     };
-    const onBlur = () => {
-      void hideWebView();
-    };
 
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('blur', onBlur);
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('blur', onBlur);
     };
   }, []);
 }
