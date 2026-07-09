@@ -7,6 +7,7 @@ import { Slot } from "radix-ui"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import i18n from "@/i18n"
+import { rightPanelWidthMax } from "@/lib/chat-panel-ratio"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -36,7 +37,6 @@ const RIGHT_SIDEBAR_WIDTH_DEFAULT = 480
 const SIDEBAR_WIDTH_MIN = 200
 const SIDEBAR_WIDTH_MAX = 560
 const RIGHT_SIDEBAR_WIDTH_MIN = 280
-const RIGHT_SIDEBAR_WIDTH_MAX = 1200
 const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
@@ -60,10 +60,10 @@ function clampSidebarWidth(width: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.round(width)))
 }
 
-/** Right panel cap scales with viewport so wide monitors can show more grid columns. */
+/** Right panel can expand across the full chat workspace (table full-screen). */
 function rightSidebarWidthMax() {
-  if (typeof window === "undefined") return RIGHT_SIDEBAR_WIDTH_MAX
-  return Math.min(RIGHT_SIDEBAR_WIDTH_MAX, Math.floor(window.innerWidth * 0.85))
+  if (typeof window === "undefined") return 1200
+  return rightPanelWidthMax(undefined, RIGHT_SIDEBAR_WIDTH_MIN)
 }
 
 function readStoredSidebarWidth(
@@ -400,9 +400,9 @@ function SidebarResizeHandle({
       data-slot="sidebar-resize-handle"
       aria-label={side === "left" ? i18n.t("sidebar.resizeLeft") : i18n.t("sidebar.resizeRight")}
       className={cn(
-        "absolute inset-y-0 z-30 w-2 cursor-col-resize border-0 bg-transparent p-0",
+        "absolute inset-y-0 z-30 w-3 cursor-col-resize border-0 bg-transparent p-0",
         side === "left" ? "right-0 translate-x-1/2" : "left-0 -translate-x-1/2",
-        "after:absolute after:inset-y-0 after:w-px after:bg-sidebar-border after:opacity-0 hover:after:opacity-100",
+        "after:absolute after:inset-y-0 after:w-0.5 after:bg-sidebar-border after:opacity-40 hover:after:opacity-100",
         side === "left" ? "after:right-1/2" : "after:left-1/2",
       )}
       onPointerDown={onPointerDown}
@@ -500,7 +500,8 @@ function SidebarPanel({
         data-slot="sidebar-container"
         style={containerStyle}
         className={cn(
-          "fixed inset-y-0 z-10 hidden h-svh transition-[left,right,width] duration-200 ease-linear md:flex",
+          "fixed inset-y-0 hidden h-svh transition-[left,right,width] duration-200 ease-linear md:flex",
+          side === "left" ? "z-20" : "z-10",
           widthClass,
           // Adjust the padding for floating and inset variants.
           variant === "floating" || variant === "inset"

@@ -1,8 +1,30 @@
-/** Fraction of the chat+workspace area given to the chat column (0.3–0.8). */
+/** Fraction of the chat+workspace area given to the chat column (0–0.95). */
 export const CHAT_PANEL_RATIO_STORAGE_KEY = 'chat_panel_ratio';
-export const CHAT_PANEL_RATIO_MIN = 0.3;
-export const CHAT_PANEL_RATIO_MAX = 0.8;
+export const CHAT_WORKSPACE_SLOT = 'chat-workspace';
+/** Minimum chat column width when the right panel is dragged to full width (px). */
+export const CHAT_PANEL_MIN_PX = 0;
+/** Minimum chat column width when the right panel is opened via the toggle (px). */
+export const CHAT_PANEL_OPEN_MIN_PX = 360;
+export const CHAT_PANEL_RATIO_MIN = 0;
+export const CHAT_PANEL_RATIO_MAX = 0.95;
 export const CHAT_PANEL_RATIO_DEFAULT = 0.55;
+
+export function readChatWorkspaceWidth(): number {
+  if (typeof window === 'undefined') return 320;
+  const workspace = document.querySelector(`[data-slot="${CHAT_WORKSPACE_SLOT}"]`);
+  if (workspace instanceof HTMLElement && workspace.clientWidth > 0) {
+    return workspace.clientWidth;
+  }
+  return Math.max(320, window.innerWidth);
+}
+
+/** Max right-panel width within the chat workspace (full bleed when CHAT_PANEL_MIN_PX is 0). */
+export function rightPanelWidthMax(
+  availableWidth = readChatWorkspaceWidth(),
+  rightMin = 280,
+): number {
+  return Math.max(rightMin, availableWidth - CHAT_PANEL_MIN_PX);
+}
 
 export function clampChatPanelRatio(ratio: number): number {
   return Math.min(
@@ -54,4 +76,22 @@ export function rightWidthToChatRatio(
 ): number {
   if (availableWidth <= 0) return CHAT_PANEL_RATIO_DEFAULT;
   return clampChatPanelRatio(1 - rightWidth / availableWidth);
+}
+
+/**
+ * Width to apply when the right panel is opened (toggle), not when dragged mid-session.
+ * Avoids restoring a previous full-bleed width and swallowing the chat column.
+ */
+export function resolveRightPanelOpenWidth(
+  availableWidth: number,
+  rightMin: number,
+): number {
+  let ratio = readChatPanelRatio();
+  if (ratio < 0.15) {
+    ratio = CHAT_PANEL_RATIO_DEFAULT;
+  }
+  const max = rightPanelWidthMax(availableWidth, rightMin);
+  const target = chatRatioToRightWidth(ratio, availableWidth, rightMin, max);
+  const maxOnOpen = Math.max(rightMin, availableWidth - CHAT_PANEL_OPEN_MIN_PX);
+  return Math.min(target, maxOnOpen);
 }
