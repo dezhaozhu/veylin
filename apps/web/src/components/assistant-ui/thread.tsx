@@ -280,7 +280,7 @@ const ComposerAction: FC = () => {
         <ComposerPlusMenu />
         <ComposerModeChips />
       </div>
-      <div className="flex min-w-0 items-center justify-end gap-0.5 overflow-hidden">
+      <div className="relative z-10 flex min-w-0 shrink-0 items-center justify-end gap-0.5 overflow-visible">
         <ComposerContextUsage className="@max-[22rem]:hidden" />
         <ModelPicker className="min-w-0" />
         <AuiIf condition={(s) => !s.thread.isRunning}>

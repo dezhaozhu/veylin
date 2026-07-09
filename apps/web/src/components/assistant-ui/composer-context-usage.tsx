@@ -47,9 +47,10 @@ function parseLastUsageKey(key: string): ApiUsageLike | null {
   };
 }
 
-/** Gray context ring — usage % via conic gradient, no center label. */
+/** Gray context ring — usage % via conic gradient; click or hover shows details. */
 export const ComposerContextUsage: FC<{ className?: string }> = ({ className }) => {
   const [model, setModel] = useState<ModelKey>(() => getChatSettings().model);
+  const [tipOpen, setTipOpen] = useState(false);
 
   useEffect(() => onChatSettingsChange((s) => setModel(s.model)), []);
 
@@ -78,31 +79,39 @@ export const ComposerContextUsage: FC<{ className?: string }> = ({ className }) 
 
   return (
     <TooltipProvider delayDuration={0}>
-      <Tooltip>
+      <Tooltip open={tipOpen} onOpenChange={setTipOpen}>
         <TooltipTrigger asChild>
           <button
             type="button"
             aria-label={tooltip}
+            aria-expanded={tipOpen}
+            onClick={() => setTipOpen((open) => !open)}
             className={cn(
-              'relative size-3.5 shrink-0 rounded-full border-0 bg-transparent p-0',
+              'relative flex size-7 shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0',
+              'hover:bg-muted/60 active:bg-muted/80',
               className,
             )}
-            style={
-              {
-                '--context-used': snapshot.usedPercent,
-                background: `
-                  radial-gradient(circle, var(--color-background) 54%, transparent 56%),
-                  conic-gradient(
-                    from 180deg,
-                    var(--color-muted-foreground) calc(var(--context-used) * 1%),
-                    var(--color-border) 0
-                  )
-                `,
-              } as CSSProperties
-            }
-          />
+          >
+            <span
+              aria-hidden
+              className="size-3.5 rounded-full"
+              style={
+                {
+                  '--context-used': snapshot.usedPercent,
+                  background: `
+                    radial-gradient(circle, var(--color-background) 54%, transparent 56%),
+                    conic-gradient(
+                      from 180deg,
+                      var(--color-muted-foreground) calc(var(--context-used) * 1%),
+                      var(--color-border) 0
+                    )
+                  `,
+                } as CSSProperties
+              }
+            />
+          </button>
         </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs">
+        <TooltipContent side="top" className="z-[210] text-xs">
           {tooltip}
         </TooltipContent>
       </Tooltip>
