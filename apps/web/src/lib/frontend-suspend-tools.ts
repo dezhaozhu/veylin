@@ -74,7 +74,7 @@ export function hasFrontendToolOutput(
     mode?: string;
   };
   if (typeof result.error === 'string' && result.error.length > 0) return true;
-  // Empty page is still a successful read (about:blank) — accept url/title/mode/content.
+  // Empty page is still a successful read (about:blank)  - accept url/title/mode/content.
   if (typeof result.content === 'string') return true;
   if (typeof result.url === 'string') return true;
   if (typeof result.title === 'string') return true;
