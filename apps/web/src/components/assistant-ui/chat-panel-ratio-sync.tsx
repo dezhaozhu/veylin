@@ -72,6 +72,8 @@ export function ChatPanelRatioSync() {
         ),
       );
     };
+    // leftWidth is in deps — re-apply immediately when the left rail is dragged.
+    onResize();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [rightOpen, leftOpen, leftWidth, setWidth]);

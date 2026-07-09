@@ -40,6 +40,12 @@
     "forward": "Forward",
     "newChat": "New Chat"
   },
+  "window": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close"
+  },
   "thread": {
     "welcome": "How can I help you today?",
     "composerPlaceholder": "Ask anything…",
@@ -114,17 +120,22 @@
   },
   "status": {
     "allDone": "All done",
-    "agentsRunning": "{{count}} agents running",
-    "agentsQueued": "{{count}} agents queued",
-    "agentsDone": "{{count}} agents finished",
-    "agentsCount": "{{count}} agents",
-    "agentsHeading": "Agents ({{count}})",
+    "agentsRunning": "{{count}} subagent(s)",
+    "agentsQueued": "{{count}} subagent(s) queued",
+    "agentsDone": "{{count}} subagent(s) finished",
+    "agentsCount": "{{count}} subagent(s)",
+    "agentsHeading": "Subagents ({{count}})",
     "todosHeading": "Todos ({{done}}/{{total}})",
     "taskQueued": "Queued",
     "taskRunning": "Running",
     "taskDone": "Done",
     "taskFailed": "Failed",
     "taskCancelled": "Cancelled",
+    "taskInitializing": "Initializing…",
+    "taskProgressTool": "{{tool}} · {{count}} tool uses",
+    "taskProgressCount": "{{count}} tool uses",
+    "taskDoneMeta": "{{count}} tool uses",
+    "stopAgent": "Stop subagent",
     "agentsQueueHint": "{{queued}} queued (max {{max}} parallel workers)"
   },
   "queue": {
@@ -159,6 +170,8 @@
   "readPage": {
     "reading": "Reading {{mode}}…",
     "failed": "Failed to read page",
+    "stopped": "Stopped reading",
+    "emptyContent": "(no text content)",
     "read": "Read {{host}}",
     "currentPage": "current page",
     "titleLabel": "Title: ",
@@ -167,9 +180,13 @@
   },
   "web": {
     "enterUrl": "Please enter a URL",
-    "urlPlaceholder": "https://internal-address or localhost:8080",
+    "urlPlaceholder": "Search or enter URL",
     "open": "Open",
-    "empty": "Enter a URL and the page will be embedded here",
+    "back": "Back",
+    "forward": "Forward",
+    "reload": "Reload",
+    "recents": "Recents",
+    "empty": "No recent pages yet. Enter a URL above to open one.",
     "requiresDesktopOpen": "Opening internal web pages requires the desktop app (Tauri). The browser-only dev mode cannot dock a webview; please use npm run dev:desktop.",
     "requiresDesktopRead": "Reading page content requires the desktop app (Tauri); for public URLs use the web_fetch tool instead."
   },

@@ -57,12 +57,8 @@ function DesktopInteractionGuard() {
   const { view } = useSettingsPanel();
   const { open: rightSidebarOpen } = useRightSidebar();
   const { activeTab } = usePanelTabs();
-  const storedUrl =
-    activeTab?.kind === 'web' && typeof activeTab.state?.url === 'string'
-      ? activeTab.state.url.trim()
-      : '';
   const hasVisibleWebTab =
-    view === 'chat' && rightSidebarOpen && activeTab?.kind === 'web' && storedUrl.length > 0;
+    view === 'chat' && rightSidebarOpen && activeTab?.kind === 'web';
 
   useDesktopInteractionGuard({
     rightSidebarOpen,

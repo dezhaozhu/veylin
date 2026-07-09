@@ -1,6 +1,18 @@
 import i18n from '@/i18n';
 
 const TOOL_VERB: Record<string, 'read' | 'edited' | 'explored' | 'ran' | 'searched'> = {
+  // Veylin tool ids
+  file_read: 'read',
+  file_write: 'edited',
+  file_edit: 'edited',
+  list_dir: 'explored',
+  grep: 'explored',
+  glob: 'explored',
+  bash: 'ran',
+  tool_search: 'searched',
+  read_open_page: 'read',
+  web_fetch: 'read',
+  // Legacy / alternate names
   read_file: 'read',
   Read: 'read',
   read: 'read',
@@ -9,14 +21,9 @@ const TOOL_VERB: Record<string, 'read' | 'edited' | 'explored' | 'ran' | 'search
   write_file: 'edited',
   search_replace: 'edited',
   Edit: 'edited',
-  grep: 'explored',
-  glob: 'explored',
-  list_dir: 'explored',
   list_directory: 'explored',
   codebase_search: 'explored',
-  bash: 'ran',
   shell: 'ran',
-  tool_search: 'searched',
 };
 
 function labelForVerb(

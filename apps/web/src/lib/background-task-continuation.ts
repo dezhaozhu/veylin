@@ -14,6 +14,10 @@ export type BackgroundTaskRow = {
   result?: string | null;
   durationMs?: number | null;
   totalTokens?: number | null;
+  toolUseCount?: number | null;
+  lastToolName?: string | null;
+  lastToolArgs?: string | null;
+  currentActivity?: string | null;
 };
 
 export function isTerminalTaskStatus(status: string): boolean {

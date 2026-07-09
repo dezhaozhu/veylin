@@ -17,6 +17,8 @@ export interface SubagentJob {
   subagentType?: string;
   fork?: boolean;
   directive?: string;
+  /** Set by the in-proc queue when the job is cancelled mid-run. */
+  abortSignal?: AbortSignal;
 }
 
 export interface AutomationJob {
@@ -66,6 +68,7 @@ type TrackedJob = {
   queue: string;
   data: SubagentJob | AutomationJob | WorkflowJob;
   cancelled: boolean;
+  abort?: AbortController;
 };
 
 export function createInProcQueue(): QueuePort {
@@ -91,16 +94,21 @@ export function createInProcQueue(): QueuePort {
     async stop() {
       for (const task of cronTasks.values()) task.stop();
       cronTasks.clear();
+      for (const tracked of jobs.values()) {
+        tracked.cancelled = true;
+        tracked.abort?.abort();
+      }
       subagentQueue.clear();
     },
     async send(queue, job) {
       const id = nextJobId();
-      jobs.set(id, { queue, data: job, cancelled: false });
+      const abort = new AbortController();
+      jobs.set(id, { queue, data: job, cancelled: false, abort });
       const run = async () => {
         const tracked = jobs.get(id);
-        if (!tracked || tracked.cancelled) return;
+        if (!tracked || tracked.cancelled || abort.signal.aborted) return;
         if (queue === SUBAGENT_QUEUE && subagentHandler) {
-          await subagentHandler(job as SubagentJob);
+          await subagentHandler({ ...(job as SubagentJob), abortSignal: abort.signal });
         } else if (queue === AUTOMATION_QUEUE && automationHandler) {
           await automationHandler(job as AutomationJob);
         } else if (queue === WORKFLOW_QUEUE && workflowHandler) {
@@ -116,7 +124,10 @@ export function createInProcQueue(): QueuePort {
     },
     async cancel(_queue, jobId) {
       const tracked = jobs.get(jobId);
-      if (tracked) tracked.cancelled = true;
+      if (tracked) {
+        tracked.cancelled = true;
+        tracked.abort?.abort();
+      }
     },
     async registerWorkers(handler) {
       subagentHandler = handler;

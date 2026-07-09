@@ -37,7 +37,7 @@ window.addEventListener('unhandledrejection', (event) => {
 // Child web-views are native layers above the UI; clear any leftover instance on load
 // (e.g. Vite HMR) so the splash screen is not partially covered.
 if (isTauri()) {
-  void hideWebView();
+  void hideWebView(undefined, { force: true });
 }
 
 function sleep(ms: number): Promise<void> {

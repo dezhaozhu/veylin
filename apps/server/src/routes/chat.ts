@@ -30,6 +30,7 @@ import {
 } from '../chat.js';
 import { listDispatchableCustomAgentIds } from '../agent-task-runner.js';
 import { scheduleDreamConsolidation } from '../dream-service.js';
+import { cancelThreadSubagentTasks } from '../cancel-thread-tasks.js';
 import { buildTableContextBlock } from '../table-store.js';
 import {
   activateSkill,
@@ -89,6 +90,9 @@ import type { ServerDeps } from './types.js';
 /**
  * SSE keepalive cadence. Must stay below the client liveness timeout
  * (LIVENESS_TIMEOUT_MS = 45s) so long synchronous tool turns never look "dead".
+ *
+ * Prefer writing SSE comment frames directly to `reply.raw` so keepalive is not
+ * blocked by AI SDK tee backpressure on the resumable capture branch.
  */
 const SSE_KEEPALIVE_INTERVAL_MS = 15_000;
 
@@ -274,6 +278,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         clientMessages: messages as never,
         forceReplace: body.forceReplace,
       });
+      if (threadStoreOk) {
+        threadRowState = (await getThreadState(threadId)) ?? threadRowState;
+      }
     } catch (err) {
       if (isMemoryStoreFailure(err)) {
         useThreadMemory = false;
@@ -396,6 +403,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
 
     const stream = await agent.stream(agentMessages as never, {
       maxSteps: 25,
+      abortSignal: runAbort.signal,
       ...(useThreadMemory ? { memory: { thread: threadId, resource: ctx.userId } } : {}),
       requestContext,
       toolsets: activeToolsets,
@@ -425,11 +433,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       },
       execute: async ({ writer }) => {
         const streamRepair = createUiStreamRepairState();
-        // Synchronous subagent tools (the `task` tool) can hold the model turn for
-        // minutes without emitting any SSE bytes. Emit a transient keepalive every
-        // 15s (well under the client's 45s liveness timeout) so the connection is
-        // not torn down + reconnected. The part is transient (never added to message
-        // state) and flows through the same tee, so the resumable cursor stays 1:1.
+        // Also write transient data-keepalive into the UI stream (resumable tee).
+        // Primary liveness for the browser is the raw SSE comment interval below —
+        // that path cannot stall behind consumeSseStream backpressure.
         const keepAlive = setInterval(() => {
           if (runAbort.signal.aborted) return;
           try {
@@ -481,9 +487,31 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         streamId,
       ),
     );
+
+    // Bypass AI SDK tee backpressure: comment frames always reach the client socket.
+    const rawKeepAlive = setInterval(() => {
+      if (runAbort.signal.aborted || reply.raw.destroyed || reply.raw.writableEnded) {
+        clearInterval(rawKeepAlive);
+        return;
+      }
+      try {
+        reply.raw.write(`: keepalive ${Date.now()}\n\n`);
+      } catch {
+        clearInterval(rawKeepAlive);
+      }
+    }, SSE_KEEPALIVE_INTERVAL_MS);
+
+    const clearRawKeepAlive = () => clearInterval(rawKeepAlive);
+    reply.raw.on('close', clearRawKeepAlive);
+    reply.raw.on('error', clearRawKeepAlive);
+
     if (response.body) {
-      Readable.fromWeb(response.body as never).pipe(reply.raw);
+      const nodeBody = Readable.fromWeb(response.body as never);
+      nodeBody.on('end', clearRawKeepAlive);
+      nodeBody.on('error', clearRawKeepAlive);
+      nodeBody.pipe(reply.raw);
     } else {
+      clearRawKeepAlive();
       reply.raw.end();
     }
   });
@@ -541,7 +569,13 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       threadId,
       activeStreamId: body.activeStreamId,
     });
-    return result;
+    // Cascade: stop parent stream also kills in-flight subagents for this thread
+    // (Claude Code parent abort → child abortController).
+    const cancelled = await cancelThreadSubagentTasks(threadId, deps.queue).catch((err) => {
+      req.log.warn({ err, threadId }, 'cancel thread subagent tasks failed');
+      return { cancelled: [] as string[] };
+    });
+    return { ...result, cancelledTasks: cancelled.cancelled };
   });
 
   /** Resume by resumable stream id (AssistantChatTransport / Last-Event-ID). */

@@ -55,6 +55,7 @@ import { useNetworkReconnectStore } from "./network-reconnect-store";
 import {
   findFirstAwaitingFrontendToolIndex,
   FRONTEND_SUSPEND_TOOL_NAMES,
+  getFrontendSuspendToolName,
   isAwaitingFrontendToolAnswer,
   pendingFrontendToolCallId,
   registerFrontendToolStop,
@@ -90,6 +91,14 @@ import {
   type BackgroundTasksApiSnapshot,
 } from "./background-task-events";
 import { registerAskUserResultSubmitter } from "./ask-user-submit-bridge";
+import {
+  abortAllReadOpenPageReads,
+  clearReadOpenPageSubmitted,
+  executeReadOpenPageForToolCall,
+  isReadOpenPageSubmitted,
+  markReadOpenPageSubmitted,
+  registerReadOpenPageResultSubmitter,
+} from "./read-open-page-submit-bridge";
 import {
   isThreadMessageInput,
   resolveThreadMessagesToUi,
@@ -349,8 +358,8 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   const chatHelpersRef = useRef(chatHelpers);
   chatHelpersRef.current = chatHelpers;
 
-  const completePendingToolCalls = async () => {
-    if (!cancelPendingToolCallsOnSend) return;
+  const completePendingToolCalls = async (reason = 'User cancelled tool call by sending a new message.') => {
+    if (!cancelPendingToolCallsOnSend && reason.includes('sending a new message')) return;
 
     chatHelpers.setMessages((messages) => {
       const lastMessage = messages.at(-1);
@@ -367,7 +376,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         return {
           ...rest,
           state: "output-error" as const,
-          errorText: "User cancelled tool call by sending a new message.",
+          errorText: reason,
         };
       });
 
@@ -490,10 +499,24 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
 
   const interruptChatRun = () => {
     suppressToolContinuation();
+    abortAllReadOpenPageReads();
+    // Prevent the pending-tool effect from starting a new read after Stop.
+    const last = chatHelpersRef.current.messages.at(-1);
+    if (last?.role === 'assistant' && last.parts?.length) {
+      for (let i = 0; i < last.parts.length; i++) {
+        const part = last.parts[i] as { toolCallId?: string; type?: string };
+        if (getFrontendSuspendToolName(part) !== 'read_open_page') continue;
+        const id = pendingFrontendToolCallId(last, i, part);
+        markReadOpenPageSubmitted(id);
+      }
+    }
     useNetworkReconnectStore.getState().clearBanner();
     const streamId = resumableStorage.getStreamId();
     chatHelpersRef.current.stop();
     setToolStatuses({});
+    // Mark in-flight tool parts cancelled so TaskToolUI / tool groups leave "running"
+    // (Claude Code synthesizes interrupted tool_result on user-cancel).
+    void completePendingToolCalls('Interrupted by user.');
     finalizeInterruptedAssistant();
     const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
     if (threadId) {
@@ -701,7 +724,18 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         result,
       });
     });
-    return () => registerAskUserResultSubmitter(threadId, null);
+    registerReadOpenPageResultSubmitter(threadId, (toolCallId, result, options) => {
+      return applyToolResult({
+        toolCallId,
+        toolName: "read_open_page",
+        result: options?.isError ? (result.error ?? result) : result,
+        isError: options?.isError,
+      });
+    });
+    return () => {
+      registerAskUserResultSubmitter(threadId, null);
+      registerReadOpenPageResultSubmitter(threadId, null);
+    };
   }, [applyToolResult, chatHelpers.id]);
 
   useEffect(() => {
@@ -726,7 +760,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       // Ignore late responses for a thread we already navigated away from.
       if (snapshotThreadId && snapshotThreadId !== resolvePersistableThreadId()) return;
       const tasks = data.tasks ?? [];
-      const ready = Boolean(data.batch?.synthesisReady ?? data.batch?.notificationsReady);
+      const ready = Boolean(data.batch?.notificationsReady);
 
       const dispatchIds = collectCoordinatorDispatchTaskIds(localMessages);
       const lastMsg = localMessages.at(-1);
@@ -758,12 +792,10 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         batchTasks: panelTasks,
         dispatchTaskIds: nextDispatchIds,
         notificationsReady: ready,
-        synthesisReady: ready,
+        synthesisReady: false,
       });
 
-      // Display-only: the background-tasks snapshot drives the subagent panel UI.
-      // It no longer triggers a client-side synthesis re-POST — subagents run
-      // synchronously in the `task` tool and the parent continues natively.
+      // Display-only: drives the subagent panel / TaskToolUI progress.
     };
 
     const refreshBackgroundTasks = async () => {
@@ -843,6 +875,8 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     stampedAssistantIdsRef.current = new Set();
     stoppedFrontendToolIdsRef.current = new Set();
     restoredHistoryHeadRef.current = null;
+    clearReadOpenPageSubmitted();
+    abortAllReadOpenPageReads();
     setToolStatuses({});
     resetFrontendToolContinuationController(frontendContinuationRef.current);
     resetToolContinuationAttemptTracker(toolContinuationAttemptRef.current);
@@ -921,8 +955,15 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     const pendingIndex = findFirstAwaitingFrontendToolIndex(last.parts);
     if (pendingIndex < 0) return;
 
-    const pendingPart = last.parts[pendingIndex] as { toolCallId?: string; type?: string };
+    const pendingPart = last.parts[pendingIndex] as {
+      toolCallId?: string;
+      type?: string;
+      input?: { mode?: 'text' | 'html'; maxChars?: number };
+      args?: { mode?: 'text' | 'html'; maxChars?: number };
+    };
     const toolCallId = pendingFrontendToolCallId(last, pendingIndex, pendingPart);
+    const toolName = getFrontendSuspendToolName(pendingPart);
+
     if (!stoppedFrontendToolIdsRef.current.has(toolCallId)) {
       stoppedFrontendToolIdsRef.current.add(toolCallId);
       const stopIds = [toolCallId];
@@ -930,6 +971,18 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         stopIds.push(pendingPart.toolCallId);
       }
       stopFrontendToolStream("open", stopIds);
+    }
+
+    // Drive read_open_page via bridge — does not depend on ToolUI addResult after chat.stop().
+    if (toolName === 'read_open_page' && !isReadOpenPageSubmitted(toolCallId)) {
+      const threadId = getThreadId?.() ?? chatHelpers.id;
+      const input = pendingPart.input ?? pendingPart.args ?? {};
+      void executeReadOpenPageForToolCall({
+        threadId,
+        toolCallId,
+        mode: input.mode,
+        maxChars: input.maxChars,
+      });
     }
 
     const trimmed = trimAssistantAfterAwaitingTool(chatHelpers.messages);

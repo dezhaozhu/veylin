@@ -4,9 +4,9 @@ import {
   ContextCompression,
   buildSummarizer,
   type ModelKey,
+  type Runtime,
 } from '@veylin/runtime';
-import { listTasksByParentThread } from '@veylin/db';
-import type { Runtime } from '@veylin/runtime';
+import { listTasksByParentThread, getTaskRow } from '@veylin/db';
 import {
   activateSkill,
   deleteThreadState,
@@ -35,7 +35,9 @@ import {
 } from '../message-sync.js';
 import { applyTenantModelSettings } from '../model-settings-store.js';
 import { stopChatStream } from '../resumable-chat-stream.js';
+import { cancelSubagentTask } from '../cancel-thread-tasks.js';
 import type { TaskEvent } from '../task-events.js';
+import { getTaskProgress } from '../task-progress-store.js';
 import type { RequestContext } from '../server-context.js';
 import type { ServerDeps, TasksSnapshot } from './types.js';
 
@@ -79,17 +81,29 @@ export function createReadTaskSnapshot(runtime: Runtime) {
     }
 
     return {
-      tasks: rows.map((r) => ({
-        id: r.id,
-        status: r.status,
-        label: r.label ?? null,
-        agentId: r.agentId,
-        subagentType: r.subagentType ?? null,
-        prompt: r.prompt ?? null,
-        result: r.result ?? null,
-        durationMs: r.durationMs ?? null,
-        totalTokens: r.totalTokens ?? null,
-      })),
+      tasks: rows.map((r) => {
+        const progress = getTaskProgress(r.id);
+        return {
+          id: r.id,
+          status: r.status,
+          label: r.label ?? null,
+          agentId: r.agentId,
+          subagentType: r.subagentType ?? null,
+          prompt: r.prompt ?? null,
+          result: r.result ?? null,
+          durationMs: r.durationMs ?? null,
+          totalTokens: progress?.totalTokens ?? r.totalTokens ?? null,
+          toolUseCount: progress?.toolUseCount ?? null,
+          lastToolName:
+            r.status === 'running' || r.status === 'queued' ? (progress?.lastToolName ?? null) : null,
+          lastToolArgs:
+            r.status === 'running' || r.status === 'queued' ? (progress?.lastToolArgs ?? null) : null,
+          currentActivity:
+            r.status === 'running' || r.status === 'queued'
+              ? (progress?.currentActivity ?? null)
+              : null,
+        };
+      }),
       batch,
     };
   };
@@ -111,6 +125,28 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
       req.log.warn({ err, threadId }, 'tasks read failed');
       if (isDatastoreFailure(err)) {
         return reply.status(503).send({ tasks: [], error: 'datastore_unavailable' });
+      }
+      throw err;
+    }
+  });
+
+  /** Stop a single subagent task (status-bar / TaskStop parity with Claude Code). */
+  app.post('/api/tasks/:taskId/stop', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const { taskId } = req.params as { taskId: string };
+    try {
+      const row = await getTaskRow(taskId);
+      if (!row) return reply.status(404).send({ ok: false, status: 'unknown' });
+      if (row.parentThreadId) {
+        const owned = await resolveThreadForRead(row.parentThreadId, ctx);
+        if (!owned) return reply.status(403).send({ error: 'forbidden' });
+      }
+      const result = await cancelSubagentTask(taskId, deps.queue);
+      return result;
+    } catch (err) {
+      req.log.warn({ err, taskId }, 'task stop failed');
+      if (isDatastoreFailure(err)) {
+        return reply.status(503).send({ ok: false, error: 'datastore_unavailable' });
       }
       throw err;
     }

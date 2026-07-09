@@ -1,107 +1,168 @@
 import { makeAssistantToolUI } from '@assistant-ui/react';
-import { GlobeIcon, LoaderIcon } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { LoaderIcon } from 'lucide-react';
+import { useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
-import { readWebView, truncatePageContent } from '@/lib/tauri-web-view';
-import { getActiveWebTabId } from '@/lib/panel-tabs-storage';
+import {
+  ToolFallbackArgs,
+  ToolFallbackContent,
+  ToolFallbackResult,
+  ToolFallbackRoot,
+  ToolFallbackTrigger,
+} from '@/components/assistant-ui/tool-fallback';
+import { useToolGroupStreaming } from '@/components/assistant-ui/tool-group';
+import {
+  getReadOpenPageSubmittedVersion,
+  isReadOpenPageSubmitted,
+  subscribeReadOpenPageSubmitted,
+  type ReadOpenPageResult,
+} from '@/lib/read-open-page-submit-bridge';
+import { cn } from '@/lib/utils';
 
 interface ReadOpenPageArgs {
   mode?: 'text' | 'html';
   maxChars?: number;
 }
 
-interface ReadOpenPageResult {
-  url?: string;
-  title?: string;
-  content?: string;
-  truncated?: boolean;
-  error?: string;
-  mode?: 'text' | 'html';
+function hostnameOf(url: string | undefined): string {
+  if (!url) return '';
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
+function formatReadOpenPageResult(
+  result: ReadOpenPageResult | undefined,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  maxChars: number,
+): string | undefined {
+  if (!result || result.error) return undefined;
+
+  const lines: string[] = [];
+  const host = hostnameOf(result.url);
+  if (host) lines.push(t('readPage.read', { host }));
+  if (result.title) lines.push(`${t('readPage.titleLabel')}${result.title}`);
+  if (result.url) lines.push(`${t('readPage.urlLabel')}${result.url}`);
+  if (result.content != null) {
+    lines.push(result.content || t('readPage.emptyContent'));
+  }
+  if (result.truncated) {
+    lines.push(t('readPage.truncated', { chars: maxChars.toLocaleString() }));
+  }
+  return lines.length > 0 ? lines.join('\n') : undefined;
+}
+
+/**
+ * Same chrome as generic tools (ToolFallback), with bridge-aware running/stopped
+ * state for the desktop WebView read.
+ */
 export const ReadOpenPageToolUI = makeAssistantToolUI<ReadOpenPageArgs, ReadOpenPageResult>({
   toolName: 'read_open_page',
-  display: 'standalone',
-  render: ({ args, addResult, status, result }) => {
+  render: ({ args, argsText, addResult, status, result, toolCallId }) => {
     const { t } = useTranslation();
-    const startedRef = useRef(false);
-    const mode = args?.mode ?? 'text';
+    const inStreamingGroup = useToolGroupStreaming();
+    const [open, setOpen] = useState(false);
     const maxChars = args?.maxChars ?? 50_000;
 
-    useEffect(() => {
-      if (!addResult || startedRef.current || result) return;
-      if (status.type === 'complete') return;
-      startedRef.current = true;
+    useSyncExternalStore(
+      subscribeReadOpenPageSubmitted,
+      getReadOpenPageSubmittedVersion,
+      getReadOpenPageSubmittedVersion,
+    );
+    const bridgeDone = isReadOpenPageSubmitted(toolCallId);
 
-      void (async () => {
-        try {
-          const page = await readWebView(mode, getActiveWebTabId() ?? undefined);
-          const { content, truncated } = truncatePageContent(page.content, maxChars);
-          addResult({
-            mode,
-            url: page.url,
-            title: page.title,
-            content,
-            truncated,
-          });
-        } catch (e) {
-          addResult({
-            mode,
-            error: e instanceof Error ? e.message : String(e),
-          });
-        }
-      })();
-    }, [status.type, addResult, mode, maxChars, result]);
+    const incompleteReason =
+      status.type === 'incomplete'
+        ? String((status as { reason?: string }).reason ?? '')
+        : '';
+    const interrupted =
+      Boolean(result?.error?.includes('Interrupted')) ||
+      incompleteReason === 'cancelled' ||
+      incompleteReason === 'error';
 
-    const running = status.type === 'running' && !result;
-    const done = status.type === 'complete';
-    let hostname = result?.url ?? '';
-    try {
-      if (result?.url) hostname = new URL(result.url).hostname;
-    } catch {
-      /* keep raw */
+    const displayError =
+      result?.error ??
+      (interrupted && !result ? 'Interrupted by user.' : undefined);
+
+    const running =
+      !result &&
+      !bridgeDone &&
+      !displayError &&
+      !interrupted &&
+      (status.type === 'running' || status.type === 'requires-action');
+
+    const stopped =
+      (!result && !bridgeDone && !running && !displayError && (!addResult || interrupted)) ||
+      (bridgeDone && !result && !displayError);
+
+    const isCancelled =
+      interrupted ||
+      stopped ||
+      (status.type === 'incomplete' && status.reason === 'cancelled');
+
+    const triggerStatus = running
+      ? ({ type: 'running' } as const)
+      : isCancelled
+        ? ({ type: 'incomplete', reason: 'cancelled' } as const)
+        : displayError
+          ? ({ type: 'incomplete', reason: 'error', error: new Error(displayError) } as const)
+          : status.type === 'complete'
+            ? ({ type: 'complete' } as const)
+            : status;
+
+    const formattedResult =
+      displayError || isCancelled
+        ? undefined
+        : formatReadOpenPageResult(result, t, maxChars);
+    const resultErrorText = displayError ?? (stopped ? t('readPage.stopped') : null);
+
+    if (inStreamingGroup) {
+      return (
+        <div
+          data-slot="tool-fallback-inline"
+          className="aui-tool-fallback-inline text-muted-foreground/50 text-base font-normal leading-snug"
+        >
+          <div className="flex items-center gap-1.5">
+            {running ? (
+              <LoaderIcon className="size-4 shrink-0 animate-spin opacity-70" />
+            ) : null}
+            <span className={cn('font-normal', isCancelled && 'line-through')}>
+              read_open_page
+            </span>
+          </div>
+          {argsText ? (
+            <pre className="mt-1 max-h-48 overflow-y-auto font-sans text-base leading-snug whitespace-pre-wrap">
+              {argsText}
+            </pre>
+          ) : null}
+          {resultErrorText ? (
+            <pre className="mt-1 max-h-48 overflow-y-auto font-sans text-base leading-snug whitespace-pre-wrap">
+              {resultErrorText}
+            </pre>
+          ) : formattedResult ? (
+            <pre className="mt-1 max-h-48 overflow-y-auto font-sans text-base leading-snug whitespace-pre-wrap">
+              {formattedResult}
+            </pre>
+          ) : null}
+        </div>
+      );
     }
 
     return (
-      <div className="border-border/60 bg-muted/20 my-2 rounded-lg border p-3 text-xs">
-        <div className="text-muted-foreground mb-2 flex items-center gap-1.5 font-medium">
-          {running ? (
-            <LoaderIcon className="size-3.5 animate-spin" />
-          ) : (
-            <GlobeIcon className="size-3.5" />
-          )}
-          {running
-            ? t('readPage.reading', { mode })
-            : result?.error
-              ? t('readPage.failed')
-              : t('readPage.read', { host: hostname || t('readPage.currentPage') })}
-        </div>
-        {done && result?.error && (
-          <p className="text-destructive whitespace-pre-wrap">{result.error}</p>
-        )}
-        {done && result?.title && !result.error && (
-          <p className="text-muted-foreground mb-1">
-            <span className="font-medium text-foreground">{t('readPage.titleLabel')}</span>
-            {result.title}
-          </p>
-        )}
-        {done && result?.url && !result.error && (
-          <p className="text-muted-foreground mb-2 truncate">
-            <span className="font-medium text-foreground">{t('readPage.urlLabel')}</span>
-            {result.url}
-          </p>
-        )}
-        {done && result?.content && !result.error && (
-          <div className="border-border/40 bg-background/60 max-h-48 overflow-y-auto rounded border p-2 whitespace-pre-wrap">
-            {result.content}
-          </div>
-        )}
-        {done && result?.truncated && (
-          <p className="text-muted-foreground mt-1.5">
-            {t('readPage.truncated', { chars: maxChars.toLocaleString() })}
-          </p>
-        )}
-      </div>
+      <ToolFallbackRoot open={open} onOpenChange={setOpen}>
+        <ToolFallbackTrigger toolName="read_open_page" status={triggerStatus} />
+        <ToolFallbackContent>
+          <ToolFallbackArgs
+            argsText={argsText}
+            className={cn(isCancelled && 'opacity-60')}
+          />
+          <ToolFallbackResult
+            result={formattedResult}
+            errorText={resultErrorText}
+          />
+        </ToolFallbackContent>
+      </ToolFallbackRoot>
     );
   },
 });

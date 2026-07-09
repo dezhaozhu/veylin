@@ -21,7 +21,7 @@ export function installDesktopReloadShortcut(): void {
     if (isEditableTarget(event.target)) return;
 
     event.preventDefault();
-    if (isTauri()) void hideWebView();
+    if (isTauri()) void hideWebView(undefined, { force: true });
     window.location.reload();
   });
 }

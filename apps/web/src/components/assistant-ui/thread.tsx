@@ -130,14 +130,16 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
 
   useEffect(() => {
     dispatchOverlayDismiss('thread-switch');
-    if (isTauri()) void hideWebView();
+    if (isTauri()) void hideWebView(undefined, { force: true });
   }, [threadId]);
 
   useEffect(() => {
     if (!isTauri() || !askOpen) return;
-    void hideWebView();
+    void hideWebView(undefined, { force: true });
     return subscribeAskUserSession(() => {
-      if (getAskUserSessionForThread(threadId) != null) void hideWebView();
+      if (getAskUserSessionForThread(threadId) != null) {
+        void hideWebView(undefined, { force: true });
+      }
     });
   }, [askOpen, threadId]);
 
@@ -314,9 +316,7 @@ const ComposerAction: FC = () => {
 const MessageError: FC = () => {
   const { t } = useTranslation();
   const error = useMessageError();
-  const isRunning = useAuiState((s) => s.thread.isRunning);
   if (error === undefined) return null;
-  if (!isRunning) return null;
 
   const formatted =
     formatChatError(error instanceof Error ? error : new Error(String(error))) ?? {
@@ -467,7 +467,7 @@ const AssistantActionBar: FC = () => {
     <ActionBarPrimitive.Root
       hideWhenRunning
       autohide="not-last"
-      className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in col-start-3 row-start-2 -ms-1 flex items-center gap-1 duration-200"
+      className="aui-assistant-action-bar-root text-muted-foreground/50 animate-in fade-in col-start-3 row-start-2 -ms-1 flex items-center gap-1 duration-200"
     >
       <MessageCopyButton />
       <MessageTimestamp className="ms-0.5" align="start" inline />
@@ -534,7 +534,7 @@ const UserMessageFooter: FC = () => {
       <ActionBarPrimitive.Root
         hideWhenRunning
         autohide="not-last"
-        className="aui-user-message-footer text-muted-foreground flex w-max shrink-0 items-center gap-1.5 whitespace-nowrap"
+        className="aui-user-message-footer text-muted-foreground/50 flex w-max shrink-0 items-center gap-1.5 whitespace-nowrap"
       >
         <MessageTimestamp align="end" inline />
         <MessageCopyButton />

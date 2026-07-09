@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 import { cn } from '@/lib/utils';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
+import { subscribeLayoutSync } from '@/lib/overlay-bounds';
 
 export function SettingsConnectedList({
   children,
@@ -179,10 +180,10 @@ function SettingsRowMenu({ items }: { items: SettingsRowMenuItem[] }) {
       return;
     }
     updateMenuPos();
-    window.addEventListener('resize', updateMenuPos);
+    const stopLayout = subscribeLayoutSync(updateMenuPos);
     window.addEventListener('scroll', updateMenuPos, true);
     return () => {
-      window.removeEventListener('resize', updateMenuPos);
+      stopLayout();
       window.removeEventListener('scroll', updateMenuPos, true);
     };
   }, [open, updateMenuPos]);

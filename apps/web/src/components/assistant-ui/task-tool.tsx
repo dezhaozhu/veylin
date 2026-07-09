@@ -1,7 +1,14 @@
 import { makeAssistantToolUI } from '@assistant-ui/react';
 import { BotIcon, LoaderIcon } from 'lucide-react';
+import { useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { deriveTaskLabel } from '@veylin/shared';
+import type { BackgroundTaskRow } from '@/lib/background-task-continuation';
+import {
+  getBackgroundTasksSnapshot,
+  subscribeBackgroundTasks,
+} from '@/lib/background-tasks-store';
+import { cn } from '@/lib/utils';
 
 type TaskToolArgs = {
   description?: string;
@@ -37,41 +44,102 @@ function taskLabel(args: TaskToolArgs | undefined, result: TaskToolResult | unde
   });
 }
 
+function useTaskProgressRow(
+  taskId: string | null | undefined,
+  label?: string | null,
+): BackgroundTaskRow | null {
+  return useSyncExternalStore(
+    subscribeBackgroundTasks,
+    () => {
+      const snap = getBackgroundTasksSnapshot();
+      if (taskId) {
+        return snap.tasks.find((t) => t.id === taskId) ?? null;
+      }
+      if (label) {
+        return (
+          snap.tasks.find(
+            (t) =>
+              (t.status === 'running' || t.status === 'queued') &&
+              (t.label === label || t.label?.includes(label)),
+          ) ?? null
+        );
+      }
+      return null;
+    },
+    () => null,
+  );
+}
+
+/** One-line detail after the title: tool name + args (not "N tools" / status). */
+function progressDetail(row: BackgroundTaskRow | null): string | null {
+  if (!row) return null;
+  if (row.lastToolName) {
+    return row.lastToolArgs
+      ? `${row.lastToolName} ${row.lastToolArgs}`
+      : row.lastToolName;
+  }
+  const activity = row.currentActivity?.trim();
+  if (!activity) return null;
+  // Drop legacy "tool · N tools" / initializing copy from older servers.
+  if (/·\s*\d+\s*tools?/i.test(activity)) {
+    return activity.replace(/\s*·\s*\d+\s*tools?/i, '').trim() || null;
+  }
+  if (/^(Initializing|初始化)/i.test(activity)) return null;
+  return activity;
+}
+
+function TaskRow({
+  label,
+  detail,
+  running,
+}: {
+  label: string;
+  detail?: string | null;
+  running?: boolean;
+}) {
+  const Icon = running ? LoaderIcon : BotIcon;
+  return (
+    <div className="text-muted-foreground/50 my-1 flex min-w-0 items-center gap-1.5 text-base font-normal leading-snug">
+      <Icon
+        className={cn(
+          'size-4 shrink-0 opacity-70',
+          running && 'animate-spin',
+        )}
+      />
+      <span className="min-w-0 truncate font-normal" title={label}>
+        {label}
+      </span>
+      {detail ? (
+        <span className="min-w-0 truncate opacity-80" title={detail}>
+          {detail}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 export const TaskToolUI = makeAssistantToolUI<TaskToolArgs, TaskToolResult>({
   toolName: 'task',
   render: ({ args, result, status }) => {
-    const { t } = useTranslation();
     const label = taskLabel(args, result);
     const running = status.type === 'running';
+    const progressRow = useTaskProgressRow(result?.task_id, label);
+    const detail = progressDetail(progressRow);
 
     if (running) {
-      return (
-        <div className="border-border/50 bg-muted/30 my-1 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
-          <LoaderIcon className="text-primary size-3.5 shrink-0 animate-spin" />
-          <span className="font-medium">{label}</span>
-          <span className="text-muted-foreground">{t('status.taskRunning')}</span>
-        </div>
-      );
+      return <TaskRow label={label} detail={detail} running />;
     }
 
     if (result?.background && result.task_id) {
-      return (
-        <div className="border-border/50 bg-muted/30 my-1 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
-          <BotIcon className="text-primary size-3.5 shrink-0" />
-          <span className="font-medium">{label}</span>
-          <span className="text-muted-foreground">{t('status.taskQueued')}</span>
-        </div>
-      );
+      return <TaskRow label={label} detail={detail} />;
     }
 
     if (result?.summary) {
-      return (
-        <div className="border-border/50 bg-muted/30 my-1 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
-          <BotIcon className="text-primary size-3.5 shrink-0" />
-          <span className="font-medium">{label}</span>
-          <span className="text-muted-foreground">{t('status.taskDone')}</span>
-        </div>
-      );
+      return <TaskRow label={label} detail={detail} />;
+    }
+
+    if (result?.task_id || args?.description || args?.prompt) {
+      return <TaskRow label={label} detail={detail} />;
     }
 
     return null;
@@ -86,29 +154,50 @@ export const TaskContinueToolUI = makeAssistantToolUI<
   render: ({ args, result, status }) => {
     const { t } = useTranslation();
     const running = status.type === 'running';
+    const progressRow = useTaskProgressRow(args?.task_id ?? result?.task_id);
+    const detail = progressDetail(progressRow);
+    const shortId = args?.task_id?.slice(0, 8) ?? '…';
 
     if (running) {
       return (
-        <div className="text-muted-foreground my-1 text-xs">
-          {t('subagent.continuing', { id: args?.task_id?.slice(0, 8) ?? '…' })}
+        <div className="text-muted-foreground/50 my-1 flex min-w-0 items-center gap-1.5 text-base font-normal leading-snug">
+          <LoaderIcon className="size-4 shrink-0 animate-spin opacity-70" />
+          <span className="shrink-0 font-normal">
+            {t('subagent.continuing', { id: shortId })}
+          </span>
+          {detail ? (
+            <span className="min-w-0 truncate opacity-80" title={detail}>
+              {detail}
+            </span>
+          ) : null}
         </div>
       );
     }
 
     if (result?.background && result.task_id) {
       return (
-        <div className="text-muted-foreground my-1 flex items-center gap-2 text-xs">
-          <span className="font-medium text-foreground">{args?.task_id?.slice(0, 8) ?? '…'}</span>
-          <span>{t('status.taskQueued')}</span>
+        <div className="text-muted-foreground/50 my-1 flex min-w-0 items-center gap-1.5 text-base font-normal leading-snug">
+          <span className="shrink-0 font-normal">{shortId}</span>
+          {detail ? (
+            <span className="min-w-0 truncate opacity-80" title={detail}>
+              {detail}
+            </span>
+          ) : null}
         </div>
       );
     }
 
     if (result?.summary) {
       return (
-        <div className="border-border/40 bg-muted/20 my-1 flex items-center gap-2 rounded border px-2 py-1.5 text-xs">
-          <span className="font-medium">{t('subagent.continueResult', { id: args?.task_id?.slice(0, 8) ?? '' })}</span>
-          <span className="text-muted-foreground">{t('status.taskDone')}</span>
+        <div className="text-muted-foreground/50 my-1 flex min-w-0 items-center gap-1.5 text-base font-normal leading-snug">
+          <span className="shrink-0 font-normal">
+            {t('subagent.continueResult', { id: shortId })}
+          </span>
+          {detail ? (
+            <span className="min-w-0 truncate opacity-80" title={detail}>
+              {detail}
+            </span>
+          ) : null}
         </div>
       );
     }

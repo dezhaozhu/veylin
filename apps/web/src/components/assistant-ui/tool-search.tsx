@@ -23,34 +23,34 @@ export const ToolSearchToolUI = makeAssistantToolUI<
     const hits = result?.tools ?? [];
     if (status.type === 'running') {
       return (
-        <div className="text-muted-foreground my-1 flex items-center gap-1.5 text-xs">
-          <SearchIcon className="size-3.5" />
+        <div className="text-muted-foreground/50 my-1 flex items-center gap-1.5 text-base font-normal leading-snug">
+          <SearchIcon className="size-4 shrink-0 opacity-70" />
           {t('toolSearch.searching', { query })}
         </div>
       );
     }
     if (hits.length === 0) {
       return (
-        <div className="border-border/60 bg-muted/20 my-2 rounded-lg border px-2 py-1.5 text-xs">
-          <div className="text-muted-foreground flex items-center gap-1.5 font-medium">
-            <SearchIcon className="size-3.5 shrink-0" />
+        <div className="text-muted-foreground/50 my-1 text-base font-normal leading-snug">
+          <div className="flex items-center gap-1.5">
+            <SearchIcon className="size-4 shrink-0 opacity-70" />
             {t('toolSearch.noResults', { query })}
           </div>
-          <p className="text-muted-foreground mt-1 ps-5">{t('toolSearch.noResultsHint')}</p>
+          <p className="mt-1 ps-5 opacity-80">{t('toolSearch.noResultsHint')}</p>
         </div>
       );
     }
     return (
-      <div className="border-border/60 bg-muted/20 my-2 rounded-lg border p-2 text-xs">
-        <div className="text-muted-foreground mb-1 flex items-center gap-1.5 font-medium">
-          <SearchIcon className="size-3.5" />
+      <div className="text-muted-foreground/50 my-1 text-base font-normal leading-snug">
+        <div className="mb-1 flex items-center gap-1.5">
+          <SearchIcon className="size-4 shrink-0 opacity-70" />
           {t('toolSearch.title', { query })}
         </div>
-        <ul className="flex flex-col gap-0.5">
+        <ul className="flex max-h-48 flex-col gap-0.5 overflow-y-auto ps-5">
           {hits.map((h) => (
             <li key={h.id} className="flex justify-between gap-2">
-              <span className="font-mono">{h.id}</span>
-              <span className="text-muted-foreground truncate">{h.description}</span>
+              <span>{h.id}</span>
+              <span className="truncate opacity-80">{h.description}</span>
             </li>
           ))}
         </ul>

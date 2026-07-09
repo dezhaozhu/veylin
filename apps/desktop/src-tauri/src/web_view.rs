@@ -1,10 +1,49 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{mpsc, Mutex};
 use std::time::Duration;
-use tauri::{webview::WebviewBuilder, AppHandle, LogicalPosition, LogicalSize, Manager, State, WebviewUrl};
+use tauri::{
+    webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder},
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewUrl,
+};
 
 const MAIN_LABEL: &str = "main";
 const WEB_VIEW_PREFIX: &str = "web-view-";
+const WEB_VIEW_NAVIGATED_EVENT: &str = "web-view-navigated";
+
+/// Force target=_blank / window.open to navigate in the same panel webview.
+const SAME_TAB_NAV_SCRIPT: &str = r#"
+(function () {
+  if (window.__veylinSameTabNav) return;
+  window.__veylinSameTabNav = true;
+  document.addEventListener('click', function (event) {
+    if (event.defaultPrevented) return;
+    if (event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var target = event.target;
+    if (!target || !target.closest) return;
+    var anchor = target.closest('a[href]');
+    if (!anchor) return;
+    var href = anchor.href;
+    if (!href || href.indexOf('javascript:') === 0) return;
+    var targetAttr = (anchor.getAttribute('target') || '').toLowerCase();
+    if (targetAttr !== '_blank' && targetAttr !== '_new') return;
+    event.preventDefault();
+    event.stopPropagation();
+    window.location.assign(href);
+  }, true);
+  var originalOpen = window.open;
+  window.open = function (url) {
+    if (typeof url === 'string' && url && url.indexOf('javascript:') !== 0) {
+      window.location.assign(url);
+      return null;
+    }
+    if (typeof originalOpen === 'function') {
+      return originalOpen.apply(window, arguments);
+    }
+    return null;
+  };
+})();
+"#;
 
 pub struct ActiveWebTab(pub Mutex<Option<String>>);
 
@@ -20,6 +59,14 @@ pub struct PageContent {
     pub url: String,
     pub title: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebViewNavigatedPayload {
+    tab_id: String,
+    url: String,
+    title: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -95,12 +142,14 @@ fn fallback_bounds(app: &AppHandle) -> Result<WebViewBounds, String> {
         .map_err(|e| e.to_string())?
         .to_logical::<f64>(scale);
 
+    // Keep clear of the right-panel tab strip (~32px) and address chrome (~36px).
+    let top_chrome = 68.0;
     let dock_width = (size.width * 0.45).max(480.0);
     Ok(WebViewBounds {
         x: size.width - dock_width,
-        y: 0.0,
+        y: top_chrome,
         width: dock_width,
-        height: size.height,
+        height: (size.height - top_chrome).max(1.0),
     })
 }
 
@@ -120,18 +169,28 @@ fn parse_external_url(url: &str) -> Result<url::Url, String> {
 }
 
 fn navigate_webview(webview: &tauri::Webview, parsed: &url::Url) -> Result<(), String> {
-    let escaped = parsed
-        .as_str()
-        .replace('\\', "\\\\")
-        .replace('\'', "\\'");
-    webview
-        .eval(&format!("window.location.href = '{escaped}';"))
-        .map_err(|e| e.to_string())
+    webview.navigate(parsed.clone()).map_err(|e| e.to_string())
+}
+
+fn install_same_tab_navigation(webview: &tauri::Webview) {
+    let _ = webview.eval(SAME_TAB_NAV_SCRIPT);
+}
+
+fn emit_navigated(app: &AppHandle, tab_id: &str, url: &str, title: &str) {
+    let _ = app.emit(
+        WEB_VIEW_NAVIGATED_EVENT,
+        WebViewNavigatedPayload {
+            tab_id: tab_id.to_string(),
+            url: url.to_string(),
+            title: title.to_string(),
+        },
+    );
 }
 
 fn create_panel_webview(
     app: &AppHandle,
     label: &str,
+    tab_id: &str,
     parsed: url::Url,
     bounds: WebViewBounds,
 ) -> Result<(), String> {
@@ -139,14 +198,51 @@ fn create_panel_webview(
         .get_window(MAIN_LABEL)
         .ok_or_else(|| "main window not found".to_string())?;
 
-    main.add_child(
-        WebviewBuilder::new(label, WebviewUrl::External(parsed)),
-        LogicalPosition::new(bounds.x, bounds.y),
-        LogicalSize::new(bounds.width, bounds.height),
-    )
-    .map_err(|e| e.to_string())?
-    .set_focus()
-    .map_err(|e| e.to_string())?;
+    let app_for_new_window = app.clone();
+    let label_for_new_window = label.to_string();
+    let tab_id_for_new_window = tab_id.to_string();
+
+    let app_for_page_load = app.clone();
+    let tab_id_for_page_load = tab_id.to_string();
+
+    // Do not set_focus here: focusing the child webview blurs the main window and
+    // can race with frontend hide/visibility guards, making the panel flash away.
+    //
+    // target=_blank / window.open → stay in this panel webview (no popup).
+    let builder = WebviewBuilder::new(label, WebviewUrl::External(parsed))
+        .initialization_script(SAME_TAB_NAV_SCRIPT)
+        .on_new_window(move |url, _features| {
+            if let Some(webview) = app_for_new_window.get_webview(&label_for_new_window) {
+                let _ = navigate_webview(&webview, &url);
+                emit_navigated(
+                    &app_for_new_window,
+                    &tab_id_for_new_window,
+                    url.as_str(),
+                    "",
+                );
+            }
+            NewWindowResponse::Deny
+        })
+        .on_page_load(move |webview, payload| {
+            if payload.event() != PageLoadEvent::Finished {
+                return;
+            }
+            install_same_tab_navigation(&webview);
+            emit_navigated(
+                &app_for_page_load,
+                &tab_id_for_page_load,
+                payload.url().as_str(),
+                "",
+            );
+        });
+
+    main
+        .add_child(
+            builder,
+            LogicalPosition::new(bounds.x, bounds.y),
+            LogicalSize::new(bounds.width, bounds.height),
+        )
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -171,13 +267,13 @@ pub async fn open_web_view(
     if let Some(webview) = app.get_webview(&label) {
         navigate_webview(&webview, &parsed)?;
         apply_bounds(&webview, bounds)?;
+        install_same_tab_navigation(&webview);
         webview.show().map_err(|e| e.to_string())?;
-        webview.set_focus().map_err(|e| e.to_string())?;
         set_active_tab(&active, &tab_id);
         return Ok(());
     }
 
-    create_panel_webview(&app, &label, parsed, bounds)?;
+    create_panel_webview(&app, &label, &tab_id, parsed, bounds)?;
     set_active_tab(&active, &tab_id);
     Ok(())
 }
@@ -203,8 +299,8 @@ pub async fn show_web_view(
     };
 
     apply_bounds(&webview, bounds)?;
+    install_same_tab_navigation(&webview);
     webview.show().map_err(|e| e.to_string())?;
-    webview.set_focus().map_err(|e| e.to_string())?;
     set_active_tab(&active, &tab_id);
     Ok(true)
 }
@@ -241,6 +337,36 @@ pub async fn close_web_view(app: AppHandle, tab_id: String) -> Result<(), String
         webview.close().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+fn panel_webview<'a>(app: &'a AppHandle, tab_id: &str) -> Result<tauri::Webview, String> {
+    let label = web_view_label(tab_id)?;
+    app.get_webview(&label)
+        .ok_or_else(|| "No page open in this web tab".to_string())
+}
+
+#[tauri::command]
+pub async fn web_view_go_back(app: AppHandle, tab_id: String) -> Result<(), String> {
+    let webview = panel_webview(&app, &tab_id)?;
+    webview
+        .eval("history.back()")
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn web_view_go_forward(app: AppHandle, tab_id: String) -> Result<(), String> {
+    let webview = panel_webview(&app, &tab_id)?;
+    webview
+        .eval("history.forward()")
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn web_view_reload(app: AppHandle, tab_id: String) -> Result<(), String> {
+    let webview = panel_webview(&app, &tab_id)?;
+    webview
+        .eval("location.reload()")
+        .map_err(|e| e.to_string())
 }
 
 fn read_script(mode: &str) -> &'static str {

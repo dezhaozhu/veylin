@@ -113,7 +113,7 @@ function ToolFallbackDuration({
     <span
       data-slot="tool-fallback-duration"
       className={cn(
-        "aui-tool-fallback-duration text-muted-foreground text-xs tabular-nums",
+        "aui-tool-fallback-duration text-muted-foreground/50 text-base tabular-nums",
         className,
       )}
       {...props}
@@ -144,7 +144,7 @@ function ToolFallbackTrigger({
     <CollapsibleTrigger
       data-slot="tool-fallback-trigger"
       className={cn(
-        "aui-tool-fallback-trigger group/trigger text-muted-foreground hover:text-foreground flex w-fit items-center gap-2 py-1 text-sm transition-colors",
+        "aui-tool-fallback-trigger group/trigger text-muted-foreground/50 hover:text-muted-foreground flex w-fit items-center gap-1.5 py-0.5 text-base font-normal leading-snug transition-colors",
         className,
       )}
       {...props}
@@ -152,20 +152,20 @@ function ToolFallbackTrigger({
       <Icon
         data-slot="tool-fallback-trigger-icon"
         className={cn(
-          "aui-tool-fallback-trigger-icon size-4 shrink-0",
-          isCancelled && "text-muted-foreground",
+          "aui-tool-fallback-trigger-icon size-4 shrink-0 opacity-70",
+          isCancelled && "text-muted-foreground/50",
           isRunning && "animate-spin",
         )}
       />
       <span
         data-slot="tool-fallback-trigger-label"
         className={cn(
-          "aui-tool-fallback-trigger-label-wrapper relative inline-block text-start leading-none",
-          isCancelled && "text-muted-foreground line-through",
+          "aui-tool-fallback-trigger-label-wrapper relative inline-block text-start font-normal leading-snug",
+          isCancelled && "line-through",
         )}
       >
         <span>
-          {label}: <b>{toolName}</b>
+          {label}: {toolName}
         </span>
         {isRunning && (
           <span
@@ -173,7 +173,7 @@ function ToolFallbackTrigger({
             data-slot="tool-fallback-trigger-shimmer"
             className="aui-tool-fallback-trigger-shimmer shimmer pointer-events-none absolute inset-0 motion-reduce:animate-none"
           >
-            {label}: <b>{toolName}</b>
+            {label}: {toolName}
           </span>
         )}
       </span>
@@ -181,7 +181,7 @@ function ToolFallbackTrigger({
       <ChevronDownIcon
         data-slot="tool-fallback-trigger-chevron"
         className={cn(
-          "aui-tool-fallback-trigger-chevron size-4 shrink-0",
+          "aui-tool-fallback-trigger-chevron size-4 shrink-0 opacity-50",
           "transition-transform duration-(--animation-duration) ease-out",
           "group-data-[state=closed]/trigger:-rotate-90",
           "group-data-[state=open]/trigger:rotate-0",
@@ -200,7 +200,7 @@ function ToolFallbackContent({
     <CollapsibleContent
       data-slot="tool-fallback-content"
       className={cn(
-        "aui-tool-fallback-content relative overflow-hidden text-sm outline-none",
+        "aui-tool-fallback-content relative overflow-hidden text-base outline-none",
         "group/collapsible-content ease-out",
         "data-[state=closed]:animate-collapsible-up",
         "data-[state=open]:animate-collapsible-down",
@@ -215,6 +215,36 @@ function ToolFallbackContent({
       <div className="flex flex-col gap-2 ps-6 pt-1 pb-2">{children}</div>
     </CollapsibleContent>
   );
+}
+
+/** Shared cap so long tool args/results scroll instead of stretching the thread. */
+const TOOL_BLOCK_MAX_HEIGHT = "max-h-48 overflow-y-auto";
+
+function formatStatusErrorText(
+  status?: ToolCallMessagePartStatus,
+): string | null {
+  if (status?.type !== "incomplete") return null;
+
+  const error = status.error;
+  if (error == null) {
+    return status.reason === "cancelled" ? "Interrupted by user." : null;
+  }
+  if (typeof error === "string") {
+    const trimmed = error.trim();
+    return trimmed || (status.reason === "cancelled" ? "Interrupted by user." : null);
+  }
+  if (error instanceof Error) {
+    return error.message || error.name || null;
+  }
+  try {
+    const text = JSON.stringify(error);
+    if (!text || text === "{}" || text === "null") {
+      return status.reason === "cancelled" ? "Interrupted by user." : "Tool call failed.";
+    }
+    return text;
+  } catch {
+    return status.reason === "cancelled" ? "Interrupted by user." : "Tool call failed.";
+  }
 }
 
 function ToolFallbackArgs({
@@ -232,7 +262,12 @@ function ToolFallbackArgs({
       className={cn("aui-tool-fallback-args", className)}
       {...props}
     >
-      <pre className="aui-tool-fallback-args-value bg-muted/50 text-muted-foreground rounded-md p-2.5 text-xs whitespace-pre-wrap">
+      <pre
+        className={cn(
+          "aui-tool-fallback-args-value bg-muted/50 text-muted-foreground/50 rounded-md p-2.5 font-sans text-base leading-snug whitespace-pre-wrap",
+          TOOL_BLOCK_MAX_HEIGHT,
+        )}
+      >
         {argsText}
       </pre>
     </div>
@@ -241,12 +276,24 @@ function ToolFallbackArgs({
 
 function ToolFallbackResult({
   result,
+  errorText,
   className,
   ...props
 }: React.ComponentProps<"div"> & {
   result?: unknown;
+  /** When set, shown as the Result body (tool failure / cancel). */
+  errorText?: string | null;
 }) {
-  if (result === undefined) return null;
+  const body =
+    errorText
+      ? errorText
+      : result === undefined
+        ? undefined
+        : typeof result === "string"
+          ? result
+          : JSON.stringify(result, null, 2);
+
+  if (body === undefined || body === null) return null;
 
   return (
     <div
@@ -254,16 +301,22 @@ function ToolFallbackResult({
       className={cn("aui-tool-fallback-result", className)}
       {...props}
     >
-      <p className="aui-tool-fallback-result-header text-muted-foreground text-xs font-medium">
+      <p className="aui-tool-fallback-result-header text-muted-foreground/50 text-base font-normal leading-snug">
         Result:
       </p>
-      <pre className="aui-tool-fallback-result-content bg-muted/50 text-muted-foreground mt-1 rounded-md p-2.5 text-xs whitespace-pre-wrap">
-        {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
+      <pre
+        className={cn(
+          "aui-tool-fallback-result-content bg-muted/50 text-muted-foreground/50 mt-1 rounded-md p-2.5 font-sans text-base leading-snug whitespace-pre-wrap",
+          TOOL_BLOCK_MAX_HEIGHT,
+        )}
+      >
+        {body}
       </pre>
     </div>
   );
 }
 
+/** @deprecated Prefer showing errors via ToolFallbackResult `errorText`. */
 function ToolFallbackError({
   status,
   className,
@@ -271,33 +324,15 @@ function ToolFallbackError({
 }: React.ComponentProps<"div"> & {
   status?: ToolCallMessagePartStatus;
 }) {
-  if (status?.type !== "incomplete") return null;
-
-  const error = status.error;
-  const errorText = error
-    ? typeof error === "string"
-      ? error
-      : JSON.stringify(error)
-    : null;
-
+  const errorText = formatStatusErrorText(status);
   if (!errorText) return null;
 
-  const isCancelled = status.reason === "cancelled";
-  const headerText = isCancelled ? "Cancelled reason:" : "Error:";
-
   return (
-    <div
-      data-slot="tool-fallback-error"
-      className={cn("aui-tool-fallback-error", className)}
+    <ToolFallbackResult
+      errorText={errorText}
+      className={className}
       {...props}
-    >
-      <p className="aui-tool-fallback-error-header text-muted-foreground font-semibold">
-        {headerText}
-      </p>
-      <p className="aui-tool-fallback-error-reason text-muted-foreground">
-        {errorText}
-      </p>
-    </div>
+    />
   );
 }
 
@@ -531,29 +566,55 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
   }
 
   if (inStreamingGroup) {
+    const errorText = formatStatusErrorText(status);
     return (
       <div
         data-slot="tool-fallback-inline"
-        className="aui-tool-fallback-inline text-muted-foreground text-base leading-snug"
+        className="aui-tool-fallback-inline text-muted-foreground/50 text-base font-normal leading-snug"
       >
         <div className="flex items-center gap-1.5">
           {isRunning ? (
-            <LoaderIcon className="size-3 shrink-0 animate-spin opacity-70" />
+            <LoaderIcon className="size-4 shrink-0 animate-spin opacity-70" />
           ) : null}
-          <span className="text-foreground/80">{toolName}</span>
-          {isRunning ? <ToolFallbackDuration className="text-xs" /> : null}
+          <span
+            className={cn(
+              "font-normal",
+              isCancelled && "line-through",
+            )}
+          >
+            {toolName}
+          </span>
+          {isRunning ? <ToolFallbackDuration /> : null}
         </div>
         {argsText ? (
-          <pre className="mt-1 max-h-20 overflow-y-auto text-xs whitespace-pre-wrap opacity-80">
+          <pre
+            className={cn(
+              "mt-1 font-sans text-base leading-snug whitespace-pre-wrap",
+              TOOL_BLOCK_MAX_HEIGHT,
+            )}
+          >
             {argsText}
           </pre>
         ) : null}
-        {!isCancelled && result !== undefined ? (
-          <pre className="mt-1 max-h-24 overflow-y-auto text-xs whitespace-pre-wrap opacity-80">
+        {errorText ? (
+          <pre
+            className={cn(
+              "mt-1 font-sans text-base leading-snug whitespace-pre-wrap",
+              TOOL_BLOCK_MAX_HEIGHT,
+            )}
+          >
+            {errorText}
+          </pre>
+        ) : !isCancelled && result !== undefined ? (
+          <pre
+            className={cn(
+              "mt-1 font-sans text-base leading-snug whitespace-pre-wrap",
+              TOOL_BLOCK_MAX_HEIGHT,
+            )}
+          >
             {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
           </pre>
         ) : null}
-        <ToolFallbackError status={status} />
         {isRequiresAction && (
           <ToolFallbackApproval
             addResult={addResult}
@@ -567,11 +628,12 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
     );
   }
 
+  const errorText = formatStatusErrorText(status);
+
   return (
     <ToolFallbackRoot open={open} onOpenChange={setOpen}>
       <ToolFallbackTrigger toolName={toolName} status={status} />
       <ToolFallbackContent>
-        <ToolFallbackError status={status} />
         <ToolFallbackArgs
           argsText={argsText}
           className={cn(isCancelled && "opacity-60")}
@@ -585,7 +647,10 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
             respondToApproval={respondToApproval}
           />
         )}
-        {!isCancelled && <ToolFallbackResult result={result} />}
+        <ToolFallbackResult
+          result={isCancelled || errorText ? undefined : result}
+          errorText={errorText}
+        />
       </ToolFallbackContent>
     </ToolFallbackRoot>
   );

@@ -66,8 +66,20 @@ export function hasFrontendToolOutput(
 ): boolean {
   if (toolName === 'ask_user_question') return hasAskUserAnswers(output);
   if (!output || typeof output !== 'object') return false;
-  const result = output as { content?: string; error?: string };
-  return Boolean(result.content?.length || result.error?.length);
+  const result = output as {
+    content?: string;
+    error?: string;
+    url?: string;
+    title?: string;
+    mode?: string;
+  };
+  if (typeof result.error === 'string' && result.error.length > 0) return true;
+  // Empty page is still a successful read (about:blank) — accept url/title/mode/content.
+  if (typeof result.content === 'string') return true;
+  if (typeof result.url === 'string') return true;
+  if (typeof result.title === 'string') return true;
+  if (result.mode === 'text' || result.mode === 'html') return true;
+  return false;
 }
 
 export function isAwaitingFrontendToolPart(part: unknown): boolean {

@@ -14,6 +14,7 @@ import { useAui, useAuiState } from '@assistant-ui/store';
 import { applyCompactToThread } from '@/lib/compact-context';
 import { getChatSettings } from '@/lib/chat-settings';
 import { commitPendingSkillAtEnd } from '@/lib/composer-pending-skill';
+import { subscribeLayoutSync } from '@/lib/overlay-bounds';
 import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
 import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 import {
@@ -58,10 +59,10 @@ function usePlusMenuAnchor(open: boolean, anchorRef: RefObject<HTMLElement | nul
     };
 
     updateAnchor();
-    window.addEventListener('resize', updateAnchor);
+    const stopLayout = subscribeLayoutSync(updateAnchor);
     window.addEventListener('scroll', updateAnchor, true);
     return () => {
-      window.removeEventListener('resize', updateAnchor);
+      stopLayout();
       window.removeEventListener('scroll', updateAnchor, true);
     };
   }, [open, anchorRef]);

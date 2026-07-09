@@ -16,6 +16,10 @@ export type TasksSnapshot = {
     result: string | null;
     durationMs: number | null;
     totalTokens: number | null;
+    toolUseCount?: number | null;
+    lastToolName?: string | null;
+    lastToolArgs?: string | null;
+    currentActivity?: string | null;
   }>;
   batch?: {
     taskIds: string[];

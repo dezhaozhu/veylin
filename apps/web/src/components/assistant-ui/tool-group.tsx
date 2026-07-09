@@ -144,8 +144,8 @@ function ToolGroupTrigger({
     <CollapsibleTrigger
       data-slot="tool-group-trigger"
       className={cn(
-        "aui-tool-group-trigger text-muted-foreground flex w-fit max-w-full cursor-pointer items-center gap-1.5 text-base leading-snug transition-colors",
-        "hover:text-foreground",
+        "aui-tool-group-trigger text-muted-foreground/50 flex w-fit max-w-full cursor-pointer items-center gap-1.5 text-base font-normal leading-snug transition-colors",
+        "hover:text-muted-foreground",
         !isOpen && "-mx-1 rounded-sm px-1 hover:bg-muted/40",
         className,
       )}
@@ -192,7 +192,7 @@ function ToolGroupContent({
     >
       <div
         className={cn(
-          "flex flex-col gap-1.5 overflow-y-auto border-l border-border ps-3",
+          "flex flex-col gap-1.5 overflow-y-auto border-l border-border/60 ps-3 text-base font-normal leading-snug text-muted-foreground/50",
           isStreaming && STREAMING_MAX_HEIGHT,
         )}
       >
@@ -207,7 +207,9 @@ function useToolNamesFromIndices(indices: readonly number[]): string[] {
     indices
       .map((i) => {
         const part = s.message.parts[i] as { type?: string; toolName?: string } | undefined;
-        if (part?.type === "tool-call" && part.toolName) return part.toolName;
+        if (!part?.type) return "";
+        if (part.type === "tool-call" && part.toolName) return part.toolName;
+        if (part.type.startsWith("tool-")) return part.type.slice("tool-".length);
         return "";
       })
       .filter(Boolean)

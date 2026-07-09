@@ -9,8 +9,20 @@ import {
   type ThreadIdentity,
   type UiMessage,
 } from './message-sync';
-import { setTodos as setThreadTodosDb, todosFromMessageHistory } from './thread-state';
+import {
+  setTodos as setThreadTodosDb,
+  todosFromMessageHistory,
+} from './thread-state';
+import type { TodoItem } from '@veylin/tools';
 import { isDatastoreFailure } from './store-errors';
+
+/**
+ * After a client transcript replace (edit truncate / forceReplace), todos must
+ * match the last todo_write still present — or clear when none remain.
+ */
+export function resolveTodosForReplacedTranscript(messages: UiMessage[]): TodoItem[] {
+  return todosFromMessageHistory(messages) ?? [];
+}
 
 type StoredMessage = { id?: string; role?: string };
 
@@ -106,10 +118,11 @@ export async function syncThreadMessagesFromClient(opts: {
     const merged = preserveServerTaskNotifications(opts.clientMessages, storedUi);
     await replaceThreadMessages(opts.memory, opts.identity, merged);
 
-    const todos = todosFromMessageHistory(merged);
-    if (todos != null) {
-      await setThreadTodosDb(opts.identity.threadId, todos);
-    }
+    // Truncated / replaced transcript is authoritative for the checklist panel.
+    await setThreadTodosDb(
+      opts.identity.threadId,
+      resolveTodosForReplacedTranscript(merged),
+    );
 
     return true;
   });

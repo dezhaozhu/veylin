@@ -22,6 +22,7 @@ type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 type TodoItem = {
   id: string;
   content: string;
+  activeForm?: string;
   status: TodoStatus;
 };
 
@@ -333,7 +334,11 @@ export function ComposerStatusBar() {
                     <span className="mt-px w-4 shrink-0 text-center">
                       {TODO_STATUS_ICON[item.status]}
                     </span>
-                    <span>{item.content}</span>
+                    <span>
+                      {item.status === 'in_progress' && item.activeForm
+                        ? item.activeForm
+                        : item.content}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -392,6 +397,7 @@ export function ComposerStatusBar() {
                             task.status === 'done' && 'bg-green-500/10 text-green-700 dark:text-green-400',
                             task.status === 'failed' && 'bg-destructive/10 text-destructive',
                             task.status === 'queued' && 'bg-muted text-muted-foreground',
+                            task.status === 'cancelled' && 'bg-muted text-muted-foreground',
                           )}
                         >
                           {statusLabel}

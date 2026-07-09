@@ -40,6 +40,12 @@
     "forward": "前进",
     "newChat": "新对话"
   },
+  "window": {
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "还原",
+    "close": "关闭"
+  },
   "thread": {
     "welcome": "今天我能帮你什么？",
     "composerPlaceholder": "问点什么…",
@@ -114,17 +120,22 @@
   },
   "status": {
     "allDone": "全部完成",
-    "agentsRunning": "{{count}} 个智能体运行中",
-    "agentsQueued": "{{count}} 个智能体已排队",
-    "agentsDone": "{{count}} 个智能体已完成",
-    "agentsCount": "{{count}} 个智能体",
-    "agentsHeading": "智能体 ({{count}})",
+    "agentsRunning": "{{count}}个子智能体",
+    "agentsQueued": "{{count}}个子智能体已排队",
+    "agentsDone": "{{count}}个子智能体已完成",
+    "agentsCount": "{{count}}个子智能体",
+    "agentsHeading": "子智能体 ({{count}})",
     "todosHeading": "待办 ({{done}}/{{total}})",
     "taskQueued": "已排队",
     "taskRunning": "运行中",
     "taskDone": "已完成",
     "taskFailed": "失败",
     "taskCancelled": "已取消",
+    "taskInitializing": "初始化中…",
+    "taskProgressTool": "{{tool}} · {{count}} 次工具调用",
+    "taskProgressCount": "{{count}} 次工具调用",
+    "taskDoneMeta": "{{count}} 次工具调用",
+    "stopAgent": "停止该子智能体",
     "agentsQueueHint": "{{queued}} 个在排队等待（最多 {{max}} 个并行执行）"
   },
   "queue": {
@@ -159,6 +170,8 @@
   "readPage": {
     "reading": "正在读取{{mode}}…",
     "failed": "读取页面失败",
+    "stopped": "已停止读取",
+    "emptyContent": "（页面无文本内容）",
     "read": "已读取 {{host}}",
     "currentPage": "当前页",
     "titleLabel": "标题：",
@@ -167,9 +180,13 @@
   },
   "web": {
     "enterUrl": "请输入网址",
-    "urlPlaceholder": "https://内网地址 或 localhost:8080",
+    "urlPlaceholder": "搜索或输入网址",
     "open": "打开",
-    "empty": "输入网址后，网页会嵌入显示在这里",
+    "back": "后退",
+    "forward": "前进",
+    "reload": "刷新",
+    "recents": "最近访问",
+    "empty": "暂无最近访问。在上方输入网址即可打开。",
     "requiresDesktopOpen": "打开内网网页需要桌面端（Tauri）。纯浏览器 dev 模式无法停靠 webview，请使用 npm run dev:desktop。",
     "requiresDesktopRead": "读取网页内容需要桌面端（Tauri）；公开 URL 可改用 web_fetch 工具。"
   },

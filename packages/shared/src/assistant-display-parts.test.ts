@@ -73,6 +73,25 @@ describe('normalizeAssistantMessageParts', () => {
     );
   });
 
+  it('drops empty text shells that would split adjacent reasoning groups', () => {
+    const parts = normalizeAssistantMessageParts([
+      { type: 'reasoning', text: '先想一步' },
+      { type: 'text', text: '' },
+      { type: 'reasoning', text: '再想一步' },
+    ]);
+
+    assert.deepEqual(
+      parts.map((p) => ({
+        type: (p as { type?: string }).type,
+        text: (p as { text?: string }).text,
+      })),
+      [
+        { type: 'reasoning', text: '先想一步' },
+        { type: 'reasoning', text: '再想一步' },
+      ],
+    );
+  });
+
   it('merges narration-only step boundaries in display mode', () => {
     const parts = normalizeAssistantMessageParts(
       [

@@ -19,11 +19,18 @@ import {
   continueTaskThread,
 } from './agent-task-runner';
 import { buildTaskManagementTools } from './task-tools';
+import { clearTaskProgress } from './task-progress-store';
 import { publishTaskEvent } from './task-events';
 
 interface TaskCtx {
   requestContext?: { get(key: string): unknown; set?(key: string, value: unknown): void };
   abortSignal?: AbortSignal;
+}
+
+function resolveToolAbortSignal(ctx?: TaskCtx): AbortSignal | undefined {
+  const fromRun = ctx?.requestContext?.get('runAbortSignal');
+  if (fromRun instanceof AbortSignal) return fromRun;
+  return ctx?.abortSignal;
 }
 
 export interface AgentTaskToolDeps extends AgentTaskRunnerDeps {
@@ -160,20 +167,23 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
       const enveloped = isFork ? input.prompt : subagentTaskEnvelope(label, input.prompt);
       const runBackground = isFork || input.run_in_background === true;
 
+      // Always persist a task row so the UI can bind progress (tool uses / last tool)
+      // under the parent tool call via /api/tasks SSE — even for inline sync runs.
+      const row = await insertTask({
+        tenantId,
+        parentThreadId: parentThreadId ?? null,
+        agentId: target.agentId,
+        prompt: enveloped,
+        status: runBackground ? 'queued' : 'running',
+        label,
+        subagentType: target.subagentType ?? null,
+      });
+      const taskId = row.id;
+      if (parentThreadId) {
+        publishTaskEvent({ kind: 'task.updated', threadId: parentThreadId, taskId });
+      }
+
       if (runBackground) {
-        const row = await insertTask({
-          tenantId,
-          parentThreadId: parentThreadId ?? null,
-          agentId: target.agentId,
-          prompt: enveloped,
-          status: 'queued',
-          label,
-          subagentType: target.subagentType ?? null,
-        });
-        const taskId = row.id;
-        if (parentThreadId) {
-          publishTaskEvent({ kind: 'task.updated', threadId: parentThreadId, taskId });
-        }
         const workerThread = `task-${taskId}`;
         const job: SubagentJob = {
           tenantId,
@@ -198,7 +208,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           jobId: jobId ?? null,
           parentThreadId,
           label,
-          abortSignal: ctx?.abortSignal,
+          abortSignal: resolveToolAbortSignal(ctx),
         });
         return {
           subagent_type: target.subagentType ?? null,
@@ -211,37 +221,58 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
         };
       }
 
-      const subThread = `subagent-${crypto.randomUUID()}`;
-      const result = await runSubagentGenerate({
-        runtime,
-        deps,
-        agentId: target.agentId,
-        preset: target.preset,
-        prompt: enveloped,
-        threadId: subThread,
-        resourceId: userId,
-        tenantId,
-        abortSignal: ctx?.abortSignal,
-        fork: isFork,
-      });
-
-      return {
-        subagent_type: target.subagentType ?? null,
-        agent_id: isFork ? null : target.subagentType ? null : target.agentId,
-        description: label,
-        summary: result.text,
-        task_id: null,
-        background: false,
-        notification: null,
-      };
+      const subThread = `subagent-${taskId}`;
+      try {
+        const result = await runSubagentGenerate({
+          runtime,
+          deps,
+          agentId: target.agentId,
+          preset: target.preset,
+          prompt: enveloped,
+          threadId: subThread,
+          resourceId: userId,
+          tenantId,
+          abortSignal: resolveToolAbortSignal(ctx),
+          fork: isFork,
+          parentThreadId,
+          taskId,
+        });
+        await updateTaskRow(taskId, {
+          status: 'done',
+          result: result.text,
+          totalTokens: result.totalTokens ?? null,
+          durationMs: result.durationMs,
+          workerThreadId: subThread,
+        });
+        if (parentThreadId) {
+          publishTaskEvent({ kind: 'task.updated', threadId: parentThreadId, taskId });
+        }
+        return {
+          subagent_type: target.subagentType ?? null,
+          agent_id: isFork ? null : target.subagentType ? null : target.agentId,
+          description: label,
+          summary: result.text,
+          task_id: taskId,
+          background: false,
+          notification: null,
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await updateTaskRow(taskId, { status: 'failed', result: message }).catch(() => undefined);
+        clearTaskProgress(taskId);
+        if (parentThreadId) {
+          publishTaskEvent({ kind: 'task.updated', threadId: parentThreadId, taskId });
+        }
+        throw err;
+      }
     },
   });
 
   const taskContinue = createTool({
     id: 'task_continue',
     description:
-      'Send a follow-up message to an existing subagent worker (Claude Code SendMessage). ' +
-      'Use the task_id from a prior task dispatch or from a <task-notification>.',
+      'Send a follow-up message to an existing subagent worker. ' +
+      'Use the task_id from a prior task tool result.',
     inputSchema: z.object({
       task_id: z.string().describe('Task id to continue.'),
       message: z.string().describe('Follow-up instruction for the worker.'),
@@ -303,7 +334,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           jobId: jobId ?? null,
           parentThreadId: continueParentThreadId,
           label: row.label ?? row.agentId,
-          abortSignal: ctx?.abortSignal,
+          abortSignal: resolveToolAbortSignal(ctx),
         });
         return {
           subagent_type: row.subagentType ?? null,

@@ -1,3 +1,4 @@
+mod panel_menu;
 mod sidecar;
 mod web_view;
 
@@ -20,9 +21,16 @@ pub fn run() {
             web_view::read_web_view,
             web_view::resize_web_view,
             web_view::show_web_view,
+            web_view::web_view_go_back,
+            web_view::web_view_go_forward,
+            web_view::web_view_reload,
+            panel_menu::show_panel_menu,
+            panel_menu::close_panel_menu,
+            panel_menu::panel_menu_choose,
             sidecar::get_sidecar_status,
         ])
         .on_window_event(|window, event| {
+            panel_menu::on_window_event(window, &event);
             if window.label() != "main" {
                 return;
             }
@@ -38,6 +46,13 @@ pub fn run() {
             // mounting business UI, so the app feels responsive on launch.
             app.state::<Sidecar>().spawn(&handle);
             if let Some(window) = app.get_webview_window("main") {
+                // macOS keeps Overlay + native traffic lights (tauri.conf).
+                // Windows/Linux: frameless so the web UI can own the titlebar
+                // (VS Code–style custom chrome with HTML caption buttons).
+                #[cfg(any(target_os = "windows", target_os = "linux"))]
+                {
+                    let _ = window.set_decorations(false);
+                }
                 let _ = window.show();
                 let _ = window.set_focus();
             }

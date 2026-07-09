@@ -58,7 +58,7 @@ export function ComposerAskPanel() {
       activeToolCallIdRef.current = null;
       return;
     }
-    if (isTauri()) void hideWebView();
+    if (isTauri()) void hideWebView(undefined, { force: true });
     if (activeToolCallIdRef.current !== session.toolCallId) {
       activeToolCallIdRef.current = session.toolCallId;
       setStep(0);
@@ -201,7 +201,7 @@ export function ComposerAskPanel() {
       className="border-border/70 bg-card/95 ring-primary/30 pointer-events-auto relative z-[200] mb-2 w-full touch-manipulation overflow-visible rounded-2xl border shadow-[0_14px_40px_-28px_rgba(15,23,42,0.45)] ring-2"
       onKeyDown={onKeyDown}
       onPointerDownCapture={() => {
-        if (isTauri()) void hideWebView();
+        if (isTauri()) void hideWebView(undefined, { force: true });
       }}
     >
       <div
