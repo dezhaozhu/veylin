@@ -87,6 +87,14 @@ function useChatThreadRuntime<UI_MESSAGE extends UIMessage = UIMessage>(
       if (isPersistableThreadId(threadId) && event && !event.isAbort && event.messages?.length) {
         void syncThreadMessagesToServer(threadId, event.messages);
       }
+      if (event && !event.isAbort) {
+        const title = aui.threadListItem().getState().title;
+        if (!title?.trim()) {
+          void Promise.resolve(aui.threadListItem().generateTitle()).catch(
+            () => undefined,
+          );
+        }
+      }
       userOnFinish?.(...args);
     },
   });

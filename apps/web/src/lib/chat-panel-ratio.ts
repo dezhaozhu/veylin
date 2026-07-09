@@ -7,7 +7,17 @@ export const CHAT_PANEL_MIN_PX = 0;
 export const CHAT_PANEL_OPEN_MIN_PX = 360;
 export const CHAT_PANEL_RATIO_MIN = 0;
 export const CHAT_PANEL_RATIO_MAX = 0.95;
-export const CHAT_PANEL_RATIO_DEFAULT = 0.55;
+/** Default chat share when no ratio is stored (chat ~65%, right panel ~35%). */
+export const CHAT_PANEL_RATIO_DEFAULT = 0.65;
+
+export function hasStoredChatPanelRatio(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(CHAT_PANEL_RATIO_STORAGE_KEY) != null;
+  } catch {
+    return false;
+  }
+}
 
 export function readChatWorkspaceWidth(): number {
   if (typeof window === 'undefined') return 320;
@@ -79,17 +89,16 @@ export function rightWidthToChatRatio(
 }
 
 /**
- * Width to apply when the right panel is opened (toggle), not when dragged mid-session.
- * Avoids restoring a previous full-bleed width and swallowing the chat column.
+ * Width to apply when the right panel is opened via toggle.
+ * First open uses CHAT_PANEL_RATIO_DEFAULT; later opens restore the saved ratio.
  */
 export function resolveRightPanelOpenWidth(
   availableWidth: number,
   rightMin: number,
 ): number {
-  let ratio = readChatPanelRatio();
-  if (ratio < 0.15) {
-    ratio = CHAT_PANEL_RATIO_DEFAULT;
-  }
+  const ratio = hasStoredChatPanelRatio()
+    ? readChatPanelRatio()
+    : CHAT_PANEL_RATIO_DEFAULT;
   const max = rightPanelWidthMax(availableWidth, rightMin);
   const target = chatRatioToRightWidth(ratio, availableWidth, rightMin, max);
   const maxOnOpen = Math.max(rightMin, availableWidth - CHAT_PANEL_OPEN_MIN_PX);
