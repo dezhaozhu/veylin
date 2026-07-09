@@ -13,11 +13,38 @@ import {
   listTableSheets,
   MAX_TABLE_GET_LIMIT,
   resolveTableSheetId,
+  tryResolveTableSheetId,
   updateTableRow,
+  type RejectedPatchField,
 } from './table-store';
 
 const rowSchema = z.record(z.string(), z.union([z.string(), z.number()]));
 const cellValueSchema = z.union([z.string(), z.number()]);
+
+function formatRejected(rejected: RejectedPatchField[]): string {
+  return rejected.map((r) => r.reason).join('; ');
+}
+
+function resolveWriteSheet(
+  sheet: string | undefined,
+): { ok: true; sheet: string } | { ok: false; sheet: string; message: string } {
+  if (sheet !== undefined && sheet !== '') {
+    const id = tryResolveTableSheetId(sheet);
+    if (!id) {
+      return {
+        ok: false,
+        sheet,
+        message: `Sheet "${sheet}" not found. Call table_list_sheets for valid ids.`,
+      };
+    }
+    return { ok: true, sheet: id };
+  }
+  const id = tryResolveTableSheetId(undefined);
+  if (!id) {
+    return { ok: false, sheet: 'main', message: 'No table sheet available' };
+  }
+  return { ok: true, sheet: id };
+}
 
 /**
  * Generic spreadsheet/table tools backed by the multi-sheet grid store.
@@ -95,58 +122,106 @@ export function buildTableTools() {
   const tableUpdateRow = createTool({
     id: 'table_update_row',
     description:
-      'Update multiple cells on one row. Identify the row with row_key (row_id or primary key column value).',
+      'Update multiple cells on one row. Identify the row with row_key (row_id from table_get). ' +
+      "Column keys may be column key or display name. Status columns only accept values listed in that column's statusOptions.",
     inputSchema: z.object({
       sheet: z.string().optional().describe('Sheet id. Defaults to main.'),
-      row_key: z.string().describe('Row id or primary key value from table_get.'),
-      values: rowSchema.describe('Column key → new value. Only include columns to change.'),
+      row_key: z.string().describe('row_id from table_get.'),
+      values: rowSchema.describe('Column key or name → new value. Only include columns to change.'),
     }),
     outputSchema: z.object({
       ok: z.boolean(),
       sheet: z.string(),
       row: rowSchema.nullable(),
+      applied: rowSchema.optional(),
+      previous: rowSchema.optional(),
       message: z.string(),
     }),
     execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
-      const updated = await updateTableRow(input.row_key, input.values, sheet);
-      if (!updated) {
-        return { ok: false, sheet, row: null, message: `Row ${input.row_key} not found` };
+      const resolved = resolveWriteSheet(input.sheet);
+      if (!resolved.ok) {
+        return { ok: false, sheet: resolved.sheet, row: null, message: resolved.message };
       }
-      return { ok: true, sheet, row: updated, message: `Updated row ${input.row_key}` };
+      const result = await updateTableRow(input.row_key, input.values, resolved.sheet);
+      if (!result.ok) {
+        return {
+          ok: false,
+          sheet: result.sheet,
+          row: result.row,
+          applied: result.applied,
+          previous: result.previous,
+          message: result.message,
+        };
+      }
+      const rejectMsg = result.rejected.length
+        ? ` Rejected: ${formatRejected(result.rejected)}`
+        : '';
+      return {
+        ok: true,
+        sheet: result.sheet,
+        row: result.row,
+        applied: result.applied,
+        previous: result.previous,
+        message: `Updated row ${input.row_key}.${rejectMsg}`,
+      };
     },
   });
 
   const tableSetCell = createTool({
     id: 'table_set_cell',
     description:
-      'Write a single cell. Use row_key from table_get; column is a column key from the same sheet.',
+      'Write a single cell. Use row_key = row_id from table_get; column may be column key or display name. ' +
+      "Status columns only accept values in that column's statusOptions (see table_get columns).",
     inputSchema: z.object({
       sheet: z.string().optional().describe('Sheet id. Defaults to main.'),
-      row_key: z.string().describe('Row id or primary key value.'),
-      column: z.string().describe('Column key to write.'),
+      row_key: z.string().describe('row_id from table_get.'),
+      column: z.string().describe('Column key or display name to write.'),
       value: cellValueSchema.describe('New cell value.'),
     }),
     outputSchema: z.object({
       ok: z.boolean(),
       sheet: z.string(),
       row: rowSchema.nullable(),
+      applied: rowSchema.optional(),
+      previous: rowSchema.optional(),
       message: z.string(),
     }),
     execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
-      const updated = await updateTableRow(
+      const resolved = resolveWriteSheet(input.sheet);
+      if (!resolved.ok) {
+        return { ok: false, sheet: resolved.sheet, row: null, message: resolved.message };
+      }
+      const result = await updateTableRow(
         input.row_key,
         { [input.column]: input.value },
-        sheet,
+        resolved.sheet,
       );
-      if (!updated) {
-        return { ok: false, sheet, row: null, message: `Row ${input.row_key} not found` };
+      if (!result.ok) {
+        return {
+          ok: false,
+          sheet: result.sheet,
+          row: result.row,
+          applied: result.applied,
+          previous: result.previous,
+          message: result.message,
+        };
+      }
+      if (result.rejected.length > 0) {
+        return {
+          ok: false,
+          sheet: result.sheet,
+          row: result.row,
+          applied: result.applied,
+          previous: result.previous,
+          message: formatRejected(result.rejected),
+        };
       }
       return {
         ok: true,
-        sheet,
-        row: updated,
+        sheet: result.sheet,
+        row: result.row,
+        applied: result.applied,
+        previous: result.previous,
         message: `Updated ${input.row_key}.${input.column}`,
       };
     },
@@ -165,10 +240,13 @@ export function buildTableTools() {
       message: z.string(),
     }),
     execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
-      const row = addTableRow(sheet);
-      if (!row) return { ok: false, sheet, row: null, message: 'Failed to add row' };
-      return { ok: true, sheet, row, message: 'Added a blank row' };
+      const resolved = resolveWriteSheet(input.sheet);
+      if (!resolved.ok) {
+        return { ok: false, sheet: resolved.sheet, row: null, message: resolved.message };
+      }
+      const row = addTableRow(resolved.sheet);
+      if (!row) return { ok: false, sheet: resolved.sheet, row: null, message: 'Failed to add row' };
+      return { ok: true, sheet: resolved.sheet, row, message: 'Added a blank row' };
     },
   });
 
@@ -177,7 +255,7 @@ export function buildTableTools() {
     description: 'Delete rows by row_key values.',
     inputSchema: z.object({
       sheet: z.string().optional().describe('Sheet id. Defaults to main.'),
-      row_keys: z.array(z.string()).min(1).describe('Row ids or primary keys to delete.'),
+      row_keys: z.array(z.string()).min(1).describe('row_id values to delete.'),
     }),
     outputSchema: z.object({
       ok: z.boolean(),
@@ -186,9 +264,17 @@ export function buildTableTools() {
       message: z.string(),
     }),
     execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
-      const removed = deleteTableRows(sheet, input.row_keys);
-      return { ok: removed > 0, sheet, removed, message: `Deleted ${removed} row(s)` };
+      const resolved = resolveWriteSheet(input.sheet);
+      if (!resolved.ok) {
+        return { ok: false, sheet: resolved.sheet, removed: 0, message: resolved.message };
+      }
+      const removed = deleteTableRows(resolved.sheet, input.row_keys);
+      return {
+        ok: removed > 0,
+        sheet: resolved.sheet,
+        removed,
+        message: `Deleted ${removed} row(s)`,
+      };
     },
   });
 
@@ -206,12 +292,17 @@ export function buildTableTools() {
       message: z.string(),
     }),
     execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
-      const column = addTableColumn(sheet, input.name);
-      if (!column) return { ok: false, sheet, column: null, message: 'Failed to add column' };
+      const resolved = resolveWriteSheet(input.sheet);
+      if (!resolved.ok) {
+        return { ok: false, sheet: resolved.sheet, column: null, message: resolved.message };
+      }
+      const column = addTableColumn(resolved.sheet, input.name);
+      if (!column) {
+        return { ok: false, sheet: resolved.sheet, column: null, message: 'Failed to add column' };
+      }
       return {
         ok: true,
-        sheet,
+        sheet: resolved.sheet,
         column: { key: column.key, name: column.name },
         message: `Added column ${column.name}`,
       };
@@ -231,11 +322,14 @@ export function buildTableTools() {
       message: z.string(),
     }),
     execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
-      const ok = deleteTableColumn(sheet, input.column);
+      const resolved = resolveWriteSheet(input.sheet);
+      if (!resolved.ok) {
+        return { ok: false, sheet: resolved.sheet, message: resolved.message };
+      }
+      const ok = deleteTableColumn(resolved.sheet, input.column);
       return {
         ok,
-        sheet,
+        sheet: resolved.sheet,
         message: ok ? `Deleted column ${input.column}` : `Failed to delete column ${input.column}`,
       };
     },
@@ -255,7 +349,11 @@ export function buildTableTools() {
     execute: async (input) => {
       const sheet = createTableSheet(input.name);
       if (!sheet) return { ok: false, sheet: null, message: 'Failed to create sheet' };
-      return { ok: true, sheet: { id: sheet.id, name: sheet.name }, message: `Created sheet ${sheet.name}` };
+      return {
+        ok: true,
+        sheet: { id: sheet.id, name: sheet.name },
+        message: `Created sheet ${sheet.name}`,
+      };
     },
   });
 

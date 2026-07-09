@@ -42,7 +42,7 @@ import {
   useExternalHistory,
   toExportedMessageRepository,
 } from './use-external-history';
-import { stampMessageWithSentAt } from "./message-timestamp";
+import { stampInterruptedAssistant, stampMessageWithSentAt } from "./message-timestamp";
 import { stampOutgoingUserMessage } from "./pending-skill-message";
 import { createMessageQueueWithDrafts } from "./create-message-queue-with-drafts";
 import { setComposerQueueRuntime } from "./composer-queue-runtime";
@@ -75,7 +75,9 @@ import {
   unmarkToolContinuationAttempt,
 } from "./frontend-tool-continuation";
 import {
+  buildInterruptedBackgroundTaskRows,
   collectCoordinatorDispatchTaskIds,
+  collectOptimisticBackgroundTasksFromMessages,
   mergePanelBackgroundTasks,
   stripTaskNotificationUserMessages,
   type BackgroundTaskRow,
@@ -256,6 +258,8 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   const restoredHistoryHeadRef = useRef<string | null>(null);
   const frontendContinuationRef = useRef(createFrontendToolContinuationController());
   const refreshBackgroundTasksRef = useRef<(() => void) | null>(null);
+  /** Task ids cancelled by Stop — keep them cancelled until the API reports a terminal status. */
+  const interruptedTaskIdsRef = useRef<Set<string>>(new Set());
   backgroundTasksRef.current = backgroundTasks;
 
   const resolvedThreadId = getThreadId?.() ?? chatHelpers.id;
@@ -355,6 +359,12 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
 
   historyLoadingRef.current = isLoading;
 
+  useEffect(() => {
+    if (isLoading) return;
+    if (!isPersistableThreadId(resolvedThreadId)) return;
+    refreshBackgroundTasksRef.current?.();
+  }, [isLoading, resolvedThreadId]);
+
   const chatHelpersRef = useRef(chatHelpers);
   chatHelpersRef.current = chatHelpers;
 
@@ -397,15 +407,8 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         void (async () => {
           try {
             if (steer) {
-              chatHelpersRef.current.stop();
-              const threadId = chatHelpersRef.current.id;
-              if (threadId) {
-                try {
-                  await requestChatStop(threadId);
-                } catch (err) {
-                  console.warn("[chat] steer stop failed", err);
-                }
-              }
+              // Same interrupt path as Stop: mark interrupted, suppress auto-continue.
+              interruptChatRun();
             }
             await dispatchNewRef.current(message);
           } finally {
@@ -489,11 +492,14 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     chatHelpersRef.current.setMessages((current) => {
       const last = current.at(-1);
       if (last?.role !== "assistant") return current;
-      const custom = (last.metadata as { custom?: { sentAt?: number } } | undefined)
-        ?.custom;
-      if (typeof custom?.sentAt === "number") return current;
+      const custom = (
+        last.metadata as { custom?: { sentAt?: number; interrupted?: boolean } } | undefined
+      )?.custom;
+      if (custom?.interrupted === true && typeof custom.sentAt === "number") {
+        return current;
+      }
       stampedAssistantIdsRef.current.add(last.id);
-      return [...current.slice(0, -1), stampMessageWithSentAt(last)];
+      return [...current.slice(0, -1), stampInterruptedAssistant(last)];
     });
   };
 
@@ -518,11 +524,57 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     // (Claude Code synthesizes interrupted tool_result on user-cancel).
     void completePendingToolCalls('Interrupted by user.');
     finalizeInterruptedAssistant();
+
     const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
+
+    // Optimistically cancel local + transcript-dispatched subagent rows so the
+    // status bar does not fall back to optimistic "running" placeholders.
+    // Collect from UI parts AND coordinator dispatch ids (real task_id), including
+    // temporary task-call-* ids so empty-filter races cannot wipe the panel.
+    const prevSnapshot = getBackgroundTasksSnapshot();
+    const messages = chatHelpersRef.current.messages;
+    const optimistic = collectOptimisticBackgroundTasksFromMessages(messages);
+    const dispatchIds = collectCoordinatorDispatchTaskIds(messages);
+    const cancelledTasks = buildInterruptedBackgroundTaskRows(
+      [...prevSnapshot.tasks, ...prevSnapshot.batchTasks],
+      optimistic,
+      [...(prevSnapshot.dispatchTaskIds ?? []), ...dispatchIds],
+    );
+    const nextDispatchIds = Array.from(
+      new Set([
+        ...(prevSnapshot.dispatchTaskIds ?? []),
+        ...dispatchIds,
+        ...optimistic.map((row) => row.id),
+        ...cancelledTasks.map((row) => row.id),
+      ]),
+    );
+    // Only the rows we actually cancelled — not the entire dispatch history.
+    const interruptedTaskIds = Array.from(
+      new Set([
+        ...(prevSnapshot.interruptedTaskIds ?? []),
+        ...cancelledTasks.map((row) => row.id),
+      ]),
+    );
+    for (const id of interruptedTaskIds) interruptedTaskIdsRef.current.add(id);
+    setBackgroundTasks(cancelledTasks);
+    backgroundTasksRef.current = cancelledTasks;
+    setBackgroundTasksSnapshot({
+      ...prevSnapshot,
+      threadId: prevSnapshot.threadId ?? threadId ?? null,
+      tasks: cancelledTasks,
+      batchTasks: cancelledTasks,
+      dispatchTaskIds: nextDispatchIds,
+      interruptedTaskIds,
+    });
+
     if (threadId) {
-      void requestChatStop(threadId, { activeStreamId: streamId }).catch((err) => {
-        console.warn("[chat] interrupt stop failed", err);
-      });
+      void requestChatStop(threadId, { activeStreamId: streamId })
+        .catch((err) => {
+          console.warn("[chat] interrupt stop failed", err);
+        })
+        .finally(() => {
+          refreshBackgroundTasksRef.current?.();
+        });
     } else {
       resumableStorage.clear();
     }
@@ -759,7 +811,17 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       if (!data) return;
       // Ignore late responses for a thread we already navigated away from.
       if (snapshotThreadId && snapshotThreadId !== resolvePersistableThreadId()) return;
-      const tasks = data.tasks ?? [];
+      let tasks = data.tasks ?? [];
+      if (interruptedTaskIdsRef.current.size > 0) {
+        tasks = tasks.map((task) => {
+          if (!interruptedTaskIdsRef.current.has(task.id)) return task;
+          if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') {
+            interruptedTaskIdsRef.current.delete(task.id);
+            return task;
+          }
+          return { ...task, status: 'cancelled' };
+        });
+      }
       const ready = Boolean(data.batch?.notificationsReady);
 
       const dispatchIds = collectCoordinatorDispatchTaskIds(localMessages);
@@ -784,6 +846,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       const panelTasks = mergePanelBackgroundTasks(localMessages, tasks, {
         pinnedTaskIds: nextDispatchIds,
       });
+      const interruptedTaskIds = Array.from(interruptedTaskIdsRef.current);
       setBackgroundTasks(tasks);
       backgroundTasksRef.current = tasks;
       setBackgroundTasksSnapshot({
@@ -791,6 +854,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         tasks,
         batchTasks: panelTasks,
         dispatchTaskIds: nextDispatchIds,
+        interruptedTaskIds,
         notificationsReady: ready,
         synthesisReady: false,
       });
@@ -867,6 +931,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       setBackgroundTasks([]);
       backgroundTasksRef.current = [];
       backgroundDispatchTaskIdsRef.current = [];
+      interruptedTaskIdsRef.current.clear();
       resetBackgroundTasksSnapshot();
     };
   }, [chatHelpers.id, getThreadId]);
@@ -1045,8 +1110,20 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       return;
     }
 
-    clearToolContinuationSuppression();
+    const last = chatHelpersRef.current.messages.at(-1);
+    const lastCustom = (
+      last?.metadata as { custom?: { interrupted?: boolean } } | undefined
+    )?.custom;
+    const lastInterrupted =
+      last?.role === "assistant" && lastCustom?.interrupted === true;
+    // Align with onEdit: after interrupt/stop, force-replace so transcript sync
+    // does not race a partial auto-continue against the new user turn.
+    if (lastInterrupted || suppressedForAssistantIdRef.current != null) {
+      setForceReplaceNextChat(true);
+    }
+
     backgroundDispatchTaskIdsRef.current = [];
+    interruptedTaskIdsRef.current.clear();
     resetBackgroundTasksSnapshot();
     lastRunConfigRef.current = message.runConfig;
     await completePendingToolCalls();
@@ -1056,6 +1133,9 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage), {
       metadata: message.runConfig,
     });
+    // Clear suppression only after the new user message is in flight so a
+    // pending sendMessage(undefined) auto-continue cannot race.
+    clearToolContinuationSuppression();
     setChatSettings({ pendingSkill: null });
   };
 
@@ -1157,6 +1237,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
 
       clearToolContinuationSuppression();
       backgroundDispatchTaskIdsRef.current = [];
+      interruptedTaskIdsRef.current.clear();
       resetBackgroundTasksSnapshot();
       setForceReplaceNextChat(true);
       lastRunConfigRef.current = message.runConfig;

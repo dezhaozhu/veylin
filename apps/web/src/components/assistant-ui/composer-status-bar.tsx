@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { useTranslation } from 'react-i18next';
 import { formatTaskAgentKind, formatTaskDisplayName } from '@veylin/shared';
 import {
+  applyInterruptedTaskIds,
   collectSubagentTasksFromThreadMessages,
   mergePanelBackgroundTasksFromThread,
   type BackgroundTaskRow,
@@ -12,19 +13,20 @@ import {
   getBackgroundTasksSnapshot,
   subscribeBackgroundTasks,
 } from '@/lib/background-tasks-store';
+import {
+  getThreadTodosSnapshot,
+  setThreadTodosSnapshot,
+  subscribeThreadTodos,
+  type ThreadTodoItem,
+} from '@/lib/thread-todos-store';
 import { cn } from '@/lib/utils';
 
 /** Default subagent worker concurrency (see server SUBAGENT_CONCURRENCY). */
 export const SUBAGENT_PARALLEL_LIMIT = 4;
 
-type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+type TodoStatus = ThreadTodoItem['status'];
 
-type TodoItem = {
-  id: string;
-  content: string;
-  activeForm?: string;
-  status: TodoStatus;
-};
+type TodoItem = ThreadTodoItem;
 
 type TaskRow = BackgroundTaskRow & { agentId: string };
 
@@ -135,6 +137,9 @@ export function ComposerStatusBar() {
     taskSnapshot.threadId != null && taskSnapshot.threadId === threadId;
   const storeBatchTasks = (storeMatchesThread ? taskSnapshot.batchTasks : []) as TaskRow[];
   const dispatchTaskIds = storeMatchesThread ? (taskSnapshot.dispatchTaskIds ?? []) : [];
+  const interruptedTaskIds = storeMatchesThread
+    ? (taskSnapshot.interruptedTaskIds ?? [])
+    : [];
   const allStoreTasks = (storeMatchesThread ? taskSnapshot.tasks : []) as TaskRow[];
 
   const optimisticFromThread = useMemo(
@@ -143,22 +148,40 @@ export function ComposerStatusBar() {
   );
 
   const batchTasks = useMemo(() => {
+    const mergeOpts = {
+      pinnedTaskIds:
+        dispatchTaskIds.length > 0
+          ? dispatchTaskIds
+          : storeBatchTasks.map((row) => row.id),
+      interruptedTaskIds,
+    };
     if (storeBatchTasks.length > 0) {
-      const fromStore = mergePanelBackgroundTasksFromThread(threadMessages, storeBatchTasks, {
-        pinnedTaskIds:
-          dispatchTaskIds.length > 0
-            ? dispatchTaskIds
-            : storeBatchTasks.map((row) => row.id),
-      });
+      const fromStore = mergePanelBackgroundTasksFromThread(
+        threadMessages,
+        storeBatchTasks,
+        mergeOpts,
+      );
       if (fromStore.length > 0) return fromStore;
     }
     const merged = mergePanelBackgroundTasksFromThread(threadMessages, allStoreTasks, {
       pinnedTaskIds: dispatchTaskIds,
+      interruptedTaskIds,
     });
     if (merged.length > 0) return merged;
+    // After Stop, overlay interrupt onto optimistic rows — do not invent ghost rows.
+    if (interruptedTaskIds.length > 0 && optimisticFromThread.length > 0) {
+      return applyInterruptedTaskIds(optimisticFromThread, interruptedTaskIds);
+    }
     if (optimisticFromThread.length > 0) return optimisticFromThread;
     return [];
-  }, [threadMessages, allStoreTasks, dispatchTaskIds, storeBatchTasks, optimisticFromThread]);
+  }, [
+    threadMessages,
+    allStoreTasks,
+    dispatchTaskIds,
+    storeBatchTasks,
+    optimisticFromThread,
+    interruptedTaskIds,
+  ]);
 
   const pinnedTaskIds = useMemo(
     () =>
@@ -185,13 +208,29 @@ export function ComposerStatusBar() {
     setOpen(readPanelOpen(threadId));
   }, [threadId]);
 
-  const todos = usePolling<TodoItem[]>(
+  const todosFromStore = useSyncExternalStore(
+    subscribeThreadTodos,
+    getThreadTodosSnapshot,
+    getThreadTodosSnapshot,
+  );
+  const storeTodos =
+    todosFromStore.threadId === threadId ? todosFromStore.todos : [];
+
+  const polledTodos = usePolling<TodoItem[]>(
     threadId,
     '/api/todos',
-    (d) => (d as { todos?: TodoItem[] }).todos ?? [],
+    (d) => {
+      const next = (d as { todos?: TodoItem[] }).todos ?? [];
+      if (threadId) setThreadTodosSnapshot(threadId, next);
+      return next;
+    },
     isRunning ? 1500 : 6000,
     [],
   );
+
+  const todos = storeTodos.length > 0 || todosFromStore.threadId === threadId
+    ? storeTodos
+    : polledTodos;
 
   const fallbackTasks = usePolling<TaskRow[]>(
     threadId,
@@ -204,22 +243,23 @@ export function ComposerStatusBar() {
   );
 
   const displayTasks = useMemo(() => {
+    const mergeOpts = { pinnedTaskIds, interruptedTaskIds };
     const base =
       batchTasks.length > 0
         ? batchTasks
-        : mergePanelBackgroundTasksFromThread(threadMessages, [], {
-            pinnedTaskIds,
-          });
-    if (!needsTaskFallbackPoll || fallbackTasks.length === 0) return base;
-    return mergePanelBackgroundTasksFromThread(threadMessages, fallbackTasks, {
-      pinnedTaskIds,
-    });
+        : mergePanelBackgroundTasksFromThread(threadMessages, allStoreTasks, mergeOpts);
+    if (!needsTaskFallbackPoll || fallbackTasks.length === 0) {
+      return mergePanelBackgroundTasksFromThread(threadMessages, base, mergeOpts);
+    }
+    return mergePanelBackgroundTasksFromThread(threadMessages, fallbackTasks, mergeOpts);
   }, [
     batchTasks,
+    allStoreTasks,
     needsTaskFallbackPoll,
     fallbackTasks,
     threadMessages,
     pinnedTaskIds,
+    interruptedTaskIds,
   ]);
 
   const total = todos.length;
@@ -265,7 +305,7 @@ export function ComposerStatusBar() {
     if (status === 'running') return t('status.taskRunning');
     if (status === 'done') return t('status.taskDone');
     if (status === 'failed') return t('status.taskFailed');
-    if (status === 'cancelled') return t('status.taskCancelled');
+    if (status === 'cancelled') return t('status.taskInterrupted');
     return null;
   };
 
@@ -291,7 +331,9 @@ export function ComposerStatusBar() {
             ) : (
               <ListTodoIcon className="size-3.5" />
             )}
-            {allTodosDone ? t('status.allDone') : `${doneCount}/${total}`}
+            {allTodosDone
+              ? t('status.allDone')
+              : t('status.todosProgress', { done: doneCount, total })}
           </span>
         )}
         {displayTasks.length > 0 && (

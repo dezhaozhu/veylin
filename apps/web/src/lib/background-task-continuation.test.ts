@@ -6,6 +6,7 @@ import {
   appendTaskNotificationMessagesForSynthesis,
   assistantDispatchedBackgroundWorkers,
   backgroundTaskBatchFingerprint,
+  buildInterruptedBackgroundTaskRows,
   collectCoordinatorDispatchTaskIds,
   collectLatestBackgroundTaskIds,
   collectOptimisticBackgroundTasksFromThreadMessages,
@@ -15,8 +16,11 @@ import {
   hasActiveBackgroundTasks,
   isCoordinatorTurnUnsettled,
   isCoordinatorPartialTurn,
+  applyInterruptedTaskIds,
+  markActiveBackgroundTasksCancelled,
   mergePanelBackgroundTasks,
   mergePanelBackgroundTasksFromThread,
+  overlayBackgroundTaskStatus,
   resolvePanelBackgroundTasks,
   shouldSynthesizeBackgroundTaskResults,
   stripTaskNotificationUserMessages,
@@ -40,6 +44,150 @@ const awaitingAssistant = {
 } as UIMessage;
 
 describe('background task continuation', () => {
+  it('markActiveBackgroundTasksCancelled flips queued/running to cancelled', () => {
+    const input = [
+      { id: 'a', status: 'running' },
+      { id: 'b', status: 'queued' },
+      { id: 'c', status: 'done' },
+      { id: 'd', status: 'failed' },
+    ];
+    const next = markActiveBackgroundTasksCancelled(input);
+    assert.notEqual(next, input);
+    assert.deepEqual(
+      next.map((t) => t.status),
+      ['cancelled', 'cancelled', 'done', 'failed'],
+    );
+    assert.equal(markActiveBackgroundTasksCancelled(next), next);
+  });
+
+  it('buildInterruptedBackgroundTaskRows seeds cancelled rows from optimistic dispatch', () => {
+    const rows = buildInterruptedBackgroundTaskRows(
+      [],
+      [{ id: 'bg-1', status: 'running', label: '分析' }],
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.id, 'bg-1');
+    assert.equal(rows[0]?.status, 'cancelled');
+  });
+
+  it('overlayBackgroundTaskStatus prefers terminal store status', () => {
+    const merged = overlayBackgroundTaskStatus(
+      { id: 'bg-1', status: 'running', label: '分析' },
+      { id: 'bg-1', status: 'cancelled' },
+    );
+    assert.equal(merged.status, 'cancelled');
+    assert.equal(merged.label, '分析');
+  });
+
+  it('mergePanelBackgroundTasksFromThread keeps cancelled after stop', () => {
+    const thread = [
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolName: 'task',
+            toolCallId: 'tc1',
+            args: { description: '分析' },
+            result: { background: true, task_id: 'bg-1', description: '分析' },
+          },
+        ],
+      },
+    ] as never;
+    const merged = mergePanelBackgroundTasksFromThread(
+      thread,
+      [{ id: 'bg-1', status: 'cancelled' }],
+      { pinnedTaskIds: ['bg-1'] },
+    );
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0]?.status, 'cancelled');
+  });
+
+  it('interrupt with empty store forces optimistic active rows to cancelled', () => {
+    const thread = [
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolName: 'task',
+            toolCallId: 'tc-opt',
+            args: { description: '调研' },
+            result: { background: true, task_id: 'bg-opt', description: '调研' },
+          },
+        ],
+      },
+    ] as never;
+    const optimistic = collectSubagentTasksFromThreadMessages(thread);
+    assert.ok(optimistic.length >= 1);
+    assert.ok(optimistic[0]?.status === 'queued' || optimistic[0]?.status === 'running');
+
+    const interrupted = buildInterruptedBackgroundTaskRows([], optimistic);
+    assert.equal(interrupted[0]?.status, 'cancelled');
+
+    const display = mergePanelBackgroundTasksFromThread(thread, [], {
+      interruptedTaskIds: interrupted.map((row) => row.id),
+    });
+    assert.ok(display.length >= 1);
+    assert.ok(display.every((row) => row.status === 'cancelled'));
+    assert.equal(hasActiveBackgroundTasks(display), false);
+  });
+
+  it('merge keeps cancelled when optimistic toolCallId differs from store task_id', () => {
+    const thread = [
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolName: 'task',
+            toolCallId: 'tool-call-xyz',
+            args: { description: '分析' },
+            // No result yet — optimistic id is toolCallId while store uses real task_id
+          },
+        ],
+      },
+    ] as never;
+    const optimistic = collectSubagentTasksFromThreadMessages(thread);
+    assert.equal(optimistic[0]?.id, 'tool-call-xyz');
+    assert.equal(optimistic[0]?.status, 'running');
+
+    const storeCancelled = [{ id: 'real-task-id', status: 'cancelled', label: '分析' }];
+    const merged = mergePanelBackgroundTasksFromThread(thread, storeCancelled, {
+      pinnedTaskIds: ['real-task-id'],
+      interruptedTaskIds: ['real-task-id', 'tool-call-xyz'],
+    });
+
+    assert.ok(merged.some((row) => row.id === 'real-task-id' && row.status === 'cancelled'));
+    assert.ok(merged.every((row) => row.status === 'cancelled'));
+    assert.equal(hasActiveBackgroundTasks(merged), false);
+  });
+
+  it('buildInterruptedBackgroundTaskRows keeps temporary task-call ids', () => {
+    const rows = buildInterruptedBackgroundTaskRows(
+      [],
+      [{ id: 'task-call-0', status: 'running', label: '临时' }],
+      ['dispatch-real'],
+    );
+    assert.ok(rows.some((row) => row.id === 'task-call-0' && row.status === 'cancelled'));
+    assert.ok(rows.some((row) => row.id === 'dispatch-real' && row.status === 'cancelled'));
+  });
+
+  it('applyInterruptedTaskIds only flips matching in-flight rows', () => {
+    const next = applyInterruptedTaskIds(
+      [
+        { id: 'a', status: 'running' },
+        { id: 'b', status: 'running' },
+        { id: 'c', status: 'done' },
+      ],
+      ['a', 'missing'],
+    );
+    assert.equal(next.find((row) => row.id === 'a')?.status, 'cancelled');
+    assert.equal(next.find((row) => row.id === 'b')?.status, 'running');
+    assert.equal(next.find((row) => row.id === 'c')?.status, 'done');
+    assert.equal(next.some((row) => row.id === 'missing'), false);
+  });
+
   it('waits while workers are still active', () => {
     assert.equal(
       shouldSynthesizeBackgroundTaskResults(
@@ -177,6 +325,31 @@ describe('background task continuation', () => {
     assert.equal(
       isCoordinatorPartialTurn([awaitingAssistant, synthesis], [], {
         notificationsReady: true,
+      }),
+      false,
+    );
+  });
+
+  it('settles after synthesis even when notificationsReady is still false on restore', () => {
+    const synthesis = {
+      id: 'a2',
+      role: 'assistant',
+      parts: [{ type: 'text', text: '综合报告如下。' }],
+    } as UIMessage;
+    const messages = [awaitingAssistant, synthesis] as UIMessage[];
+    const batch = [{ id: 'bg-1', status: 'done' }];
+    assert.equal(
+      isCoordinatorTurnUnsettled(messages, batch, {
+        notificationsReady: false,
+        pinnedTaskIds: ['bg-1'],
+      }),
+      false,
+    );
+    assert.equal(
+      isCoordinatorPartialTurn(messages, batch, {
+        notificationsReady: false,
+        pinnedTaskIds: ['bg-1'],
+        chatStatus: 'ready',
       }),
       false,
     );

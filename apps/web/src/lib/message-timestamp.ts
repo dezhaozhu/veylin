@@ -1,5 +1,6 @@
 export type MessageSentAtCustom = {
   sentAt?: number;
+  interrupted?: boolean;
 };
 
 export function extractSentAtFromParts(parts: unknown[] | undefined): number | undefined {
@@ -36,6 +37,26 @@ export function stampMessageWithSentAt<T extends { metadata?: unknown }>(
       custom: {
         ...custom,
         sentAt,
+      },
+    },
+  };
+}
+
+/** Mark an assistant turn as user-interrupted; preserve existing sentAt when present. */
+export function stampInterruptedAssistant<T extends { metadata?: unknown }>(
+  message: T,
+  sentAt: number = Date.now(),
+): T {
+  const metadata = (message.metadata ?? {}) as Record<string, unknown>;
+  const custom = (metadata.custom ?? {}) as MessageSentAtCustom;
+  return {
+    ...message,
+    metadata: {
+      ...metadata,
+      custom: {
+        ...custom,
+        sentAt: typeof custom.sentAt === 'number' ? custom.sentAt : sentAt,
+        interrupted: true,
       },
     },
   };

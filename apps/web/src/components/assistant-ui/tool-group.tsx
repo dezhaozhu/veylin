@@ -26,10 +26,62 @@ import {
 } from "@/components/ui/collapsible";
 import { useTranslation } from "react-i18next";
 import { summarizeToolCalls } from "@/lib/summarize-tool-calls";
+import {
+  sumTableToolDiffs,
+  type TableToolDiff,
+} from "@/lib/table-tool-diff";
 import { cn } from "@/lib/utils";
 
 const ANIMATION_DURATION = 200;
 const STREAMING_MAX_HEIGHT = "max-h-36";
+
+type ToolPartSnapshot = {
+  toolName: string;
+  args?: unknown;
+  result?: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readToolPartSnapshot(part: unknown): ToolPartSnapshot | null {
+  if (!isRecord(part) || typeof part.type !== "string") return null;
+
+  let toolName = "";
+  if (part.type === "tool-call" && typeof part.toolName === "string") {
+    toolName = part.toolName;
+  } else if (part.type.startsWith("tool-")) {
+    toolName = part.type.slice("tool-".length);
+  }
+  if (!toolName) return null;
+
+  const args =
+    "args" in part
+      ? part.args
+      : "input" in part
+        ? part.input
+        : undefined;
+  const result =
+    "result" in part
+      ? part.result
+      : "output" in part
+        ? part.output
+        : undefined;
+
+  return { toolName, args, result };
+}
+
+function formatToolGroupDiffLabel(
+  label: string,
+  diff: TableToolDiff | undefined,
+): string {
+  if (!diff || (diff.added <= 0 && diff.removed <= 0)) return label;
+  const parts = [label];
+  if (diff.added > 0) parts.push(`+${diff.added}`);
+  if (diff.removed > 0) parts.push(`-${diff.removed}`);
+  return parts.join(" ");
+}
 
 export const ToolGroupStreamingContext = createContext(false);
 
@@ -127,24 +179,28 @@ function ToolGroupRoot({
 function ToolGroupTrigger({
   count,
   summary,
+  diff,
   active = false,
   className,
   ...props
 }: React.ComponentProps<typeof CollapsibleTrigger> & {
   count: number;
   summary?: string;
+  diff?: TableToolDiff;
   active?: boolean;
 }) {
   const { t } = useTranslation();
   const { isOpen } = useCollapsiblePanel();
   const collapsedLabel =
     summary ?? t("toolGroup.toolCalls", { count });
+  const shimmerLabel = formatToolGroupDiffLabel(collapsedLabel, diff);
+  const showDiff = Boolean(diff && (diff.added > 0 || diff.removed > 0));
 
   return (
     <CollapsibleTrigger
       data-slot="tool-group-trigger"
       className={cn(
-        "aui-tool-group-trigger text-muted-foreground/50 flex w-fit max-w-full cursor-pointer items-center gap-1.5 text-base font-normal leading-snug transition-colors",
+        "aui-tool-group-trigger group/trigger text-muted-foreground/50 flex w-fit max-w-full cursor-pointer items-center gap-1.5 text-base font-normal leading-snug transition-colors",
         "hover:text-muted-foreground",
         !isOpen && "-mx-1 rounded-sm px-1 hover:bg-muted/40",
         className,
@@ -152,19 +208,33 @@ function ToolGroupTrigger({
       {...props}
     >
       <span className="aui-tool-group-trigger-label relative inline-block">
-        <span>{collapsedLabel}</span>
+        <span>
+          {collapsedLabel}
+          {showDiff ? (
+            <>
+              {" "}
+              {diff!.added > 0 ? (
+                <span className="text-emerald-600">+{diff!.added}</span>
+              ) : null}
+              {diff!.added > 0 && diff!.removed > 0 ? " " : null}
+              {diff!.removed > 0 ? (
+                <span className="text-red-600">-{diff!.removed}</span>
+              ) : null}
+            </>
+          ) : null}
+        </span>
         {active ? (
           <span
             aria-hidden
             className="aui-tool-group-trigger-shimmer shimmer pointer-events-none absolute inset-0 motion-reduce:animate-none"
           >
-            {collapsedLabel}
+            {shimmerLabel}
           </span>
         ) : null}
       </span>
       <ChevronDownIcon
         className={cn(
-          "aui-tool-group-trigger-chevron size-4 shrink-0 opacity-50 transition-transform duration-200",
+          "aui-tool-group-trigger-chevron size-4 shrink-0 opacity-0 transition-[opacity,transform] duration-200 group-hover/trigger:opacity-50",
           isOpen ? "rotate-0" : "-rotate-90",
         )}
       />
@@ -202,34 +272,34 @@ function ToolGroupContent({
   );
 }
 
-function useToolNamesFromIndices(indices: readonly number[]): string[] {
-  const namesKey = useAuiState((s) =>
-    indices
-      .map((i) => {
-        const part = s.message.parts[i] as { type?: string; toolName?: string } | undefined;
-        if (!part?.type) return "";
-        if (part.type === "tool-call" && part.toolName) return part.toolName;
-        if (part.type.startsWith("tool-")) return part.type.slice("tool-".length);
-        return "";
-      })
-      .filter(Boolean)
-      .join("\0"),
+function useToolSnapshotsFromIndices(
+  indices: readonly number[],
+): ToolPartSnapshot[] {
+  const snapshotsKey = useAuiState((s) =>
+    JSON.stringify(
+      indices
+        .map((i) => readToolPartSnapshot(s.message.parts[i]))
+        .filter((part): part is ToolPartSnapshot => part != null),
+    ),
   );
-  return namesKey ? namesKey.split("\0") : [];
+  return snapshotsKey ? (JSON.parse(snapshotsKey) as ToolPartSnapshot[]) : [];
 }
 
 export const ToolGroupBlock: FC<
   PropsWithChildren<{ indices: readonly number[] }>
 > = ({ indices, children }) => {
   const streaming = useGroupStreaming(indices);
-  const toolNames = useToolNamesFromIndices(indices);
+  const snapshots = useToolSnapshotsFromIndices(indices);
+  const toolNames = snapshots.map((item) => item.toolName);
   const summary = summarizeToolCalls(toolNames);
+  const diff = sumTableToolDiffs(snapshots);
 
   return (
     <ToolGroupRoot variant="ghost" streaming={streaming}>
       <ToolGroupTrigger
         count={indices.length}
         summary={summary}
+        diff={diff}
         active={streaming}
       />
       <ToolGroupContent>{children}</ToolGroupContent>
@@ -253,12 +323,14 @@ const ToolGroupImpl: FC<
     (_, i) => startIndex + i,
   );
   const toolCount = indices.length;
-  const toolNames = useToolNamesFromIndices(indices);
+  const snapshots = useToolSnapshotsFromIndices(indices);
+  const toolNames = snapshots.map((item) => item.toolName);
   const summary = summarizeToolCalls(toolNames);
+  const diff = sumTableToolDiffs(snapshots);
 
   return (
     <ToolGroupRoot>
-      <ToolGroupTrigger count={toolCount} summary={summary} />
+      <ToolGroupTrigger count={toolCount} summary={summary} diff={diff} />
       <ToolGroupContent>{children}</ToolGroupContent>
     </ToolGroupRoot>
   );

@@ -99,7 +99,9 @@
     "browserChip": "Browser: {{name}}",
     "removeBrowser": "Remove browser context",
     "skillChip": "Skill: {{name}}",
-    "skillType": "Skill"
+    "skillType": "Skill",
+    "activatedSkillChip": "Activated skill: {{name}}",
+    "activatedSkillType": "Active"
   },
   "slash": {
     "title": "Commands",
@@ -120,6 +122,7 @@
   },
   "status": {
     "allDone": "All done",
+    "todosProgress": "{{done}}/{{total}} todos",
     "agentsRunning": "{{count}} subagent(s)",
     "agentsQueued": "{{count}} subagent(s) queued",
     "agentsDone": "{{count}} subagent(s) finished",
@@ -131,6 +134,7 @@
     "taskDone": "Done",
     "taskFailed": "Failed",
     "taskCancelled": "Cancelled",
+    "taskInterrupted": "Interrupted",
     "taskInitializing": "Initializing…",
     "taskProgressTool": "{{tool}} · {{count}} tool uses",
     "taskProgressCount": "{{count}} tool uses",

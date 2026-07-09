@@ -17,3 +17,4 @@ export * from './constants';
 export * from './model';
 export * from './plan-mode';
 export * from './thread';
+export * from './interrupted-turn';

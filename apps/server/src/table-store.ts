@@ -266,38 +266,99 @@ function isAllowedStatusValue(value: string, col: TableColumnDef): boolean {
   return col.statusOptions.includes(value);
 }
 
-function sanitizePatch(
+function findColumn(
+  columns: TableColumnDef[],
+  field: string,
+): TableColumnDef | undefined {
+  return columns.find((c) => c.key === field) ?? columns.find((c) => c.name === field);
+}
+
+export type RejectedPatchField = {
+  /** Original key from the patch (may be display name). */
+  field: string;
+  columnKey?: string;
+  reason: string;
+};
+
+export type SanitizePatchResult = {
+  applied: TableRowPatch;
+  rejected: RejectedPatchField[];
+};
+
+/**
+ * Map a patch onto column keys (accepts key or display name).
+ * Invalid number/status values are rejected with reasons — never silently dropped.
+ */
+export function sanitizePatch(
   patch: TableRowPatch,
   columns: TableColumnDef[],
-): TableRowPatch {
-  const out: TableRowPatch = {};
-  for (const col of columns) {
-    const raw = patch[col.key];
-    if (raw === undefined) continue;
+): SanitizePatchResult {
+  const applied: TableRowPatch = {};
+  const rejected: RejectedPatchField[] = [];
+
+  for (const [field, raw] of Object.entries(patch)) {
+    if (field === 'row_id') continue;
+    const col = findColumn(columns, field);
+    if (!col) {
+      rejected.push({ field, reason: `Unknown column "${field}"` });
+      continue;
+    }
     if (col.type === 'number') {
       if (raw === '' || raw === undefined) {
-        out[col.key] = '';
+        applied[col.key] = '';
         continue;
       }
       const n = Number(raw);
-      if (Number.isFinite(n)) out[col.key] = n;
+      if (!Number.isFinite(n)) {
+        rejected.push({
+          field,
+          columnKey: col.key,
+          reason: `Invalid number value "${String(raw)}" for column "${col.name || col.key}"`,
+        });
+        continue;
+      }
+      applied[col.key] = n;
     } else if (col.type === 'status') {
       if (raw === '' || raw === undefined) {
-        out[col.key] = '';
+        applied[col.key] = '';
         continue;
       }
       const value = String(raw).trim();
-      if (isAllowedStatusValue(value, col)) out[col.key] = value;
+      if (!isAllowedStatusValue(value, col)) {
+        const allowed = col.statusOptions?.length
+          ? col.statusOptions.join(', ')
+          : '(any non-empty string)';
+        rejected.push({
+          field,
+          columnKey: col.key,
+          reason: `Invalid status value "${value}" for column "${col.name || col.key}"; allowed: ${allowed}`,
+        });
+        continue;
+      }
+      applied[col.key] = value;
     } else {
-      out[col.key] = String(raw);
+      applied[col.key] = String(raw);
     }
   }
-  return out;
+
+  return { applied, rejected };
 }
 
+/** Resolve sheet id; unknown/missing values fall back to main (read paths). */
 export function resolveTableSheetId(value: string | undefined): string {
   if (value && sheetStore.has(value)) return value;
   return DEFAULT_TABLE_SHEET;
+}
+
+/**
+ * Resolve sheet for writes. `undefined`/`''` → main when it exists;
+ * an explicit unknown id returns null (do not silently write main).
+ */
+export function tryResolveTableSheetId(value: string | undefined): string | null {
+  if (value === undefined || value === '') {
+    return sheetStore.has(DEFAULT_TABLE_SHEET) ? DEFAULT_TABLE_SHEET : null;
+  }
+  return sheetStore.has(value) ? value : null;
 }
 
 export function listTableSheets(): TableSheetMeta[] {
@@ -410,20 +471,117 @@ export function getTableRow(rowKey: string, sheetId: string = DEFAULT_TABLE_SHEE
   return found ? { ...found } : undefined;
 }
 
+export type UpdateTableRowResult =
+  | {
+      ok: true;
+      row: TableRowData;
+      sheet: string;
+      applied: TableRowPatch;
+      /** Previous values for keys in `applied` (before this write). */
+      previous: TableRowPatch;
+      rejected: RejectedPatchField[];
+    }
+  | {
+      ok: false;
+      row: TableRowData | null;
+      sheet: string;
+      applied: TableRowPatch;
+      previous: TableRowPatch;
+      rejected: RejectedPatchField[];
+      message: string;
+    };
+
 export async function updateTableRow(
   rowKey: string,
   patch: TableRowPatch,
   sheetId: string = DEFAULT_TABLE_SHEET,
-): Promise<TableRowData | null> {
-  const sheet = getSheet(resolveTableSheetId(sheetId));
-  if (!sheet) return null;
+): Promise<UpdateTableRowResult> {
+  // Callers that already validated the id pass a known sheet; otherwise require
+  // an existing id (explicit unknown id must not fall back to main).
+  const effectiveSheetId = sheetStore.has(sheetId)
+    ? sheetId
+    : sheetId === DEFAULT_TABLE_SHEET
+      ? tryResolveTableSheetId(undefined)
+      : null;
+
+  if (!effectiveSheetId) {
+    return {
+      ok: false,
+      row: null,
+      sheet: sheetId,
+      applied: {},
+      previous: {},
+      rejected: [],
+      message: `Sheet "${sheetId}" not found`,
+    };
+  }
+
+  const sheet = getSheet(effectiveSheetId);
+  if (!sheet) {
+    return {
+      ok: false,
+      row: null,
+      sheet: effectiveSheetId,
+      applied: {},
+      previous: {},
+      rejected: [],
+      message: `Sheet "${effectiveSheetId}" not found`,
+    };
+  }
+
   const idx = sheet.rows.findIndex((r) => tableRowKey(r) === rowKey);
-  if (idx === -1) return null;
-  const clean = sanitizePatch(patch, sheet.columns);
-  sheet.rows[idx] = { ...sheet.rows[idx]!, ...clean };
-  await persistSheet(resolveTableSheetId(sheetId));
-  emitTable({ type: 'rowUpsert', sheet: resolveTableSheetId(sheetId), row: { ...sheet.rows[idx]! } });
-  return { ...sheet.rows[idx]! };
+  if (idx === -1) {
+    return {
+      ok: false,
+      row: null,
+      sheet: effectiveSheetId,
+      applied: {},
+      previous: {},
+      rejected: [],
+      message: `Row ${rowKey} not found`,
+    };
+  }
+
+  const { applied, rejected } = sanitizePatch(patch, sheet.columns);
+  const hasApplied = Object.keys(applied).length > 0;
+  const requested = Object.keys(patch).filter((k) => k !== 'row_id');
+  const current = sheet.rows[idx]!;
+  const previous: TableRowPatch = {};
+  for (const key of Object.keys(applied)) {
+    const prev = current[key];
+    previous[key] = prev === undefined ? '' : prev;
+  }
+
+  if (requested.length > 0 && !hasApplied) {
+    return {
+      ok: false,
+      row: { ...current },
+      sheet: effectiveSheetId,
+      applied,
+      previous,
+      rejected,
+      message: rejected.map((r) => r.reason).join('; ') || 'No fields applied',
+    };
+  }
+
+  if (hasApplied) {
+    sheet.rows[idx] = { ...current, ...applied };
+    tablePersist(effectiveSheetId);
+    emitTable({
+      type: 'rowUpsert',
+      sheet: effectiveSheetId,
+      row: { ...sheet.rows[idx]! },
+    });
+  }
+
+  return {
+    ok: true,
+    row: { ...sheet.rows[idx]! },
+    sheet: effectiveSheetId,
+    applied,
+    previous,
+    rejected,
+  };
 }
 
 function slugifySheetId(name: string): string {
@@ -602,8 +760,8 @@ export function importTableSheet(
   fresh.rows = importedRows.map((raw) => {
     const base = emptyRow();
     const mapped = normalizeImportedRow(raw, fresh.columns);
-    const clean = sanitizePatch(mapped, fresh.columns);
-    return { ...base, ...clean };
+    const { applied } = sanitizePatch(mapped, fresh.columns);
+    return { ...base, ...applied };
   });
 
   tablePersist(resolved);

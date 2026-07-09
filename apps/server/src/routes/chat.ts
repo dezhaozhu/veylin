@@ -14,6 +14,7 @@ import {
   type ModelKey,
 } from '@veylin/runtime';
 import { setThreadPlanMode } from '@veylin/tools';
+import { stripInterruptedAssistantTurnsForAgent } from '@veylin/shared';
 import {
   createUiStreamRepairState,
   formatAgentStreamError,
@@ -321,6 +322,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         app.log.warn({ err, threadId }, 'agent context merge failed; using client messages');
       }
     }
+    agentInputMessages = stripInterruptedAssistantTurnsForAgent(agentInputMessages);
     let agentMessages = await toAgentMessages(
       agentInputMessages as Parameters<typeof toAgentMessages>[0],
       modelSupportsImages(effectiveModel),

@@ -207,8 +207,8 @@ async function executeNode(
       const patch = interpolateDeep(rawPatch, ctx) as Record<string, string | number>;
       if (!rowKey) throw new Error('table_write requires rowKey');
       const updated = await updateTableRow(rowKey, patch, sheetId);
-      if (!updated) throw new Error(`dataset row not found: ${rowKey}`);
-      return { sheetId, row: updated };
+      if (!updated.ok) throw new Error(updated.message || `dataset row not found: ${rowKey}`);
+      return { sheetId: updated.sheet, row: updated.row };
     }
 
     case 'end': {

@@ -164,12 +164,12 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       return { ok: false, message: 'row_key is required' };
     }
     const sheetId = resolveTableSheetId(sheet);
-    const row = await updateTableRow(key, patch, sheetId);
-    if (!row) {
-      reply.code(404);
-      return { ok: false, message: 'Row not found' };
+    const result = await updateTableRow(key, patch, sheetId);
+    if (!result.ok) {
+      reply.code(result.row ? 400 : 404);
+      return { ok: false, message: result.message, rejected: result.rejected };
     }
-    return { ok: true, sheet: sheetId, row };
+    return { ok: true, sheet: result.sheet, row: result.row };
   });
 
   app.post('/api/table/import', async (req, reply) => {

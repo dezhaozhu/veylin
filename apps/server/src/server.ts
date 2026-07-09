@@ -160,7 +160,7 @@ async function main() {
         await mcp.disconnect().catch(() => undefined);
         mcp = null;
       }
-      mcp = await createMcpClient(tenantId);
+    mcp = await createMcpClient(tenantId);
       try {
         mcpToolsets = (await mcp.listToolsets()) as Record<string, unknown>;
       } catch (err) {
@@ -278,7 +278,7 @@ async function main() {
 
   const readTaskSnapshot = createReadTaskSnapshot(runtime);
   const deps = {
-    runtime,
+        runtime,
     queue,
     resolveContext,
     isForbiddenError,
@@ -297,7 +297,7 @@ async function main() {
   await seedMcpServersFromEnvIfMissing(DEV_TENANT_ID);
   // Connect MCP servers; expose their tools to chat as a toolset.
   if (!isLazyMcpBoot()) {
-    await rebuildMcp(DEV_TENANT_ID);
+  await rebuildMcp(DEV_TENANT_ID);
   }
 
   const tableTools = buildTableTools();

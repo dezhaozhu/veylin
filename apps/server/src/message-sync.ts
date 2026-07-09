@@ -15,6 +15,17 @@ import type { ThreadIdentity, ThreadSnapshot, UiMessage } from '@veylin/shared';
 
 export type { UiMessage, ThreadSnapshot, ThreadIdentity };
 
+function metadataFromTranscriptMeta(
+  meta: { sentAt?: number; interrupted?: boolean } | undefined,
+): { metadata: { custom: { sentAt?: number; interrupted?: boolean } } } | undefined {
+  if (!meta) return undefined;
+  const custom: { sentAt?: number; interrupted?: boolean } = {};
+  if (typeof meta.sentAt === 'number') custom.sentAt = meta.sentAt;
+  if (meta.interrupted) custom.interrupted = true;
+  if (custom.sentAt == null && !custom.interrupted) return undefined;
+  return { metadata: { custom } };
+}
+
 /** Mastra LibSQL requires a thread row before recall when semantic recall is off. */
 export async function ensureMastraThread(
   memory: Memory,
@@ -138,9 +149,7 @@ export function mastraMessagesToUi(
       role: m.role ?? 'assistant',
       parts,
       content: partText(parts),
-      ...(meta?.sentAt != null
-        ? { metadata: { custom: { sentAt: meta.sentAt } } }
-        : {}),
+      ...metadataFromTranscriptMeta(meta),
     });
   }
   return normalizeRecalledUiMessages(out, { forDisplay: true });
@@ -168,9 +177,7 @@ export function mastraMessagesToAgentContext(
       role: m.role ?? 'assistant',
       parts,
       content: partText(parts),
-      ...(meta?.sentAt != null
-        ? { metadata: { custom: { sentAt: meta.sentAt } } }
-        : {}),
+      ...metadataFromTranscriptMeta(meta),
     });
   }
   return normalizeRecalledUiMessages(out, { forDisplay: false });

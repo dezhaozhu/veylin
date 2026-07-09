@@ -185,7 +185,7 @@ function ReasoningTrigger({
       data-slot="reasoning-trigger"
       aria-label={ariaLabel}
       className={cn(
-        "aui-reasoning-trigger text-muted-foreground/50 flex w-fit max-w-full cursor-pointer items-center gap-1.5 text-base font-normal leading-snug transition-colors",
+        "aui-reasoning-trigger group/trigger text-muted-foreground/50 flex w-fit max-w-full cursor-pointer items-center gap-1.5 text-base font-normal leading-snug transition-colors",
         "hover:text-muted-foreground",
         !isOpen && "-mx-1 rounded-sm px-1 hover:bg-muted/40",
         className,
@@ -205,7 +205,7 @@ function ReasoningTrigger({
       </span>
       <ChevronDownIcon
         className={cn(
-          "aui-reasoning-trigger-chevron size-4 shrink-0 opacity-50 transition-transform duration-200",
+          "aui-reasoning-trigger-chevron size-4 shrink-0 opacity-0 transition-[opacity,transform] duration-200 group-hover/trigger:opacity-50",
           isOpen ? "rotate-0" : "-rotate-90",
         )}
       />

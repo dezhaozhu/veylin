@@ -11,13 +11,7 @@ import { RightSidebarTrigger, useRightSidebar, useSidebar } from '@/components/u
 import { readChatWorkspaceWidth, rightPanelWidthMax } from '@/lib/chat-panel-ratio';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 import { subscribeLayoutSync } from '@/lib/overlay-bounds';
-import {
-  closePanelMenu,
-  isTauri,
-  listenPanelMenuClosed,
-  listenPanelMenuSelect,
-  showPanelMenu,
-} from '@/lib/tauri-web-view';
+import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import {
   collapsedSidebarTriggerReservePx,
   isRightPanelNearlyMaximized,
@@ -27,11 +21,10 @@ import {
 import { cn } from '@/lib/utils';
 import { startWindowDrag } from '@/lib/window-drag';
 import { PANEL_KINDS, getPanelKindDef } from './panel-registry';
+import { PANEL_TAB_MENU_CLOSED_EVENT } from './panel-events';
 import type { PanelKind, PanelTab } from './panel-types';
 
 const MENU_WIDTH = 220;
-const MENU_ROW_HEIGHT = 36;
-const MENU_CHROME = 16;
 
 interface PanelTabBarProps {
   tabs: PanelTab[];
@@ -63,16 +56,24 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   const tabBarPaddingRight = titlebarTrailingInset();
   const [menuOpen, setMenuOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement>(null);
+  const menuWasOpen = useRef(false);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
-  const onOpenRef = useRef(onOpen);
-  onOpenRef.current = onOpen;
 
-  const close = useCallback(() => {
-    setMenuOpen(false);
-    if (isTauri()) void closePanelMenu();
-  }, []);
+  const close = useCallback(() => setMenuOpen(false), []);
 
   useOverlayDismiss(close);
+
+  // Hide the docked native webview while the menu is open so the HTML portal
+  // is clickable; restore via PANEL_TAB_MENU_CLOSED_EVENT when it closes.
+  useEffect(() => {
+    if (!isTauri()) return;
+    if (menuOpen) {
+      void hideWebView(undefined, { force: true });
+    } else if (menuWasOpen.current) {
+      window.dispatchEvent(new CustomEvent(PANEL_TAB_MENU_CLOSED_EVENT));
+    }
+    menuWasOpen.current = menuOpen;
+  }, [menuOpen]);
 
   const updateMenuPos = useCallback(() => {
     const el = addBtnRef.current;
@@ -101,78 +102,8 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
     };
   }, [menuOpen, updateMenuPos]);
 
-  // Desktop: native always-on-top menu paints above the docked webview.
-  // Page layout stays untouched — same idea as Cursor's floating "+" menu.
-  useEffect(() => {
-    if (!isTauri() || !menuOpen || !menuPos) return;
-
-    let cancelled = false;
-    const items = PANEL_KINDS.map((def) => ({
-      kind: def.kind,
-      label: t(def.label),
-      description: def.description ? t(def.description) : undefined,
-    }));
-    const height = MENU_CHROME + items.length * MENU_ROW_HEIGHT;
-    const viewportX = window.innerWidth - menuPos.right - MENU_WIDTH;
-    const viewportY = menuPos.top;
-
-    void (async () => {
-      try {
-        const { getCurrentWindow } = await import('@tauri-apps/api/window');
-        const win = getCurrentWindow();
-        const [factor, outer] = await Promise.all([win.scaleFactor(), win.outerPosition()]);
-        const [innerPos, outerSize, innerSize] = await Promise.all([
-          win.innerPosition(),
-          win.outerSize(),
-          win.innerSize(),
-        ]);
-        const chromeX = (innerPos.x - outer.x) / factor;
-        const chromeY = (innerPos.y - outer.y) / factor;
-        // Prefer inner→outer delta; fall back if platform reports zeros.
-        const offsetX = Number.isFinite(chromeX) ? chromeX : 0;
-        const offsetY = Number.isFinite(chromeY)
-          ? chromeY
-          : Math.max(0, (outerSize.height - innerSize.height) / factor);
-        await showPanelMenu({
-          x: outer.x / factor + offsetX + viewportX,
-          y: outer.y / factor + offsetY + viewportY,
-          width: MENU_WIDTH,
-          height,
-          items,
-        });
-      } catch {
-        if (!cancelled) setMenuOpen(false);
-      }
-    })();
-
-    let unlistenSelect: (() => void) | undefined;
-    let unlistenClosed: (() => void) | undefined;
-    void listenPanelMenuSelect((kind) => {
-      if (cancelled) return;
-      onOpenRef.current(kind as PanelKind);
-      setMenuOpen(false);
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlistenSelect = fn;
-    });
-    void listenPanelMenuClosed(() => {
-      if (!cancelled) setMenuOpen(false);
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlistenClosed = fn;
-    });
-
-    return () => {
-      cancelled = true;
-      unlistenSelect?.();
-      unlistenClosed?.();
-      void closePanelMenu();
-    };
-  }, [menuOpen, menuPos, t]);
-
-  // Browser / non-Tauri fallback: HTML portal is fine (no native webview layer).
   const htmlMenu =
-    !isTauri() && menuOpen && menuPos
+    menuOpen && menuPos
       ? createPortal(
           <>
             <DismissibleBackdrop

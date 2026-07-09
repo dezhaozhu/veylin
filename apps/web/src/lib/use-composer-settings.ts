@@ -12,6 +12,11 @@ import {
   readCachedThreadPlanMode,
   writeCachedThreadPlanMode,
 } from '@/lib/plan-mode-sync';
+import { fetchThreadTodos, clearThreadTodosSnapshot } from '@/lib/thread-todos-store';
+import {
+  fetchActivatedSkills,
+  clearActivatedSkillsSnapshot,
+} from '@/lib/activated-skills-store';
 import { useState } from 'react';
 
 function applyPlanModeForThread(threadId: string | undefined, on: boolean): void {
@@ -31,7 +36,11 @@ export function usePlanModeBridge(): void {
   const wasRunningRef = useRef(false);
 
   useEffect(() => {
-    if (!threadId) return;
+    if (!threadId) {
+      clearThreadTodosSnapshot();
+      clearActivatedSkillsSnapshot();
+      return;
+    }
     const cached = readCachedThreadPlanMode(threadId);
     if (cached != null) {
       applyPlanModeForThread(threadId, cached);
@@ -39,6 +48,8 @@ export function usePlanModeBridge(): void {
     void fetchThreadPlanMode(threadId).then((on) => {
       applyPlanModeForThread(threadId, on);
     });
+    void fetchThreadTodos(threadId);
+    void fetchActivatedSkills(threadId);
   }, [threadId]);
 
   useEffect(() => {
@@ -57,6 +68,8 @@ export function usePlanModeBridge(): void {
       void fetchThreadPlanMode(threadId).then((on) => {
         applyPlanModeForThread(threadId, on);
       });
+      void fetchThreadTodos(threadId);
+      void fetchActivatedSkills(threadId);
     }
 
     if (!isRunning) return;

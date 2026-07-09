@@ -181,8 +181,8 @@ function ToolFallbackTrigger({
       <ChevronDownIcon
         data-slot="tool-fallback-trigger-chevron"
         className={cn(
-          "aui-tool-fallback-trigger-chevron size-4 shrink-0 opacity-50",
-          "transition-transform duration-(--animation-duration) ease-out",
+          "aui-tool-fallback-trigger-chevron size-4 shrink-0 opacity-0 group-hover/trigger:opacity-50",
+          "transition-[opacity,transform] duration-(--animation-duration) ease-out",
           "group-data-[state=closed]/trigger:-rotate-90",
           "group-data-[state=open]/trigger:rotate-0",
         )}

@@ -64,6 +64,27 @@ npm run -w @veylin/desktop build  # 自动：构建前端 → 打包 sidecar(含
 
 相关环境变量见 `.env.example` 中 Context engineering 一节。
 
+## 会话持久化边界
+
+刷新或切换线程时，以下状态会恢复：
+
+| 恢复 | 来源 |
+|------|------|
+| 聊天消息 transcript | LibSQL（Mastra Memory） |
+| Todos | SurrealDB `thread_state`；空库时从 transcript 最后一次 `todo_write` 回填 |
+| Plan mode | SurrealDB + `GET /api/plan-mode` |
+| 子 agent 任务行（状态/结果） | SurrealDB `task` + SSE `/api/tasks` |
+| 已激活 skills（只读 chip） | `GET /api/threads/:id/state` |
+| 挂起的 `ask_user_question` | 从 transcript 重建 |
+
+以下**不**跨刷新恢复（设计如此或本轮未做）：
+
+- 进行中的主流式响应（进程内 resumable stream，重启即失效）
+- Composer 消息队列、未发送的附件/浏览器引用
+- Worker 子线程完整 transcript UI
+- Working memory 文档的可视化编辑
+- `read_open_page` 客户端挂起态
+
 ## 关键决策
 
 - 存储：**嵌入式 SurrealDB 单引擎**（业务表 + 知识库 图+向量+全文），线程记忆旁挂本地 LibSQL；不依赖外部 Postgres / Redis / Docker。

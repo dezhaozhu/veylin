@@ -5,6 +5,7 @@ export const STEP_BOUNDARY_PART_TYPE = 'data-veylin-step-boundary';
 
 export type TranscriptMeta = {
   sentAt?: number;
+  interrupted?: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -15,11 +16,14 @@ export function readTranscriptMetaFromMetadata(metadata: unknown): TranscriptMet
   if (!isRecord(metadata)) return undefined;
   const custom = metadata.custom;
   if (!isRecord(custom)) return undefined;
-  const sentAt = custom.sentAt;
-  if (typeof sentAt === 'number' && Number.isFinite(sentAt)) {
-    return { sentAt };
+  const meta: TranscriptMeta = {};
+  if (typeof custom.sentAt === 'number' && Number.isFinite(custom.sentAt)) {
+    meta.sentAt = custom.sentAt;
   }
-  return undefined;
+  if (custom.interrupted === true) {
+    meta.interrupted = true;
+  }
+  return meta.sentAt != null || meta.interrupted ? meta : undefined;
 }
 
 export function extractTranscriptEnvelope(parts: unknown[]): {
@@ -36,10 +40,15 @@ export function extractTranscriptEnvelope(parts: unknown[]): {
     }
     const type = part.type;
     if (type === TRANSCRIPT_META_PART_TYPE && isRecord(part.data)) {
+      const next: TranscriptMeta = { ...(meta ?? {}) };
       const sentAt = part.data.sentAt;
       if (typeof sentAt === 'number' && Number.isFinite(sentAt)) {
-        meta = { sentAt };
+        next.sentAt = sentAt;
       }
+      if (part.data.interrupted === true) {
+        next.interrupted = true;
+      }
+      meta = next;
       continue;
     }
     if (type === STEP_BOUNDARY_PART_TYPE) {
@@ -72,10 +81,13 @@ export function embedTranscriptEnvelope(
   }
 
   const meta = readTranscriptMetaFromMetadata(metadata);
-  if (meta?.sentAt != null) {
+  if (meta?.sentAt != null || meta?.interrupted) {
     encoded.push({
       type: TRANSCRIPT_META_PART_TYPE,
-      data: { sentAt: meta.sentAt },
+      data: {
+        ...(meta.sentAt != null ? { sentAt: meta.sentAt } : {}),
+        ...(meta.interrupted ? { interrupted: true } : {}),
+      },
     });
   }
 

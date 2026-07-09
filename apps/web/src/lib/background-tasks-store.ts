@@ -7,6 +7,11 @@ export type BackgroundTasksSnapshot = {
   batchTasks: BackgroundTaskRow[];
   /** Last known dispatch batch ids — keeps completed workers visible until synthesis. */
   dispatchTaskIds: string[];
+  /**
+   * Task ids cancelled by Stop. Status bar must treat these as interrupted even when
+   * transcript optimistic rows still say running/queued (id mismatch races).
+   */
+  interruptedTaskIds: string[];
   notificationsReady: boolean;
   synthesisReady: boolean;
 };
@@ -16,6 +21,7 @@ const EMPTY: BackgroundTasksSnapshot = {
   tasks: [],
   batchTasks: [],
   dispatchTaskIds: [],
+  interruptedTaskIds: [],
   notificationsReady: false,
   synthesisReady: false,
 };
@@ -28,7 +34,10 @@ export function getBackgroundTasksSnapshot(): BackgroundTasksSnapshot {
 }
 
 export function setBackgroundTasksSnapshot(next: BackgroundTasksSnapshot): void {
-  snapshot = next;
+  snapshot = {
+    ...next,
+    interruptedTaskIds: next.interruptedTaskIds ?? [],
+  };
   for (const listener of listeners) listener();
 }
 
