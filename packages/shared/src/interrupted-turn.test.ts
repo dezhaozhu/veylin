@@ -57,8 +57,11 @@ describe('interrupted-turn', () => {
     ];
     const stripped = stripInterruptedAssistantTurnsForAgent(messages);
     assert.equal(stripped.length, 2);
-    assert.equal(stripped[0]!.content, INTERRUPTED_TURN_NOTE);
     assert.deepEqual(stripped[0]!.parts, [{ type: 'text', text: INTERRUPTED_TURN_NOTE }]);
+    assert.equal(
+      (stripped[0] as { content?: string }).content,
+      INTERRUPTED_TURN_NOTE,
+    );
     assert.equal((stripped[1]!.parts![0] as { text: string }).text, '你好');
   });
 
