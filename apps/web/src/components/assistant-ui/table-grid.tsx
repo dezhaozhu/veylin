@@ -1106,16 +1106,20 @@ export function TableGrid() {
     // Pinned row-number column (read-only, no sort)
     defs.push({
       colId: '__rowNum__',
-      headerName: '#',
-      width: 44,
-      minWidth: 44,
-      maxWidth: 44,
+      headerName: '',
+      width: 52,
+      minWidth: 52,
+      maxWidth: 52,
       pinned: 'left' as const,
       lockPosition: true,
+      lockPinned: true,
       sortable: false,
       resizable: false,
       editable: false,
       suppressMovable: true,
+      enableRowGroup: false,
+      enableValue: false,
+      enablePivot: false,
       suppressHeaderFilterButton: true,
       valueGetter: (p) => (p.node?.rowIndex ?? 0) + 1,
       cellStyle: {
@@ -1137,11 +1141,16 @@ export function TableGrid() {
         maxWidth: 44,
         pinned: 'left' as const,
         lockPosition: true,
+        lockPinned: true,
         sortable: false,
         resizable: false,
         editable: false,
         suppressMovable: true,
+        enableRowGroup: false,
+        enableValue: false,
+        enablePivot: false,
         suppressHeaderFilterButton: true,
+        suppressHeaderMenuButton: true,
         cellRenderer: 'agGroupCellRenderer',
       });
     }
@@ -1692,6 +1701,17 @@ export function TableGrid() {
               columnDefs={agColDefs}
               getRowId={(params: GetRowIdParams<TableRow>) => rowKey(params.data)}
               rowSelection={rowSelection}
+              selectionColumnDef={{
+                suppressHeaderMenuButton: true,
+                suppressMovable: true,
+                lockPinned: true,
+                enableRowGroup: false,
+                enableValue: false,
+                enablePivot: false,
+                width: 48,
+                minWidth: 44,
+                maxWidth: 64,
+              }}
               masterDetail={proMasterDetail || undefined}
               isRowMaster={proMasterDetail ? () => true : undefined}
               detailCellRendererParams={proMasterDetail ? detailCellRendererParams : undefined}
