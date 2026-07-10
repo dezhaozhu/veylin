@@ -58,6 +58,7 @@ type TableEvent =
 // The schedule sheet's 二级 rows expand to their 三级 (设备级) ops, fetched on
 // demand from /api/schedule-detail (→ Compass get_workorder_rows). Read-only.
 const SCHEDULE_SHEET_ID = 'schedule';
+const ORDER_SHEET_ID = 'orders';
 
 // Columns worth showing in the B2 preview dialog (filtered by presence in the payload)
 const PREVIEW_COLUMNS: Array<{ key: string; labelKey: string }> = [
@@ -1109,7 +1110,11 @@ export function TableGrid() {
   // 二三级 master-detail (Pro): only on the schedule sheet, only when entitled AND
   // Enterprise modules are loaded (setting masterDetail props otherwise → module error).
   const proEnterprise = hasProEntitlement() && isAgGridEnterpriseReady();
-  const proMasterDetail = activeSheetId === SCHEDULE_SHEET_ID && proEnterprise;
+  // Master-detail on the schedule sheet (per-工序 → that stage's ops) AND the orders
+  // sheet (per-订单 → full 三级 route: order rows carry order_id but no stage_code,
+  // so the same detail fetch returns the whole route unfiltered).
+  const proMasterDetail =
+    (activeSheetId === SCHEDULE_SHEET_ID || activeSheetId === ORDER_SHEET_ID) && proEnterprise;
 
   // Generic Enterprise affordances for EVERY sheet (no sheet-specific logic —
   // Veylin stays a generic host): drag-to-group row grouping, columns/filters

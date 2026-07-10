@@ -165,6 +165,79 @@ export async function importCompassResourceSheet(
   return { ok: true as const, sheet: RESOURCES_SHEET_ID, imported: rows.length };
 }
 
+export const ORDERS_SHEET_ID = 'orders';
+
+// Per-order overview: one row per 订单 (aggregated from the per-工序 schedule rows).
+// Master-detail on this sheet reuses the schedule-detail fetch, but since order
+// rows carry order_id and NO stage_code, it returns the order's FULL 三级 route.
+export async function importCompassOrderSheet(
+  getMcpToolsets: ToolsetsGetter | undefined,
+): Promise<
+  | { ok: true; sheet: string; imported: number; total: number; columns: number }
+  | { ok: false; error: string }
+> {
+  const toolsets = getMcpToolsets?.() ?? {};
+  const compass = toolsets['compass'] as
+    | Record<string, { execute: (args: unknown) => Promise<unknown> }>
+    | undefined;
+  const tool = compass?.['get_schedule_rows'];
+  if (!tool) {
+    return { ok: false as const, error: 'compass MCP server not connected (no get_schedule_rows)' };
+  }
+  const res: unknown = await tool.execute({ limit: 1_000_000 });
+  const payload = unwrapMcpPayload(res);
+  const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
+
+  // Aggregate the per-工序 rows into one row per order.
+  const STATUS_RANK: Record<string, number> = { unscheduled: 3, derived: 2, solved: 1 };
+  type Agg = {
+    order_id: string; product_class: string; due_at: string | null; end: string | null;
+    schedule_status: string; workshops: Set<string>; stage_count: number; _wo_count: number;
+  };
+  const byOrder = new Map<string, Agg>();
+  for (const r of rows) {
+    const oid = String(r['order_id'] ?? '');
+    if (!oid) continue;
+    let o = byOrder.get(oid);
+    if (!o) {
+      o = {
+        order_id: oid, product_class: String(r['product_class'] ?? ''),
+        due_at: (r['due_at'] as string | null) ?? null, end: null,
+        schedule_status: 'solved', workshops: new Set(), stage_count: 0,
+        _wo_count: Number(r['_wo_count'] ?? 0),
+      };
+      byOrder.set(oid, o);
+    }
+    o.stage_count += 1;
+    if (r['workshop']) o.workshops.add(String(r['workshop']));
+    const end = r['end'] as string | null;
+    if (end && (!o.end || String(end) > String(o.end))) o.end = end;   // latest stage end = order 完工
+    const st = String(r['schedule_status'] ?? 'solved');
+    if ((STATUS_RANK[st] ?? 0) > (STATUS_RANK[o.schedule_status] ?? 0)) o.schedule_status = st;
+  }
+  const orderRows = [...byOrder.values()].map((o) => ({
+    order_id: o.order_id, product_class: o.product_class, workshop: [...o.workshops].join('/'),
+    stage_count: o.stage_count, schedule_status: o.schedule_status,
+    end: o.end, due_at: o.due_at, _wo_count: o._wo_count,
+  }));
+
+  const descriptors = [
+    { key: 'order_id', name: '订单号', type: 'text' as const },
+    { key: 'product_class', name: '产品', type: 'text' as const },
+    { key: 'workshop', name: '分厂', type: 'text' as const },
+    { key: 'stage_count', name: '工序数', type: 'number' as const },
+    { key: 'schedule_status', name: '排产状态', type: 'status' as const },
+    { key: 'end', name: '计划完工', type: 'text' as const },
+    { key: 'due_at', name: '交期', type: 'text' as const },
+  ];
+  if (!listTableSheets().find((s) => s.id === ORDERS_SHEET_ID)) createTableSheet(ORDERS_SHEET_ID);
+  importTableSheet(ORDERS_SHEET_ID, [], orderRows as Array<Record<string, string | number>>, undefined, descriptors);
+  return {
+    ok: true as const, sheet: ORDERS_SHEET_ID,
+    imported: orderRows.length, total: orderRows.length, columns: descriptors.length,
+  };
+}
+
 /**
  * Generic spreadsheet/table tools backed by the multi-sheet grid store.
  */
@@ -492,6 +565,15 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
     },
   });
 
+  const loadCompassOrders = createTool({
+    id: 'load_compass_orders',
+    description:
+      '从 Compass 拉取本租户的订单总览（每订单一行：产品/分厂/工序数/排产状态/计划完工/交期），' +
+      '写入名为 orders 的表 sheet。展开一行 = 该订单的完整三级工艺路线。需要 Compass MCP 已连接。',
+    inputSchema: z.object({}),
+    execute: async () => importCompassOrderSheet(getMcpToolsets),
+  });
+
   const loadCompassResources = createTool({
     id: 'load_compass_resources',
     description:
@@ -513,6 +595,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
     table_delete_sheet: tableDeleteSheet,
     table_list_sheets: tableListSheets,
     load_compass_schedule: loadCompassSchedule,
+    load_compass_orders: loadCompassOrders,
     load_compass_resources: loadCompassResources,
     table_chart: tableChart,
   };
