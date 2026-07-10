@@ -6,6 +6,7 @@ import {
   type GetRowIdParams,
   type ValueFormatterParams,
   type ICellRendererParams,
+  type CellClassParams,
   type CellValueChangedEvent,
   type CellKeyDownEvent,
   type SelectionChangedEvent,
@@ -1068,6 +1069,25 @@ export function TableGrid() {
     return map;
   }, [columnDefs, rows]);
 
+  // Per-number-column max, for a whisper-alpha magnitude tint (data-bar feel).
+  // Only columns with a positive spread get a max → flat/index-like columns stay
+  // untinted (less is more: a cue where magnitude means something, nowhere else).
+  const numberColMax = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const def of columnDefs) {
+      if (def.type !== 'number') continue;
+      let max = 0;
+      let min = Infinity;
+      let seen = false;
+      for (const r of rows) {
+        const v = Number(r[def.key]);
+        if (Number.isFinite(v)) { max = Math.max(max, v); min = Math.min(min, v); seen = true; }
+      }
+      if (seen && max > 0 && max !== min) m.set(def.key, max);
+    }
+    return m;
+  }, [columnDefs, rows]);
+
   // AG-Grid column definitions: row-number + typed data columns
   // 二三级 master-detail (Pro): only on the schedule sheet, only when entitled AND
   // Enterprise modules are loaded (setting masterDetail props otherwise → module error).
@@ -1190,10 +1210,20 @@ export function TableGrid() {
       };
 
       if (def.type === 'number') {
+        const heatMax = numberColMax.get(def.key);
         defs.push({
           ...baseColDef,
+          aggFunc: 'sum',   // group rows roll up numeric columns (只在分组时出现)
           cellEditor: 'agNumberCellEditor',
-          cellStyle: { textAlign: 'center', fontVariantNumeric: 'tabular-nums' },
+          cellStyle: (params: CellClassParams<TableRow>) => {
+            const base = { textAlign: 'center' as const, fontVariantNumeric: 'tabular-nums' as const };
+            // No tint on group/aggregated rows, or columns without meaningful spread.
+            if (!heatMax || params.node?.group) return base;
+            const v = Number(params.value);
+            if (!Number.isFinite(v) || v <= 0) return base;
+            const t = Math.min(1, v / heatMax);   // 0..1
+            return { ...base, backgroundColor: `rgba(37, 99, 235, ${(0.05 + t * 0.22).toFixed(3)})` };
+          },
         });
       } else if (def.type === 'sparkline' && proEnterprise) {
         // Cell holds a comma-separated numeric series ("3,5,2,…") → in-cell bar
@@ -1236,7 +1266,7 @@ export function TableGrid() {
     }
 
     return defs;
-  }, [activeSheetId, columnDefs, statusOptionsByKey, selectColumn, proMasterDetail]);
+  }, [activeSheetId, columnDefs, statusOptionsByKey, numberColMax, selectColumn, proMasterDetail]);
 
   // AG-Grid v36 row selection config (object form)
   const rowSelection = useMemo(
@@ -1705,9 +1735,6 @@ export function TableGrid() {
                 suppressHeaderMenuButton: true,
                 suppressMovable: true,
                 lockPinned: true,
-                enableRowGroup: false,
-                enableValue: false,
-                enablePivot: false,
                 width: 48,
                 minWidth: 44,
                 maxWidth: 64,
