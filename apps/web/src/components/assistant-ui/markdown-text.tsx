@@ -12,6 +12,7 @@ import {
   useIsMarkdownCodeBlock,
   type SyntaxHighlighterProps,
 } from "@assistant-ui/react-markdown";
+import remarkDirective from "remark-directive";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -21,7 +22,9 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { MermaidDiagram } from "@/components/assistant-ui/mermaid-diagram";
 import { CitationMarkdownLink } from "@/components/assistant-ui/citation-markdown-link";
+import { SyntaxHighlighter } from "@/components/assistant-ui/shiki-highlighter";
 import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { remarkCallouts } from "@/lib/remark-callouts";
 import { remarkInlineCitations } from "@/lib/remark-inline-citations";
 import { cn } from "@/lib/utils";
 
@@ -33,10 +36,12 @@ const rehypeKatexPlugins: [[typeof rehypeKatex, { throwOnError: boolean }]] = [
   [rehypeKatex, { throwOnError: false }],
 ];
 
+const baseRemarkPlugins = [remarkGfm, remarkMath, remarkDirective, remarkCallouts];
+
 const MarkdownTextImpl = () => {
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm, remarkMath]}
+      remarkPlugins={baseRemarkPlugins}
       rehypePlugins={rehypeKatexPlugins}
       preprocess={preprocessMarkdownMath}
       className="aui-md"
@@ -52,7 +57,7 @@ export const MarkdownText = memo(MarkdownTextImpl);
 const AssistantMarkdownTextImpl = () => {
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm, remarkMath, remarkInlineCitations]}
+      remarkPlugins={[...baseRemarkPlugins, remarkInlineCitations]}
       rehypePlugins={rehypeKatexPlugins}
       preprocess={preprocessMarkdownMath}
       className="aui-md"
@@ -131,6 +136,7 @@ const markdownComponentsByLanguage = {
 } as const;
 
 const defaultComponents = memoizeMarkdownComponents({
+  SyntaxHighlighter,
   h1: ({ className, ...props }) => (
     <h1
       className={cn(
@@ -140,6 +146,47 @@ const defaultComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
+  div: ({ className, children, ...props }) => {
+    const callout =
+      typeof (props as { "data-callout"?: unknown })["data-callout"] === "string"
+        ? String((props as { "data-callout": string })["data-callout"])
+        : null;
+    if (!callout) {
+      return (
+        <div className={className} {...props}>
+          {children}
+        </div>
+      );
+    }
+    const title =
+      typeof (props as { "data-title"?: unknown })["data-title"] === "string"
+        ? String((props as { "data-title": string })["data-title"])
+        : null;
+    return (
+      <div
+        className={cn(
+          "aui-md-callout my-3 rounded-lg border px-3.5 py-2.5 text-sm leading-relaxed",
+          callout === "tip" &&
+            "border-emerald-500/25 bg-emerald-500/10 text-emerald-950 dark:text-emerald-100",
+          callout === "note" &&
+            "border-sky-500/25 bg-sky-500/10 text-sky-950 dark:text-sky-100",
+          callout === "info" &&
+            "border-sky-500/25 bg-sky-500/10 text-sky-950 dark:text-sky-100",
+          callout === "warning" &&
+            "border-amber-500/25 bg-amber-500/10 text-amber-950 dark:text-amber-100",
+          callout === "danger" &&
+            "border-red-500/25 bg-red-500/10 text-red-950 dark:text-red-100",
+          className,
+        )}
+        {...props}
+      >
+        {title ? (
+          <div className="aui-md-callout-title mb-1 font-semibold">{title}</div>
+        ) : null}
+        {children}
+      </div>
+    );
+  },
   h2: ({ className, ...props }) => (
     <h2
       className={cn(
