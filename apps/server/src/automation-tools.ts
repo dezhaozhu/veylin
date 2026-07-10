@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { z } from 'zod';
+import { llmBool } from './zod-llm.js';
 import type { QueuePort } from './queue';
 import {
   createAutomation,
@@ -38,7 +39,7 @@ export function buildAutomationTools(boss: QueuePort) {
       sourceType: z.union([z.literal('cron'), z.string().min(1)]).optional(),
       eventOn: z.union([z.string(), z.array(z.string())]).optional(),
       eventFilter: z.string().optional(),
-      enabled: z.boolean().default(true),
+      enabled: llmBool().default(true),
     }),
     outputSchema: z.object({ id: z.string(), name: z.string() }),
     execute: async (input, ctx?: AutoCtx) => {
@@ -49,7 +50,7 @@ export function buildAutomationTools(boss: QueuePort) {
         kind: input.kind ?? 'cron',
         agentId: input.agentId ?? DEFAULT_AGENT_ID,
         prompt: input.prompt,
-        enabled: input.enabled ?? true,
+        enabled: (input.enabled as boolean | undefined) ?? true,
         cron: input.cron,
         timezone: input.timezone ?? 'UTC',
         sourceType: input.sourceType,
@@ -103,12 +104,12 @@ export function buildAutomationTools(boss: QueuePort) {
     description: 'Enable or disable an automation by id.',
     inputSchema: z.object({
       id: z.string(),
-      enabled: z.boolean(),
+      enabled: llmBool(),
     }),
     outputSchema: z.object({ ok: z.boolean() }),
     execute: async (input, ctx?: AutoCtx) => {
       const tenantId = ctxValue(ctx, 'tenantId') ?? '00000000-0000-0000-0000-000000000000';
-      const row = await updateAutomation(tenantId, input.id, { enabled: input.enabled });
+      const row = await updateAutomation(tenantId, input.id, { enabled: input.enabled as boolean | undefined });
       if (!row) return { ok: false };
       if (row.kind === 'cron' && row.cron) {
         if (row.enabled) {
@@ -157,13 +158,13 @@ export function buildAutomationTools(boss: QueuePort) {
       sourceType: z.union([z.literal('cron'), z.string().min(1)]).optional(),
       eventOn: z.union([z.string(), z.array(z.string())]).optional(),
       eventFilter: z.string().optional(),
-      enabled: z.boolean().optional(),
+      enabled: llmBool().optional(),
     }),
     outputSchema: z.object({ ok: z.boolean() }),
     execute: async (input, ctx?: AutoCtx) => {
       const tenantId = ctxValue(ctx, 'tenantId') ?? '00000000-0000-0000-0000-000000000000';
       const { id, ...patch } = input;
-      const row = await updateAutomation(tenantId, id, patch);
+      const row = await updateAutomation(tenantId, id, { ...patch, enabled: patch.enabled as boolean | undefined });
       if (!row) return { ok: false };
       if (row.kind === 'cron') {
         await unregisterAutomationSchedule(boss, row.id);

@@ -1,5 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import { llmBool } from './zod-llm.js';
 import { insertTask, updateTaskRow, getTaskRow } from '@veylin/db';
 import { DEFAULT_AGENT_ID, deriveTaskLabel } from '@veylin/shared';
 import {
@@ -245,7 +246,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
     inputSchema: z.object({
       task_id: z.string().describe('Task id to continue.'),
       message: z.string().describe('Follow-up instruction for the worker.'),
-      run_in_background: z.boolean().optional(),
+      run_in_background: llmBool().optional(),
     }),
     outputSchema: taskOutputSchema,
     execute: async (input, ctx?: TaskCtx) => {
