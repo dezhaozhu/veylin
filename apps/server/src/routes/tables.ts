@@ -10,6 +10,7 @@ import {
   listTableColumns,
   listTableRows,
   listTableSheets,
+  renameTableSheet,
   resolveTableSheetId,
   updateTableRow,
   DEFAULT_TABLE_SHEET,
@@ -86,6 +87,22 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     return { ok: true, sheets, nextSheet };
   });
 
+  app.patch('/api/table/sheets/:sheetId', async (req, reply) => {
+    await deps.resolveContext(req.headers);
+    const { sheetId } = req.params as { sheetId: string };
+    const { name } = (req.body ?? {}) as { name?: string };
+    if (!name?.trim()) {
+      reply.code(400);
+      return { ok: false, message: 'name is required' };
+    }
+    const sheet = renameTableSheet(sheetId, name);
+    if (!sheet) {
+      reply.code(400);
+      return { ok: false, message: 'Failed to rename sheet' };
+    }
+    return { ok: true, sheet, sheets: listTableSheets() };
+  });
+
   app.post('/api/table/rows', async (req, reply) => {
     await deps.resolveContext(req.headers);
     const { sheet } = (req.body ?? {}) as { sheet?: string };
@@ -107,7 +124,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     };
     const sheetId = resolveTableSheetId(body.sheet);
     const rowKeys = body.row_keys ?? body.order_nos ?? [];
-    const removed = deleteTableRows(sheetId, rowKeys);
+    const { removed } = deleteTableRows(sheetId, rowKeys);
     return { ok: true, sheet: sheetId, removed, rows: listTableRows(sheetId) };
   });
 

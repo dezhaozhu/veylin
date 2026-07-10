@@ -15,6 +15,7 @@ import {
   addTableColumn,
   importTableSheet,
   createTableSheet,
+  renameTableSheet,
   type TableEvent,
 } from './table-store.js';
 
@@ -64,6 +65,18 @@ describe('table-store change events', () => {
     const off = onTableEvent((e) => events.push(e));
     createTableSheet('Sheet X');
     off();
+    assert.ok(events.some((e) => e.type === 'sheetsChange'));
+  });
+
+  it('renameTableSheet updates display name and emits sheetsChange', () => {
+    const created = createTableSheet(`Rename Me ${Date.now()}`)!;
+    const events: TableEvent[] = [];
+    const off = onTableEvent((e) => events.push(e));
+    const renamed = renameTableSheet(created.id, 'Renamed Sheet');
+    off();
+    assert.ok(renamed);
+    assert.equal(renamed!.name, 'Renamed Sheet');
+    assert.equal(renamed!.id, created.id);
     assert.ok(events.some((e) => e.type === 'sheetsChange'));
   });
 

@@ -200,7 +200,7 @@ export async function buildKnowledgeContextBlock(tenantId: string): Promise<stri
     return [
       '# Knowledge base (local)',
       'No documents are uploaded yet. The **知识库** panel is empty until the user adds files.',
-      'Spreadsheet/table data in the **表格** panel is separate — use `table_list_sheets` / `table_get`, not `knowledge_search`, for grid data.',
+      'Spreadsheet/table data in the **表格** panel is separate — use `table_sheets` (list) / `table_get`, not `knowledge_search`, for grid data.',
       'After documents are uploaded, call `knowledge_search` before answering document questions.',
     ].join('\n');
   }

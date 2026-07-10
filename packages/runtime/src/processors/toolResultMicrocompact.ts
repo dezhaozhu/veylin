@@ -9,7 +9,7 @@ export const MICROCOMPACT_TOOL_WHITELIST = new Set([
   'knowledge_search',
   'web_fetch',
   'table_get',
-  'table_list_sheets',
+  'table_sheets',
   'read_open_page',
   'tool_search',
 ]);

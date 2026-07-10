@@ -30,6 +30,7 @@ import {
   sumTableToolDiffs,
   type TableToolDiff,
 } from "@/lib/table-tool-diff";
+import { RollingNumber } from "@/components/assistant-ui/rolling-number";
 import { cn } from "@/lib/utils";
 
 const ANIMATION_DURATION = 200;
@@ -70,17 +71,6 @@ function readToolPartSnapshot(part: unknown): ToolPartSnapshot | null {
         : undefined;
 
   return { toolName, args, result };
-}
-
-function formatToolGroupDiffLabel(
-  label: string,
-  diff: TableToolDiff | undefined,
-): string {
-  if (!diff || (diff.added <= 0 && diff.removed <= 0)) return label;
-  const parts = [label];
-  if (diff.added > 0) parts.push(`+${diff.added}`);
-  if (diff.removed > 0) parts.push(`-${diff.removed}`);
-  return parts.join(" ");
 }
 
 export const ToolGroupStreamingContext = createContext(false);
@@ -193,7 +183,6 @@ function ToolGroupTrigger({
   const { isOpen } = useCollapsiblePanel();
   const collapsedLabel =
     summary ?? t("toolGroup.toolCalls", { count });
-  const shimmerLabel = formatToolGroupDiffLabel(collapsedLabel, diff);
   const showDiff = Boolean(diff && (diff.added > 0 || diff.removed > 0));
 
   return (
@@ -207,29 +196,31 @@ function ToolGroupTrigger({
       )}
       {...props}
     >
-      <span className="aui-tool-group-trigger-label relative inline-block">
-        <span>
-          {collapsedLabel}
-          {showDiff ? (
-            <>
-              {" "}
-              {diff!.added > 0 ? (
-                <span className="text-emerald-600">+{diff!.added}</span>
-              ) : null}
-              {diff!.added > 0 && diff!.removed > 0 ? " " : null}
-              {diff!.removed > 0 ? (
-                <span className="text-red-600">-{diff!.removed}</span>
-              ) : null}
-            </>
+      <span className="aui-tool-group-trigger-label relative inline-flex max-w-full items-baseline gap-1.5">
+        <span className="relative inline-block">
+          <span>{collapsedLabel}</span>
+          {active ? (
+            <span
+              aria-hidden
+              className="aui-tool-group-trigger-shimmer shimmer pointer-events-none absolute inset-0 motion-reduce:animate-none"
+            >
+              {collapsedLabel}
+            </span>
           ) : null}
         </span>
-        {active ? (
-          <span
-            aria-hidden
-            className="aui-tool-group-trigger-shimmer shimmer pointer-events-none absolute inset-0 motion-reduce:animate-none"
-          >
-            {shimmerLabel}
-          </span>
+        {showDiff && diff!.added > 0 ? (
+          <RollingNumber
+            value={diff!.added}
+            prefix="+"
+            className="text-emerald-600"
+          />
+        ) : null}
+        {showDiff && diff!.removed > 0 ? (
+          <RollingNumber
+            value={diff!.removed}
+            prefix="-"
+            className="text-red-600"
+          />
         ) : null}
       </span>
       <ChevronDownIcon

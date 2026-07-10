@@ -73,7 +73,7 @@ describe('workspace context blocks', () => {
   it('hints table panel focus', () => {
     const block = buildWorkspacePanelHintBlock({ activePanel: 'table' });
     assert.match(block, /表格/);
-    assert.match(block, /table_list_sheets/);
+    assert.match(block, /table_sheets/);
   });
 
   it('hints web panel with url', () => {

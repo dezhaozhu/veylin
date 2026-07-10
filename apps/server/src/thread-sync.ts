@@ -15,6 +15,10 @@ import {
 } from './thread-state';
 import type { TodoItem } from '@veylin/tools';
 import { isDatastoreFailure } from './store-errors';
+import {
+  removedMessagesAfterPrefix,
+  undoTableCellMutationsFromRemovedMessages,
+} from './table-transcript-restore';
 
 /**
  * After a client transcript replace (edit truncate / forceReplace), todos must
@@ -115,6 +119,7 @@ export async function syncThreadMessagesFromClient(opts: {
     }
 
     const storedUi = mastraMessagesToAgentContext(stored);
+    const removed = removedMessagesAfterPrefix(storedUi, opts.clientMessages);
     const merged = preserveServerTaskNotifications(opts.clientMessages, storedUi);
     await replaceThreadMessages(opts.memory, opts.identity, merged);
 
@@ -123,6 +128,11 @@ export async function syncThreadMessagesFromClient(opts: {
       opts.identity.threadId,
       resolveTodosForReplacedTranscript(merged),
     );
+
+    // Undo cell-level table writes that lived only in the dropped suffix.
+    if (removed.length > 0) {
+      await undoTableCellMutationsFromRemovedMessages(removed);
+    }
 
     return true;
   });

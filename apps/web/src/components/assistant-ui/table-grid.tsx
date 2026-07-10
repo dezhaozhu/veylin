@@ -1,5 +1,5 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X } from 'lucide-react';
+import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X, Loader2 } from 'lucide-react';
 import {
   DataGrid,
   SELECT_COLUMN_KEY,
@@ -588,6 +588,11 @@ export function TableGrid() {
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [newSheetName, setNewSheetName] = useState('');
   const [addingSheet, setAddingSheet] = useState(false);
+  const [renamingSheetId, setRenamingSheetId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [renamingSheet, setRenamingSheet] = useState(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const renameCommitLockRef = useRef(false);
 
   useEffect(() => {
     if (!toast) return;
@@ -748,6 +753,86 @@ export function TableGrid() {
       setAddingSheet(false);
     }
   };
+
+  const beginRenameSheet = useCallback((sheet: TableSheet) => {
+    setRenamingSheetId(sheet.id);
+    setRenameDraft(sheet.name);
+  }, []);
+
+  const cancelRenameSheet = useCallback(() => {
+    setRenamingSheetId(null);
+    setRenameDraft('');
+  }, []);
+
+  const commitRenameSheet = useCallback(async () => {
+    if (!renamingSheetId || renamingSheet) return;
+    const name = renameDraft.trim();
+    const current = sheets.find((s) => s.id === renamingSheetId);
+    if (!name || !current || name === current.name) {
+      cancelRenameSheet();
+      return;
+    }
+    setRenamingSheet(true);
+    // Optimistic local update so the next chat turn's table context is not stale
+    // while the PATCH is in flight (server buildTableContextBlock reads the store).
+    setSheets((prev) =>
+      prev.map((s) => (s.id === renamingSheetId ? { ...s, name } : s)),
+    );
+    try {
+      const res = await fetch(`/api/table/sheets/${encodeURIComponent(renamingSheetId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await readJsonResponse<{
+        ok?: boolean;
+        message?: string;
+        sheet?: TableSheet;
+        sheets?: TableSheet[];
+      }>(res);
+      if (!res.ok || !data.ok) {
+        if (current) {
+          setSheets((prev) =>
+            prev.map((s) => (s.id === renamingSheetId ? current : s)),
+          );
+        }
+        showToast(data.message ?? t('table.renameSheetFailed'), 'error');
+        return;
+      }
+      if (data.sheets) setSheets(data.sheets);
+      else if (data.sheet) {
+        setSheets((prev) =>
+          prev.map((s) => (s.id === data.sheet!.id ? { ...s, ...data.sheet! } : s)),
+        );
+      }
+      cancelRenameSheet();
+    } catch (e: unknown) {
+      if (current) {
+        setSheets((prev) =>
+          prev.map((s) => (s.id === renamingSheetId ? current : s)),
+        );
+      }
+      showToast(e instanceof Error ? e.message : t('table.renameSheetFailed'), 'error');
+    } finally {
+      setRenamingSheet(false);
+    }
+  }, [
+    cancelRenameSheet,
+    renameDraft,
+    renamingSheet,
+    renamingSheetId,
+    sheets,
+    showToast,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (!renamingSheetId) return;
+    const el = renameInputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, [renamingSheetId]);
 
   useEffect(() => {
     void load(activeSheetId, true);
@@ -1196,7 +1281,6 @@ export function TableGrid() {
   }, [resetImportInput]);
 
   const handleImportFile = async (file: File) => {
-    setImporting(true);
     try {
       const { rows: importedRows, columnNames } = await parseTableExcelFile(file);
       if (columnNames.length === 0 || importedRows.length === 0) {
@@ -1230,20 +1314,29 @@ export function TableGrid() {
         setRows(data.rows);
       }
       showToast(t('table.importSuccess', { count: data.rows?.length ?? importedRows.length }), 'success');
+      setImportConfirmOpen(false);
+      setPendingImportFile(null);
+      resetImportInput();
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : t('table.importFailed'), 'error');
     } finally {
       setImporting(false);
-      setPendingImportFile(null);
-      resetImportInput();
     }
   };
 
   const confirmImport = () => {
     const file = pendingImportFile;
-    if (!file) return;
-    setImportConfirmOpen(false);
-    void handleImportFile(file);
+    if (!file || importing) return;
+    // Paint loading UI before Excel parse blocks the main thread.
+    setImporting(true);
+    void (async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => resolve());
+        });
+      });
+      await handleImportFile(file);
+    })();
   };
 
   const hasActiveFilters = filters.query.trim() !== '';
@@ -1276,6 +1369,7 @@ export function TableGrid() {
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {sheets.map((sheet) => {
             const active = activeSheetId === sheet.id;
+            const renaming = renamingSheetId === sheet.id;
             return (
               <div
                 key={sheet.id}
@@ -1287,14 +1381,51 @@ export function TableGrid() {
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                 )}
               >
-                <button
-                  type="button"
-                  onClick={() => switchSheet(sheet.id)}
-                  className="sheet-tab-label py-1 pl-2.5 pr-1 transition-[padding] duration-150"
-                >
-                  {sheet.name}
-                </button>
-                {sheets.length > 1 ? (
+                {renaming ? (
+                  <input
+                    ref={renameInputRef}
+                    value={renameDraft}
+                    size={Math.max(renameDraft.length, 1)}
+                    aria-label={t('table.renameSheet')}
+                    disabled={renamingSheet}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    onBlur={() => {
+                      void commitRenameSheet();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void commitRenameSheet();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        cancelRenameSheet();
+                      }
+                    }}
+                    className={cn(
+                      'sheet-tab-label w-auto max-w-[10rem] min-w-0 rounded-md border-0 bg-transparent py-1 pl-2.5 pr-1 outline-none',
+                      active
+                        ? 'text-primary-foreground placeholder:text-primary-foreground/60'
+                        : 'text-foreground',
+                    )}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => switchSheet(sheet.id)}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      beginRenameSheet(sheet);
+                    }}
+                    title={t('table.renameSheet')}
+                    className="sheet-tab-label py-1 pl-2.5 pr-1 transition-[padding] duration-150"
+                  >
+                    {sheet.name}
+                  </button>
+                )}
+                {sheets.length > 1 && !renaming ? (
                   <button
                     type="button"
                     aria-label={t('table.deleteSheet', { name: sheet.name })}
@@ -1496,7 +1627,7 @@ export function TableGrid() {
             }}
             placeholder={t('table.newSheetName')}
           />
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2">
             <Button
               type="button"
               variant="outline"
@@ -1541,7 +1672,7 @@ export function TableGrid() {
             }}
             placeholder={t('table.newColumnName')}
           />
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2">
             <Button
               type="button"
               variant="outline"
@@ -1579,7 +1710,7 @@ export function TableGrid() {
             </DialogTitle>
             <DialogDescription>{t('table.confirmDeleteSheet')}</DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2">
             <Button
               type="button"
               variant="outline"
@@ -1603,20 +1734,39 @@ export function TableGrid() {
       <Dialog
         open={importConfirmOpen}
         onOpenChange={(open) => {
+          if (importing) return;
           if (!open) cancelImport();
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent
+          className="sm:max-w-md"
+          showCloseButton={!importing}
+          onPointerDownOutside={(e) => {
+            if (importing) e.preventDefault();
+          }}
+          onEscapeKeyDown={(e) => {
+            if (importing) e.preventDefault();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{t('table.import')}</DialogTitle>
-            <DialogDescription>{t('table.confirmImport')}</DialogDescription>
+            <DialogDescription>
+              {importing ? t('table.importing') : t('table.confirmImport')}
+            </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" onClick={cancelImport}>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" disabled={importing} onClick={cancelImport}>
               {t('common.cancel')}
             </Button>
-            <Button type="button" disabled={importing} onClick={confirmImport}>
-              {t('table.import')}
+            <Button type="button" disabled={importing || !pendingImportFile} onClick={confirmImport}>
+              {importing ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  {t('table.importing')}
+                </>
+              ) : (
+                t('table.import')
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

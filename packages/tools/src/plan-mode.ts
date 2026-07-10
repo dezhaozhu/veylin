@@ -39,9 +39,10 @@ export const enterPlanMode = createTool({
 export const exitPlanMode = createTool({
   id: EXIT_PLAN_MODE_TOOL,
   description:
-    'Exit planning mode and proceed with execution. Call this only after you have explored ' +
-    'enough and are ready to act; it re-enables mutating tools (subject to the usual approval ' +
-    'gates).',
+    'Exit planning mode and request approval to proceed with execution. Call this only after ' +
+    'you have explored enough and the plan is ready for the user to approve; it re-enables ' +
+    'mutating tools (subject to the usual approval gates). Do not use ask_user_question to ask ' +
+    '"may I execute the plan?" — that is what this tool is for.',
   inputSchema: z.object({}),
   outputSchema: z.object({ planMode: z.literal(false) }),
   execute: async (_input, ctx) => {

@@ -4,6 +4,11 @@ export type TableToolDiff = {
 };
 
 const TABLE_MUTATING_TOOLS = new Set([
+  // Current
+  'table_update_cells',
+  'table_edit_structure',
+  'table_sheets',
+  // Legacy (historical transcripts)
   'table_set_cell',
   'table_update_row',
   'table_add_row',
@@ -79,6 +84,54 @@ function diffAppliedCells(args: unknown, result: unknown, toolName: string): Tab
   return { added, removed };
 }
 
+function diffUpdateCells(result: unknown): TableToolDiff {
+  if (!isRecord(result) || !Array.isArray(result.cells)) return { added: 0, removed: 0 };
+  let added = 0;
+  let removed = 0;
+  for (const cell of result.cells) {
+    if (!isRecord(cell)) continue;
+    const part = cellTransitionDiff(cell.previous, cell.value);
+    added += part.added;
+    removed += part.removed;
+  }
+  return { added, removed };
+}
+
+function diffEditStructure(result: unknown): TableToolDiff {
+  if (!isRecord(result) || !Array.isArray(result.results)) return { added: 0, removed: 0 };
+  let added = 0;
+  let removed = 0;
+  for (const item of result.results) {
+    if (!isRecord(item) || item.ok !== true) continue;
+    if (item.op === 'add_rows') {
+      const n = Array.isArray(item.row_keys)
+        ? item.row_keys.length
+        : typeof item.rows === 'object' && Array.isArray(item.rows)
+          ? item.rows.length
+          : 0;
+      added += n;
+    } else if (item.op === 'delete_rows') {
+      removed += typeof item.removed === 'number' ? item.removed : 0;
+    } else if (item.op === 'add_columns') {
+      added += Array.isArray(item.columns) ? item.columns.length : 0;
+    } else if (item.op === 'delete_columns') {
+      removed += Array.isArray(item.deleted) ? item.deleted.length : 0;
+    }
+  }
+  return { added, removed };
+}
+
+function diffSheets(args: unknown, result: unknown): TableToolDiff {
+  if (!resultOk(result)) return { added: 0, removed: 0 };
+  const action =
+    (isRecord(args) && typeof args.action === 'string' && args.action) ||
+    (isRecord(result) && typeof result.action === 'string' && result.action) ||
+    null;
+  if (action === 'create') return { added: 1, removed: 0 };
+  if (action === 'delete') return { added: 0, removed: 1 };
+  return { added: 0, removed: 0 };
+}
+
 /** Cell/structure-unit diff for one successful table mutating tool call. */
 export function tableToolDiff(
   toolName: string,
@@ -90,6 +143,12 @@ export function tableToolDiff(
   }
 
   switch (toolName) {
+    case 'table_update_cells':
+      return diffUpdateCells(result);
+    case 'table_edit_structure':
+      return diffEditStructure(result);
+    case 'table_sheets':
+      return diffSheets(args, result);
     case 'table_set_cell':
     case 'table_update_row':
       return diffAppliedCells(args, result, toolName);

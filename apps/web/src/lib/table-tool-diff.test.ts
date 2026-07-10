@@ -9,6 +9,9 @@ import {
 
 describe('table-tool-diff', () => {
   it('identifies mutating table tools', () => {
+    assert.equal(isTableMutatingTool('table_update_cells'), true);
+    assert.equal(isTableMutatingTool('table_edit_structure'), true);
+    assert.equal(isTableMutatingTool('table_sheets'), true);
     assert.equal(isTableMutatingTool('table_set_cell'), true);
     assert.equal(isTableMutatingTool('table_get'), false);
     assert.equal(isTableMutatingTool('table_list_sheets'), false);
@@ -96,6 +99,52 @@ describe('table-tool-diff', () => {
         { ok: true, removed: 2 },
       ),
       { added: 0, removed: 2 },
+    );
+  });
+
+  it('counts table_update_cells from cells array', () => {
+    assert.deepEqual(
+      tableToolDiff(
+        'table_update_cells',
+        { updates: [] },
+        {
+          ok: true,
+          cells: [
+            { row_key: 'r1', column: 'a', value: 'x', previous: '' },
+            { row_key: 'r1', column: 'b', value: '', previous: 'old' },
+          ],
+        },
+      ),
+      { added: 1, removed: 1 },
+    );
+  });
+
+  it('counts table_edit_structure ops', () => {
+    assert.deepEqual(
+      tableToolDiff(
+        'table_edit_structure',
+        {},
+        {
+          ok: true,
+          results: [
+            { op: 'add_rows', ok: true, row_keys: ['a', 'b'] },
+            { op: 'delete_rows', ok: true, removed: 1 },
+            { op: 'add_columns', ok: true, columns: [{ key: 'c' }] },
+          ],
+        },
+      ),
+      { added: 3, removed: 1 },
+    );
+  });
+
+  it('counts table_sheets create/delete only', () => {
+    assert.deepEqual(
+      tableToolDiff('table_sheets', { action: 'list' }, { ok: true, action: 'list' }),
+      { added: 0, removed: 0 },
+    );
+    assert.deepEqual(
+      tableToolDiff('table_sheets', { action: 'create' }, { ok: true, action: 'create' }),
+      { added: 1, removed: 0 },
     );
   });
 

@@ -48,6 +48,7 @@ describe('ContextCompression', () => {
     assert.equal(out.length, 2);
     const summary = (out[0] as { content: { parts: { text?: string }[] } }).content.parts[0]?.text ?? '';
     assert.match(summary, /compacted/i);
+    assert.match(summary, /Resume unfinished work silently/i);
     assert.match((out[1] as { content: { parts: { text?: string }[] } }).content.parts[0]?.text ?? '', /recent tail/);
   });
 

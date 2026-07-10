@@ -106,7 +106,9 @@ export class ContextCompression implements Processor {
           const summary = await this.summarizer(transcript);
           summaryText =
             `[Conversation compacted (gen ${bumpCompactGeneration()}): the ${head.length} earlier message(s) were summarized below. ` +
-            `Treat this as the authoritative record of that span and continue the task.]\n\n` +
+            `Treat this as the authoritative record of that span. Resume unfinished work silently — ` +
+            `do not greet, do not restate the whole summary, and do not ask whether to continue ` +
+            `unless the summary conflicts with the latest user intent.]\n\n` +
             formatCompactSummary(summary);
         } catch {
           summaryText = this.deterministic(head);
@@ -134,7 +136,9 @@ export class ContextCompression implements Processor {
 
   private deterministic(head: MastraDBMessage[]): string {
     return (
-      `[compacted ${head.length} earlier messages]\n` +
+      `[Conversation compacted: ${head.length} earlier messages summarized below. ` +
+      `Resume unfinished work silently — do not greet, restate the whole summary, or ask whether to continue ` +
+      `unless it conflicts with the latest user intent.]\n` +
       head
         .map((m) => {
           const role = (m as { role?: string }).role ?? 'msg';

@@ -9,7 +9,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarRail,
 } from '@/components/ui/sidebar';
 import { ThreadList } from '@/components/assistant-ui/thread-list';
 import { SidebarUserMenu } from '@/components/assistant-ui/sidebar-user-menu';
@@ -59,7 +58,6 @@ export function ThreadListSidebar({ ...props }: React.ComponentProps<typeof Side
       <SidebarFooter className="p-2">
         <SidebarUserMenu />
       </SidebarFooter>
-      <SidebarRail />
     </Sidebar>
   );
 }

@@ -415,7 +415,7 @@ export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string
   const lines: string[] = [
     '# Table / spreadsheet data (live snapshot)',
     'The workspace **表格** panel holds multi-sheet spreadsheet data. This is separate from the knowledge base (uploaded documents).',
-    'Before saying there is no data, check this block and call `table_list_sheets` / `table_get` when row counts are non-zero.',
+    'Before saying there is no data, check this block and call `table_sheets` (action list) / `table_get` when row counts are non-zero.',
   ];
 
   for (const sheet of snapshots) {
@@ -614,6 +614,23 @@ export function createTableSheet(name: string): TableSheetMeta | null {
   return { ...meta };
 }
 
+/** Rename a sheet's display name. Sheet id stays stable so tool/API references keep working. */
+export function renameTableSheet(sheetId: string, name: string): TableSheetMeta | null {
+  const sheet = sheetStore.get(sheetId);
+  if (!sheet) return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  if (sheet.meta.name === trimmed) return { ...sheet.meta };
+  // Reject duplicate display names (case-sensitive match of trimmed names).
+  for (const other of sheetStore.values()) {
+    if (other.meta.id !== sheetId && other.meta.name === trimmed) return null;
+  }
+  sheet.meta = { ...sheet.meta, name: trimmed };
+  tablePersist(sheetId);
+  emitTable({ type: 'sheetsChange' });
+  return { ...sheet.meta };
+}
+
 export async function deleteTableSheet(sheetId: string): Promise<boolean> {
   const sheet = sheetStore.get(sheetId);
   if (!sheet) return false;
@@ -661,15 +678,72 @@ export function addTableRow(sheetId: string): TableRowData | null {
   return { ...row };
 }
 
-export function deleteTableRows(sheetId: string, rowKeys: string[]): number {
+/** Snapshot of a row removed by deleteTableRows, for transcript rewind restore. */
+export type DeletedTableRowSnapshot = {
+  index: number;
+  row: TableRowData;
+};
+
+export type DeleteTableRowsResult = {
+  removed: number;
+  rows: DeletedTableRowSnapshot[];
+};
+
+export function deleteTableRows(
+  sheetId: string,
+  rowKeys: string[],
+): DeleteTableRowsResult {
   const sheet = getSheet(resolveTableSheetId(sheetId));
-  if (!sheet || rowKeys.length === 0) return 0;
+  if (!sheet || rowKeys.length === 0) return { removed: 0, rows: [] };
   const drop = new Set(rowKeys);
-  const before = sheet.rows.length;
+  const removedRows: DeletedTableRowSnapshot[] = [];
+  for (let i = 0; i < sheet.rows.length; i++) {
+    const row = sheet.rows[i]!;
+    if (drop.has(tableRowKey(row))) {
+      removedRows.push({ index: i, row: { ...row } });
+    }
+  }
+  if (removedRows.length === 0) return { removed: 0, rows: [] };
   sheet.rows = sheet.rows.filter((r) => !drop.has(tableRowKey(r)));
-  tablePersist(resolveTableSheetId(sheetId));
-  emitTable({ type: 'rowsDelete', sheet: resolveTableSheetId(sheetId), keys: rowKeys });
-  return before - sheet.rows.length;
+  const effectiveId = resolveTableSheetId(sheetId);
+  tablePersist(effectiveId);
+  emitTable({
+    type: 'rowsDelete',
+    sheet: effectiveId,
+    keys: removedRows.map((s) => tableRowKey(s.row)),
+  });
+  return { removed: removedRows.length, rows: removedRows };
+}
+
+/**
+ * Re-insert rows at their recorded indices (ascending). Used to undo delete_rows
+ * after a transcript truncate. Skips keys that already exist.
+ */
+export function restoreDeletedTableRows(
+  sheetId: string,
+  snapshots: DeletedTableRowSnapshot[],
+): number {
+  const sheet = getSheet(resolveTableSheetId(sheetId));
+  if (!sheet || snapshots.length === 0) return 0;
+  const existing = new Set(sheet.rows.map(tableRowKey));
+  const ordered = [...snapshots].sort((a, b) => a.index - b.index);
+  let restored = 0;
+  for (const snap of ordered) {
+    const key = tableRowKey(snap.row);
+    if (existing.has(key)) continue;
+    const row = { ...snap.row };
+    const at = Math.max(0, Math.min(snap.index, sheet.rows.length));
+    sheet.rows.splice(at, 0, row);
+    existing.add(key);
+    restored++;
+    emitTable({
+      type: 'rowUpsert',
+      sheet: resolveTableSheetId(sheetId),
+      row: { ...row },
+    });
+  }
+  if (restored > 0) tablePersist(resolveTableSheetId(sheetId));
+  return restored;
 }
 
 export function addTableColumn(sheetId: string, name: string): TableColumnDef | null {
