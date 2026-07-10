@@ -512,7 +512,20 @@ export function buildTableTools() {
     outputSchema: z.object({
       ok: z.boolean(),
       sheet: z.string(),
-      results: z.array(z.record(z.string(), z.unknown())),
+      results: z.array(
+        z.object({
+          op: z.enum(['add_rows', 'delete_rows', 'add_columns', 'delete_columns']),
+          ok: z.boolean(),
+          message: z.string(),
+          row_keys: z.array(z.string()).optional(),
+          rows: z.array(z.unknown()).optional(),
+          removed: z.number().optional(),
+          columns: z
+            .array(z.object({ key: z.string(), name: z.string() }))
+            .optional(),
+          deleted: z.array(z.string()).optional(),
+        }),
+      ),
       message: z.string(),
     }),
     execute: async (input) => {
