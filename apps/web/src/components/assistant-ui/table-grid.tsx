@@ -1330,6 +1330,7 @@ export function TableGrid() {
         theme: themeQuartz,
         columnDefs: SCHEDULE_DETAIL_COLUMN_DEFS,
         defaultColDef: { flex: 1, minWidth: 100, sortable: true, resizable: true },
+        overlayNoRowsTemplate: '<span style="color:var(--ag-disabled-foreground-color,#888)">该工序暂无三级工艺明细</span>',
       },
       getDetailRowData: getScheduleDetailRowData,
     }),
@@ -1785,7 +1786,13 @@ export function TableGrid() {
                 maxWidth: 64,
               }}
               masterDetail={proMasterDetail || undefined}
-              isRowMaster={proMasterDetail ? () => true : undefined}
+              // Only rows whose order actually has 三级 ops (_wo_count > 0) get an
+              // expander — no chevron that opens into "No Rows".
+              isRowMaster={
+                proMasterDetail
+                  ? (data: TableRow) => Number((data as Record<string, unknown>)?.['_wo_count']) > 0
+                  : undefined
+              }
               detailCellRendererParams={proMasterDetail ? detailCellRendererParams : undefined}
               // Detail panel sizes to its 三级 ops (<30 rows) instead of a fixed
               // 300px box that fills with empty space — AG-Grid master-detail-height guidance.
