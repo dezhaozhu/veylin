@@ -170,3 +170,10 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
 }
 
 /* Schedule grid (AG-Grid) cell overrides — Task 3 will do these via the Theming API params */
+
+/* Master-detail: inset the 三级 detail panel so it reads as a child of its 二级
+   row (left indent aligns it under the expander chevron). Pairs with
+   detailRowAutoHeight so the panel hugs its content instead of a fixed box. */
+.ag-details-row {
+  padding: 4px 8px 8px 40px;
+}

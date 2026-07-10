@@ -1742,6 +1742,9 @@ export function TableGrid() {
               masterDetail={proMasterDetail || undefined}
               isRowMaster={proMasterDetail ? () => true : undefined}
               detailCellRendererParams={proMasterDetail ? detailCellRendererParams : undefined}
+              // Detail panel sizes to its 三级 ops (<30 rows) instead of a fixed
+              // 300px box that fills with empty space — AG-Grid master-detail-height guidance.
+              detailRowAutoHeight={proMasterDetail || undefined}
               onGridReady={onGridReady}
               onCellValueChanged={onCellValueChanged}
               onCellKeyDown={onGridCellKeyDown}
