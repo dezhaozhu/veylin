@@ -2,6 +2,16 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath, URL } from 'node:url';
+import { existsSync } from 'node:fs';
+
+// @caliper/viewer 真包通过 node_modules 软链接入(ln -s <caliper>/packages/viewer
+// node_modules/@caliper/viewer);存在则打真 3D 查看器,否则落 shim 兜底。
+const caliperViewerReal = fileURLToPath(
+  new URL('../../node_modules/@caliper/viewer/dist/index.js', import.meta.url),
+);
+const caliperViewer = existsSync(caliperViewerReal)
+  ? caliperViewerReal
+  : fileURLToPath(new URL('./src/shims/caliper-viewer.tsx', import.meta.url));
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -17,9 +27,7 @@ export default defineConfig({
       'secure-json-parse': fileURLToPath(
         new URL('./src/shims/secure-json-parse.ts', import.meta.url),
       ),
-      '@caliper/viewer': fileURLToPath(
-        new URL('./src/shims/caliper-viewer.tsx', import.meta.url),
-      ),
+      '@caliper/viewer': caliperViewer,
     },
   },
   optimizeDeps: {
