@@ -178,6 +178,13 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
   padding: 0;
 }
 
+/* Governed-edit cells: a quiet affordance on hover so planners see what's editable
+   (改资源/日期 → propose). No permanent chrome — only on hover. */
+.ag-cell.veylin-editable:hover {
+  box-shadow: inset 0 0 0 1px var(--ring);
+  cursor: text;
+}
+
 /* Schedule lateness: a quiet left accent stripe (not a full-row wash, so it
    doesn't clash with the number-cell magnitude tint). red = past due, amber = at-risk. */
 .ag-row.sched-late {

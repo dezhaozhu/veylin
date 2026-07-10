@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X } from 'lucide-react';
+import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X, Loader2, Search } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   type ColDef,
@@ -1262,6 +1262,8 @@ export function TableGrid() {
 
     // Data columns
     for (const def of columnDefs) {
+      const isEditable =
+        activeSheetId === SCHEDULE_SHEET_ID ? GOVERNED_EDIT_FIELDS.has(def.key) : true;
       const baseColDef: ColDef<TableRow> = {
         field: def.key,
         colId: def.key,
@@ -1270,8 +1272,11 @@ export function TableGrid() {
         resizable: true,
         sortable: true,
         pinned: def.frozen ? ('left' as const) : undefined,
-        editable:
-          activeSheetId === SCHEDULE_SHEET_ID ? GOVERNED_EDIT_FIELDS.has(def.key) : true,
+        editable: isEditable,
+        // Hover cue on the schedule sheet's governed-edit cells (改资源/日期→propose).
+        cellClass: activeSheetId === SCHEDULE_SHEET_ID && isEditable ? 'veylin-editable' : undefined,
+        // Full value on hover — helps any truncated cell (IDs, long names).
+        tooltipValueGetter: (p) => (p.value == null || p.value === '' ? null : String(p.value)),
         cellDataType: false,
         suppressHeaderFilterButton: true,
         valueFormatter: (params: ValueFormatterParams<TableRow>) => {
@@ -1724,13 +1729,16 @@ export function TableGrid() {
             {t('table.export')}
           </Button>
           <span className="text-muted-foreground mx-1 hidden h-4 w-px bg-border sm:inline-block" />
-          <input
-            type="search"
-            placeholder={t('table.filterPlaceholder')}
-            value={filters.query}
-            onChange={(e) => setFilters({ query: e.target.value })}
-            className="bg-background border-input h-7 min-w-[8rem] flex-1 rounded-md border px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
-          />
+          <div className="relative min-w-[8rem] flex-1">
+            <Search className="text-muted-foreground pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2" />
+            <input
+              type="search"
+              placeholder={t('table.filterPlaceholder')}
+              value={filters.query}
+              onChange={(e) => setFilters({ query: e.target.value })}
+              className="bg-background border-input h-7 w-full rounded-md border pl-7 pr-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
           {hasActiveFilters ? (
             <button
               type="button"
@@ -1787,7 +1795,12 @@ export function TableGrid() {
         </div>
       ) : null}
 
-      {filteredRows.length === 0 ? (
+      {loading && rows.length === 0 ? (
+        <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-sm">
+          <Loader2 className="size-5 animate-spin opacity-60" />
+          <span>{t('table.loading', { defaultValue: '加载排产数据…' })}</span>
+        </div>
+      ) : filteredRows.length === 0 ? (
         <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-sm">
           <span>
             {columnDefs.length === 0
