@@ -177,6 +177,7 @@ export function AssistantChat() {
           model: s.model,
           agentId: s.agentId,
           planMode: s.planMode,
+          pendingLoop: s.pendingLoop || undefined,
           mcpEnabled: s.mcpEnabled,
           pendingSkill: s.pendingSkill ?? undefined,
           attachedBrowser: s.attachedBrowserTab ?? undefined,

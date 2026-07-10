@@ -4,8 +4,8 @@ export const mcpTransportSchema = z.enum(['sse', 'http']);
 export type McpTransport = z.infer<typeof mcpTransportSchema>;
 
 export const mcpServerSchema = z.object({
-  id: z.string().uuid(),
-  tenantId: z.string().uuid(),
+  id: z.string().min(1),
+  tenantId: z.string().min(1),
   name: z.string(),
   transport: mcpTransportSchema,
   url: z.string().url(),

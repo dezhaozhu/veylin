@@ -4,16 +4,25 @@
  * Desktop dev (VEYLIN_SKIP_SIDECAR=1): tsx + watchdog (current source, auto-restart).
  * Production / bundled dev: apps/server/dist/sidecar.
  */
-import { spawn, execSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { probeVeylinHealth } from './health-probe.mjs';
+import {
+  isLiveRepoWatchdog,
+  killPortListener,
+  killRepoWatchdogsByCommand,
+  readPidFile,
+  reclaimDevServerSingleton,
+  watchdogPidPath,
+} from './server-dev-singleton.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '../../..');
 const port = process.env.PORT ?? '8787';
 const healthUrl = `http://127.0.0.1:${port}/health`;
+
 function resolveDevDataDir() {
   const raw = process.env.VEYLIN_DATA_DIR?.trim();
   if (!raw) return resolve(repoRoot, 'data');
@@ -35,19 +44,6 @@ async function probeDevRoutes() {
     return res.status !== 404;
   } catch {
     return false;
-  }
-}
-
-async function killPortListener(listenPort) {
-  try {
-    const out = execSync(`lsof -ti :${listenPort}`, { encoding: 'utf8' }).trim();
-    if (!out) return;
-    for (const pid of out.split(/\s+/)) {
-      if (pid) process.kill(Number(pid), 'SIGTERM');
-    }
-    await new Promise((r) => setTimeout(r, 800));
-  } catch {
-    // nothing listening
   }
 }
 
@@ -94,6 +90,7 @@ function useDevTsxServer() {
 function spawnDevServerWatchdog(serverEnv) {
   const watchdog = resolve(scriptDir, 'run-server-dev.mjs');
   console.log(`[ensure-server] starting dev server watchdog (tsx) on :${port}...`);
+  console.log(`[ensure-server] VEYLIN_DATA_DIR=${dataDir}`);
   const child = spawn(process.execPath, [watchdog], {
     env: serverEnv,
     stdio: 'ignore',
@@ -102,16 +99,42 @@ function spawnDevServerWatchdog(serverEnv) {
   child.unref();
 }
 
-async function main() {
-  if (await probe()) {
-    if (useDevTsxServer() && !(await probeDevRoutes())) {
-      console.log(`[ensure-server] stale dev server on :${port} (missing routes); restarting...`);
-      await killPortListener(port);
-    } else {
-      console.log(`[ensure-server] sidecar already ready on :${port}`);
-      return;
+/**
+ * If health is already up, keep a single owned watchdog when possible.
+ * Stale/missing routes or multi-watchdog mess → full reclaim + respawn.
+ */
+async function ensureOwnedDevServer(serverEnv) {
+  const pidFile = watchdogPidPath(dataDir);
+  const pid = readPidFile(pidFile);
+  const owned = pid != null && isLiveRepoWatchdog(pid, repoRoot);
+  const routesOk = await probeDevRoutes();
+
+  if (owned && routesOk) {
+    const extras = killRepoWatchdogsByCommand(repoRoot, { log: console.log, keepPid: pid });
+    if (extras > 0) {
+      console.log(`[ensure-server] removed ${extras} extra watchdog(s); keeping pid=${pid}`);
     }
+    console.log(`[ensure-server] sidecar already ready on :${port} (watchdog pid=${pid})`);
+    console.log(`[ensure-server] VEYLIN_DATA_DIR=${dataDir}`);
+    return;
   }
+
+  if (!routesOk) {
+    console.log(`[ensure-server] stale or incomplete server on :${port}; reclaiming...`);
+  } else if (!owned) {
+    console.log(`[ensure-server] :${port} ready but watchdog not owned; reclaiming...`);
+  }
+
+  reclaimDevServerSingleton({ dataDir, repoRoot, port, log: console.log });
+  await new Promise((r) => setTimeout(r, 400));
+  spawnDevServerWatchdog(serverEnv);
+  await waitForHealth();
+  console.log(`[ensure-server] dev tsx server ready on :${port}`);
+  console.log(`[ensure-server] VEYLIN_DATA_DIR=${dataDir}`);
+}
+
+async function main() {
+  console.log(`[ensure-server] VEYLIN_DATA_DIR=${dataDir}`);
 
   const serverEnv = {
     ...process.env,
@@ -120,13 +143,25 @@ async function main() {
     VEYLIN_DESKTOP_AUTH: '1',
     VEYLIN_REQUIRE_USER_MODEL_SETTINGS: '1',
     VEYLIN_MODEL_CATALOG_PATH: catalogPath,
+    VEYLIN_LAZY_MCP_BOOT: process.env.VEYLIN_LAZY_MCP_BOOT ?? '1',
     PORT: port,
   };
 
   if (useDevTsxServer()) {
+    if (await probe()) {
+      await ensureOwnedDevServer(serverEnv);
+      return;
+    }
+    reclaimDevServerSingleton({ dataDir, repoRoot, port, log: console.log });
+    await new Promise((r) => setTimeout(r, 400));
     spawnDevServerWatchdog(serverEnv);
     await waitForHealth();
     console.log(`[ensure-server] dev tsx server ready on :${port}`);
+    return;
+  }
+
+  if (await probe()) {
+    console.log(`[ensure-server] sidecar already ready on :${port}`);
     return;
   }
 
@@ -139,6 +174,7 @@ async function main() {
     const serverRoot = resolve(repoRoot, 'apps/server');
     const tsx = resolve(repoRoot, `node_modules/.bin/tsx${process.platform === 'win32' ? '.cmd' : ''}`);
     console.log(`[ensure-server] bundled sidecar incomplete — starting tsx server on :${port}...`);
+    killPortListener(port);
     const child = spawn(tsx, ['src/server.ts'], {
       cwd: serverRoot,
       env: serverEnv,
@@ -154,6 +190,7 @@ async function main() {
 
   const node = sidecarNode();
   console.log(`[ensure-server] starting sidecar on :${port} (${entry})...`);
+  killPortListener(port);
   const child = spawn(node, [entry], {
     cwd: dirname(entry),
     env: serverEnv,

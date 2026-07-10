@@ -1,15 +1,17 @@
 import { useComposerAddAttachment } from '@assistant-ui/core/react';
 import {
   BookOpenIcon,
-  FileTextIcon,
-  ImageIcon,
+  CrosshairIcon,
+  FileIcon,
+  ListTodoIcon,
   Minimize2Icon,
-  NotebookPenIcon,
   PlugIcon,
   PlusIcon,
+  RefreshCwIcon,
 } from 'lucide-react';
 import { useCallback, useLayoutEffect, useRef, useState, type FC, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useAui, useAuiState } from '@assistant-ui/store';
 import { applyCompactToThread } from '@/lib/compact-context';
 import { getChatSettings } from '@/lib/chat-settings';
@@ -26,9 +28,10 @@ import {
 import { ComposerMcpFlyout } from '@/components/assistant-ui/composer-mcp-flyout';
 import { ComposerSkillsFlyout } from '@/components/assistant-ui/composer-skills-flyout';
 import { addComposerFiles } from '@/lib/add-composer-files';
-import { FILE_ATTACHMENT_ACCEPT } from '@/lib/file-attachment-adapter';
+import { pickComposerFiles } from '@/lib/pick-composer-files';
 import {
   useAgentContext,
+  useGoalLoopState,
   useMcpEnabled,
   usePendingSkill,
   usePlanMode,
@@ -71,6 +74,7 @@ function usePlusMenuAnchor(open: boolean, anchorRef: RefObject<HTMLElement | nul
 }
 
 export const ComposerPlusMenu: FC = () => {
+  const { t } = useTranslation();
   const anchorRef = useRef<HTMLDivElement>(null);
   const aui = useAui();
   const threadId = useAuiState(
@@ -82,9 +86,18 @@ export const ComposerPlusMenu: FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [mcpSearch, setMcpSearch] = useState('');
   const [compacting, setCompacting] = useState(false);
+  const hoverArmedRef = useRef(false);
   const { addAttachment } = useComposerAddAttachment();
 
   const { planMode, togglePlanMode } = usePlanMode();
+  const {
+    goalActive,
+    pendingGoal,
+    loopActive,
+    pendingLoop,
+    toggleGoal,
+    toggleLoop,
+  } = useGoalLoopState();
   const { setPendingSkill } = usePendingSkill();
   const { isServerEnabled, setServerEnabled } = useMcpEnabled();
   const { context } = useAgentContext(open);
@@ -94,45 +107,30 @@ export const ComposerPlusMenu: FC = () => {
     setSubmenu(null);
     setSearchQuery('');
     setMcpSearch('');
+    hoverArmedRef.current = false;
+  }, []);
+
+  const clearSubmenu = useCallback(() => setSubmenu(null), []);
+
+  const openSubmenu = useCallback((next: Submenu) => {
+    if (!hoverArmedRef.current) return;
+    setSubmenu(next);
+  }, []);
+
+  const armHoverOnPointerMove = useCallback(() => {
+    hoverArmedRef.current = true;
   }, []);
 
   useOverlayDismiss(close);
 
-  const openImagePicker = useCallback(() => {
+  const openFilePicker = useCallback(() => {
     if (!addAttachment) return;
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.multiple = true;
-    input.hidden = true;
-    document.body.appendChild(input);
-    input.onchange = () => {
-      const files = input.files;
-      if (files && files.length > 0) {
-        void addComposerFiles((file) => addAttachment(file), files);
+    void (async () => {
+      const files = await pickComposerFiles({ multiple: true });
+      if (files.length > 0) {
+        await addComposerFiles((file) => addAttachment(file), files);
       }
-      document.body.removeChild(input);
-    };
-    input.click();
-    close();
-  }, [addAttachment, close]);
-
-  const openDocumentPicker = useCallback(() => {
-    if (!addAttachment) return;
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = FILE_ATTACHMENT_ACCEPT;
-    input.multiple = true;
-    input.hidden = true;
-    document.body.appendChild(input);
-    input.onchange = () => {
-      const files = input.files;
-      if (files && files.length > 0) {
-        void addComposerFiles((file) => addAttachment(file), files);
-      }
-      document.body.removeChild(input);
-    };
-    input.click();
+    })();
     close();
   }, [addAttachment, close]);
 
@@ -155,29 +153,47 @@ export const ComposerPlusMenu: FC = () => {
       const { model } = getChatSettings();
       const result = await applyCompactToThread(aui, threadId, model);
       if (!result.ok) {
-        console.warn('[compact]', result.error);
+        alert(t('slash.compactFailed', { error: result.error }));
+      } else {
+        alert(t('slash.compactDone', { before: result.before, after: result.after }));
       }
     } finally {
       setCompacting(false);
       close();
     }
-  }, [aui, threadId, compacting, close]);
+  }, [aui, threadId, compacting, close, t]);
 
   const skills = context?.skills ?? [];
   const mcpServers = context?.mcpServers ?? [];
+  const goalMode = pendingGoal || goalActive;
+  const loopMode = pendingLoop || loopActive;
 
   return (
     <div ref={anchorRef} className="relative shrink-0">
       <TooltipIconButton
-        tooltip="Add context"
+        tooltip={t('mention.title')}
         side="bottom"
         type="button"
         variant="ghost"
         size="icon"
         className="aui-composer-plus hover:bg-muted-foreground/15 size-7 rounded-full"
-        aria-label="Add context"
+        aria-label={t('mention.title')}
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          setOpen((o) => {
+            const next = !o;
+            if (next) {
+              hoverArmedRef.current = false;
+              setSubmenu(null);
+              setSearchQuery('');
+              setMcpSearch('');
+            } else {
+              hoverArmedRef.current = false;
+              setSubmenu(null);
+            }
+            return next;
+          });
+        }}
       >
         <PlusIcon className="size-4.5 stroke-[1.5px]" />
       </TooltipIconButton>
@@ -186,7 +202,7 @@ export const ComposerPlusMenu: FC = () => {
         anchor &&
         createPortal(
           <>
-            <DismissibleBackdrop ariaLabel="Close menu" onClose={close} />
+            <DismissibleBackdrop ariaLabel={t('mention.close')} onClose={close} />
             <div
               className="fixed z-[201]"
               style={{
@@ -195,45 +211,66 @@ export const ComposerPlusMenu: FC = () => {
                 bottom: anchor.bottom,
               }}
               onClick={(e) => e.stopPropagation()}
+              onPointerMove={armHoverOnPointerMove}
             >
               <ComposerMenuPanel className="min-w-[240px]">
-                <div className="px-1 pb-1">
+                <div className="px-1 pb-1" onMouseEnter={clearSubmenu}>
                   <input
                     type="search"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Add context, tools..."
+                    placeholder={t('mention.searchPlaceholder')}
                     className="border-input bg-background placeholder:text-muted-foreground h-8 w-full rounded-md border px-2.5 text-xs outline-none"
                   />
                 </div>
 
                 <ComposerMenuRow
-                  icon={<NotebookPenIcon className="size-4" />}
-                  label="Plan"
+                  icon={<ListTodoIcon className="size-4" />}
+                  label={t('slash.plan')}
                   pressed={planMode}
+                  onMouseEnter={clearSubmenu}
                   onClick={() => {
                     togglePlanMode();
+                    close();
+                  }}
+                />
+                <ComposerMenuRow
+                  icon={<CrosshairIcon className="size-4" />}
+                  label={goalMode ? t('slash.exitGoal') : t('slash.goal')}
+                  pressed={goalMode}
+                  title={t('slash.goalDesc')}
+                  onMouseEnter={clearSubmenu}
+                  onClick={() => {
+                    toggleGoal();
+                    close();
+                  }}
+                />
+                <ComposerMenuRow
+                  icon={<RefreshCwIcon className="size-4" />}
+                  label={loopMode ? t('slash.stopLoop') : t('slash.loop')}
+                  pressed={loopMode}
+                  title={t('slash.loopDesc')}
+                  onMouseEnter={clearSubmenu}
+                  onClick={() => {
+                    toggleLoop();
                     close();
                   }}
                 />
                 <ComposerMenuSeparator />
 
                 <ComposerMenuRow
-                  icon={<ImageIcon className="size-4" />}
-                  label="Image"
-                  onClick={openImagePicker}
-                />
-                <ComposerMenuRow
-                  icon={<FileTextIcon className="size-4" />}
-                  label="Document"
-                  onClick={openDocumentPicker}
+                  icon={<FileIcon className="size-4" />}
+                  label={t('mention.file')}
+                  onMouseEnter={clearSubmenu}
+                  onClick={openFilePicker}
                 />
 
                 <ComposerMenuFlyoutItem
                   icon={<BookOpenIcon className="size-4" />}
-                  label="Skills"
+                  label={t('slash.skills')}
                   active={submenu === 'skills'}
-                  onOpen={() => setSubmenu('skills')}
+                  onOpen={() => openSubmenu('skills')}
+                  onClose={clearSubmenu}
                 >
                   <ComposerSkillsFlyout
                     skills={skills}
@@ -244,9 +281,10 @@ export const ComposerPlusMenu: FC = () => {
 
                 <ComposerMenuFlyoutItem
                   icon={<PlugIcon className="size-4" />}
-                  label="MCP Servers"
+                  label={t('mention.mcp')}
                   active={submenu === 'mcp'}
-                  onOpen={() => setSubmenu('mcp')}
+                  onOpen={() => openSubmenu('mcp')}
+                  onClose={clearSubmenu}
                 >
                   <ComposerMcpFlyout
                     servers={mcpServers}
@@ -259,7 +297,8 @@ export const ComposerPlusMenu: FC = () => {
 
                 <ComposerMenuRow
                   icon={<Minimize2Icon className="size-4" />}
-                  label={compacting ? 'Compressing…' : 'Compact context'}
+                  label={compacting ? t('slash.compacting') : t('slash.compact')}
+                  onMouseEnter={clearSubmenu}
                   onClick={() => {
                     if (!threadId || compacting) return;
                     void compactContext();

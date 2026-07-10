@@ -627,9 +627,27 @@ function slugifySheetId(name: string): string {
   return id;
 }
 
+/** Display-name key for uniqueness (trim + case-insensitive). */
+function sheetNameKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/** True if another sheet already uses this display name (case-insensitive). */
+export function isTableSheetNameTaken(name: string, excludeSheetId?: string): boolean {
+  const key = sheetNameKey(name);
+  if (!key) return false;
+  for (const other of sheetStore.values()) {
+    if (excludeSheetId && other.meta.id === excludeSheetId) continue;
+    if (sheetNameKey(other.meta.name) === key) return true;
+  }
+  return false;
+}
+
 export function createTableSheet(name: string): TableSheetMeta | null {
   const trimmed = name.trim();
   if (!trimmed) return null;
+  // Display names must be unique so the model can tell sheets apart in context.
+  if (isTableSheetNameTaken(trimmed)) return null;
   const id = slugifySheetId(trimmed);
   const meta: TableSheetMeta = { id, name: trimmed, builtin: false };
   sheetStore.set(id, {
@@ -649,10 +667,7 @@ export function renameTableSheet(sheetId: string, name: string): TableSheetMeta 
   const trimmed = name.trim();
   if (!trimmed) return null;
   if (sheet.meta.name === trimmed) return { ...sheet.meta };
-  // Reject duplicate display names (case-sensitive match of trimmed names).
-  for (const other of sheetStore.values()) {
-    if (other.meta.id !== sheetId && other.meta.name === trimmed) return null;
-  }
+  if (isTableSheetNameTaken(trimmed, sheetId)) return null;
   sheet.meta = { ...sheet.meta, name: trimmed };
   tablePersist(sheetId);
   emitTable({ type: 'sheetsChange' });

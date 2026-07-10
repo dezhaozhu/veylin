@@ -1,4 +1,4 @@
-import { useAuiState } from '@assistant-ui/react';
+import { useAui, useAuiState } from '@assistant-ui/store';
 import { useCallback, useEffect, useRef } from 'react';
 import {
   getChatSettings,
@@ -17,6 +17,21 @@ import {
   fetchActivatedSkills,
   clearActivatedSkillsSnapshot,
 } from '@/lib/activated-skills-store';
+import {
+  ackGoalContinueApi,
+  ackLoopWakeApi,
+  clearThreadGoalApi,
+  fetchThreadGoal,
+  fetchThreadLoop,
+  onGoalLoopChange,
+  readCachedGoal,
+  readCachedLoop,
+  setThreadGoalApi,
+  setThreadLoopApi,
+  stopThreadLoopApi,
+} from '@/lib/goal-loop-sync';
+import { requestSilentChatContinue } from '@/lib/silent-chat-continue';
+import { requestChatStop } from '@/lib/chat-stop';
 import { useState } from 'react';
 
 function applyPlanModeForThread(threadId: string | undefined, on: boolean): void {
@@ -111,6 +126,226 @@ export function usePlanMode() {
   const togglePlanMode = useCallback(() => setPlanMode(!planMode), [planMode, setPlanMode]);
 
   return { planMode, setPlanMode, togglePlanMode };
+}
+
+export function useGoalLoopState() {
+  const threadId = useAuiState(
+    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+  );
+  const [, bump] = useState(0);
+  useEffect(() => onGoalLoopChange(() => bump((n) => n + 1)), []);
+  const settings = useChatSettingsState();
+  const pendingGoal = settings.pendingGoal;
+  const pendingLoop = settings.pendingLoop;
+
+  const goal =
+    threadId != null ? (readCachedGoal(threadId) ?? null) : null;
+  const loop =
+    threadId != null ? (readCachedLoop(threadId) ?? null) : null;
+
+  const setPendingGoal = useCallback((on: boolean) => {
+    setChatSettings(
+      on
+        ? { pendingGoal: true, pendingLoop: false }
+        : { pendingGoal: false },
+    );
+  }, []);
+
+  const setPendingLoop = useCallback((on: boolean) => {
+    setChatSettings(
+      on
+        ? { pendingLoop: true, pendingGoal: false }
+        : { pendingLoop: false },
+    );
+  }, []);
+
+  const clearGoal = useCallback(async () => {
+    setChatSettings({ pendingGoal: false });
+    if (!threadId) return;
+    // Stop in-flight turn so onFinish cannot resurrect the goal.
+    void requestChatStop(threadId).catch(() => undefined);
+    await clearThreadGoalApi(threadId);
+  }, [threadId]);
+
+  const stopLoop = useCallback(async () => {
+    setChatSettings({ pendingLoop: false });
+    if (!threadId) return;
+    await stopThreadLoopApi(threadId);
+  }, [threadId]);
+
+  const setGoal = useCallback(
+    async (condition: string) => {
+      if (!threadId) return { ok: false as const, error: 'no_thread' };
+      return setThreadGoalApi(threadId, condition);
+    },
+    [threadId],
+  );
+
+  const setLoop = useCallback(
+    async (
+      prompt: string,
+      opts?: { intervalSeconds?: number; interval?: string; mode?: 'fixed' | 'dynamic' },
+    ) => {
+      if (!threadId) return { ok: false as const, error: 'no_thread' };
+      return setThreadLoopApi(threadId, prompt, opts);
+    },
+    [threadId],
+  );
+
+  const toggleGoal = useCallback(() => {
+    if (goal?.status === 'active' || pendingGoal) {
+      void clearGoal();
+      return;
+    }
+    if (loop?.status === 'active' || pendingLoop) {
+      void stopLoop();
+    }
+    setPendingGoal(true);
+  }, [
+    goal?.status,
+    pendingGoal,
+    loop?.status,
+    pendingLoop,
+    clearGoal,
+    stopLoop,
+    setPendingGoal,
+  ]);
+
+  const toggleLoop = useCallback(() => {
+    if (loop?.status === 'active' || pendingLoop) {
+      void stopLoop();
+      return;
+    }
+    if (goal?.status === 'active' || pendingGoal) {
+      void clearGoal();
+    }
+    setPendingLoop(true);
+  }, [
+    loop?.status,
+    pendingLoop,
+    goal?.status,
+    pendingGoal,
+    stopLoop,
+    clearGoal,
+    setPendingLoop,
+  ]);
+
+  return {
+    threadId,
+    goal,
+    loop,
+    goalActive: goal?.status === 'active',
+    loopActive: loop?.status === 'active',
+    pendingGoal,
+    pendingLoop,
+    setPendingGoal,
+    setPendingLoop,
+    toggleGoal,
+    toggleLoop,
+    setGoal,
+    clearGoal,
+    setLoop,
+    stopLoop,
+  };
+}
+
+export function useGoalMode() {
+  const { goalActive, pendingGoal, toggleGoal, clearGoal, setPendingGoal } = useGoalLoopState();
+  return {
+    goalMode: pendingGoal || goalActive,
+    pendingGoal,
+    goalActive,
+    toggleGoal,
+    clearGoal,
+    setPendingGoal,
+  };
+}
+
+/** Sync goal/loop from API; auto-continue goal and fire loop wakes when idle. */
+export function useGoalLoopBridge(): void {
+  const aui = useAui();
+  const threadId = useAuiState(
+    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+  );
+  const isRunning = useAuiState((s) => s.thread.isRunning);
+  const wasRunningRef = useRef(false);
+  const continuingRef = useRef(false);
+
+  useEffect(() => {
+    if (!threadId) return;
+    void fetchThreadGoal(threadId);
+    void fetchThreadLoop(threadId).then((loop) => {
+      if (loop?.status === 'active' && getChatSettings().pendingLoop) {
+        setChatSettings({ pendingLoop: false });
+      }
+    });
+  }, [threadId]);
+
+  useEffect(() => {
+    if (!threadId) return;
+    const wasRunning = wasRunningRef.current;
+    wasRunningRef.current = isRunning;
+    if (wasRunning && !isRunning) {
+      void fetchThreadGoal(threadId);
+      void fetchThreadLoop(threadId).then((loop) => {
+        if (loop?.status === 'active' && getChatSettings().pendingLoop) {
+          setChatSettings({ pendingLoop: false });
+        }
+      });
+    }
+    if (!isRunning) return;
+    const timer = window.setInterval(() => {
+      void fetchThreadGoal(threadId);
+      void fetchThreadLoop(threadId).then((loop) => {
+        if (loop?.status === 'active' && getChatSettings().pendingLoop) {
+          setChatSettings({ pendingLoop: false });
+        }
+      });
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [threadId, isRunning]);
+
+  useEffect(() => {
+    if (!threadId || isRunning || continuingRef.current) return;
+
+    const tick = async () => {
+      if (continuingRef.current || isRunning) return;
+      const goal = await fetchThreadGoal(threadId);
+      if (goal?.status === 'active' && goal.needsContinuation) {
+        continuingRef.current = true;
+        try {
+          const started = await requestSilentChatContinue();
+          if (started) {
+            await ackGoalContinueApi(threadId);
+          }
+        } finally {
+          continuingRef.current = false;
+        }
+        return;
+      }
+
+      const loop = await fetchThreadLoop(threadId);
+      if (loop?.status === 'active' && loop.nextWakeAt) {
+        const due = Date.parse(loop.nextWakeAt) <= Date.now() + 500;
+        if (due) {
+          continuingRef.current = true;
+          try {
+            await ackLoopWakeApi(threadId);
+            aui.composer().setText(loop.prompt);
+            aui.composer().send({ startRun: true });
+          } finally {
+            continuingRef.current = false;
+          }
+        }
+      }
+    };
+
+    void tick();
+    const timer = window.setInterval(() => {
+      void tick();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [threadId, isRunning, aui]);
 }
 
 export interface AgentContextResponse {

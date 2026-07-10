@@ -53,7 +53,7 @@ export {
   recordCompactSuccess,
   recordCompactFailure,
 } from './context-window';
-export { buildSummarizer, COMPACTION_SYSTEM_PROMPT, formatCompactSummary } from './summarizer';
+export { buildSummarizer, buildCompactionSystemPrompt, COMPACTION_SYSTEM_PROMPT, formatCompactSummary } from './summarizer';
 export { selectTools } from './processors/toolSearch';
 export {
   BASE_SYSTEM_PROMPT,

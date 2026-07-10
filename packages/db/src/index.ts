@@ -17,7 +17,7 @@ export {
   rerankerOnnxPaths,
   isRerankerModelOnDisk,
 } from './local-model-paths';
-export { queryRows, newId, rid, normalizeId } from './query';
+export { queryRows, newId, rid, normalizeId, upsertById, deleteById, selectById } from './query';
 export * from './types';
 export * from './repos';
 export * from './table-repos';

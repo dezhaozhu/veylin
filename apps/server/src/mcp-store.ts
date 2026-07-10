@@ -1,43 +1,157 @@
+import { promises as fs } from 'node:fs';
 import { MCPClient } from '@mastra/mcp';
-import {
-  deleteMcpServerRow,
-  insertMcpServer,
-  listMcpServerRows,
-  updateMcpServerRow,
-} from '@veylin/db';
+import { listMcpServerRows } from '@veylin/db';
 import { mcpServerConfigs } from '@veylin/mcp-servers';
 import { mcpServerInputSchema, type McpServer, type McpServerInput } from '@veylin/shared';
-import { getDisabledMcpServers } from './skills-store';
+import { getDisabledMcpServers } from './veylin-settings-file.js';
+import { veylinHome, veylinMcpLocalPath, veylinMcpPath } from './veylin-paths.js';
 
 export type McpServerConfig = Record<string, unknown>;
 
-function rowToMcp(row: Awaited<ReturnType<typeof listMcpServerRows>>[number]): McpServer {
+type McpFileEntry = {
+  transport: 'sse' | 'http';
+  url: string;
+  enabled?: boolean;
+  headers?: Record<string, string>;
+};
+
+type McpFile = {
+  mcpServers: Record<string, McpFileEntry>;
+};
+
+let mcpMigrated = false;
+
+async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
+  try {
+    return JSON.parse(await fs.readFile(path, 'utf8')) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+async function writeMcpPublic(file: McpFile): Promise<void> {
+  await fs.mkdir(veylinHome(), { recursive: true });
+  const publicServers: Record<string, McpFileEntry> = {};
+  for (const [name, entry] of Object.entries(file.mcpServers)) {
+    publicServers[name] = {
+      transport: entry.transport,
+      url: entry.url,
+      enabled: entry.enabled !== false,
+    };
+  }
+  await fs.writeFile(
+    veylinMcpPath(),
+    `${JSON.stringify({ mcpServers: publicServers }, null, 2)}\n`,
+    'utf8',
+  );
+}
+
+async function writeMcpLocal(headersByName: Record<string, Record<string, string>>): Promise<void> {
+  await fs.mkdir(veylinHome(), { recursive: true });
+  const mcpServers: Record<string, { headers: Record<string, string> }> = {};
+  for (const [name, headers] of Object.entries(headersByName)) {
+    if (Object.keys(headers).length > 0) mcpServers[name] = { headers };
+  }
+  await fs.writeFile(
+    veylinMcpLocalPath(),
+    `${JSON.stringify({ mcpServers }, null, 2)}\n`,
+    'utf8',
+  );
+}
+
+async function loadMergedMcpFile(): Promise<McpFile> {
+  const pub = await readJsonFile<McpFile>(veylinMcpPath(), { mcpServers: {} });
+  const local = await readJsonFile<{
+    mcpServers?: Record<string, { headers?: Record<string, string> }>;
+  }>(veylinMcpLocalPath(), { mcpServers: {} });
+  const mcpServers: Record<string, McpFileEntry> = { ...(pub.mcpServers ?? {}) };
+  for (const [name, entry] of Object.entries(local.mcpServers ?? {})) {
+    const base = mcpServers[name] ?? { transport: 'http' as const, url: '', enabled: true };
+    mcpServers[name] = {
+      ...base,
+      headers: { ...(base.headers ?? {}), ...(entry.headers ?? {}) },
+    };
+  }
+  return { mcpServers };
+}
+
+async function persistMerged(file: McpFile): Promise<void> {
+  const headersByName: Record<string, Record<string, string>> = {};
+  for (const [name, entry] of Object.entries(file.mcpServers)) {
+    if (entry.headers && Object.keys(entry.headers).length > 0) {
+      headersByName[name] = entry.headers;
+    }
+  }
+  await writeMcpPublic(file);
+  await writeMcpLocal(headersByName);
+}
+
+async function migrateMcpFromDb(tenantId: string): Promise<void> {
+  if (mcpMigrated) return;
+  mcpMigrated = true;
+  try {
+    await fs.access(veylinMcpPath());
+    return;
+  } catch {
+    // missing
+  }
+  try {
+    const rows = await listMcpServerRows(tenantId);
+    if (rows.length === 0) {
+      await persistMerged({ mcpServers: {} });
+      return;
+    }
+    const mcpServers: Record<string, McpFileEntry> = {};
+    for (const row of rows) {
+      mcpServers[row.name] = {
+        transport: row.transport as 'sse' | 'http',
+        url: row.url,
+        enabled: row.enabled,
+        headers: row.headers ?? {},
+      };
+    }
+    await persistMerged({ mcpServers });
+    console.info(`[veylin] migrated ${rows.length} MCP server(s) to mcp.json`);
+  } catch (err) {
+    console.warn('[veylin] mcp.json migration skipped:', err);
+    await persistMerged({ mcpServers: {} });
+  }
+}
+
+function entryToServer(tenantId: string, name: string, entry: McpFileEntry): McpServer {
   return {
-    id: row.id,
-    tenantId: row.tenantId,
-    name: row.name,
-    transport: row.transport,
-    url: row.url,
-    headers: row.headers ?? {},
-    enabled: row.enabled,
-    createdAt: row.createdAt,
+    id: name,
+    tenantId,
+    name,
+    transport: entry.transport,
+    url: entry.url,
+    headers: entry.headers ?? {},
+    enabled: entry.enabled !== false,
   };
 }
 
 export async function listRemoteMcpServers(tenantId: string): Promise<McpServer[]> {
-  const rows = await listMcpServerRows(tenantId);
-  return rows.map(rowToMcp);
+  await migrateMcpFromDb(tenantId);
+  const file = await loadMergedMcpFile();
+  return Object.entries(file.mcpServers)
+    .filter(([, e]) => e.url)
+    .map(([name, entry]) => entryToServer(tenantId, name, entry))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function createRemoteMcpServer(tenantId: string, input: McpServerInput) {
-  const row = await insertMcpServer(tenantId, {
-    name: input.name.trim(),
+  await migrateMcpFromDb(tenantId);
+  const name = input.name.trim();
+  const file = await loadMergedMcpFile();
+  if (file.mcpServers[name]) throw new Error(`MCP server already exists: ${name}`);
+  file.mcpServers[name] = {
     transport: input.transport,
     url: input.url,
     headers: input.headers ?? {},
     enabled: input.enabled ?? true,
-  });
-  return rowToMcp(row);
+  };
+  await persistMerged(file);
+  return entryToServer(tenantId, name, file.mcpServers[name]!);
 }
 
 export async function updateRemoteMcpServer(
@@ -45,18 +159,30 @@ export async function updateRemoteMcpServer(
   id: string,
   patch: Partial<McpServerInput>,
 ) {
-  const row = await updateMcpServerRow(tenantId, id, {
-    ...(patch.name != null ? { name: patch.name.trim() } : {}),
-    ...(patch.transport != null ? { transport: patch.transport } : {}),
-    ...(patch.url != null ? { url: patch.url } : {}),
-    ...(patch.headers != null ? { headers: patch.headers } : {}),
-    ...(patch.enabled != null ? { enabled: patch.enabled } : {}),
-  });
-  return row ? rowToMcp(row) : null;
+  await migrateMcpFromDb(tenantId);
+  const file = await loadMergedMcpFile();
+  const existing = file.mcpServers[id];
+  if (!existing) return null;
+  const nextName = patch.name?.trim() || id;
+  const next: McpFileEntry = {
+    transport: patch.transport ?? existing.transport,
+    url: patch.url ?? existing.url,
+    headers: patch.headers ?? existing.headers ?? {},
+    enabled: patch.enabled ?? existing.enabled !== false,
+  };
+  delete file.mcpServers[id];
+  file.mcpServers[nextName] = next;
+  await persistMerged(file);
+  return entryToServer(tenantId, nextName, next);
 }
 
 export async function deleteRemoteMcpServer(tenantId: string, id: string): Promise<boolean> {
-  return deleteMcpServerRow(tenantId, id);
+  await migrateMcpFromDb(tenantId);
+  const file = await loadMergedMcpFile();
+  if (!file.mcpServers[id]) return false;
+  delete file.mcpServers[id];
+  await persistMerged(file);
+  return true;
 }
 
 /** Parse VEYLIN_MCP_SERVERS JSON array from env (dev/bootstrap). */
@@ -83,7 +209,7 @@ export function parseMcpServersFromEnv(
   }
 }
 
-/** Insert env-declared MCP servers when missing from DB (by name). */
+/** Insert env-declared MCP servers when missing from file (by name). */
 export async function seedMcpServersFromEnvIfMissing(tenantId: string): Promise<number> {
   const fromEnv = parseMcpServersFromEnv();
   if (fromEnv.length === 0) return 0;

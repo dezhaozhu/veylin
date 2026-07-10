@@ -5,12 +5,68 @@ const API = '';
 export type SkillListItem = {
   name: string;
   description: string;
-  source: 'bundled' | 'custom';
+  source: 'bundled' | 'user' | 'plugin';
   type: string;
   triggers: string[];
   enabled: boolean;
   content?: string;
   id?: string;
+  path?: string;
+  pluginId?: string;
+};
+
+export type HookHandlerPayload = {
+  type: string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  prompt?: string;
+  server?: string;
+  tool?: string;
+  subagent_type?: string;
+};
+
+export type HookListItem = {
+  key: string;
+  event: string;
+  matcher: string;
+  type: string;
+  source: string;
+  sourceId: string | null;
+  enabled: boolean;
+  dormant: boolean;
+  configPath: string | null;
+  handler?: HookHandlerPayload;
+};
+
+export type HookLogItem = {
+  id: string;
+  at: string;
+  event: string;
+  matcher?: string;
+  source: string;
+  decision?: string;
+  durationMs?: number;
+  error?: string;
+  dormant?: boolean;
+};
+
+export type PluginInstall = {
+  id: string;
+  name: string;
+  version?: string | null;
+  description?: string | null;
+  sourceType: string;
+  source: string;
+  installPath: string;
+  enabled: boolean;
+};
+
+export type MarketplaceEntry = {
+  name: string;
+  description: string;
+  version?: string;
+  source: { type: 'path' | 'git'; url: string };
 };
 
 export type Rule = {
@@ -147,17 +203,89 @@ export const settingsApi = {
   },
 
   getSkills: () =>
-    apiFetch<{ skills: SkillListItem[]; disabledSkills: string[] }>('/api/skills'),
+    apiFetch<{ skills: SkillListItem[]; disabledSkills: string[]; skillsDir?: string }>('/api/skills'),
   saveDisabledSkills: (disabledSkills: string[]) =>
     apiFetch('/api/skills/disabled', {
       method: 'POST',
       body: JSON.stringify({ disabledSkills }),
     }),
   createSkill: (body: { name: string; description?: string; content: string; enabled?: boolean }) =>
-    apiFetch<{ ok: boolean; skill: SkillListItem }>('/api/skills', { method: 'POST', body: JSON.stringify(body) }),
-  updateSkill: (id: string, body: Partial<{ name: string; description: string; content: string; enabled: boolean }>) =>
-    apiFetch<{ ok: boolean; skill: SkillListItem }>(`/api/skills/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-  deleteSkill: (id: string) => apiFetch(`/api/skills/${id}`, { method: 'DELETE' }),
+    apiFetch<{ ok: boolean; skill: SkillListItem }>('/api/skills', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateSkill: (
+    id: string,
+    body: Partial<{ name: string; description: string; content: string; enabled: boolean }>,
+  ) =>
+    apiFetch<{ ok: boolean; skill: SkillListItem }>(`/api/skills/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  deleteSkill: (id: string) =>
+    apiFetch(`/api/skills/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  importSkill: (path: string) =>
+    apiFetch<{ ok: boolean; skill: SkillListItem }>('/api/skills/import', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+
+  getHooks: () => apiFetch<{ hooks: HookListItem[]; logs: HookLogItem[] }>('/api/hooks'),
+  reloadHooks: () => apiFetch<{ ok: boolean; count: number }>('/api/hooks/reload', { method: 'POST' }),
+  createHook: (body: { event: string; matcher?: string; handler: HookHandlerPayload }) =>
+    apiFetch<{ ok: boolean; count: number }>('/api/hooks', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateHook: (
+    key: string,
+    body: { event?: string; matcher?: string; handler?: HookHandlerPayload },
+  ) =>
+    apiFetch<{ ok: boolean }>(`/api/hooks/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  deleteHook: (key: string) =>
+    apiFetch(`/api/hooks/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+  setHookDisabled: (key: string, disabled: boolean) =>
+    apiFetch('/api/hooks/disabled', {
+      method: 'POST',
+      body: JSON.stringify({ key, disabled }),
+    }),
+  getWorkspaceSettings: () =>
+    apiFetch<{
+      workspaceRoot: string | null;
+      workspaceRootSetting: string | null;
+      importClaudeHooks: boolean;
+    }>('/api/workspace-settings'),
+  saveWorkspaceSettings: (body: {
+    workspaceRoot?: string | null;
+    importClaudeHooks?: boolean;
+  }) =>
+    apiFetch('/api/workspace-settings', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  getPlugins: () =>
+    apiFetch<{ installed: PluginInstall[]; marketplace: MarketplaceEntry[] }>('/api/plugins'),
+  installPlugin: (body: {
+    type: 'path' | 'git' | 'marketplace';
+    path?: string;
+    url?: string;
+    name?: string;
+  }) =>
+    apiFetch<{ ok: boolean; plugin?: PluginInstall; message?: string }>('/api/plugins/install', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  setPluginEnabled: (id: string, enabled: boolean) =>
+    apiFetch<{ ok: boolean; plugin?: PluginInstall }>(
+      `/api/plugins/${encodeURIComponent(id)}/enable`,
+      { method: 'POST', body: JSON.stringify({ enabled }) },
+    ),
+  uninstallPlugin: (id: string) =>
+    apiFetch(`/api/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   getRules: () => apiFetch<{ rules: Rule[] }>('/api/rules'),
   createRule: (body: {

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { COMPACTION_SYSTEM_PROMPT, formatCompactSummary } from './summarizer.js';
+import {
+  COMPACTION_SYSTEM_PROMPT,
+  buildCompactionSystemPrompt,
+  formatCompactSummary,
+} from './summarizer.js';
 
 describe('summarizer', () => {
   it('defines structured compaction sections', () => {
@@ -18,5 +22,12 @@ describe('summarizer', () => {
     const cleaned = formatCompactSummary(raw);
     assert.doesNotMatch(cleaned, /scratch notes/);
     assert.match(cleaned, /Primary request/);
+  });
+
+  it('appends focus instructions when provided', () => {
+    const withFocus = buildCompactionSystemPrompt('Keep the auth refactor decisions');
+    assert.match(withFocus, /User focus instructions/);
+    assert.match(withFocus, /auth refactor/);
+    assert.equal(buildCompactionSystemPrompt('  '), COMPACTION_SYSTEM_PROMPT);
   });
 });

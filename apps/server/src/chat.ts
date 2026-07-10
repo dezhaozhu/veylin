@@ -37,6 +37,8 @@ type ChatBody = {
   model?: string;
   toolQuery?: string;
   planMode?: boolean;
+  /** Loop chip armed; model should analyze conditions and call loop_set when ready. */
+  pendingLoop?: boolean;
   mcpEnabled?: Record<string, boolean>;
   /** Skill to auto-activate when sending the next message. */
   pendingSkill?: string;

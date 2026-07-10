@@ -14,7 +14,7 @@ import {
   type ModelKey,
 } from '@veylin/runtime';
 import { setThreadPlanMode } from '@veylin/tools';
-import { stripInterruptedAssistantTurnsForAgent } from '@veylin/shared';
+import { stripInterruptedAssistantTurnsForAgent, clampLoopWakeupSeconds, isGoalActive, isLoopActive, parseIntervalToSeconds, LOOP_WAKEUP_MIN_SECONDS } from '@veylin/shared';
 import {
   createUiStreamRepairState,
   formatAgentStreamError,
@@ -35,6 +35,7 @@ import { cancelThreadSubagentTasks } from '../cancel-thread-tasks.js';
 import { buildTableContextBlock } from '../table-store.js';
 import {
   activateSkill,
+  createActiveLoop,
   ensureThreadState,
   ephemeralThreadState,
   ensureThreadTitleIfMissing,
@@ -43,6 +44,8 @@ import {
   type ThreadStateRow,
   setPlanMode as setThreadPlanModeDb,
   setTodos as setThreadTodosDb,
+  setThreadGoal,
+  setThreadLoop,
   syncWorkingMemory,
   restoreTodosFromHistoryIfEmpty,
   requireThreadOwnership,
@@ -51,6 +54,12 @@ import {
 } from '../thread-state.js';
 import { buildReminderBlock } from '../reminders.js';
 import { buildPlanModeBlock } from '../plan-mode-reminder.js';
+import { buildGoalBlock, buildLoopBlock, appendPendingLoopTurnNote } from '../goal-loop-blocks.js';
+import {
+  evaluateGoalCondition,
+  summarizeMessagesForGoalEval,
+} from '../goal-evaluator.js';
+import { rescheduleLoopFromState } from '../loop-scheduler.js';
 import { buildChatSystemBlocks } from '../chat-system-blocks.js';
 import { isMemoryStoreFailure, syncThreadMessagesFromClient } from '../thread-sync.js';
 import { isDatastoreFailure, withDatastoreFallback } from '../store-errors.js';
@@ -73,6 +82,7 @@ import {
   stopChatStream,
   unregisterRunAbort,
 } from '../resumable-chat-stream.js';
+import { markThreadChatActivity } from '../thread-activity.js';
 import { refreshAgentPackages, requireAgent } from '../agent-packages-sync.js';
 import {
   listMergedSkills,
@@ -86,6 +96,8 @@ import {
 import { listActiveMcpServerNames } from '../mcp-store.js';
 import { applyTenantModelSettings } from '../model-settings-store.js';
 import { buildKnowledgeContextBlock } from '../rag-store.js';
+import { getHookBus, reloadHooksForTenant } from '../hooks-service.js';
+import { wrapToolsetsWithHooks } from '../tool-hooks.js';
 import type { ServerDeps } from './types.js';
 
 /**
@@ -122,6 +134,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const ctx = await deps.resolveContext(req.headers);
     await applyTenantModelSettings(ctx.tenantId);
     await deps.ensureMcpForTenant(ctx.tenantId);
+    await reloadHooksForTenant(ctx.tenantId);
+    const hookBus = getHookBus(ctx.tenantId);
     const threadId = body.id ?? body.threadId ?? `thread-${ctx.userId}`;
     const agentId = body.agentId ?? DEFAULT_AGENT_ID;
     const identity = {
@@ -132,15 +146,25 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
 
     let threadRow: ThreadStateRow;
     let threadStoreOk = true;
+    let isNewSession = false;
     try {
+      const before = await getThreadState(threadId);
+      isNewSession = !before;
       threadRow = await ensureThreadState(identity);
       await touchThreadActivity(threadId);
     } catch (err) {
       if (!isDatastoreFailure(err)) throw err;
       threadStoreOk = false;
+      isNewSession = true;
       threadRow = ephemeralThreadState(identity);
       app.log.warn({ err, threadId }, 'thread state store failed; continuing chat ephemerally');
     }
+
+    await hookBus.emit(
+      'SessionStart',
+      { source: isNewSession ? 'startup' : 'resume', thread_id: threadId, agent_id: agentId },
+      { threadId },
+    );
     await stopChatStream({ threadId }).catch(() => undefined);
     if (threadStoreOk) {
       await withDatastoreFallback(
@@ -234,11 +258,84 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       setThreadPlanMode(threadId, on);
       requestContext.set('planMode', on);
     });
+    requestContext.set('threadLoop', threadRowState?.loop ?? null);
+    requestContext.set('persistThreadLoop', async (loop: import('@veylin/shared').ThreadLoopState | null) => {
+      await setThreadLoop(threadId, loop);
+      requestContext.set('threadLoop', loop);
+      rescheduleLoopFromState(threadId, loop);
+    });
+    requestContext.set(
+      'startThreadLoop',
+      async (args: { prompt: string; intervalSeconds?: number; interval?: string }) => {
+        const state = await getThreadState(threadId);
+        if (isGoalActive(state?.goal)) {
+          return {
+            ok: false,
+            error: 'goal_active',
+            message: 'Clear the active goal before starting a loop.',
+          };
+        }
+        let intervalSeconds = args.intervalSeconds;
+        if (intervalSeconds == null && args.interval) {
+          intervalSeconds = parseIntervalToSeconds(args.interval) ?? undefined;
+        }
+        if (intervalSeconds == null || intervalSeconds < LOOP_WAKEUP_MIN_SECONDS) {
+          return {
+            ok: false,
+            error: 'interval_required',
+            message: `A clear interval of at least ${LOOP_WAKEUP_MIN_SECONDS}s is required.`,
+          };
+        }
+        const loop = createActiveLoop({
+          prompt: args.prompt,
+          mode: 'fixed',
+          intervalSeconds,
+        });
+        await setThreadLoop(threadId, loop);
+        requestContext.set('threadLoop', loop);
+        requestContext.set('pendingLoop', false);
+        rescheduleLoopFromState(threadId, loop);
+        return { ok: true, loop };
+      },
+    );
+    requestContext.set('pendingLoop', body.pendingLoop === true && !isLoopActive(threadRowState?.loop));
+    requestContext.set(
+      'scheduleLoopWakeup',
+      async (args: { delaySeconds?: number; stop?: boolean; reason?: string }) => {
+        const state = await getThreadState(threadId);
+        const loop = state?.loop;
+        if (!loop || loop.status !== 'active') return { ok: false };
+        if (args.stop) {
+          const stopped = {
+            ...loop,
+            status: 'stopped' as const,
+            nextWakeAt: undefined,
+            stopRequested: true,
+          };
+          await setThreadLoop(threadId, stopped);
+          requestContext.set('threadLoop', stopped);
+          rescheduleLoopFromState(threadId, stopped);
+          return { ok: true, stopped: true };
+        }
+        const delaySeconds = clampLoopWakeupSeconds(args.delaySeconds ?? 600);
+        const nextWakeAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
+        const next = { ...loop, nextWakeAt };
+        await setThreadLoop(threadId, next);
+        requestContext.set('threadLoop', next);
+        rescheduleLoopFromState(threadId, next);
+        return { ok: true, nextWakeAt, delaySeconds };
+      },
+    );
     requestContext.set('onSkillActivated', async ({ name }: { name: string; content: string }) => {
       const content = await resolveSkillContent(deps.runtime, ctx.tenantId, agentId, name);
       if (!content) return;
       const skills = await activateSkill(threadId, name, content);
       await syncWorkingMemory(deps.runtime.memory, identity, skills, threadRowState?.workingMemory ?? null);
+      await hookBus.emit(
+        'SkillActivated',
+        { name, skill: name },
+        { threadId },
+      );
     });
     requestContext.set('enabledSkillNames', enabledSkillNames);
     requestContext.set(
@@ -248,6 +345,17 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     if (body.model) requestContext.set('model', body.model);
 
     if (body.pendingSkill) {
+      const expansion = await hookBus.emit(
+        'UserPromptExpansion',
+        { command: body.pendingSkill, skill: body.pendingSkill },
+        { threadId },
+      );
+      if (expansion.decision === 'deny') {
+        return reply.status(400).send({
+          error: 'skill_blocked',
+          message: expansion.reason ?? 'Skill expansion blocked by hook',
+        });
+      }
       const content = await resolveSkillContent(
         deps.runtime,
         ctx.tenantId,
@@ -327,6 +435,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       agentInputMessages as Parameters<typeof toAgentMessages>[0],
       modelSupportsImages(effectiveModel),
     );
+    if (body.pendingLoop === true && !isLoopActive(threadRowState?.loop)) {
+      agentMessages = appendPendingLoopTurnNote(agentMessages);
+    }
 
     const rules = await withDatastoreFallback(
       () => listRules(ctx.tenantId, ctx.userId, agentId),
@@ -340,6 +451,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       todosUpdatedAt: threadRowState?.updatedAt,
     });
     const planModeBlock = planMode ? buildPlanModeBlock() : '';
+    const goalBlock = buildGoalBlock(threadRowState?.goal);
+    const loopBlock = buildLoopBlock(threadRowState?.loop);
     // Live workspace awareness (table + knowledge base + right-panel focus).
     const tableBlock = planMode ? '' : buildTableContextBlock();
     const knowledgeBlock = planMode
@@ -364,6 +477,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       skillBlock,
       rulesBlock,
       planModeBlock,
+      goalBlock,
+      loopBlock,
       tableBlock,
       knowledgeBlock,
       workspacePanelBlock,
@@ -379,7 +494,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const discoveredIds = (requestContext.get('discoveredToolIds') as string[]) ?? [];
     const agentDef = deps.runtime.definitions.get(agentId)?.definition;
     const declaredBuiltinTools = agentDef?.tools ?? [];
-    const activeToolsets = planMode
+    const activeToolsetsRaw = planMode
       ? {}
       : coordinatorMode
         ? { agent: deps.getTaskToolset().agent }
@@ -399,17 +514,63 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
               ...(deps.getTaskToolset().table ? { table: deps.getTaskToolset().table } : {}),
               ...(deps.getTaskToolset().knowledge ? { knowledge: deps.getTaskToolset().knowledge } : {}),
             };
+    const activeToolsets = wrapToolsetsWithHooks(activeToolsetsRaw, hookBus, {
+      threadId,
+      tenantId: ctx.tenantId,
+    });
+
+    const promptSubmit = await hookBus.emit(
+      'UserPromptSubmit',
+      {
+        prompt: lastUserText(messages),
+        thread_id: threadId,
+        agent_id: agentId,
+      },
+      { threadId },
+    );
+    if (promptSubmit.decision === 'deny') {
+      return reply.status(400).send({
+        error: 'prompt_blocked',
+        message: promptSubmit.reason ?? 'Prompt blocked by hook',
+      });
+    }
+    if (promptSubmit.additionalContext) {
+      agentMessages = [
+        { role: 'system', content: promptSubmit.additionalContext } as never,
+        ...agentMessages,
+      ];
+    }
+
+    await hookBus.emit(
+      'InstructionsLoaded',
+      { reason: 'session_start', thread_id: threadId },
+      { threadId },
+    );
+
     const streamId = crypto.randomUUID();
     const runAbort = createRunAbortController(streamId);
     requestContext.set('runAbortSignal', runAbort.signal);
 
-    const stream = await agent.stream(agentMessages as never, {
-      maxSteps: 25,
-      abortSignal: runAbort.signal,
-      ...(useThreadMemory ? { memory: { thread: threadId, resource: ctx.userId } } : {}),
-      requestContext,
-      toolsets: activeToolsets,
-    } as never);
+    let stream;
+    try {
+      stream = await agent.stream(agentMessages as never, {
+        maxSteps: 25,
+        abortSignal: runAbort.signal,
+        ...(useThreadMemory ? { memory: { thread: threadId, resource: ctx.userId } } : {}),
+        requestContext,
+        toolsets: activeToolsets,
+      } as never);
+    } catch (err) {
+      await hookBus.emit(
+        'StopFailure',
+        {
+          error_type: 'server_error',
+          error: err instanceof Error ? err.message : String(err),
+        },
+        { threadId },
+      );
+      throw err;
+    }
 
     await bindActiveStream(threadId, streamId);
     const cancelPoll = setInterval(() => {
@@ -431,7 +592,76 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         void clearActiveStream(threadId).catch((err) => {
           app.log.warn({ err, threadId }, 'clearActiveStream failed');
         });
+        markThreadChatActivity(threadId, 'finished');
         scheduleDreamConsolidation(deps.runtime, identity);
+        void hookBus.emit('Stop', { thread_id: threadId }, { threadId });
+        void hookBus.emit('PostToolBatch', { thread_id: threadId }, { threadId });
+        void (async () => {
+          try {
+            const state = await getThreadState(threadId);
+            if (isGoalActive(state?.goal) && state?.goal) {
+              const summary = summarizeMessagesForGoalEval(
+                messages as Array<{ role?: string; content?: unknown; parts?: unknown[] }>,
+              );
+              const evalResult = await evaluateGoalCondition({
+                condition: state.goal.condition,
+                transcriptSummary: summary,
+                modelKey: (body.model as ModelKey | undefined) ?? undefined,
+              });
+              // Re-read: user may have cleared the goal while this turn was finishing.
+              const latest = await getThreadState(threadId);
+              if (!isGoalActive(latest?.goal) || !latest?.goal) {
+                return;
+              }
+              const turnsEvaluated = latest.goal.turnsEvaluated + 1;
+              if (evalResult.done) {
+                await setThreadGoal(threadId, {
+                  ...latest.goal,
+                  status: 'achieved',
+                  turnsEvaluated,
+                  lastEvalReason: evalResult.reason,
+                  needsContinuation: false,
+                  updatedAt: new Date().toISOString(),
+                });
+              } else if (turnsEvaluated >= latest.goal.maxTurns) {
+                await setThreadGoal(threadId, {
+                  ...latest.goal,
+                  status: 'max_turns',
+                  turnsEvaluated,
+                  lastEvalReason: evalResult.reason,
+                  needsContinuation: false,
+                  updatedAt: new Date().toISOString(),
+                });
+              } else {
+                await setThreadGoal(threadId, {
+                  ...latest.goal,
+                  turnsEvaluated,
+                  lastEvalReason: evalResult.reason,
+                  needsContinuation: true,
+                  updatedAt: new Date().toISOString(),
+                });
+              }
+            } else if (isLoopActive(state?.loop) && state?.loop) {
+              const loop = state.loop;
+              if (loop.mode === 'fixed' && loop.intervalSeconds) {
+                const nextWakeAt = new Date(
+                  Date.now() + loop.intervalSeconds * 1000,
+                ).toISOString();
+                const next = { ...loop, nextWakeAt };
+                await setThreadLoop(threadId, next);
+                rescheduleLoopFromState(threadId, next);
+              } else if (loop.mode === 'dynamic' && !loop.nextWakeAt && !loop.stopRequested) {
+                // Default dynamic delay if agent forgot to schedule.
+                const nextWakeAt = new Date(Date.now() + 600_000).toISOString();
+                const next = { ...loop, nextWakeAt };
+                await setThreadLoop(threadId, next);
+                rescheduleLoopFromState(threadId, next);
+              }
+            }
+          } catch (err) {
+            app.log.warn({ err, threadId }, 'goal/loop onFinish failed');
+          }
+        })();
       },
       execute: async ({ writer }) => {
         const streamRepair = createUiStreamRepairState();
@@ -571,6 +801,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       threadId,
       activeStreamId: body.activeStreamId,
     });
+    if (result.stopped) {
+      markThreadChatActivity(threadId, 'interrupted');
+    }
     // Cascade: stop parent stream also kills in-flight subagents for this thread
     // (Claude Code parent abort → child abortController).
     const cancelled = await cancelThreadSubagentTasks(threadId, deps.queue).catch((err) => {

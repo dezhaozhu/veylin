@@ -1,5 +1,5 @@
 /**
- * Remote MCP servers are configured per-tenant via the UI / workspace_config tool.
+ * Remote MCP servers are configured via ~/.veylin/mcp.json (and Settings UI).
  * Bundled stdio servers have been removed.
  */
 export interface StdioServerConfig {

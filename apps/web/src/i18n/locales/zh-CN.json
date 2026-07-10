@@ -1,10 +1,22 @@
 {
   "panels": {
     "empty": "点击上方 + 新建一个面板",
-    "table": { "label": "表格", "desc": "可编辑的多工作表数据表格" },
-    "web": { "label": "网页", "desc": "内嵌浏览器，访问内网页面和工具" },
-    "rag": { "label": "知识库", "desc": "本地文档检索、引用追踪和知识图谱" },
-    "workflow": { "label": "工作流", "desc": "可视化工作流编排" }
+    "table": {
+      "label": "表格",
+      "desc": "可编辑的多工作表数据表格"
+    },
+    "web": {
+      "label": "网页",
+      "desc": "内嵌浏览器，访问内网页面和工具"
+    },
+    "rag": {
+      "label": "知识库",
+      "desc": "本地文档检索、引用追踪和知识图谱"
+    },
+    "workflow": {
+      "label": "工作流",
+      "desc": "可视化工作流编排"
+    }
   },
   "subagent": {
     "dispatching": "正在派发 {{label}}…",
@@ -84,10 +96,16 @@
     "browserDesc": "附加右侧面板中已打开的网页",
     "filesFolders": "文件和文件夹",
     "filesFoldersDesc": "从本机选择文件附加到对话",
+    "file": "文件",
+    "fileDesc": "附加图片、PDF 或文本文件",
     "image": "图片",
     "imageDesc": "从本机选择图片附加",
     "document": "文档",
     "documentDesc": "附加 PDF、表格或文本文件",
+    "searchPlaceholder": "添加上下文、工具…",
+    "noMcpServers": "暂无 MCP 服务",
+    "openMcpSettings": "打开 MCP 设置",
+    "searchMcp": "搜索 MCP 服务…",
     "mcp": "MCP",
     "mcpDesc": "为本轮对话启用或关闭工具服务",
     "mcpToggle": "切换 {{name}}",
@@ -116,9 +134,25 @@
     "planDesc": "只读规划模式，先分析再改动",
     "exitPlan": "退出计划",
     "exitPlanDesc": "返回正常模式并允许编辑",
+    "goal": "目标",
+    "goalDesc": "点选后在输入框写完成条件并发送，自动续跑直到达成",
+    "exitGoal": "清除目标",
+    "goalPlaceholder": "例如：所有测试通过且 lint 干净",
+    "goalStart": "开始目标",
+    "goalFailed": "无法设置目标",
+    "loop": "循环",
+    "loopDesc": "点选后输入循环任务；模型会判断条件是否齐全，不足则反问，齐全后再开始",
+    "stopLoop": "停止循环",
+    "loopIntervalPlaceholder": "间隔（如 5m，可留空为动态）",
+    "loopPromptPlaceholder": "每次循环要执行的提示",
+    "loopPromptRequired": "请填写循环提示",
+    "loopStart": "开始循环",
+    "loopFailed": "无法启动循环",
     "compact": "压缩上下文",
     "compactDesc": "总结当前对话以释放上下文空间",
     "compacting": "压缩中…",
+    "compactDone": "已压缩上下文：{{before}} → {{after}} 条消息",
+    "compactFailed": "压缩失败：{{error}}",
     "showMore": "显示另外 {{count}} 项",
     "noMatches": "没有匹配的技能或命令",
     "removeSkill": "移除技能"
@@ -236,7 +270,13 @@
     "navTitle": "设置",
     "general": {
       "nav": "通用",
-      "title": "通用"
+      "title": "通用",
+      "workspaceTitle": "工作区",
+      "workspaceHint": "用于解析项目级 Hooks。若设置了工作区环境变量，将优先生效。",
+      "workspaceRoot": "工作区根目录",
+      "importClaudeHooks": "从 Claude Code 设置导入 Hooks（~/.claude/settings.json）",
+      "saving": "保存中…",
+      "saved": "已保存"
     },
     "language": {
       "title": "语言",
@@ -279,15 +319,16 @@
     "rules": "规则",
     "mcp": "MCP",
     "plugins": "插件",
+    "hooks": "Hooks",
     "soon": "即将推出",
     "skillsPage": {
       "title": "技能",
-      "description": "启用内置技能，或创建自定义知识块，让 Agent 在对话中按需加载。",
-      "addCustom": "添加自定义技能",
+      "description": "已安装技能统一列表。用户与市场安装的可删除；内置显示删除但不可点。",
+      "addCustom": "添加技能",
       "searchPlaceholder": "搜索技能…",
       "loading": "正在加载技能…",
       "editTitle": "编辑技能",
-      "addTitle": "添加自定义技能",
+      "addTitle": "添加技能",
       "editorDescription": "技能为 Agent 提供可在相关场景下加载的专用知识。",
       "addSkill": "添加技能",
       "namePlaceholder": "例如：schedule-risk-review",
@@ -296,17 +337,88 @@
       "contentHint": "技能激活时注入的 Markdown 正文。",
       "contentPlaceholder": "## 什么时候使用\n...",
       "builtIn": "内置",
-      "custom": "自定义",
+      "filesystem": "用户",
+      "filesystemEmpty": "还没有用户技能。",
+      "custom": "用户",
       "source": {
         "bundled": "内置",
-        "custom": "自定义"
+        "user": "用户",
+        "plugin": "插件"
       },
       "triggers": "触发条件：{{triggers}}",
       "toggle": "启用/停用 {{name}}",
       "confirmDelete": "删除这个技能？",
       "deleteTitle": "删除技能",
       "saveFailed": "保存技能失败：{{error}}",
-      "loadFailed": "加载技能失败。"
+      "loadFailed": "加载技能失败。",
+      "user": "用户",
+      "userEmpty": "还没有用户技能。点「添加技能」创建后，行菜单会出现编辑/删除。",
+      "plugin": "插件",
+      "installed": "已安装",
+      "installedEmpty": "还没有技能。可点「添加技能」，或从市场安装。",
+      "marketplace": "市场",
+      "marketplaceEmpty": "市场暂无条目。",
+      "installFromMarket": "安装",
+      "otherInstalled": "内置与插件",
+      "otherInstalledEmpty": "未加载内置或插件技能。",
+      "deletePluginTitle": "卸载插件",
+      "confirmDeletePlugin": "卸载插件「{{name}}」？其技能与 Hooks 将一并移除。",
+      "pluginNotFound": "未找到对应插件安装记录"
+    },
+    "hooksPage": {
+      "title": "Hooks",
+      "description": "已加载 Hook 统一列表。用户 Hook 可编辑/删除；插件 Hook 可停用或删除（将卸载该插件）。",
+      "loading": "正在加载 Hooks…",
+      "reload": "重新加载",
+      "searchPlaceholder": "搜索 Hooks…",
+      "loaded": "已加载",
+      "recentLogs": "最近执行",
+      "dormant": "未接线",
+      "addHook": "添加 Hook",
+      "addTitle": "添加 Hook",
+      "editTitle": "编辑 Hook",
+      "editorDescription": "定义在会话生命周期事件触发时运行的处理器。",
+      "event": "事件",
+      "matcher": "匹配器",
+      "matcherHint": "可选。工具名或模式；留空表示全部。",
+      "handlerType": "处理器类型",
+      "confirmDelete": "删除这个用户 Hook？",
+      "deleteTitle": "删除 Hook",
+      "userHooks": "用户",
+      "userHooksEmpty": "还没有用户 Hook。点「添加 Hook」创建一条后，菜单里会出现编辑/删除。",
+      "otherHooks": "插件及其它",
+      "otherHooksEmpty": "未加载插件或其它来源的 Hook。",
+      "loadedEmpty": "还没有 Hook。可点「添加 Hook」，或从市场安装。",
+      "marketplace": "市场",
+      "marketplaceEmpty": "市场暂无条目。",
+      "installFromMarket": "安装",
+      "deletePluginTitle": "卸载插件",
+      "confirmDeletePlugin": "卸载插件「{{name}}」？其 Hooks 与技能将一并移除。",
+      "pluginNotFound": "未找到对应插件安装记录",
+      "installSuccess": "已安装「{{name}}」。",
+      "alreadyInstalled": "「{{name}}」已安装。"
+    },
+    "pluginsPage": {
+      "title": "插件",
+      "description": "安装打包了技能、Hooks 与 MCP 定义的插件。",
+      "loading": "正在加载插件…",
+      "install": "添加插件",
+      "installTitle": "添加插件",
+      "installDescription": "从本地路径或 Git 仓库安装。",
+      "installFailed": "安装失败",
+      "sourceType": "来源",
+      "fromPath": "本地路径",
+      "fromGit": "Git 地址",
+      "path": "路径",
+      "gitUrl": "Git 地址",
+      "installed": "已安装",
+      "marketplace": "市场",
+      "addPlugin": "添加插件",
+      "deleteTitle": "删除插件",
+      "confirmDelete": "卸载「{{name}}」？将删除安装记录并移除本地副本。",
+      "installedEmpty": "还没有已安装的插件。",
+      "marketplaceEmpty": "市场暂无条目。",
+      "installFromMarket": "添加"
     },
     "rulesPage": {
       "title": "规则",
@@ -337,7 +449,7 @@
     "mcpPage": {
       "title": "模型上下文协议（MCP）",
       "description": "添加 MCP 服务，扩展 Agent 能做的事情。已安装服务可随时启用或停用，无需卸载。",
-      "addCustom": "添加自定义服务",
+      "addCustom": "添加 MCP",
       "searchPlaceholder": "搜索 MCP 服务…",
       "filterAll": "全部",
       "connected": "已连接",
@@ -375,7 +487,8 @@
         "notion": "将报告和结构化笔记发布到团队共享工作区。",
         "tavily": "为需要最新外部信息的 Agent 提供网页搜索和研究能力。",
         "supabase": "查询项目数据，并对数据库执行运维检查。"
-      }
+      },
+      "addMcp": "添加 MCP"
     }
   },
   "automate": {
@@ -506,27 +619,66 @@
     "postRetryMsg": "{{reason}} · {{seconds}} 秒后重试"
   },
   "chatError": {
-    "rateLimited": { "title": "请求过于频繁", "detail": "请求太多，请稍候再试。" },
-    "serverError": { "title": "服务器错误", "detail": "服务器出现问题，请稍后重试。" },
-    "serviceBusy": { "title": "服务繁忙", "detail": "服务暂时不可用，请稍后重试。" },
+    "rateLimited": {
+      "title": "请求过于频繁",
+      "detail": "请求太多，请稍候再试。"
+    },
+    "serverError": {
+      "title": "服务器错误",
+      "detail": "服务器出现问题，请稍后重试。"
+    },
+    "serviceBusy": {
+      "title": "服务繁忙",
+      "detail": "服务暂时不可用，请稍后重试。"
+    },
     "backendUnavailable": {
       "title": "后端不可用",
       "detail": "后端服务不可用 (HTTP {{status}})，请确认 server 已在 :8787 运行"
     },
-    "gatewayTimeout": { "title": "网关超时", "detail": "请求耗时过长，请重试。" },
-    "requestFailed": { "title": "请求失败" },
+    "gatewayTimeout": {
+      "title": "网关超时",
+      "detail": "请求耗时过长，请重试。"
+    },
+    "requestFailed": {
+      "title": "请求失败"
+    },
     "requestFailedHttp": "请求失败 (HTTP {{status}})",
-    "stopped": { "title": "生成已停止", "detail": "回复已被停止。" },
-    "livenessTimeout": { "title": "连接超时", "detail": "服务器无响应，请检查网络后重试。" },
-    "reconnectFailed": { "title": "重连失败", "detail": "无法恢复连接，请重试。" },
+    "stopped": {
+      "title": "生成已停止",
+      "detail": "回复已被停止。"
+    },
+    "livenessTimeout": {
+      "title": "连接超时",
+      "detail": "服务器无响应，请检查网络后重试。"
+    },
+    "reconnectFailed": {
+      "title": "重连失败",
+      "detail": "无法恢复连接，请重试。"
+    },
     "reconnectExhausted": "重连时间已用尽（10 分钟），请稍后重试。",
-    "network": { "title": "网络异常", "detail": "无法连接本地后端，请确认服务已在运行。" },
-    "busyRetry": { "title": "服务繁忙", "detail": "请稍后重试。" },
-    "unauthorized": { "title": "未授权", "detail": "会话无效或已过期，请重新登录。" },
-    "modelNotConfigured": { "title": "模型未配置", "detail": "请先打开「设置 -> Models」并配置你自己的 API Key。" },
-    "unknown": { "detail": "出现问题，请重试。" },
+    "network": {
+      "title": "网络异常",
+      "detail": "无法连接本地后端，请确认服务已在运行。"
+    },
+    "busyRetry": {
+      "title": "服务繁忙",
+      "detail": "请稍后重试。"
+    },
+    "unauthorized": {
+      "title": "未授权",
+      "detail": "会话无效或已过期，请重新登录。"
+    },
+    "modelNotConfigured": {
+      "title": "模型未配置",
+      "detail": "请先打开「设置 -> Models」并配置你自己的 API Key。"
+    },
+    "unknown": {
+      "detail": "出现问题，请重试。"
+    },
     "retryLater": "请稍后重试。",
-    "connectFailed": { "title": "连接失败" },
+    "connectFailed": {
+      "title": "连接失败"
+    },
     "providerClosed": {
       "title": "模型 API 连接中断",
       "detail": "上游模型关闭了连接。系统会自动重试汇总；你也可以手动发送消息请求汇总。"
@@ -552,6 +704,7 @@
     "deleteSheetFailed": "删除工作表失败",
     "createSheetFailed": "创建工作表失败",
     "renameSheetFailed": "重命名工作表失败",
+    "sheetNameDuplicate": "工作表名称已存在，名称不能重复",
     "newSheetName": "新工作表名称",
     "renameSheet": "重命名工作表",
     "confirmDeleteSheet": "删除该工作表？此操作不可恢复。",
@@ -603,8 +756,17 @@
     "upload": "上传",
     "searchPlaceholder": "搜索知识库，例如：文档中的核心概念有哪些？",
     "search": "搜索",
-    "stat": { "documents": "文档", "entities": "实体", "edges": "关系" },
-    "tab": { "search": "检索", "documents": "文档", "graph": "图谱", "citations": "引用" },
+    "stat": {
+      "documents": "文档",
+      "entities": "实体",
+      "edges": "关系"
+    },
+    "tab": {
+      "search": "检索",
+      "documents": "文档",
+      "graph": "图谱",
+      "citations": "引用"
+    },
     "searchEmptyTitle": "直接检索本地知识库",
     "searchEmptyDesc": "上传文档后，可在上方输入问题；检索会同时使用全文和语义相似度。",
     "foundSnippets": "找到 {{count}} 条相关片段",
@@ -646,9 +808,9 @@
       "embeddingDesc": "从 Hugging Face 官方仓库下载，用于文档向量化与语义检索；未安装时仅支持全文检索。",
       "rerankerTitle": "检索精排（Cross-Encoder）",
       "rerankerDesc": "从 Hugging Face 官方仓库下载，对检索结果二次排序；不安装不影响基础检索。",
-    "enableReranker": "启用精排",
-    "enabledHint": "精排已启用，检索与对话中的 knowledge_search 会使用精排结果。",
-    "disabledHint": "精排已关闭，仍保留模型文件，需要时可重新开启。",
+      "enableReranker": "启用精排",
+      "enabledHint": "精排已启用，检索与对话中的 knowledge_search 会使用精排结果。",
+      "disabledHint": "精排已关闭，仍保留模型文件，需要时可重新开启。",
       "hfEndpoint": "下载源：{{endpoint}}"
     }
   },
@@ -669,7 +831,37 @@
     "nodes": "节点",
     "saveAsNew": "保存为新流程",
     "save": "保存",
-    "run": "运行",
+    "run": {
+      "history": "运行历史",
+      "status": {
+        "queued": "排队中",
+        "running": "运行中",
+        "done": "已完成",
+        "failed": "失败"
+      },
+      "tab": {
+        "result": "最终结果",
+        "tracing": "追踪",
+        "variables": "变量"
+      },
+      "selectRun": "选择一次运行查看详情",
+      "failed": "流程执行失败",
+      "inProgress": "流程仍在运行，请稍候…",
+      "inProgressStep": "正在执行：{{step}}",
+      "finalText": "输出文本",
+      "finalOutput": "最终输出",
+      "rawJson": "原始 JSON",
+      "noFinalOutput": "暂无最终输出（请确认已连接「输出」节点并完成运行）",
+      "nodeOutput": "节点输出",
+      "pickStep": "点击左侧步骤查看该节点输出",
+      "noVariables": "本次运行尚无节点输出",
+      "noOutput": "无输出数据",
+      "emptyOutput": "（空）",
+      "copy": "复制",
+      "lastRun": "上次运行",
+      "notExecuted": "该节点在本次运行中尚未执行",
+      "insertVar": "插入上游变量"
+    },
     "runLogs": "运行日志",
     "label": "标签",
     "noRuns": "暂无运行记录",
@@ -749,37 +941,6 @@
       "errorHandling": "错误处理",
       "errorAbort": "出错则终止流程",
       "errorBranch": "走 error 分支（红色句柄）"
-    },
-    "run": {
-      "history": "运行历史",
-      "status": {
-        "queued": "排队中",
-        "running": "运行中",
-        "done": "已完成",
-        "failed": "失败"
-      },
-      "tab": {
-        "result": "最终结果",
-        "tracing": "追踪",
-        "variables": "变量"
-      },
-      "selectRun": "选择一次运行查看详情",
-      "failed": "流程执行失败",
-      "inProgress": "流程仍在运行，请稍候…",
-      "inProgressStep": "正在执行：{{step}}",
-      "finalText": "输出文本",
-      "finalOutput": "最终输出",
-      "rawJson": "原始 JSON",
-      "noFinalOutput": "暂无最终输出（请确认已连接「输出」节点并完成运行）",
-      "nodeOutput": "节点输出",
-      "pickStep": "点击左侧步骤查看该节点输出",
-      "noVariables": "本次运行尚无节点输出",
-      "noOutput": "无输出数据",
-      "emptyOutput": "（空）",
-      "copy": "复制",
-      "lastRun": "上次运行",
-      "notExecuted": "该节点在本次运行中尚未执行",
-      "insertVar": "插入上游变量"
     }
   },
   "splash": {

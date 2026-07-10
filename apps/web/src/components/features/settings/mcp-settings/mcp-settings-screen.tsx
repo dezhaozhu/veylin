@@ -313,7 +313,7 @@ export function McpSettingsScreen() {
               setDialogOpen(true);
             }}
           >
-            {t('customize.mcpPage.addCustom')}
+            {t('customize.mcpPage.addMcp')}
           </PrimaryActionButton>
         }
       />

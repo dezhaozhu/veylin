@@ -420,7 +420,8 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
   });
 
   app.post('/api/compact', async (req) => {
-    const query = req.query as { threadId?: string; model?: string };
+    const query = req.query as { threadId?: string; model?: string; instructions?: string };
+    const body = (req.body ?? {}) as { instructions?: string };
     const { threadId } = query;
     if (!threadId) return { ok: false, error: 'threadId required' };
     try {
@@ -439,6 +440,10 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
 
       await stopChatStream({ threadId }).catch(() => undefined);
 
+      const { getHookBus } = await import('../hooks-service.js');
+      const hookBus = getHookBus(ctx.tenantId);
+      await hookBus.emit('PreCompact', { trigger: 'manual', thread_id: threadId }, { threadId });
+
       const recalled = await deps.runtime.memory.recall({
         threadId,
         resourceId: threadRow.resourceId,
@@ -446,8 +451,10 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
       });
       const stored = recalled?.messages ?? [];
       const modelKey = (query.model ?? 'default') as ModelKey;
+      const instructions = (body.instructions ?? query.instructions)?.trim() || undefined;
       const compressor = new ContextCompression({
-        summarizer: buildSummarizer(modelKey),
+        summarizer: buildSummarizer(modelKey, { focusInstructions: instructions }),
+        force: true,
       });
       const compacted = await compressor.processInput({ messages: stored });
       const uiMessages = mastraMessagesToUi(
@@ -462,6 +469,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
       });
 
       runPostCompactCleanup();
+      await hookBus.emit('PostCompact', { trigger: 'manual', thread_id: threadId }, { threadId });
 
       return {
         ok: true,

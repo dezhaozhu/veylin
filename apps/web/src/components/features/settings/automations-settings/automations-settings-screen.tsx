@@ -758,7 +758,7 @@ export function AutomationsSettingsScreen() {
         </SettingsConnectedList>
       </section>
 
-      <section className="border-border border-t pt-6">
+      <section className="mb-8">
         <SectionHeading title={t('automate.webhooks')} count={webhooks.length} />
         <div className="mb-3 flex flex-wrap gap-2">
           <Button type="button" size="sm" variant="outline" onClick={openGithubHookDialog}>

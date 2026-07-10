@@ -26,14 +26,15 @@ export const ComposerMenuFlyoutItem: FC<{
   label: string;
   active?: boolean;
   onOpen?: () => void;
+  onClose?: () => void;
   onClick?: () => void;
   children?: ReactNode;
-}> = ({ icon, label, active, onOpen, onClick, children }) => {
+}> = ({ icon, label, active, onOpen, onClose, onClick, children }) => {
   return (
     <div
       className="relative"
       onMouseEnter={onOpen}
-      onFocus={onOpen}
+      onMouseLeave={onClose}
     >
       <button
         type="button"
@@ -64,12 +65,14 @@ export function ComposerMenuRow({
   pressed,
   title,
   onClick,
+  onMouseEnter,
 }: {
   icon: ReactNode;
   label: string;
   pressed?: boolean;
   title?: string;
   onClick?: () => void;
+  onMouseEnter?: () => void;
 }) {
   return (
     <button
@@ -80,6 +83,7 @@ export function ComposerMenuRow({
         pressed && 'bg-accent',
       )}
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
     >
       <span className="text-muted-foreground flex size-4 shrink-0 items-center justify-center">
         {icon}

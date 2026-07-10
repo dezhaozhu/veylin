@@ -1,5 +1,6 @@
 import { AutomationsSettingsScreen } from '@/components/features/settings/automations-settings/automations-settings-screen';
 import { useWorkspaceCollapsedInset } from '@/components/features/workspace-view-frame';
+import { WorkspaceMain } from '@/components/features/workspace-main';
 import { startWindowDrag } from '@/lib/window-drag';
 
 export function AutomateWorkspace() {
@@ -15,9 +16,9 @@ export function AutomateWorkspace() {
           onMouseDown={startWindowDrag}
         />
       ) : null}
-      <main className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+      <WorkspaceMain>
         <AutomationsSettingsScreen />
-      </main>
+      </WorkspaceMain>
     </div>
   );
 }

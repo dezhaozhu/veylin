@@ -67,7 +67,7 @@ import {
   getAskUserSessionForThread,
   subscribeAskUserSession,
 } from "@/lib/ask-user-question-session";
-import { usePlanModeBridge } from "@/lib/use-composer-settings";
+import { usePlanModeBridge, useGoalLoopBridge } from "@/lib/use-composer-settings";
 import { dispatchOverlayDismiss } from "@/lib/overlay-dismiss";
 import { hideWebView, isTauri } from "@/lib/tauri-web-view";
 import { isTaskNotificationText } from "@veylin/shared";
@@ -149,6 +149,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; hasNoMessages: boolean }> = ({
     hasNoMessages &&
     (threadLoading || Boolean(historyError));
   usePlanModeBridge();
+  useGoalLoopBridge();
   const askOpen = useSyncExternalStore(
     subscribeAskUserSession,
     () => getAskUserSessionForThread(threadId) != null,

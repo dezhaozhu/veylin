@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 /**
  * Dev-only: keep apps/server running on :8787 with tsx, restart on crash, log to data/logs/.
- * Spawned detached by ensure-server.mjs during `npm run dev` (VEYLIN_SKIP_SIDECAR=1).
+ * Spawned detached by ensure-server.mjs during desktop/web dev (VEYLIN_SKIP_SIDECAR=1).
  */
 import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  removePidFile,
+  watchdogPidPath,
+  writePidFile,
+} from './server-dev-singleton.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const serverRoot = resolve(repoRoot, 'apps/server');
@@ -23,8 +28,10 @@ const dataDir = resolveDevDataDir();
 const catalogPath = resolve(repoRoot, 'data/models.local.json');
 const logDir = resolve(dataDir, 'logs');
 const logPath = resolve(logDir, 'server-dev.log');
+const pidFile = watchdogPidPath(dataDir);
 
 mkdirSync(logDir, { recursive: true });
+writePidFile(pidFile, process.pid);
 
 const serverEnv = {
   ...process.env,
@@ -33,6 +40,7 @@ const serverEnv = {
   VEYLIN_DESKTOP_AUTH: '1',
   VEYLIN_REQUIRE_USER_MODEL_SETTINGS: '1',
   VEYLIN_MODEL_CATALOG_PATH: catalogPath,
+  VEYLIN_LAZY_MCP_BOOT: process.env.VEYLIN_LAZY_MCP_BOOT ?? '1',
   PORT: port,
 };
 
@@ -59,9 +67,9 @@ async function probe() {
   }
 }
 
-function tsxCommand(repoRoot) {
+function tsxCommand(repoRootPath) {
   const ext = process.platform === 'win32' ? '.cmd' : '';
-  return resolve(repoRoot, `node_modules/.bin/tsx${ext}`);
+  return resolve(repoRootPath, `node_modules/.bin/tsx${ext}`);
 }
 
 function spawnServer() {
@@ -94,12 +102,14 @@ function shutdown() {
   if (child && !child.killed) {
     child.kill('SIGTERM');
   }
+  removePidFile(pidFile);
   process.exit(0);
 }
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
+logLine(`watchdog pid=${process.pid} dataDir=${dataDir} pidFile=${pidFile}`);
 spawnServer();
 
 async function watchHealth() {

@@ -1,0 +1,13 @@
+{
+  "plugins": [
+    {
+      "name": "hello-veylin",
+      "description": "Example plugin with a sample skill and a Stop hook.",
+      "version": "0.1.0",
+      "source": {
+        "type": "path",
+        "url": "examples/marketplace/hello-veylin"
+      }
+    }
+  ]
+}

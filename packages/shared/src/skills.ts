@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const skillSourceSchema = z.enum(['bundled', 'custom']);
+export const skillSourceSchema = z.enum(['bundled', 'user', 'plugin']);
 export type SkillSource = z.infer<typeof skillSourceSchema>;
 
 export const skillListItemSchema = z.object({
@@ -16,6 +16,10 @@ export const skillListItemSchema = z.object({
   userInvocable: z.boolean().default(true),
   content: z.string().optional(),
   id: z.string().optional(),
+  /** Absolute path to SKILL.md when loaded from the filesystem. */
+  path: z.string().optional(),
+  /** Plugin id when source is `plugin` (catalog name may be `pluginId:skillName`). */
+  pluginId: z.string().optional(),
 });
 
 export type SkillListItem = z.infer<typeof skillListItemSchema>;

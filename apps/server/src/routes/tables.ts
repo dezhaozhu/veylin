@@ -7,6 +7,7 @@ import {
   deleteTableRows,
   deleteTableSheet,
   importTableSheet,
+  isTableSheetNameTaken,
   listTableColumns,
   listTableRows,
   listTableSheets,
@@ -62,11 +63,19 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   app.post('/api/table/sheets', async (req, reply) => {
     await deps.resolveContext(req.headers);
     const { name } = (req.body ?? {}) as { name?: string };
-    if (!name?.trim()) {
+    const trimmed = name?.trim();
+    if (!trimmed) {
       reply.code(400);
       return { ok: false, message: 'name is required' };
     }
-    const sheet = createTableSheet(name);
+    if (isTableSheetNameTaken(trimmed)) {
+      reply.code(409);
+      return {
+        ok: false,
+        message: `Sheet name "${trimmed}" already exists. Sheet names must be unique.`,
+      };
+    }
+    const sheet = createTableSheet(trimmed);
     if (!sheet) {
       reply.code(400);
       return { ok: false, message: 'Failed to create sheet' };
@@ -91,11 +100,19 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     await deps.resolveContext(req.headers);
     const { sheetId } = req.params as { sheetId: string };
     const { name } = (req.body ?? {}) as { name?: string };
-    if (!name?.trim()) {
+    const trimmed = name?.trim();
+    if (!trimmed) {
       reply.code(400);
       return { ok: false, message: 'name is required' };
     }
-    const sheet = renameTableSheet(sheetId, name);
+    if (isTableSheetNameTaken(trimmed, sheetId)) {
+      reply.code(409);
+      return {
+        ok: false,
+        message: `Sheet name "${trimmed}" already exists. Sheet names must be unique.`,
+      };
+    }
+    const sheet = renameTableSheet(sheetId, trimmed);
     if (!sheet) {
       reply.code(400);
       return { ok: false, message: 'Failed to rename sheet' };

@@ -3,8 +3,8 @@ import { ChevronRightIcon, FolderIcon, GlobeIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type FC } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAui } from '@assistant-ui/store';
-import { FILE_ATTACHMENT_ACCEPT } from '@/lib/file-attachment-adapter';
 import { addComposerFiles } from '@/lib/add-composer-files';
+import { pickComposerFiles } from '@/lib/pick-composer-files';
 import { useAttachedBrowserTab } from '@/lib/use-composer-settings';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import {
@@ -124,22 +124,14 @@ export const ComposerMentionMenu: FC<{
 
   const pickFiles = useCallback(() => {
     if (!addAttachment) return;
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = FILE_ATTACHMENT_ACCEPT;
-    input.multiple = true;
-    input.hidden = true;
-    document.body.appendChild(input);
-    input.onchange = () => {
-      const files = input.files;
-      if (files && files.length > 0) {
-        void addComposerFiles((file) => addAttachment(file), files);
-      }
-      document.body.removeChild(input);
-    };
-    input.click();
     clearMentionFromInput();
     onClose();
+    void (async () => {
+      const files = await pickComposerFiles({ multiple: true });
+      if (files.length > 0) {
+        await addComposerFiles((file) => addAttachment(file), files);
+      }
+    })();
   }, [addAttachment, clearMentionFromInput, onClose]);
 
   const pickWebTab = useCallback(

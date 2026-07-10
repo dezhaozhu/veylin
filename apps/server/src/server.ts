@@ -39,7 +39,7 @@ import { refreshAgentPackages, isAgentHotReloadEnabled } from './agent-packages-
 import { createMcpClient, listActiveMcpServerNames, seedMcpServersFromEnvIfMissing } from './mcp-store';
 import { listAllCronAutomations, sweepInterruptedAutomationRuns } from './automation-store';
 import { runAutomationJob } from './automation-worker';
-import { buildWorkspaceConfigTool } from './workspace-config-tool';
+import { buildConfigFsTools } from './veylin-config-fs-tools';
 import { listAllCronWorkflows, sweepInterruptedWorkflowRuns } from './workflow-store';
 import { runWorkflowJob } from './workflow-runner';
 import { ensureEmbeddingModelOnStartup } from './embedding-service';
@@ -47,6 +47,7 @@ import { buildWorkflowTools } from './workflow-tools';
 import { applyTenantModelSettings, seedModelSettingsFromEnvIfEmpty } from './model-settings-store';
 import { buildKnowledgeSearchTool, sweepInterruptedRagIngests } from './rag-store';
 import { RAG_UPLOAD_MAX_BYTES } from './rag-limits';
+import { registerPluginProviders } from './plugin-store';
 import {
   connectDb,
   closeDb,
@@ -145,6 +146,7 @@ async function main() {
   await initTableStore();
   await ensureDevTenant();
   await seedModelSettingsFromEnvIfEmpty(DEV_TENANT_ID);
+  registerPluginProviders();
 
   console.info('[veylin] VEYLIN_DATA_DIR=%s', DATA_DIR);
   ensureEmbeddingModelOnStartup();
@@ -229,9 +231,6 @@ async function main() {
     libsqlUrl: mastraLibsqlUrl(DATA_DIR),
     agentsDir: AGENTS_DIR,
   });
-  if (isDesktopAuth) {
-    await pruneDesktopThreadClutter(DEV_TENANT_ID, 'dev-user', runtime.memory);
-  }
   app.log.info(
     {
       agentsDir: AGENTS_DIR,
@@ -309,9 +308,7 @@ async function main() {
   }
 
   const tableTools = buildTableTools();
-  const workspaceConfig = buildWorkspaceConfigTool({
-    runtime,
-    queue,
+  const configFsTools = buildConfigFsTools({
     onMcpRebuild: rebuildMcp,
   });
   const workflowTools = buildWorkflowTools(queue);
@@ -320,7 +317,7 @@ async function main() {
     agent: agentTaskTools,
     table: tableTools,
     knowledge: { knowledge_search: buildKnowledgeSearchTool() },
-    config: { workspace_config: workspaceConfig },
+    config: configFsTools,
     workflow: workflowTools,
   };
 
@@ -393,6 +390,12 @@ async function main() {
   await listenWithRetry(app, PORT, LISTEN_HOST);
   startupCheckpoint('listen_ready');
   app.log.info(`veylin server on ${LISTEN_HOST}:${PORT}`);
+
+  if (isDesktopAuth) {
+    void pruneDesktopThreadClutter(DEV_TENANT_ID, 'dev-user', runtime.memory).catch((err) => {
+      app.log.warn({ err }, 'desktop thread clutter prune failed');
+    });
+  }
 
   if (isLazyMcpBoot()) {
     void rebuildMcp(DEV_TENANT_ID)

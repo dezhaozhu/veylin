@@ -309,6 +309,25 @@ export async function runSubagentGenerate(options: {
   const agent = options.runtime.getAgent(options.agentId);
   if (!agent) throw new Error(`Agent not registered: ${options.agentId}`);
 
+  const { getHookBus } = await import('./hooks-service.js');
+  const hookBus = getHookBus(options.tenantId);
+  const agentType = options.preset?.key ?? options.agentId;
+  await hookBus.emit(
+    'SubagentStart',
+    {
+      agent_type: agentType,
+      subagent_type: agentType,
+      thread_id: options.threadId,
+      parent_thread_id: options.parentThreadId,
+    },
+    { threadId: options.parentThreadId ?? options.threadId },
+  );
+  await hookBus.emit(
+    'TaskCreated',
+    { task_id: options.taskId, agent_type: agentType },
+    { threadId: options.parentThreadId ?? options.threadId },
+  );
+
   const subCtx = new RequestContext();
   subCtx.set('tenantId', options.tenantId);
   subCtx.set('userId', options.resourceId);
@@ -381,6 +400,22 @@ export async function runSubagentGenerate(options: {
       currentActivity: null,
     });
   }
+
+  await hookBus.emit(
+    'SubagentStop',
+    {
+      agent_type: agentType,
+      subagent_type: agentType,
+      thread_id: options.threadId,
+      task_id: taskId,
+    },
+    { threadId: options.parentThreadId ?? options.threadId },
+  );
+  await hookBus.emit(
+    'TaskCompleted',
+    { task_id: taskId, agent_type: agentType },
+    { threadId: options.parentThreadId ?? options.threadId },
+  );
 
   return {
     text: result?.text ?? '(no output)',

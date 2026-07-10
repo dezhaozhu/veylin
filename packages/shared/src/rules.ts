@@ -4,8 +4,8 @@ export const ruleTriggerSchema = z.enum(['always', 'keyword']);
 export type RuleTrigger = z.infer<typeof ruleTriggerSchema>;
 
 export const ruleSchema = z.object({
-  id: z.string().uuid(),
-  tenantId: z.string().uuid(),
+  id: z.string().min(1),
+  tenantId: z.string().min(1),
   userId: z.string().nullable().optional(),
   agentId: z.string().nullable().optional(),
   name: z.string(),

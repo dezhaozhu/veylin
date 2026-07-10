@@ -16,5 +16,7 @@ export * from './working-memory';
 export * from './constants';
 export * from './model';
 export * from './plan-mode';
+export * from './goal-loop';
 export * from './thread';
 export * from './interrupted-turn';
+export * from './plugins';

@@ -75,6 +75,8 @@ export interface ThreadStateRow {
   activatedSkills: Record<string, string>;
   workingMemory?: string | null;
   title?: string | null;
+  goal?: unknown | null;
+  loop?: unknown | null;
   updatedAt?: string;
 }
 
@@ -82,11 +84,14 @@ export interface TenantSettingsRow {
   tenantId: string;
   disabledSkills: string[];
   disabledMcpServers: string[];
+  disabledHooks: string[];
   modelSettings?: {
     modelName?: string;
     requestUrl?: string;
     apiKey?: string;
   };
+  workspaceRoot?: string | null;
+  importClaudeHooks?: boolean;
   updatedAt?: string;
 }
 

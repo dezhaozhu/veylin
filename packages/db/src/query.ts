@@ -69,12 +69,24 @@ export function unwrapRecord<T extends Record<string, unknown>>(row: T): T {
 
 export function normalizeId(id: unknown): string {
   if (typeof id === 'string') {
-    const raw = id.includes(':') ? (id.split(':').pop() ?? id) : id;
-    return raw.startsWith('⟨') && raw.endsWith('⟩') ? raw.slice(1, -1) : raw;
+    // Surreal complex record: table:⟨id:with:colons⟩
+    const bracketed = id.match(/^[^:]+:⟨(.+)⟩$/);
+    if (bracketed?.[1]) return bracketed[1];
+    if (id.startsWith('⟨') && id.endsWith('⟩')) return id.slice(1, -1);
+    // table:simpleId — only strip when the id part itself has no colons
+    const simple = id.match(/^([A-Za-z_][A-Za-z0-9_]*):([^:]+)$/);
+    if (simple?.[2]) return simple[2];
+    // Already-logical ids may contain colons (e.g. plugin:tenant:name)
+    return id;
   }
   if (id && typeof id === 'object' && 'id' in id) {
     const inner = (id as { id?: unknown }).id;
-    return inner != null ? normalizeId(String(inner)) : String(id);
+    if (inner == null) return String(id);
+    // RecordId.id is already the thing key (may contain colons); do not re-split.
+    if (typeof inner === 'string') {
+      return inner.startsWith('⟨') && inner.endsWith('⟩') ? inner.slice(1, -1) : inner;
+    }
+    return normalizeId(inner);
   }
   return String(id);
 }
@@ -103,11 +115,12 @@ export async function upsertById(
   fields: Record<string, unknown>,
 ): Promise<void> {
   const existing = await selectById<Record<string, unknown>>(db, table, id);
+  const content = recordContent({ id, ...fields });
   if (existing) {
     await db.query('UPDATE type::thing($table, $id) MERGE $content', {
       table,
       id,
-      content: fields,
+      content,
     });
     return;
   }

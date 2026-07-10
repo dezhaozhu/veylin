@@ -18,6 +18,10 @@ export interface ChatSettings {
   model: ModelKey;
   agentId: string;
   planMode: boolean;
+  /** Goal mode armed from + menu; next user message becomes the completion condition. */
+  pendingGoal: boolean;
+  /** Loop mode armed from + menu; model analyzes conditions and calls loop_set when ready. */
+  pendingLoop: boolean;
   /** Skill selected from + menu for the next message (UI hint). */
   pendingSkill: string | null;
   /** Character index in composer text where the skill chip is inserted. */
@@ -34,6 +38,8 @@ const DEFAULTS: ChatSettings = {
   model: '',
   agentId: DEFAULT_AGENT_ID,
   planMode: false,
+  pendingGoal: false,
+  pendingLoop: false,
   pendingSkill: null,
   pendingSkillInsertAt: 0,
   attachedBrowserTab: null,

@@ -1,5 +1,6 @@
 import { SearchIcon } from 'lucide-react';
 import type { FC } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ComposerMenuPanel } from '@/components/assistant-ui/composer-menu-flyout';
 import { mcpServerIcon } from '@/lib/mcp-icon';
 import { cn } from '@/lib/utils';
@@ -43,6 +44,7 @@ export const ComposerMcpFlyout: FC<{
   isEnabled: (id: string) => boolean;
   onToggle: (id: string, enabled: boolean) => void;
 }> = ({ servers, query, onQueryChange, isEnabled, onToggle }) => {
+  const { t } = useTranslation();
   const { openCustomize } = useSettingsPanel();
   const q = query.trim().toLowerCase();
   const filtered = q ? servers.filter((s) => s.toLowerCase().includes(q)) : servers;
@@ -55,13 +57,13 @@ export const ComposerMcpFlyout: FC<{
           type="search"
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
-          placeholder="Search MCP servers..."
+          placeholder={t('mention.searchMcp')}
           className="border-input bg-background h-8 w-full rounded-md border pr-2 pl-8 text-xs outline-none"
         />
       </div>
       <div className="max-h-56 overflow-y-auto">
         {filtered.length === 0 && (
-          <div className="text-muted-foreground px-2.5 py-2 text-xs">No MCP servers</div>
+          <div className="text-muted-foreground px-2.5 py-2 text-xs">{t('mention.noMcpServers')}</div>
         )}
         {filtered.map((server) => {
           const icon = mcpServerIcon(server);
@@ -91,7 +93,7 @@ export const ComposerMcpFlyout: FC<{
               <McpToggle
                 checked={on}
                 onChange={(enabled) => onToggle(server, enabled)}
-                label={`Toggle ${server}`}
+                label={t('mention.mcpToggle', { name: server })}
               />
             </div>
           );
@@ -103,7 +105,7 @@ export const ComposerMcpFlyout: FC<{
           className="text-muted-foreground hover:text-foreground w-full px-2.5 py-1.5 text-left text-xs hover:underline"
           onClick={() => openCustomize('mcp')}
         >
-          Open MCP Settings
+          {t('mention.openMcpSettings')}
         </button>
       </div>
     </ComposerMenuPanel>

@@ -1,15 +1,20 @@
 "use client";
 
 import "@assistant-ui/react-markdown/styles/dot.css";
+import "katex/dist/katex.min.css";
 
 import {
   type CodeHeaderProps,
+  escapeCurrencyDollars,
   MarkdownTextPrimitive,
+  normalizeMathDelimiters,
   unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
   useIsMarkdownCodeBlock,
   type SyntaxHighlighterProps,
 } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import { type FC, memo, useEffect, useRef, useState } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
@@ -20,10 +25,20 @@ import { copyToClipboard } from "@/lib/copy-to-clipboard";
 import { remarkInlineCitations } from "@/lib/remark-inline-citations";
 import { cn } from "@/lib/utils";
 
+/** assistant-ui official LaTeX path: normalize \( \)/\[ \] then protect $5 currency. */
+const preprocessMarkdownMath = (text: string) =>
+  escapeCurrencyDollars(normalizeMathDelimiters(text));
+
+const rehypeKatexPlugins: [[typeof rehypeKatex, { throwOnError: boolean }]] = [
+  [rehypeKatex, { throwOnError: false }],
+];
+
 const MarkdownTextImpl = () => {
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={rehypeKatexPlugins}
+      preprocess={preprocessMarkdownMath}
       className="aui-md"
       components={defaultComponents}
       componentsByLanguage={markdownComponentsByLanguage}
@@ -37,7 +52,9 @@ export const MarkdownText = memo(MarkdownTextImpl);
 const AssistantMarkdownTextImpl = () => {
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm, remarkInlineCitations]}
+      remarkPlugins={[remarkGfm, remarkMath, remarkInlineCitations]}
+      rehypePlugins={rehypeKatexPlugins}
+      preprocess={preprocessMarkdownMath}
       className="aui-md"
       components={assistantComponents}
       componentsByLanguage={markdownComponentsByLanguage}
@@ -54,11 +71,13 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
     if (!code || isCopied) return;
     copyToClipboard(code);
   };
+  const languageLabel =
+    language && language !== "unknown" ? language : null;
 
   return (
     <div className="aui-code-header-root border-border/50 bg-muted/50 mt-3 flex items-center justify-between rounded-t-xl border border-b-0 px-3.5 py-1.5 text-xs">
       <span className="aui-code-header-language text-muted-foreground font-medium lowercase">
-        {language}
+        {languageLabel}
       </span>
       <TooltipIconButton tooltip="Copy" onClick={onCopy}>
         {!isCopied && (

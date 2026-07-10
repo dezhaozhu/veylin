@@ -46,9 +46,11 @@ import { stampInterruptedAssistant, stampMessageWithSentAt } from "./message-tim
 import { stampOutgoingUserMessage } from "./pending-skill-message";
 import { createMessageQueueWithDrafts } from "./create-message-queue-with-drafts";
 import { setComposerQueueRuntime } from "./composer-queue-runtime";
+import { setSilentChatContinue } from "./silent-chat-continue";
 import { getChatSettings, setChatSettings } from "./chat-settings";
 import { setForceReplaceNextChat } from "./chat-force-replace-ref";
 import { stripAllPendingSkillTokens } from "./pending-skill-text";
+import { setThreadGoalApi } from "./goal-loop-sync";
 import { requestChatStop } from "./chat-stop";
 import { resumableStorage } from "./resumable-storage";
 import { useNetworkReconnectStore } from "./network-reconnect-store";
@@ -143,6 +145,38 @@ const toUIMessage = <UI_MESSAGE extends UIMessage>(
     id: createMessage.id ?? generateId(),
     role: createMessage.role ?? fallbackRole,
   }) as UI_MESSAGE;
+
+function extractUserText(message: {
+  content?: unknown;
+  parts?: readonly unknown[];
+}): string {
+  if (typeof message.content === 'string') return message.content;
+  if (Array.isArray(message.content)) {
+    return message.content
+      .filter(
+        (part): part is { type: 'text'; text: string } =>
+          !!part &&
+          typeof part === 'object' &&
+          (part as { type?: string }).type === 'text' &&
+          typeof (part as { text?: unknown }).text === 'string',
+      )
+      .map((part) => part.text)
+      .join('');
+  }
+  if (Array.isArray(message.parts)) {
+    return message.parts
+      .filter(
+        (part): part is { type: 'text'; text: string } =>
+          !!part &&
+          typeof part === 'object' &&
+          (part as { type?: string }).type === 'text' &&
+          typeof (part as { text?: unknown }).text === 'string',
+      )
+      .map((part) => part.text)
+      .join('');
+  }
+  return '';
+}
 
 function stripPendingSkillToken<UI_MESSAGE extends UIMessage>(
   message: CreateUIMessage<UI_MESSAGE>,
@@ -433,6 +467,16 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     });
     return () => setComposerQueueRuntime(null);
   }, [queueCtrl]);
+
+  useEffect(() => {
+    setSilentChatContinue(async () => {
+      resumableStorage.clear();
+      await chatHelpersRef.current.sendMessage(undefined, {
+        metadata: lastRunConfigRef.current,
+      });
+    });
+    return () => setSilentChatContinue(null);
+  }, []);
 
   useEffect(() => {
     rememberUiMessages(chatHelpers.messages);
@@ -1127,9 +1171,26 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     resetBackgroundTasksSnapshot();
     lastRunConfigRef.current = message.runConfig;
     await completePendingToolCalls();
+    let ensuredThreadId: string | undefined;
     if (ensureThreadInitialized) {
-      await ensureThreadInitialized();
+      ensuredThreadId = await ensureThreadInitialized();
     }
+
+    // Pending goal from + menu: first user message becomes the completion condition.
+    const settings = getChatSettings();
+    if (settings.pendingGoal) {
+      const threadId =
+        ensuredThreadId ?? getThreadId?.() ?? chatHelpersRef.current.id;
+      const condition = extractUserText(createMessage).trim();
+      if (threadId && condition) {
+        const result = await setThreadGoalApi(threadId, condition);
+        if (result.ok) {
+          setChatSettings({ pendingGoal: false });
+        }
+      }
+    }
+    // Pending loop: do not start here. The model analyzes completeness and calls loop_set.
+
     await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage), {
       metadata: message.runConfig,
     });

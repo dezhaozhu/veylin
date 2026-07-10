@@ -8,7 +8,6 @@ import {
   useAuiState,
 } from "@assistant-ui/react";
 import {
-  CheckIcon,
   LoaderIcon,
   MinusIcon,
   PlusIcon,
@@ -203,8 +202,8 @@ const ThreadListItemActivityBadge: FC<{
   }
   if (kind === "finished") {
     return (
-      <CheckIcon
-        className="size-3.5 shrink-0 text-green-600"
+      <span
+        className="size-2 shrink-0 rounded-full bg-green-500"
         aria-label={t("threadList.finished")}
       />
     );

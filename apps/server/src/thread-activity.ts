@@ -1,7 +1,7 @@
 import type { Memory } from '@mastra/memory';
 import { queryRows, getDb } from '@veylin/db';
-import { getActiveStreamId } from './resumable-chat-stream';
-import { listThreadsForResource } from './thread-state';
+import { getActiveStreamId } from './resumable-chat-stream.js';
+import { listThreadsForResource } from './thread-state.js';
 
 export type ThreadActivityKind = 'running' | 'finished' | 'interrupted';
 
@@ -17,6 +17,24 @@ const TERMINAL_TASK: Record<string, ThreadActivityKind> = {
 };
 
 const ACTIVE_TASK = new Set(['queued', 'running']);
+
+/** Main-chat terminal state (in-memory; survives until process restart). */
+const chatActivityByThread = new Map<string, ThreadActivity>();
+
+export function markThreadChatActivity(
+  threadId: string,
+  kind: 'finished' | 'interrupted',
+): void {
+  if (!threadId) return;
+  chatActivityByThread.set(threadId, {
+    kind,
+    at: new Date().toISOString(),
+  });
+}
+
+export function clearThreadChatActivity(threadId: string): void {
+  chatActivityByThread.delete(threadId);
+}
 
 export async function listThreadActivity(
   tenantId: string,
@@ -57,16 +75,22 @@ export async function listThreadActivity(
       }
 
       const task = latestTaskByThread.get(threadId);
-      if (!task) return;
-
-      if (ACTIVE_TASK.has(task.status)) {
+      if (task && ACTIVE_TASK.has(task.status)) {
         out[threadId] = { kind: 'running', at: task.updatedAt };
         return;
       }
 
-      const kind = TERMINAL_TASK[task.status];
-      if (kind) {
-        out[threadId] = { kind, at: task.updatedAt };
+      const chat = chatActivityByThread.get(threadId);
+      if (chat) {
+        out[threadId] = chat;
+        return;
+      }
+
+      if (task) {
+        const kind = TERMINAL_TASK[task.status];
+        if (kind) {
+          out[threadId] = { kind, at: task.updatedAt };
+        }
       }
     }),
   );

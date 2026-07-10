@@ -8,6 +8,7 @@ import {
   deleteTableColumn,
   deleteTableRows,
   deleteTableSheet,
+  isTableSheetNameTaken,
   listTableColumns,
   listTableRowsPage,
   listTableSheets,
@@ -546,6 +547,7 @@ export function buildTableTools() {
     id: 'table_sheets',
     description:
       'Manage table sheets (tabs): list, create, rename, or delete. ' +
+      'Sheet display names must be unique (case-insensitive). ' +
       'Use action "list" when sheet id is unknown before table_get / writes.',
     inputSchema: z.object({
       action: z
@@ -554,7 +556,7 @@ export function buildTableTools() {
       name: z
         .string()
         .optional()
-        .describe('Sheet display name (required for create/rename).'),
+        .describe('Unique sheet display name (required for create/rename).'),
       sheet: z
         .string()
         .optional()
@@ -595,6 +597,15 @@ export function buildTableTools() {
             message: 'name is required for create',
           };
         }
+        if (isTableSheetNameTaken(name)) {
+          return {
+            ok: false,
+            action: 'create' as const,
+            sheet: null,
+            sheets: listTableSheets(),
+            message: `Sheet name "${name}" already exists. Sheet names must be unique.`,
+          };
+        }
         const sheet = createTableSheet(name);
         if (!sheet) {
           return {
@@ -628,6 +639,15 @@ export function buildTableTools() {
             action: 'rename' as const,
             sheet: null,
             message: 'name is required for rename',
+          };
+        }
+        if (isTableSheetNameTaken(name, sheetId)) {
+          return {
+            ok: false,
+            action: 'rename' as const,
+            sheet: null,
+            sheets: listTableSheets(),
+            message: `Sheet name "${name}" already exists. Sheet names must be unique.`,
           };
         }
         const sheet = renameTableSheet(sheetId, name);

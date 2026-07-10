@@ -20,6 +20,8 @@
     "@mastra/mcp": "^1.11.0",
     "@napi-rs/canvas": "^0.1.100",
     "@veylin/db": "*",
+    "@veylin/agent-package": "*",
+    "@veylin/hooks": "*",
     "@veylin/mcp-servers": "*",
     "@veylin/policy": "*",
     "@veylin/runtime": "*",

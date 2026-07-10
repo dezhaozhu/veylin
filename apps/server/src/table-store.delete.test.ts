@@ -15,7 +15,7 @@ describe('deleteTableSheet', () => {
     await connectDb();
     try {
       await initTableStore();
-      createTableSheet('backup');
+      createTableSheet(`backup-${Date.now()}`);
       for (let i = 0; i < 5; i++) addTableRow('main');
       assert.equal(listTableRows('main').length, 5);
 

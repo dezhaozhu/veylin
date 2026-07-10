@@ -8,7 +8,7 @@ describe('toolset registration shape', () => {
       agent: { spawn_task: {} },
       table: { table_get: {} },
       knowledge: { knowledge_search: {} },
-      config: { workspace_config: {} },
+      config: { config_read: {}, config_write: {} },
       workflow: { workflow_run: {} },
     };
 

@@ -7,15 +7,28 @@ export type CompactContextResult =
   | { ok: true; before: number; after: number; messages: ReloadableMessage[] }
   | { ok: false; error: string };
 
+export type CompactThreadOptions = {
+  /** Optional focus instructions (Claude Code–style /compact notes). */
+  instructions?: string;
+};
+
 export async function compactThreadContext(
   threadId: string,
   model: ModelKey,
+  opts: CompactThreadOptions = {},
 ): Promise<CompactContextResult> {
   await requestChatStop(threadId).catch(() => undefined);
 
   const res = await fetch(
     `/api/compact?threadId=${encodeURIComponent(threadId)}&model=${encodeURIComponent(model)}`,
-    { method: 'POST', credentials: 'include' },
+    {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...(opts.instructions?.trim() ? { instructions: opts.instructions.trim() } : {}),
+      }),
+    },
   );
 
   const data = (await res.json()) as CompactContextResult & {
@@ -41,8 +54,9 @@ export async function applyCompactToThread(
   aui: AssistantClient,
   threadId: string,
   model: ModelKey,
+  opts: CompactThreadOptions = {},
 ): Promise<CompactContextResult> {
-  const result = await compactThreadContext(threadId, model);
+  const result = await compactThreadContext(threadId, model, opts);
   if (!result.ok) return result;
   reloadThreadFromServer(aui, result.messages);
   return result;

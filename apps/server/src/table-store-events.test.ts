@@ -63,7 +63,7 @@ describe('table-store change events', () => {
   it('createTableSheet emits sheetsChange', () => {
     const events: TableEvent[] = [];
     const off = onTableEvent((e) => events.push(e));
-    createTableSheet('Sheet X');
+    createTableSheet(`Sheet X ${Date.now()}`);
     off();
     assert.ok(events.some((e) => e.type === 'sheetsChange'));
   });
@@ -72,12 +72,23 @@ describe('table-store change events', () => {
     const created = createTableSheet(`Rename Me ${Date.now()}`)!;
     const events: TableEvent[] = [];
     const off = onTableEvent((e) => events.push(e));
-    const renamed = renameTableSheet(created.id, 'Renamed Sheet');
+    const renamed = renameTableSheet(created.id, `Renamed Sheet ${Date.now()}`);
     off();
     assert.ok(renamed);
-    assert.equal(renamed!.name, 'Renamed Sheet');
     assert.equal(renamed!.id, created.id);
     assert.ok(events.some((e) => e.type === 'sheetsChange'));
+  });
+
+  it('rejects duplicate sheet display names (case-insensitive)', () => {
+    const stamp = Date.now();
+    const a = createTableSheet(`Unique ${stamp}`)!;
+    assert.ok(a);
+    assert.equal(createTableSheet(`unique ${stamp}`), null);
+    const b = createTableSheet(`Other ${stamp}`)!;
+    assert.equal(renameTableSheet(b.id, `UNIQUE ${stamp}`), null);
+    const cased = renameTableSheet(a.id, `UNIQUE ${stamp}`);
+    assert.ok(cased);
+    assert.equal(cased!.name, `UNIQUE ${stamp}`);
   });
 
   it('unsubscribe stops delivery', () => {

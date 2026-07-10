@@ -700,9 +700,9 @@ export function TableGrid() {
   };
 
   const suggestNewSheetName = useCallback(() => {
-    const used = new Set(sheets.map((s) => s.name));
+    const used = new Set(sheets.map((s) => s.name.trim().toLowerCase()));
     let n = sheets.length + 1;
-    while (used.has(`Sheet ${n}`)) n++;
+    while (used.has(`sheet ${n}`)) n++;
     return `Sheet ${n}`;
   }, [sheets]);
 
@@ -714,6 +714,11 @@ export function TableGrid() {
   const submitAddSheet = async () => {
     const name = newSheetName.trim();
     if (!name) return;
+    const taken = sheets.some((s) => s.name.trim().toLowerCase() === name.toLowerCase());
+    if (taken) {
+      showToast(t('table.sheetNameDuplicate'), 'error');
+      return;
+    }
     setAddingSheet(true);
     try {
       const res = await fetch('/api/table/sheets', {
@@ -760,6 +765,13 @@ export function TableGrid() {
     const current = sheets.find((s) => s.id === renamingSheetId);
     if (!name || !current || name === current.name) {
       cancelRenameSheet();
+      return;
+    }
+    const taken = sheets.some(
+      (s) => s.id !== renamingSheetId && s.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (taken) {
+      showToast(t('table.sheetNameDuplicate'), 'error');
       return;
     }
     setRenamingSheet(true);

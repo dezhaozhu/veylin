@@ -10,6 +10,8 @@ export type ChatSystemBlockInput = {
   skillBlock: string;
   rulesBlock: string;
   planModeBlock: string;
+  goalBlock: string;
+  loopBlock: string;
   tableBlock: string;
   knowledgeBlock: string;
   workspacePanelBlock: string;
@@ -32,6 +34,8 @@ export async function buildChatSystemBlocks(input: ChatSystemBlockInput): Promis
     uncachedSystemPromptSection('activated_skills', () => blockOrNull(input.skillBlock)),
     uncachedSystemPromptSection('rules', () => blockOrNull(input.rulesBlock)),
     uncachedSystemPromptSection('plan_mode', () => blockOrNull(input.planModeBlock)),
+    uncachedSystemPromptSection('goal', () => blockOrNull(input.goalBlock)),
+    uncachedSystemPromptSection('loop', () => blockOrNull(input.loopBlock)),
     uncachedSystemPromptSection('table_context', () => blockOrNull(input.tableBlock)),
     uncachedSystemPromptSection('knowledge_context', () => blockOrNull(input.knowledgeBlock)),
     uncachedSystemPromptSection('workspace_panel', () => blockOrNull(input.workspacePanelBlock)),

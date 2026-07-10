@@ -1,0 +1,17 @@
+{
+  "description": "Example Stop hook for hello-veylin plugin",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${VEYLIN_PLUGIN_ROOT}/scripts/stop-ack.mjs"],
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

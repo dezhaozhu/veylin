@@ -1,4 +1,10 @@
-import { DEFAULT_WORKING_MEMORY_TEMPLATE } from '@veylin/shared';
+import {
+  DEFAULT_GOAL_MAX_TURNS,
+  DEFAULT_LOOP_MAX_AGE_DAYS,
+  type ThreadGoalState,
+  type ThreadLoopState,
+  DEFAULT_WORKING_MEMORY_TEMPLATE,
+} from '@veylin/shared';
 import type { Memory } from '@mastra/memory';
 import type { TodoItem } from '@veylin/tools';
 import {
@@ -36,7 +42,19 @@ export interface ThreadStateRow {
   activatedSkills: Record<string, string>;
   workingMemory: string | null;
   title: string | null;
+  goal: ThreadGoalState | null;
+  loop: ThreadLoopState | null;
   updatedAt?: Date;
+}
+
+function asGoal(value: unknown): ThreadGoalState | null {
+  if (!value || typeof value !== 'object') return null;
+  return value as ThreadGoalState;
+}
+
+function asLoop(value: unknown): ThreadLoopState | null {
+  if (!value || typeof value !== 'object') return null;
+  return value as ThreadLoopState;
 }
 
 export function ephemeralThreadState(identity: ThreadIdentity): ThreadStateRow {
@@ -49,6 +67,8 @@ export function ephemeralThreadState(identity: ThreadIdentity): ThreadStateRow {
     activatedSkills: {},
     workingMemory: null,
     title: null,
+    goal: null,
+    loop: null,
   };
 }
 
@@ -63,6 +83,8 @@ function toRow(r: Awaited<ReturnType<typeof getThreadStateRow>>): ThreadStateRow
     activatedSkills: r.activatedSkills ?? {},
     workingMemory: r.workingMemory ?? null,
     title: r.title ?? null,
+    goal: asGoal(r.goal),
+    loop: asLoop(r.loop),
     updatedAt: r.updatedAt ? new Date(r.updatedAt) : undefined,
   };
 }
@@ -94,6 +116,8 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
     activatedSkills: {},
     workingMemory: null,
     title: null,
+    goal: null,
+    loop: null,
   });
   return {
     threadId: identity.threadId,
@@ -104,6 +128,8 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
     activatedSkills: {},
     workingMemory: null,
     title: null,
+    goal: null,
+    loop: null,
   };
 }
 
@@ -190,6 +216,59 @@ export async function setPlanMode(threadId: string, planMode: boolean): Promise<
   await updateThreadState(threadId, { planMode });
 }
 
+export async function setThreadGoal(
+  threadId: string,
+  goal: ThreadGoalState | null,
+): Promise<void> {
+  await updateThreadState(threadId, { goal });
+}
+
+export async function setThreadLoop(
+  threadId: string,
+  loop: ThreadLoopState | null,
+): Promise<void> {
+  await updateThreadState(threadId, { loop });
+}
+
+export function createActiveGoal(
+  condition: string,
+  maxTurns = DEFAULT_GOAL_MAX_TURNS,
+): ThreadGoalState {
+  const now = new Date().toISOString();
+  return {
+    condition: condition.trim(),
+    status: 'active',
+    turnsEvaluated: 0,
+    maxTurns,
+    needsContinuation: false,
+    startedAt: now,
+    updatedAt: now,
+  };
+}
+
+export function createActiveLoop(input: {
+  prompt: string;
+  mode: ThreadLoopState['mode'];
+  intervalSeconds?: number;
+}): ThreadLoopState {
+  const now = new Date();
+  const createdAt = now.toISOString();
+  const nextWakeAt =
+    input.mode === 'fixed' && input.intervalSeconds
+      ? new Date(now.getTime() + input.intervalSeconds * 1000).toISOString()
+      : undefined;
+  return {
+    prompt: input.prompt.trim(),
+    mode: input.mode,
+    intervalSeconds: input.intervalSeconds,
+    nextWakeAt,
+    jobId: crypto.randomUUID().slice(0, 8),
+    status: 'active',
+    maxAgeDays: DEFAULT_LOOP_MAX_AGE_DAYS,
+    createdAt,
+  };
+}
+
 export async function setTodos(
   threadId: string,
   todos: TodoItem[],
@@ -269,6 +348,8 @@ export async function captureThreadSnapshot(
     planMode: state.planMode,
     activatedSkills: state.activatedSkills,
     workingMemory,
+    goal: state.goal,
+    loop: state.loop,
   };
 }
 
@@ -283,6 +364,8 @@ export async function applyThreadSnapshot(
     todos: snapshot.todos,
     activatedSkills: snapshot.activatedSkills,
     workingMemory: snapshot.workingMemory,
+    goal: snapshot.goal ?? null,
+    loop: snapshot.loop ?? null,
   });
 
   await replaceThreadMessages(memory, identity, snapshot.messages);

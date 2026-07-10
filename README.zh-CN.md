@@ -2,119 +2,133 @@
 
 [English](./README.md) · 简体中文
 
-从头重设计的通用 Agent 平台。**嵌入式 SurrealDB 单引擎**（文档+图+向量+全文），运行时内核，Fastify 薄 BFF，Tauri + React 客户端。打包为桌面应用后**双击即用**：服务端以内嵌 Node 的 sidecar 二进制随安装包分发，无需用户单独安装 Node / Docker / Postgres / Redis。
+> 开源、本机自托管的 **通用 AI Agent 桌面平台**。具备 Claude Code 级 agent 循环（工具调用、计划模式、子智能体、Skills、Hooks），以及可 DIY 的统一工作区（表格 / 知识库 / 工作流 / 网页），方便在清晰的 monorepo 架构上二次做成领域应用。双击即用，无需 Docker / Postgres / Redis。
 
-## 特点
+<p>
+  <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey">
+  <img alt="Built with Tauri" src="https://img.shields.io/badge/built%20with-Tauri%20%2B%20React-24C8DB">
+  <img alt="Storage" src="https://img.shields.io/badge/storage-embedded%20SurrealDB-ff00a0">
+  <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933">
+</p>
 
-- **完整的 Agent**：自带工具调用、计划模式、子智能体、技能与记忆，端到端完成任务。
-- **无需写代码**：可视化工作流编排、定时与事件自动化、技能/规则/MCP 配置全部在 UI 完成。
-- **权限与隐私优先**：本地优先、单机自托管；危险操作走审批门；数据默认留在本机。
-- **领域无关**：不绑定单一行业，角色与指令通过 agent.yaml 与技能注入。
-- **介于「手搓」与「全包」之间**：易于 DIY，又开箱即用。
-- **企业自托管**：零外部依赖，可离线运行。
-- **右侧统一可 DIY 面板**：表格 / 网页 / 知识库(RAG) / 知识图谱 / 工作流。
-- **完整国际化**：默认英文，可切换简体中文；Agent 回复语言跟随界面语言。
+![Veylin 桌面：对话、定制/自动化与右侧工作区](docs/images/veylin-desktop.jpg)
+
+## 适合谁
+
+- 需要 **本地、隐私优先** 的 Agent，又不想自建一整套云端基础设施
+- 希望开箱即用 **Claude Code 式能力**（计划模式 / 子智能体 / Skills / Hooks / MCP）
+- 要在稳定平台上 **DIY 垂直应用**（面板、`agent.yaml`、插件），而不是从聊天壳从头造轮子
+
+## 为什么是 Veylin
+
+1. **Claude Code 级 agent 循环** — 工具调用、计划模式、Goal/Loop、子智能体（`task`）、Skills、Hooks、审批门、上下文压缩，而不是「只有对话框」。
+2. **为二次开发而设计** — Skills / Rules / MCP / Hooks / Plugins 与 `agent.yaml` 可定制；右侧面板（表格 · 知识库 · 工作流 · 网页）与 Settings API 可扩展，不必改壳。
+3. **零运维本机栈** — Tauri 桌面 + Node sidecar + 嵌入式 SurrealDB（文档 + 图 + 向量 + 全文）。终端用户无需单独安装 Node / Docker / 数据库。
+
+## 和同类项目比
+
+| 类型 | 代表 | Veylin |
+|------|------|--------|
+| IDE / CLI coding agent | Cline、Aider、Continue、OpenCode | **不是** VS Code 插件；写代码只是场景之一，产品是 **桌面 Agent 工作区** |
+| 自治 coding 平台 | OpenHands、Goose | 更偏 **本机桌面 + 业务面板**（表 / RAG / 工作流），而非 Docker 沙箱出 PR |
+| 聊天 / RAG 壳 | Dify、Open WebUI、AnythingLLM | 更完整的 **agent 运行时**（计划、子智能体、hooks、skills、策略）+ 同一套 DIY 面 |
+
+## 功能
+
+### Agent
+
+- OpenAI-compatible 模型流式对话（自备 Key）
+- 计划模式、Todos、向用户提问、Goal / Loop
+- 子智能体与预设（explore / plan / general-purpose 等）
+- 动态工具发现（`tool_search`）：表格、知识库、工作流、配置、agent 工具
+- 上下文工程：分层 system prompt、微压缩、LLM compaction
+
+### 定制与扩展
+
+- **Skills** — bundled / user / plugin；Composer 中激活
+- **Rules** — always / keyword 注入 system prompt
+- **MCP** — 远程 SSE/HTTP；变更后刷新工具集
+- **Hooks** — 兼容 Claude Code 生命周期事件（user / project / plugin）
+- **Plugins** — path / git / marketplace；可捆绑 skills + hooks + MCP  
+  详见 [docs/hooks-skills-plugins.md](./docs/hooks-skills-plugins.md) 与 [examples/](./examples/)
+
+### 自动化
+
+- 定时（cron）与事件 Webhook（HMAC + JMESPath）
+- 右侧面板可视化 **工作流** DAG（agent / 知识库 / 表格 / HTTP 等节点）
+
+### 工作区面板
+
+表格 · 知识库（RAG + 图谱）· 工作流 · 网页 — 同一壳，Agent 可调用对应工具。
 
 ## 架构
 
 ```
 Tauri 壳 (apps/desktop)
-  └─ React + assistant-ui (apps/web) ── AI SDK useChat 流式
-        └─ veylin-server sidecar (apps/server) ── 单租户/免登录 + SSE + 策略前置 + 进程内队列
-              └─ Runtime (packages/runtime) ── Agent / Network / Processors / Memory
-                    ├─ 工具层 (packages/tools, packages/mcp-servers)
-                    ├─ 策略层 (packages/policy)
-                    ├─ 嵌入式 SurrealDB (packages/db) ── 业务表 + 知识库图谱/向量/全文
-                    └─ 本地 LibSQL ── 线程记忆 + 语义召回向量
+  └─ React + assistant-ui (apps/web)
+        └─ Fastify BFF sidecar (apps/server)
+              └─ Runtime (packages/runtime) ── Mastra agents / memory / processors
+                    ├─ 工具 + MCP (packages/tools, …)
+                    ├─ 策略 (packages/policy)
+                    ├─ Hooks (packages/hooks)
+                    ├─ 嵌入式 SurrealDB (packages/db)
+                    └─ LibSQL ── 线程 transcript + 语义召回
 ```
+
+| 包 | 职责 |
+|----|------|
+| `@veylin/shared` | 类型、zod、workflow / goal 契约 |
+| `@veylin/db` | 嵌入式 SurrealDB + 表 / RAG / 工作流仓储 |
+| `@veylin/runtime` | Agent 组装、memory、prompts、子智能体预设 |
+| `@veylin/tools` | 内置工具 + `tool_search` |
+| `@veylin/policy` | 风险分级、审批、计划模式白名单 |
+| `@veylin/hooks` | Hook 总线 / 加载器 |
+| `@veylin/agent-package` | `agent.yaml` + skills 加载 |
+| `@veylin/server` | Fastify BFF + sidecar 打包 |
+| `@veylin/web` | React UI |
+| `apps/desktop` | Tauri 壳 + sidecar 生命周期 |
+
+更多：[docs/architecture.md](./docs/architecture.md)。
 
 ## 本地启动（开发）
 
 ```bash
-cp .env.example .env          # 填模型 key；数据默认落 ./data
+cp .env.example .env          # 填模型 key
 npm install
-npm run dev                   # server :8787 + web :5174（数据自动初始化，无需 Docker）
+npm run dev                   # server :8787 + web :5174
+# 或桌面：
+npm run -w @veylin/desktop dev
 ```
 
-数据目录由 `VEYLIN_DATA_DIR` 指定（默认 `~/.veylin`），首启自动建 SurrealDB schema 与种子数据。桌面模式 `VEYLIN_DESKTOP_AUTH=1` 单租户免登录。
+数据目录由 `VEYLIN_DATA_DIR` 指定（开发默认仓库内 `./data`）。桌面免登录：`VEYLIN_DESKTOP_AUTH=1`。
 
-## 打包桌面应用（双击即用）
+## 打包桌面应用
 
 ```bash
-npm run -w @veylin/desktop build  # 自动：构建前端 → 打包 sidecar(含内嵌 Node + SurrealDB 原生模块) → tauri build
+npm run -w @veylin/desktop build
 ```
 
-产物：
+产物在 `apps/desktop/src-tauri/target/release/bundle/`（dmg / msi / AppImage / deb）。安装版数据默认在系统应用数据目录（如 macOS Application Support），可用 `VEYLIN_DATA_DIR` 覆盖。
 
-- macOS：`apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg`（+ `.app`）
-- Windows：`*.msi/.exe`；Linux：AppImage/deb
+安装包**不内置模型凭据** — 首次聊天前在 **设置 → 模型** 配置 API Key。
 
-安装后双击：Tauri 启动 sidecar → 内嵌 Node 跑 `server.mjs` → SurrealDB(surrealkv) 自动初始化 → 前端 `/api` 直连本地 sidecar。
+## 上下文工程（摘要）
 
-桌面安装包**不内置模型凭据**。首次聊天前，请从左下角用户菜单进入 **Settings** → **Models**，配置你自己的 OpenAI-compatible API Key。
+- **System prompt 分层**：静态 instructions 与每轮动态块（技能、规则、RAG 等）分开组装
+- **微压缩**：旧的大工具结果可替换为占位，保留近轮完整输出
+- **Compaction**：历史超阈值时摘要较早消息（可按 context window 比例自动触发）
 
-## 上下文工程
-
-长对话时 Veylin 会分层管理上下文，避免超出模型窗口：
-
-- **System prompt 分层**：静态 instructions（角色、沟通规范）与每轮动态块（技能、规则、RAG、提醒）分开组装；稳定段落进程内缓存，`/api/compact` 后清空重拼。
-- **微压缩（microcompact）**：只读大结果工具（如 `knowledge_search`、`web_fetch`）的旧输出替换为占位符，保留最近几轮完整结果；关键事实应在助手回复中记下。
-- **Compaction**：历史超阈值时摘要较早消息（支持 LLM 九段式摘要）；阈值可按 context window 比例自动触发（`VEYLIN_AUTOCOMPACT_PCT`）。
-- **沟通规范**：首次调工具前一句话说明、关键节点短更新、回合末 1–2 句总结（改了什么 + 下一步）。
-
-相关环境变量见 `.env.example` 中 Context engineering 一节。
-
-## 会话持久化边界
-
-刷新或切换线程时，以下状态会恢复：
-
-| 恢复 | 来源 |
-|------|------|
-| 聊天消息 transcript | LibSQL（Mastra Memory） |
-| Todos | SurrealDB `thread_state`；空库时从 transcript 最后一次 `todo_write` 回填 |
-| Plan mode | SurrealDB + `GET /api/plan-mode` |
-| 子 agent 任务行（状态/结果） | SurrealDB `task` + SSE `/api/tasks` |
-| 已激活 skills（只读 chip） | `GET /api/threads/:id/state` |
-| 挂起的 `ask_user_question` | 从 transcript 重建 |
-
-以下**不**跨刷新恢复（设计如此或本轮未做）：
-
-- 进行中的主流式响应（进程内 resumable stream，重启即失效）
-- Composer 消息队列、未发送的附件/浏览器引用
-- Worker 子线程完整 transcript UI
-- Working memory 文档的可视化编辑
-- `read_open_page` 客户端挂起态
-
-## 关键决策
-
-- 存储：**嵌入式 SurrealDB 单引擎**（业务表 + 知识库 图+向量+全文），线程记忆旁挂本地 LibSQL；不依赖外部 Postgres / Redis / Docker。
-- 队列：进程内 `p-queue` + `node-cron`，无外部依赖。
-- Embedding：本地 fastembed（离线），可切 API。
-- 分发：server 编译为单文件 bundle + 内嵌官方 Node 运行时，作为 Tauri sidecar 打包，目标机零运行时依赖。
-
-## Customize & Automate
-
-veylin 提供全屏 Settings 面板（左侧导航 + 右侧内容）：
-
-### Customize
-
-- **Skills**：内置技能可禁用；自定义技能 CRUD。Composer 选择 skill 后通过 `pendingSkill` 自动激活。
-- **Rules**：always / keyword 规则注入 system prompt。
-- **MCP**：bundled stdio 只读；远程 SSE/HTTP 可增删改，写后刷新工具集。
-
-API：`GET/POST/PUT/DELETE /api/skills`、`/api/rules`、`/api/mcp-servers`
-
-### Automate
-
-- **定时**：`automations` 表 + 进程内队列（node-cron）；每次运行新建 thread，写入 `automation_runs`，出现在会话列表。
-- **事件**：`POST /api/events/{tenantId}/{source}`（HMAC 验签）；按 OpenHands 风格 `on` + JMESPath `filter` 匹配 `kind=event` 的 automation 后投递队列。
-
-API：`GET/POST/PUT/DELETE /api/automations`、`POST /api/automations/:id/trigger`、`GET /api/automations/:id/runs`、`GET/POST/DELETE /api/webhooks`
+环境变量见 `.env.example` 中 Context engineering 一节。
 
 ## 安全
 
-请阅读 [SECURITY.md](./SECURITY.md)。生产/共享部署务必设置 `AUTH_SECRET` 并关闭桌面免登录。
+见 [SECURITY.md](./SECURITY.md)。共享或生产部署请设置 `AUTH_SECRET`，并关闭桌面免登录。
 
-## 许可证
+## 贡献
 
-[MIT](./LICENSE)
+见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+## License
+
+[MIT](./LICENSE) © Veylin contributors

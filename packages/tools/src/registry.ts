@@ -5,6 +5,8 @@ import type { RiskLevel } from '@veylin/shared';
 import { webFetch } from './web';
 import { todoWrite, askUserQuestion, readOpenPage } from './interaction';
 import { enterPlanMode, exitPlanMode } from './plan-mode';
+import { loopScheduleWakeup } from './loop-wakeup';
+import { loopSet } from './loop-set';
 
 export const builtinTools = {
   // file_read: fileRead,
@@ -20,6 +22,8 @@ export const builtinTools = {
   read_open_page: readOpenPage,
   enter_plan_mode: enterPlanMode,
   exit_plan_mode: exitPlanMode,
+  loop_set: loopSet,
+  loop_schedule_wakeup: loopScheduleWakeup,
 } as const;
 
 export type BuiltinToolId = keyof typeof builtinTools;
@@ -32,6 +36,8 @@ export const toolRisk: Record<BuiltinToolId, RiskLevel> = {
   read_open_page: 'caution',
   enter_plan_mode: 'safe',
   exit_plan_mode: 'safe',
+  loop_set: 'safe',
+  loop_schedule_wakeup: 'safe',
 };
 
 /** Meta tools not in builtinTools but evaluated by policy. */
@@ -48,4 +54,6 @@ export const toolKeywords: Record<BuiltinToolId, string[]> = {
   read_open_page: ['page', 'current', 'dom', 'read', 'open', '网页', '当前页', '内网', 'browser'],
   enter_plan_mode: ['plan', 'planning', 'explore', 'read-only'],
   exit_plan_mode: ['execute', 'exit plan', 'implement'],
+  loop_set: ['loop', 'interval', 'recurring', 'schedule', 'repeat', '循环'],
+  loop_schedule_wakeup: ['loop', 'schedule', 'wakeup', 'interval', 'recurring'],
 };

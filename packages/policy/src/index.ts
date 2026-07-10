@@ -31,6 +31,8 @@ export const planModePolicy: PolicyConfig = {
     tool_search: 'allow',
     enter_plan_mode: 'allow',
     exit_plan_mode: 'allow',
+    loop_set: 'allow',
+    loop_schedule_wakeup: 'allow',
     skill: 'allow',
     web_fetch: 'allow',
     read_open_page: 'allow',
