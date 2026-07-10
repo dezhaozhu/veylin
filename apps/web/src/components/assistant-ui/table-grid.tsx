@@ -81,6 +81,23 @@ function honestStatusLabel(t: (key: string) => string, raw: unknown): string {
   return key ? t(key) : String(raw ?? '-');
 }
 
+// Schedule-row lateness for the row accent stripe: compares a row's planned `end`
+// against its `due_at` (both ISO dates the schedule sheet carries). 'late' = past
+// due; 'atrisk' = lands within the buffer (7d) of due. No-op for rows/sheets that
+// don't carry both fields (returns null → no stripe).
+const _ATRISK_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
+function scheduleLateness(row: Record<string, unknown> | undefined): 'late' | 'atrisk' | null {
+  const end = row?.['end'];
+  const due = row?.['due_at'];
+  if (!end || !due) return null;
+  const e = Date.parse(String(end));
+  const d = Date.parse(String(due));
+  if (!Number.isFinite(e) || !Number.isFinite(d)) return null;
+  if (e > d) return 'late';
+  if (d - e < _ATRISK_BUFFER_MS) return 'atrisk';
+  return null;
+}
+
 const SCHEDULE_DETAIL_COLUMN_DEFS: ColDef[] = [
   { field: 'op_seq', headerName: '工序号', maxWidth: 90 },
   { field: 'op_name', headerName: '工序' },
@@ -1734,6 +1751,12 @@ export function TableGrid() {
               pagination
               paginationPageSize={500}
               paginationPageSizeSelector={[100, 500, 2000, 10000]}
+              // Left accent stripe: red = past due (end > due_at), amber = at-risk
+              // (within the buffer). No-op on rows/sheets without both fields.
+              rowClassRules={{
+                'sched-late': (p) => scheduleLateness(p.data) === 'late',
+                'sched-atrisk': (p) => scheduleLateness(p.data) === 'atrisk',
+              }}
               getRowId={(params: GetRowIdParams<TableRow>) => rowKey(params.data)}
               rowSelection={rowSelection}
               selectionColumnDef={{

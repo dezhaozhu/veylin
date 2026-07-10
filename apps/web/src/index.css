@@ -177,3 +177,12 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
 .ag-details-row {
   padding: 4px 8px 8px 40px;
 }
+
+/* Schedule lateness: a quiet left accent stripe (not a full-row wash, so it
+   doesn't clash with the number-cell magnitude tint). red = past due, amber = at-risk. */
+.ag-row.sched-late {
+  box-shadow: inset 3px 0 0 0 rgb(239 68 68 / 0.9);
+}
+.ag-row.sched-atrisk {
+  box-shadow: inset 3px 0 0 0 rgb(245 158 11 / 0.85);
+}
