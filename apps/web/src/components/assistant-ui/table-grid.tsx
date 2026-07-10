@@ -99,20 +99,6 @@ function scheduleLateness(row: Record<string, unknown> | undefined): 'late' | 'a
   return null;
 }
 
-const SCHEDULE_DETAIL_COLUMN_DEFS: ColDef[] = [
-  { field: 'op_seq', headerName: '工序号', maxWidth: 90 },
-  { field: 'op_name', headerName: '工序' },
-  { field: 'op_code', headerName: '工序编码' },
-  { field: 'resource_id', headerName: '设备/工作中心' },
-  { field: 'status', headerName: '状态' },
-  { field: 'wbs', headerName: 'WBS' },
-  { field: 'material_code', headerName: '物料' },
-  { field: 'planned_start', headerName: '计划开始' },
-  { field: 'planned_end', headerName: '计划完成' },
-  { field: 'actual_start', headerName: '实际开始' },
-  { field: 'actual_end', headerName: '实际完成' },
-];
-
 async function fetchScheduleDetail(orderId: unknown, stageCode: unknown): Promise<Record<string, unknown>[]> {
   const qs = new URLSearchParams();
   if (orderId != null && orderId !== '') qs.set('order_id', String(orderId));
@@ -343,6 +329,56 @@ function StatusBadge({ status }: { status: string }) {
     >
       {t(`table.status.${status}`, { defaultValue: humanizeStatus(status) })}
     </span>
+  );
+}
+
+// Custom master-detail panel: the order's 三级 工艺路线 as a clean styled list
+// (not a raw nested AG-Grid). AG-Grid passes the master row as params.data; we
+// fetch the ops on expand. Read-only. Pairs with detailRowAutoHeight so it hugs
+// its content. Replaces the default bordered detail grid.
+function ScheduleDetailPanel(params: { data?: Record<string, unknown> }) {
+  const [rows, setRows] = useState<Record<string, unknown>[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void fetchScheduleDetail(params.data?.['order_id'], params.data?.['stage_code']).then((r) => {
+      if (alive) setRows(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [params.data]);
+  const day = (v: unknown) => (typeof v === 'string' && v.length >= 10 ? v.slice(0, 10) : '');
+
+  return (
+    <div className="border-l-2 border-primary/25 bg-muted/25 py-1.5 pl-9 pr-3">
+      {rows === null ? (
+        <div className="py-1.5 text-xs text-muted-foreground">加载三级工艺路线…</div>
+      ) : rows.length === 0 ? (
+        <div className="py-1.5 text-xs text-muted-foreground">该订单暂无三级工艺明细</div>
+      ) : (
+        <div className="flex flex-col">
+          {rows.map((op, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3 rounded px-2 py-1 text-xs hover:bg-muted/60"
+            >
+              <span className="w-8 shrink-0 tabular-nums text-muted-foreground">
+                {String(op['op_seq'] ?? '')}
+              </span>
+              <span className="min-w-[7rem] shrink-0 font-medium">{String(op['op_name'] ?? '-')}</span>
+              <span className="min-w-[6rem] shrink-0 text-muted-foreground">
+                {String(op['resource_id'] ?? '')}
+              </span>
+              <StatusBadge status={String(op['status'] ?? '')} />
+              <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
+                {day(op['planned_start'])}
+                {day(op['planned_end']) ? ` → ${day(op['planned_end'])}` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1320,27 +1356,8 @@ export function TableGrid() {
     [],
   );
 
-  const getScheduleDetailRowData = useCallback(
-    (params: { data: TableRow; successCallback: (rows: Record<string, unknown>[]) => void }) => {
-      void fetchScheduleDetail(params.data['order_id'], params.data['stage_code']).then((rows) =>
-        params.successCallback(rows),
-      );
-    },
-    [],
-  );
-
-  const detailCellRendererParams = useMemo(
-    () => ({
-      detailGridOptions: {
-        theme: themeQuartz,
-        columnDefs: SCHEDULE_DETAIL_COLUMN_DEFS,
-        defaultColDef: { flex: 1, minWidth: 100, sortable: true, resizable: true },
-        overlayNoRowsTemplate: '<span style="color:var(--ag-disabled-foreground-color,#888)">该工序暂无三级工艺明细</span>',
-      },
-      getDetailRowData: getScheduleDetailRowData,
-    }),
-    [getScheduleDetailRowData],
-  );
+  // (三级 detail is now the ScheduleDetailPanel custom renderer, which fetches on
+  // expand — no detailGridOptions/getDetailRowData needed.)
 
   const handleAddRow = async () => {
     const res = await fetch('/api/table/rows', {
@@ -1791,14 +1808,18 @@ export function TableGrid() {
                 maxWidth: 64,
               }}
               masterDetail={proMasterDetail || undefined}
-              // Only rows whose order actually has 三级 ops (_wo_count > 0) get an
-              // expander — no chevron that opens into "No Rows".
+              // Expander only on rows whose order has 三级 ops (_wo_count > 0). FAIL-OPEN
+              // when _wo_count is absent (sheet loaded before the field existed / other
+              // sheets) so the affordance isn't silently lost — reload to get true gating.
               isRowMaster={
                 proMasterDetail
-                  ? (data: TableRow) => Number((data as Record<string, unknown>)?.['_wo_count']) > 0
+                  ? (data: TableRow) => {
+                      const c = (data as Record<string, unknown>)?.['_wo_count'];
+                      return c === undefined ? true : Number(c) > 0;
+                    }
                   : undefined
               }
-              detailCellRendererParams={proMasterDetail ? detailCellRendererParams : undefined}
+              detailCellRenderer={proMasterDetail ? ScheduleDetailPanel : undefined}
               // Detail panel sizes to its 三级 ops (<30 rows) instead of a fixed
               // 300px box that fills with empty space — AG-Grid master-detail-height guidance.
               detailRowAutoHeight={proMasterDetail || undefined}

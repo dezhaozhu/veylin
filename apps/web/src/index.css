@@ -175,7 +175,7 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
    row (left indent aligns it under the expander chevron). Pairs with
    detailRowAutoHeight so the panel hugs its content instead of a fixed box. */
 .ag-details-row {
-  padding: 4px 8px 8px 40px;
+  padding: 0;
 }
 
 /* Schedule lateness: a quiet left accent stripe (not a full-row wash, so it
