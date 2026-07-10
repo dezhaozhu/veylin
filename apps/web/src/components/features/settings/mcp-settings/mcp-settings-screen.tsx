@@ -133,6 +133,8 @@ export function McpSettingsScreen() {
   const [disabledMcp, setDisabledMcp] = useState<Set<string>>(new Set());
   const [health, setHealth] = useState<McpHealthSnapshot | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'installed' | 'library'>('all');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -146,12 +148,20 @@ export function McpSettingsScreen() {
   });
 
   const load = useCallback(async () => {
-    const data = await settingsApi.getMcpServers();
-    setBundled(data.bundled);
-    setRemote(data.remote);
-    setDisabledMcp(new Set(data.disabledMcp ?? []));
-    setHealth(data.health);
-  }, []);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const data = await settingsApi.getMcpServers();
+      setBundled(data.bundled);
+      setRemote(data.remote);
+      setDisabledMcp(new Set(data.disabledMcp ?? []));
+      setHealth(data.health);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : t('customize.mcpPage.loadFailed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
 
   const reconnect = useCallback(async () => {
     setReconnecting(true);
@@ -271,6 +281,25 @@ export function McpSettingsScreen() {
   const hasConnectionIssues =
     Boolean(health?.lastError) ||
     (health?.servers ?? []).some((server) => !server.connected);
+
+  if (loading) {
+    return <div className="text-muted-foreground text-sm">{t('customize.mcpPage.loading')}</div>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="mx-auto flex max-w-5xl flex-col items-start gap-3">
+        <p className="text-muted-foreground text-sm">{t('customize.mcpPage.loadFailed')}</p>
+        <button
+          type="button"
+          className="text-foreground border-border hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
+          onClick={() => void load()}
+        >
+          {t('common.retry')}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-5xl">

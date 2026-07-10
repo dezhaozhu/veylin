@@ -125,21 +125,6 @@ type SchedulePayload = {
   rows?: TableRow[];
 };
 
-const DEFAULT_EMPTY_COLUMNS: TableColumnDef[] = [];
-
-const DEFAULT_EMPTY_SHEETS: TableSheet[] = [
-  { id: 'main', name: 'Sheet 1', builtin: true },
-];
-
-function emptySchedulePayload(sheetId: string): SchedulePayload {
-  return {
-    sheet: sheetId,
-    sheets: DEFAULT_EMPTY_SHEETS,
-    columns: DEFAULT_EMPTY_COLUMNS,
-    rows: [],
-  };
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -562,6 +547,7 @@ export function TableGrid() {
   const [columnDefs, setColumnDefs] = useState<TableColumnDef[]>([]);
   const [rows, setRows] = useState<TableRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
   const [sortColumns, setSortColumns] = useState<readonly SortColumn[]>([]);
@@ -651,20 +637,24 @@ export function TableGrid() {
       for (let i = 0; i < attempts; i++) {
         try {
           const data = await fetchSchedule(sheetId);
+          setLoadError(null);
           applyPayload(data, initial);
           return;
-        } catch {
+        } catch (err) {
           if (i < attempts - 1) {
             await sleep(400 * (i + 1));
             continue;
           }
           if (initial) {
-            applyPayload(emptySchedulePayload(sheetId), true);
+            const message =
+              err instanceof Error ? err.message : t('table.loadFailedGeneric');
+            setLoadError(message);
+            setLoading(false);
           }
         }
       }
     },
-    [applyPayload],
+    [applyPayload, t],
   );
 
   const switchSheet = useCallback(
@@ -1340,6 +1330,27 @@ export function TableGrid() {
   };
 
   const hasActiveFilters = filters.query.trim() !== '';
+
+  if (loadError && rows.length === 0 && columnDefs.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
+        <p className="text-muted-foreground text-sm">
+          {t('table.loadError', { error: loadError })}
+        </p>
+        <button
+          type="button"
+          className="text-foreground border-border hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
+          onClick={() => {
+            setLoadError(null);
+            setLoading(true);
+            void load(activeSheetId, true);
+          }}
+        >
+          {t('common.retry')}
+        </button>
+      </div>
+    );
+  }
 
   if (loading && rows.length === 0 && columnDefs.length === 0) {
     return (

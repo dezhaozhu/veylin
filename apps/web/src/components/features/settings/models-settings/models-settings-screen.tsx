@@ -55,7 +55,7 @@ export function ModelsSettingsScreen() {
     hasApiKey: false,
     configured: false,
   });
-  const { provider: liveProvider, loading: providerLoading, refresh: refreshProvider } =
+  const { provider: liveProvider, loading: providerLoading, error: providerError, refresh: refreshProvider } =
     useModelProvider();
   const [modelNameDraft, setModelNameDraft] = useState('');
   const [requestUrlDraft, setRequestUrlDraft] = useState('');
@@ -65,13 +65,15 @@ export function ModelsSettingsScreen() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ModelCatalogEntry | null>(null);
   const [deletingModel, setDeletingModel] = useState(false);
-  const hydratedProviderRef = useRef(false);
+  const lastHydratedProviderKey = useRef<string | null>(null);
 
   useEffect(() => onModelSettingsChange(setSettings), []);
   useEffect(() => {
-    if (providerLoading || hydratedProviderRef.current) return;
+    if (providerLoading) return;
+    const key = `${liveProvider.modelName}|${liveProvider.requestUrl}|${liveProvider.configured}|${liveProvider.hasApiKey}`;
+    if (lastHydratedProviderKey.current === key) return;
     applyProviderToDrafts(liveProvider, setProvider, setModelNameDraft, setRequestUrlDraft);
-    hydratedProviderRef.current = true;
+    lastHydratedProviderKey.current = key;
   }, [liveProvider, providerLoading]);
 
   const catalogContext = provider.configured ? provider : liveProvider;
@@ -218,11 +220,20 @@ export function ModelsSettingsScreen() {
         <div className="max-h-[min(60vh,28rem)] overflow-y-auto">
           {filtered.length === 0 && (
             <p className="text-muted-foreground px-4 py-6 text-center text-sm">
-              {configuredCatalog.length === 0
-                ? t('settings.models.emptyUnconfigured')
-                : t('settings.models.noSearchResults')}
+              {providerError
+                ? t('settings.models.loadFailed')
+                : configuredCatalog.length === 0
+                  ? t('settings.models.emptyUnconfigured')
+                  : t('settings.models.noSearchResults')}
             </p>
           )}
+          {providerError && filtered.length === 0 ? (
+            <div className="flex justify-center pb-4">
+              <Button type="button" variant="outline" size="sm" onClick={() => void refreshProvider()}>
+                {t('common.retry')}
+              </Button>
+            </div>
+          ) : null}
           {filtered.map((model) => (
             <ModelRow
               key={model.id}

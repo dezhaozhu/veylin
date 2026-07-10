@@ -355,7 +355,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
     } catch (err) {
       req.log.warn({ err, threadId }, 'memory recall failed for thread messages');
       if (isMemoryStoreFailure(err)) {
-        return { messages: [] };
+        return reply.status(503).send({ ok: false, error: 'memory_unavailable' });
       }
       return reply.status(500).send({ ok: false, error: 'memory_recall_failed' });
     }

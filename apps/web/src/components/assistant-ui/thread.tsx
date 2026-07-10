@@ -71,6 +71,11 @@ import { usePlanModeBridge } from "@/lib/use-composer-settings";
 import { dispatchOverlayDismiss } from "@/lib/overlay-dismiss";
 import { hideWebView, isTauri } from "@/lib/tauri-web-view";
 import { isTaskNotificationText } from "@veylin/shared";
+import {
+  getHistoryLoadState,
+  retryHistoryLoad,
+  subscribeHistoryLoadState,
+} from "@/lib/history-load-state";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
@@ -104,23 +109,45 @@ const ThreadComponentsContext =
 
 // Startup exposes a loading placeholder thread; treat it as a new chat so
 // the composer mounts centered. Loads after startup keep the docked layout.
-const isNewChatView = (s: AssistantState) =>
-  s.thread.messages.length === 0 &&
-  (!s.thread.isLoading || s.threads.isLoading);
+// History threads with remoteId must not show Welcome while empty (loading or
+// error) — that looked like a blank conversation.
+const isNewChatView = (s: AssistantState) => {
+  if (s.thread.messages.length > 0) return false;
+  if (s.threadListItem.remoteId) return false;
+  return !s.thread.isLoading || s.threads.isLoading;
+};
 
 export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
   const isEmpty = useAuiState(isNewChatView);
+  const hasNoMessages = useAuiState((s) => s.thread.messages.length === 0);
 
   return (
     <ThreadComponentsContext.Provider value={components}>
-      <ThreadRoot isEmpty={isEmpty} />
+      <ThreadRoot isEmpty={isEmpty} hasNoMessages={hasNoMessages} />
     </ThreadComponentsContext.Provider>
   );
 };
 
-const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
+const ThreadRoot: FC<{ isEmpty: boolean; hasNoMessages: boolean }> = ({
+  isEmpty,
+  hasNoMessages,
+}) => {
+  const { t } = useTranslation();
   const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
   const threadId = useAuiState((s) => s.threadListItem.id);
+  const remoteId = useAuiState((s) => s.threadListItem.remoteId);
+  const threadLoading = useAuiState((s) => s.thread.isLoading);
+  const historyLoad = useSyncExternalStore(
+    subscribeHistoryLoadState,
+    getHistoryLoadState,
+    getHistoryLoadState,
+  );
+  const historyError =
+    remoteId && historyLoad.remoteId === remoteId ? historyLoad.error : null;
+  const showHistoryStatus =
+    Boolean(remoteId) &&
+    hasNoMessages &&
+    (threadLoading || Boolean(historyError));
   usePlanModeBridge();
   const askOpen = useSyncExternalStore(
     subscribeAskUserSession,
@@ -173,6 +200,30 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
           <AuiIf condition={isNewChatView}>
             <Welcome />
           </AuiIf>
+
+          {showHistoryStatus ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+              {historyError ? (
+                <>
+                  <p className="text-muted-foreground text-sm">
+                    {t("thread.historyLoadFailed")}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => retryHistoryLoad()}
+                  >
+                    {t("thread.historyRetry")}
+                  </Button>
+                </>
+              ) : (
+                <p className="text-muted-foreground text-sm">
+                  {t("thread.historyLoading")}
+                </p>
+              )}
+            </div>
+          ) : null}
 
           <div
             data-slot="aui_message-group"

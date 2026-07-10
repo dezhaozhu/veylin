@@ -82,6 +82,7 @@ export function SkillsSettingsScreen() {
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<SkillListItem | null>(null);
@@ -91,14 +92,17 @@ export function SkillsSettingsScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await settingsApi.getSkills();
       setSkills(data.skills);
       setDisabled(new Set(data.disabledSkills));
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : t('customize.skillsPage.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -178,6 +182,21 @@ export function SkillsSettingsScreen() {
 
   if (loading) {
     return <div className="text-muted-foreground text-sm">{t('customize.skillsPage.loading')}</div>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="mx-auto flex max-w-4xl flex-col items-start gap-3">
+        <p className="text-muted-foreground text-sm">{t('customize.skillsPage.loadFailed')}</p>
+        <button
+          type="button"
+          className="text-foreground border-border hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
+          onClick={() => void load()}
+        >
+          {t('common.retry')}
+        </button>
+      </div>
+    );
   }
 
   return (

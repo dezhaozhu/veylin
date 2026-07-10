@@ -28,6 +28,11 @@ import {
   fetchThreadMessages,
   storedMessageToUiMessage,
 } from '@/lib/server-thread-history-adapter';
+import {
+  clearHistoryLoadError,
+  setHistoryLoadError,
+  setHistoryLoadRetry,
+} from '@/lib/history-load-state';
 
 function countFileParts(messages: ReadonlyArray<unknown>): number {
   return messages.reduce<number>((total, message) => {
@@ -92,11 +97,20 @@ export const useExternalHistory = <TMessage>(
   options?: UseExternalHistoryOptions,
 ) => {
   const loadedRemoteIdRef = useRef<string | null>(null);
+  /** Last remoteId we finished a fetch for (success, empty, or error) — blocks spin loops. */
+  const attemptedRemoteIdRef = useRef<string | null>(null);
   const loadGenerationRef = useRef(0);
+  const reloadNonceRef = useRef(0);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const wasMainRef = useRef(false);
 
   const aui = useAui();
   const remoteId = useAuiState((s) => s.threadListItem.remoteId);
-  const threadMessageCount = useAuiState((s) => s.thread.messages.length);
+  const threadTitle = useAuiState((s) => s.threadListItem.title);
+  const threadStatus = useAuiState((s) => s.threadListItem.status);
+  const isMainThread = useAuiState(
+    (s) => s.threads.mainThreadId === s.threadListItem.id,
+  );
 
   const optionalThreadListItem = useCallback(
     () => (aui.threadListItem.source ? aui.threadListItem() : null),
@@ -104,6 +118,7 @@ export const useExternalHistory = <TMessage>(
   );
 
   const [isLoading, setIsLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const historyIds = useRef(new Set<string>());
 
@@ -124,16 +139,43 @@ export const useExternalHistory = <TMessage>(
     return historyAdapter.withFormat<TMessage, any>(storageFormatAdapter);
   }, [historyAdapter, storageFormatAdapter]);
 
+  const reloadHistory = useCallback(() => {
+    loadedRemoteIdRef.current = null;
+    attemptedRemoteIdRef.current = null;
+    reloadNonceRef.current += 1;
+    setReloadNonce(reloadNonceRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!isMainThread || !remoteId) {
+      setHistoryLoadRetry(null);
+      return;
+    }
+    setHistoryLoadRetry(() => {
+      clearHistoryLoadError(remoteId);
+      setHistoryError(null);
+      reloadHistory();
+    });
+    return () => setHistoryLoadRetry(null);
+  }, [isMainThread, remoteId, reloadHistory]);
+
   useEffect(() => {
     if (!formatAdapter || !remoteId) return;
 
     const threadListItem = optionalThreadListItem();
     if (!threadListItem) return;
 
+    const becameMain = isMainThread && !wasMainRef.current;
+    wasMainRef.current = isMainThread;
+
     const chatCount = getChatMessageCountRef.current?.() ?? 0;
-    const alreadyLoadedForRemote =
-      loadedRemoteIdRef.current === remoteId && chatCount > 0;
-    if (alreadyLoadedForRemote) return;
+    if (loadedRemoteIdRef.current === remoteId && chatCount > 0) return;
+
+    // After a finished attempt (empty or error), only retry when activated again
+    // or the user explicitly reloads — never spin while staying on the same thread.
+    if (attemptedRemoteIdRef.current === remoteId && !becameMain && reloadNonce === 0) {
+      return;
+    }
 
     dispatchOverlayDismiss('history-load');
 
@@ -142,11 +184,16 @@ export const useExternalHistory = <TMessage>(
 
     const loadHistory = async () => {
       setIsLoading(true);
+      setHistoryError(null);
+      clearHistoryLoadError(remoteId);
       try {
         const stored = await fetchThreadMessages(remoteId);
         if (generation !== loadGenerationRef.current) return;
 
+        attemptedRemoteIdRef.current = remoteId;
+
         if (stored.length === 0) {
+          // Soft-mark: blocks spin via attemptedRemoteId; activation can retry.
           loadedRemoteIdRef.current = remoteId;
           return;
         }
@@ -175,7 +222,7 @@ export const useExternalHistory = <TMessage>(
           .getMessages()
           .flatMap(getExternalStoreMessages<TMessage>);
 
-        const liveChatCount = getChatMessageCountRef.current?.() ?? threadMessageCount;
+        const liveChatCount = getChatMessageCountRef.current?.() ?? 0;
         const runtimeMessages = runtimeRef.current.thread
           .getState()
           .messages.flatMap(getExternalStoreMessages<TMessage>);
@@ -185,15 +232,15 @@ export const useExternalHistory = <TMessage>(
         const localSkills = countSkillMarkers(runtimeMessages);
         const serverSkills = countSkillMarkers(serverMessages);
 
-        // UI renders useChat messages. runtime.thread can retain a stale import
-        // after a thread switch while chat is empty — never skip hydration then.
-        if (
+        // UI renders useChat messages. Never skip when useChat is empty.
+        const shouldSkipHydration =
           liveChatCount > 0 &&
           runtimeMessages.length > 0 &&
           (uiMessages.length < runtimeMessages.length ||
             serverFileParts < localFileParts ||
-            serverSkills < localSkills)
-        ) {
+            serverSkills < localSkills);
+
+        if (shouldSkipHydration) {
           loadedRemoteIdRef.current = remoteId;
           return;
         }
@@ -208,6 +255,14 @@ export const useExternalHistory = <TMessage>(
         loadedRemoteIdRef.current = remoteId;
       } catch (error) {
         console.error("Failed to load message history:", error);
+        if (generation === loadGenerationRef.current) {
+          attemptedRemoteIdRef.current = remoteId;
+          // Do not set loadedRemoteIdRef — chat stays empty and Retry/activation works.
+          const message =
+            error instanceof Error ? error.message : "Failed to load message history";
+          setHistoryError(message);
+          if (isMainThread) setHistoryLoadError(remoteId, message);
+        }
       } finally {
         if (generation === loadGenerationRef.current) {
           setIsLoading(false);
@@ -216,7 +271,18 @@ export const useExternalHistory = <TMessage>(
     };
 
     void loadHistory();
-  }, [formatAdapter, remoteId]);
+  }, [
+    formatAdapter,
+    remoteId,
+    isMainThread,
+    reloadNonce,
+    threadTitle,
+    threadStatus,
+    optionalThreadListItem,
+    runtimeRef,
+    storageFormatAdapter,
+    toThreadMessages,
+  ]);
 
   const runStartRef = useRef<number | null>(null);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -415,5 +481,5 @@ export const useExternalHistory = <TMessage>(
     [formatAdapter, runtimeRef, storageFormatAdapter],
   );
 
-  return { isLoading, deleteMessage };
+  return { isLoading, historyError, reloadHistory, deleteMessage };
 };

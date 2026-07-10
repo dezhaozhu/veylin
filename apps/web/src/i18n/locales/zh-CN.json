@@ -53,7 +53,10 @@
     "scrollToBottom": "滚动到底部",
     "sendMessage": "发送消息",
     "stopGenerating": "停止生成",
-    "assistantWorking": "助手正在处理"
+    "assistantWorking": "助手正在处理",
+    "historyLoading": "正在加载会话…",
+    "historyLoadFailed": "无法加载此会话。",
+    "historyRetry": "重试"
   },
   "reasoning": {
     "thought": "思考",
@@ -225,7 +228,9 @@
     "name": "名称",
     "open": "打开",
     "content": "内容",
-    "saveChanges": "保存更改"
+    "saveChanges": "保存更改",
+    "retry": "重试",
+    "loadFailed": "加载失败，请重试。"
   },
   "settings": {
     "navTitle": "设置",
@@ -243,6 +248,7 @@
       "title": "模型",
       "notConfigured": "未配置",
       "emptyUnconfigured": "暂无可用模型。请在下方配置供应商信息。",
+      "loadFailed": "加载模型供应商设置失败。",
       "noSearchResults": "没有匹配的模型。",
       "searchPlaceholder": "搜索模型",
       "resetEnabled": "重置已启用模型",
@@ -299,7 +305,8 @@
       "toggle": "启用/停用 {{name}}",
       "confirmDelete": "删除这个技能？",
       "deleteTitle": "删除技能",
-      "saveFailed": "保存技能失败：{{error}}"
+      "saveFailed": "保存技能失败：{{error}}",
+      "loadFailed": "加载技能失败。"
     },
     "rulesPage": {
       "title": "规则",
@@ -323,7 +330,9 @@
       "toggle": "启用/停用 {{name}}",
       "confirmDelete": "删除这条规则？",
       "deleteTitle": "删除规则",
-      "saveFailed": "保存规则失败：{{error}}"
+      "saveFailed": "保存规则失败：{{error}}",
+      "loading": "正在加载规则…",
+      "loadFailed": "加载规则失败。"
     },
     "mcpPage": {
       "title": "模型上下文协议（MCP）",
@@ -355,6 +364,8 @@
       "connectionError": "{{name}}：{{error}}",
       "reconnect": "重试连接",
       "reconnecting": "正在重连…",
+      "loading": "正在加载 MCP 服务…",
+      "loadFailed": "加载 MCP 服务失败。",
       "toolsCount": "{{count}} 个工具",
       "disconnected": "未连接",
       "library": {
@@ -403,6 +414,8 @@
     "inactive": "已停用",
     "noActive": "暂无已启用自动化。",
     "noInactive": "暂无已停用自动化。",
+    "loading": "正在加载自动化…",
+    "loadFailed": "加载自动化失败。",
     "confirmDelete": "删除这个自动化？",
     "deleteAutomationTitle": "删除自动化",
     "details": "详情 · {{name}}",

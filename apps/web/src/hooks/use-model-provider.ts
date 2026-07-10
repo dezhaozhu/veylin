@@ -18,6 +18,7 @@ const DEFAULT_PROVIDER: ModelProviderSettings = {
 export function useModelProvider() {
   const [provider, setProvider] = useState<ModelProviderSettings>(DEFAULT_PROVIDER);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -26,10 +27,12 @@ export function useModelProvider() {
         upsertCatalogModel(next.modelName);
       }
       setProvider(next);
+      setError(null);
       ensureActiveModelConfigured(next);
       return next;
-    } catch {
+    } catch (err) {
       setProvider(DEFAULT_PROVIDER);
+      setError(err instanceof Error ? err.message : 'Failed to load model provider');
       return DEFAULT_PROVIDER;
     } finally {
       setLoading(false);
@@ -49,6 +52,7 @@ export function useModelProvider() {
           upsertCatalogModel(detail.modelName);
         }
         setProvider(detail);
+        setError(null);
         ensureActiveModelConfigured(detail);
         setLoading(false);
         return;
@@ -63,6 +67,7 @@ export function useModelProvider() {
     provider,
     configured: provider.configured,
     loading,
+    error,
     refresh,
   };
 }

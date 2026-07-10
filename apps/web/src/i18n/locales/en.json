@@ -53,7 +53,10 @@
     "scrollToBottom": "Scroll to bottom",
     "sendMessage": "Send message",
     "stopGenerating": "Stop generating",
-    "assistantWorking": "Assistant is working"
+    "assistantWorking": "Assistant is working",
+    "historyLoading": "Loading conversation…",
+    "historyLoadFailed": "Could not load this conversation.",
+    "historyRetry": "Retry"
   },
   "reasoning": {
     "thought": "Thought",
@@ -225,7 +228,9 @@
     "name": "Name",
     "open": "Open",
     "content": "Content",
-    "saveChanges": "Save changes"
+    "saveChanges": "Save changes",
+    "retry": "Retry",
+    "loadFailed": "Failed to load. Please retry."
   },
   "settings": {
     "navTitle": "Settings",
@@ -243,6 +248,7 @@
       "title": "Models",
       "notConfigured": "Not configured",
       "emptyUnconfigured": "No models available yet. Configure a provider below.",
+      "loadFailed": "Failed to load model provider settings.",
       "noSearchResults": "No models match your search.",
       "searchPlaceholder": "Search models",
       "resetEnabled": "Reset enabled models",
@@ -299,7 +305,8 @@
       "toggle": "Toggle {{name}}",
       "confirmDelete": "Delete this skill?",
       "deleteTitle": "Delete skill",
-      "saveFailed": "Failed to save skill: {{error}}"
+      "saveFailed": "Failed to save skill: {{error}}",
+      "loadFailed": "Failed to load skills."
     },
     "rulesPage": {
       "title": "Rules",
@@ -323,7 +330,9 @@
       "toggle": "Toggle {{name}}",
       "confirmDelete": "Delete rule?",
       "deleteTitle": "Delete rule",
-      "saveFailed": "Failed to save rule: {{error}}"
+      "saveFailed": "Failed to save rule: {{error}}",
+      "loading": "Loading rules…",
+      "loadFailed": "Failed to load rules."
     },
     "mcpPage": {
       "title": "Model Context Protocol (MCP)",
@@ -355,6 +364,8 @@
       "connectionError": "{{name}}: {{error}}",
       "reconnect": "Retry connections",
       "reconnecting": "Reconnecting…",
+      "loading": "Loading MCP servers…",
+      "loadFailed": "Failed to load MCP servers.",
       "toolsCount": "{{count}} tools",
       "disconnected": "Disconnected",
       "library": {
@@ -403,6 +414,8 @@
     "inactive": "Inactive",
     "noActive": "No active automations.",
     "noInactive": "No inactive automations.",
+    "loading": "Loading automations…",
+    "loadFailed": "Failed to load automations.",
     "confirmDelete": "Delete automation?",
     "deleteAutomationTitle": "Delete automation",
     "details": "Details · {{name}}",
