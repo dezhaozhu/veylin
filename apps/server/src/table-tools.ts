@@ -250,13 +250,13 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
       'Call table_list_sheets first if sheet id is unknown.',
     inputSchema: z.object({
       sheet: z.string().optional().describe('Sheet id. Defaults to main.'),
-      offset: z
+      offset: z.coerce
         .number()
         .int()
         .min(0)
         .optional()
         .describe(`Row offset for pagination (default 0).`),
-      limit: z
+      limit: z.coerce
         .number()
         .int()
         .min(1)
@@ -278,8 +278,10 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
     }),
     execute: async (input) => {
       const sheet = resolveTableSheetId(input.sheet);
-      const offset = input.offset ?? 0;
-      const limit = input.limit ?? DEFAULT_TABLE_GET_LIMIT;
+      // z.coerce.number() already validated string→number; Number() re-narrows the
+      // zod-v4 `unknown` input type to a clean number (idempotent at runtime).
+      const offset = Number(input.offset ?? 0);
+      const limit = Number(input.limit ?? DEFAULT_TABLE_GET_LIMIT);
       const { totalRows, rows } = listTableRowsPage(sheet, offset, limit);
       const hasMore = offset + rows.length < totalRows;
       return {
@@ -516,12 +518,16 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
       '从 Compass 拉取本租户的排产网格行，写入名为 schedule 的表 sheet 供展示。' +
       ' 需要 Compass MCP 服务器已连接。',
     inputSchema: z.object({
-      limit: z.number().int().min(1).optional().describe('最多返回多少行（默认 500）'),
+      limit: z.coerce.number().int().min(1).optional().describe('最多返回多少行（默认 500）'),
       workshop: z.string().optional().describe('按车间过滤'),
       status: z.string().optional().describe('按状态过滤'),
       order_id: z.string().optional().describe('按订单号过滤'),
     }),
-    execute: async (input) => importCompassScheduleSheet(getMcpToolsets, input),
+    execute: async (input) =>
+      importCompassScheduleSheet(getMcpToolsets, {
+        ...input,
+        limit: input.limit == null ? undefined : Number(input.limit),
+      }),
   });
 
   const tableChart = createTool({
