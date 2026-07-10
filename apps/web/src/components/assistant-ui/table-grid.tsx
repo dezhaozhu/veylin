@@ -60,6 +60,33 @@ type TableEvent =
 const SCHEDULE_SHEET_ID = 'schedule';
 const ORDER_SHEET_ID = 'orders';
 
+// Grid theme tuned to Veylin's identity: the app's system font + its shadcn CSS
+// variables (so the grid tracks light/dark automatically), tighter density, a
+// clean borderless look (hairline row separators, no vertical gridlines, no heavy
+// header fill), and the app's neutral accent for selection/focus.
+const veylinGridTheme = themeQuartz.withParams({
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  fontSize: 13,
+  spacing: 6,
+  rowHeight: 34,
+  headerHeight: 38,
+  backgroundColor: 'var(--background)',
+  foregroundColor: 'var(--foreground)',
+  borderColor: 'var(--border)',
+  chromeBackgroundColor: 'var(--muted)',
+  headerBackgroundColor: 'var(--background)',
+  headerTextColor: 'var(--muted-foreground)',
+  headerFontWeight: 600,
+  headerFontSize: 12,
+  oddRowBackgroundColor: 'transparent',
+  rowHoverColor: 'var(--muted)',
+  selectedRowBackgroundColor: 'var(--accent)',
+  accentColor: 'var(--ring)',
+  wrapperBorderRadius: 8,
+  wrapperBorder: false,
+  columnBorder: false,
+});
+
 // Columns worth showing in the B2 preview dialog (filtered by presence in the payload)
 const PREVIEW_COLUMNS: Array<{ key: string; labelKey: string }> = [
   { key: 'order_id', labelKey: 'table.previewColOrder' },
@@ -1271,10 +1298,11 @@ export function TableGrid() {
         const heatMax = numberColMax.get(def.key);
         defs.push({
           ...baseColDef,
+          type: 'rightAligned',   // right-align header + cells (numbers line up)
           aggFunc: 'sum',   // group rows roll up numeric columns (只在分组时出现)
           cellEditor: 'agNumberCellEditor',
           cellStyle: (params: CellClassParams<TableRow>) => {
-            const base = { textAlign: 'center' as const, fontVariantNumeric: 'tabular-nums' as const };
+            const base = { textAlign: 'right' as const, fontVariantNumeric: 'tabular-nums' as const };
             // No tint on group/aggregated rows, or columns without meaningful spread.
             if (!heatMax || params.node?.group) return base;
             const v = Number(params.value);
@@ -1783,7 +1811,10 @@ export function TableGrid() {
           <div className="min-h-0 flex-1 text-sm" style={{ height: '100%' }}>
             <AgGridReact<TableRow>
               key={proMasterDetail ? 'grid-md' : 'grid-plain'}
-              theme={themeQuartz}
+              theme={veylinGridTheme}
+              // Size columns to fit header + visible content on load — no more
+              // truncated headers (订.../产.../期...). Virtualized, so it's cheap.
+              autoSizeStrategy={{ type: 'fitCellContents' }}
               rowData={filteredRows}
               columnDefs={agColDefs}
               // All rows load into the grid (no 500 cap); paginate so large sheets
