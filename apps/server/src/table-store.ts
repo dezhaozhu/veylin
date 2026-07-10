@@ -156,7 +156,11 @@ function buildInitialStore(): Map<string, SheetState> {
 let sheetStore = buildInitialStore();
 let tableHydrated = false;
 
-async function persistSheet(sheetId: string): Promise<void> {
+/** Per-sheet serial persist chain so concurrent fire-and-forget writes cannot interleave. */
+const persistChains = new Map<string, Promise<void>>();
+
+/** Write the *current* in-memory snapshot for a sheet (re-read at call time). */
+async function persistSheetLatest(sheetId: string): Promise<void> {
   const sheet = sheetStore.get(sheetId);
   if (!sheet) return;
   await upsertTableSheet({ ...sheet.meta });
@@ -176,25 +180,49 @@ async function persistSheet(sheetId: string): Promise<void> {
   );
   await replaceTableRows(
     sheetId,
-    sheet.rows.map((r) => ({
+    sheet.rows.map((r, i) => ({
       sheetId,
       rowKey: tableRowKey(r),
       data: { ...r },
+      position: i,
     })),
   );
 }
 
+function enqueuePersist(sheetId: string): Promise<void> {
+  const prev = persistChains.get(sheetId) ?? Promise.resolve();
+  // Swallow errors on the chain itself so fire-and-forget callers (and the
+  // detached `.finally` cleanup) never leave an unhandledRejection — unit tests
+  // without connectDb() would otherwise fail after the test ends.
+  const next = prev
+    .catch(() => undefined)
+    .then(() => persistSheetLatest(sheetId))
+    .catch((e) => {
+      console.error('[table] persist failed:', e);
+    });
+  persistChains.set(sheetId, next);
+  void next.finally(() => {
+    if (persistChains.get(sheetId) === next) persistChains.delete(sheetId);
+  });
+  return next;
+}
+
 async function persistAll(): Promise<void> {
   for (const id of sheetStore.keys()) {
-    await persistSheet(id);
+    await enqueuePersist(id);
   }
 }
 
-/** Fire-and-forget persist that never lets a rejection crash the process. */
+/** Fire-and-forget persist; errors are logged inside the per-sheet chain. */
 function tablePersist(sheetId: string): void {
-  void persistSheet(sheetId).catch((e) => {
-    console.error('[table] persist failed:', e);
-  });
+  void enqueuePersist(sheetId);
+}
+
+/** Wait for in-flight sheet persists (call before closing the DB). */
+export async function flushTablePersists(): Promise<void> {
+  const pending = [...persistChains.values()];
+  if (pending.length === 0) return;
+  await Promise.allSettled(pending);
 }
 
 /** Load tables from SurrealDB or seed builtin sheets on first run. */
@@ -231,7 +259,7 @@ export async function initTableStore(): Promise<void> {
       const initial = buildInitialStore();
       const main = initial.get(DEFAULT_TABLE_SHEET)!;
       sheetStore.set(DEFAULT_TABLE_SHEET, main);
-      await persistSheet(DEFAULT_TABLE_SHEET);
+      await enqueuePersist(DEFAULT_TABLE_SHEET);
     }
     let migrated = false;
     for (const sheet of sheetStore.values()) {
@@ -665,7 +693,7 @@ async function ensureAtLeastOneSheet(): Promise<void> {
   const initial = buildInitialStore();
   const main = initial.get(DEFAULT_TABLE_SHEET)!;
   sheetStore.set(DEFAULT_TABLE_SHEET, main);
-  await persistSheet(DEFAULT_TABLE_SHEET);
+  await enqueuePersist(DEFAULT_TABLE_SHEET);
 }
 
 export function addTableRow(sheetId: string): TableRowData | null {

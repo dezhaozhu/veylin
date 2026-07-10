@@ -5,6 +5,7 @@ import {
   insertChunk,
   insertDocument,
   listDocuments,
+  listIndexingDocuments,
   deleteDocument,
   updateDocumentStatus,
   saveAgentCitation,
@@ -17,6 +18,19 @@ import { embedTextsIfInstalled } from './embedding-service';
 
 const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 150;
+
+const RAG_INGEST_INTERRUPTED_MESSAGE =
+  'Indexing interrupted (server restarted or the worker stopped before completion)';
+
+/** Mark documents stuck in `indexing` as failed after a restart. */
+export async function sweepInterruptedRagIngests(): Promise<number> {
+  const rows = await listIndexingDocuments();
+  if (rows.length === 0) return 0;
+  for (const doc of rows) {
+    await updateDocumentStatus(doc.id, 'failed', RAG_INGEST_INTERRUPTED_MESSAGE);
+  }
+  return rows.length;
+}
 
 export type AgentCitationRecord = {
   query: string;

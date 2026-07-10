@@ -172,6 +172,7 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS sheet_id ON table_row TYPE string`,
   `DEFINE FIELD IF NOT EXISTS row_key ON table_row TYPE string`,
   `DEFINE FIELD IF NOT EXISTS data ON table_row FLEXIBLE TYPE object`,
+  `DEFINE FIELD IF NOT EXISTS position ON table_row TYPE int DEFAULT 0`,
 
   `DEFINE TABLE IF NOT EXISTS document SCHEMAFULL`,
   `DEFINE FIELD IF NOT EXISTS id ON document TYPE string`,

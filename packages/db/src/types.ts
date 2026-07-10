@@ -188,6 +188,8 @@ export interface TableRowRecord {
   sheetId: string;
   rowKey: string;
   data: Record<string, string | number>;
+  /** Stable display order within the sheet (0-based). */
+  position?: number;
 }
 
 export interface DocumentRow {

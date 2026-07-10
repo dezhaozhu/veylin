@@ -774,6 +774,15 @@ export async function listAutomationRunRows(
   return rows.map(mapAutomationRun);
 }
 
+/** Runs left mid-flight after a crash/restart. */
+export async function listIncompleteAutomationRunRows(): Promise<AutomationRunRow[]> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    "SELECT * FROM automation_run WHERE status = 'running' OR status = 'queued'",
+  );
+  return rows.map(mapAutomationRun);
+}
+
 export async function listEventAutomationRows(
   tenantId: string,
   sourceType: string,

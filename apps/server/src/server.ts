@@ -25,7 +25,7 @@ import {
 import { buildAgentTaskTools } from './agent-task-tool';
 import { executeSubagentJob, CancelledTaskError } from './agent-task-runner';
 import { buildTableTools } from './table-tools';
-import { initTableStore } from './table-store';
+import { initTableStore, flushTablePersists } from './table-store';
 import { pruneDesktopThreadClutter } from './thread-state';
 import {
   initResumableChatStreams,
@@ -37,7 +37,7 @@ import { startupCheckpoint } from './startup-profiler';
 import { ensureDevTenant, DEV_TENANT_ID } from './tenant';
 import { refreshAgentPackages, isAgentHotReloadEnabled } from './agent-packages-sync';
 import { createMcpClient, listActiveMcpServerNames, seedMcpServersFromEnvIfMissing } from './mcp-store';
-import { listAllCronAutomations } from './automation-store';
+import { listAllCronAutomations, sweepInterruptedAutomationRuns } from './automation-store';
 import { runAutomationJob } from './automation-worker';
 import { buildWorkspaceConfigTool } from './workspace-config-tool';
 import { listAllCronWorkflows, sweepInterruptedWorkflowRuns } from './workflow-store';
@@ -45,7 +45,7 @@ import { runWorkflowJob } from './workflow-runner';
 import { ensureEmbeddingModelOnStartup } from './embedding-service';
 import { buildWorkflowTools } from './workflow-tools';
 import { applyTenantModelSettings, seedModelSettingsFromEnvIfEmpty } from './model-settings-store';
-import { buildKnowledgeSearchTool } from './rag-store';
+import { buildKnowledgeSearchTool, sweepInterruptedRagIngests } from './rag-store';
 import { RAG_UPLOAD_MAX_BYTES } from './rag-limits';
 import {
   connectDb,
@@ -132,6 +132,14 @@ async function main() {
   const interruptedRuns = await sweepInterruptedWorkflowRuns();
   if (interruptedRuns > 0) {
     console.info(`[workflow] marked ${interruptedRuns} interrupted run(s) as failed`);
+  }
+  const interruptedAutomations = await sweepInterruptedAutomationRuns();
+  if (interruptedAutomations > 0) {
+    console.info(`[automation] marked ${interruptedAutomations} interrupted run(s) as failed`);
+  }
+  const interruptedRag = await sweepInterruptedRagIngests();
+  if (interruptedRag > 0) {
+    console.info(`[rag] marked ${interruptedRag} interrupted ingest(s) as failed`);
   }
   await initResumableChatStreams();
   await initTableStore();
@@ -404,8 +412,9 @@ async function main() {
         await mcp.disconnect().catch(() => undefined);
         mcp = null;
       }
-      await closeDb();
+      await flushTablePersists();
       await app.close();
+      await closeDb();
     } catch (err) {
       app.log.error(err, 'graceful shutdown error');
     }
