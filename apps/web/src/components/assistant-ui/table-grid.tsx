@@ -1729,6 +1729,11 @@ export function TableGrid() {
               theme={themeQuartz}
               rowData={filteredRows}
               columnDefs={agColDefs}
+              // All rows load into the grid (no 500 cap); paginate so large sheets
+              // (e.g. shangzhong's ~30k schedule rows) stay navigable + fast.
+              pagination
+              paginationPageSize={500}
+              paginationPageSizeSelector={[100, 500, 2000, 10000]}
               getRowId={(params: GetRowIdParams<TableRow>) => rowKey(params.data)}
               rowSelection={rowSelection}
               selectionColumnDef={{

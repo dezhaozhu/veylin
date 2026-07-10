@@ -55,8 +55,12 @@ export async function importCompassScheduleSheet(
     };
   }
 
+  // Load the FULL result set into the grid sheet (not just 500). This is safe for
+  // the agent's context: importCompassScheduleSheet returns only a summary
+  // (imported/total counts), never the rows — the rows go straight into the grid.
+  // The grid paginates them client-side. An explicit input.limit still wins.
   const res: unknown = await tool.execute({
-    limit: input.limit ?? 500,
+    limit: input.limit ?? 1_000_000,
     workshop: input.workshop,
     status: input.status,
     order_id: input.order_id,
