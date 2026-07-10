@@ -1122,7 +1122,7 @@ export function TableGrid() {
       cellSelection: true,
       enableCharts: true,
       // allow any data column to be dragged into the group panel / aggregated
-      defaultColDef: { enableRowGroup: true, enableValue: true },
+      defaultColDef: { enableRowGroup: true, enableValue: true, enablePivot: true },
       sideBar: {
         toolPanels: ['columns', 'filters'],
         hiddenByDefault: false,
@@ -1280,6 +1280,23 @@ export function TableGrid() {
           cellStyle: { textAlign: 'center' },
         });
       }
+    }
+
+    // Schedule-sheet only: a hidden "排产月" column (derived YYYY-MM from `start`)
+    // so pivot mode can build a time-axis load matrix (资源/分厂 × 月). Hidden by
+    // default — no clutter in the normal view; drag it in from the columns panel.
+    if (activeSheetId === SCHEDULE_SHEET_ID && columnDefs.some((d) => d.key === 'start')) {
+      defs.push({
+        colId: '__month__',
+        headerName: '排产月',
+        hide: true,
+        enableRowGroup: true,
+        enablePivot: true,
+        valueGetter: (params) => {
+          const s = params.data?.['start'];
+          return typeof s === 'string' && s.length >= 7 ? s.slice(0, 7) : '';
+        },
+      });
     }
 
     return defs;
