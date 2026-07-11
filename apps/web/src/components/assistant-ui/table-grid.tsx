@@ -199,8 +199,22 @@ const TONE_STYLE: Record<StatusTone, string> = {
   info: STATUS_BLUE,
 };
 
+// Fallback tones for Veylin's OWN built-in, domain-agnostic status vocabulary —
+// used only when the data source ships no `semantics` (a user-added status column,
+// an Excel import, or a sheet persisted before semantics existed). These are
+// universal words, NOT a domain's (solved/已完工… deliberately live in metadata, not
+// here). Data-source semantics always override this.
+const FALLBACK_TONE: Record<string, StatusTone> = {
+  open: 'neutral',
+  in_progress: 'warning',
+  done: 'positive',
+  normal: 'positive',
+  tight: 'warning',
+  overdue: 'negative',
+};
+
 function statusClass(value: string, semantics?: Record<string, string>): string {
-  const tone = (semantics?.[value] as StatusTone | undefined) ?? 'neutral';
+  const tone = (semantics?.[value] as StatusTone | undefined) ?? FALLBACK_TONE[value] ?? 'neutral';
   return TONE_STYLE[tone] ?? TONE_STYLE.neutral;
 }
 
@@ -1173,9 +1187,16 @@ export function TableGrid() {
   // rowData (search) AND column-filter/sort/group changes → single source of truth.
   const onModelUpdated = useCallback(() => {
     const api = gridApiRef.current;
-    const c = api?.getDisplayedRowCount?.() ?? null;
+    if (!api) return;
+    // Count filtered LEAF data rows only — getDisplayedRowCount() also counts group
+    // header + master-detail rows, which would inflate the footer on the grouped /
+    // schedule / orders sheets.
+    let c = 0;
+    api.forEachNodeAfterFilterAndSort((n) => {
+      if (n.data != null && !n.group) c += 1;
+    });
     setDisplayedCount((prev) => (prev === c ? prev : c));
-    const active = api?.isAnyFilterPresent?.() ?? false;
+    const active = api.isAnyFilterPresent?.() ?? false;
     setColumnFilterActive((prev) => (prev === active ? prev : active));
   }, []);
 
