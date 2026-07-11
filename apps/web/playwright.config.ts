@@ -25,23 +25,22 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'node apps/desktop/scripts/ensure-server.mjs',
+      // Keep the process alive for Playwright (ensure-server exits after spawn → "exited early").
+      command: 'node apps/desktop/scripts/run-server-dev.mjs',
       cwd: repoRoot,
       url: 'http://127.0.0.1:8787/health',
-      reuseExistingServer: true,
+      reuseExistingServer: !process.env.CI,
       timeout: 120_000,
       env: {
         VEYLIN_DESKTOP_AUTH: '1',
         VEYLIN_DATA_DIR: './data',
-        // CI/smoke has no prebuilt sidecar; use the same tsx path as desktop dev.
-        VEYLIN_SKIP_SIDECAR: '1',
         VEYLIN_LAZY_MCP_BOOT: '1',
       },
     },
     {
       command: 'npm run dev',
       url: baseURL,
-      reuseExistingServer: true,
+      reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },
   ],
