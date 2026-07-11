@@ -31,7 +31,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { exportTableToExcel, parseTableExcelFile } from '@/lib/table-excel';
-import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
+import { DEFAULT_TABLE_STATUS_OPTIONS, applyTextQuery, sortRows } from '@veylin/shared';
 
 type TableColumnType = 'text' | 'number' | 'status';
 
@@ -215,43 +215,6 @@ function collectEdits(
     });
   }
   return edits;
-}
-
-function applyFilters(rows: TableRow[], filters: FilterState): TableRow[] {
-  const q = filters.query.trim().toLowerCase();
-  if (!q) return rows;
-  return rows.filter((row) =>
-    Object.values(row).some((v) => String(v ?? '').toLowerCase().includes(q)),
-  );
-}
-
-function compareScheduleValues(
-  a: string | number | undefined,
-  b: string | number | undefined,
-  type: TableColumnType,
-): number {
-  const aEmpty = a === undefined || a === '';
-  const bEmpty = b === undefined || b === '';
-  if (aEmpty && bEmpty) return 0;
-  if (aEmpty) return -1;
-  if (bEmpty) return 1;
-  if (type === 'number') return Number(a) - Number(b);
-  return String(a).localeCompare(String(b), 'zh-CN', { numeric: true });
-}
-
-function sortTableRows(
-  rows: TableRow[],
-  sortColumns: readonly SortColumn[],
-  columnDefs: TableColumnDef[],
-): TableRow[] {
-  if (sortColumns.length === 0) return rows;
-  const { columnKey, direction } = sortColumns[0]!;
-  const colDef = columnDefs.find((c) => c.key === columnKey);
-  const type = colDef?.type ?? 'text';
-  return [...rows].sort((a, b) => {
-    const cmp = compareScheduleValues(a[columnKey], b[columnKey], type);
-    return direction === 'ASC' ? cmp : -cmp;
-  });
 }
 
 function cellTextValue(row: TableRow, columnKey: string): string {
@@ -899,8 +862,15 @@ export function TableGrid() {
   }, [activeSheetId, load, resetSheetUiState]);
 
   const filteredRows = useMemo(() => {
-    const filtered = applyFilters(rows, filters);
-    return sortTableRows(filtered, sortColumns, columnDefs);
+    const filtered = applyTextQuery(rows, filters.query);
+    const sort = sortColumns[0];
+    if (!sort) return filtered;
+    return sortRows(
+      filtered,
+      columnDefs.map((c) => ({ key: c.key, name: c.name, type: c.type })),
+      sort.columnKey,
+      sort.direction === 'DESC' ? 'desc' : 'asc',
+    );
   }, [rows, filters, sortColumns, columnDefs]);
 
   const toggleSort = useCallback((columnKey: string) => {

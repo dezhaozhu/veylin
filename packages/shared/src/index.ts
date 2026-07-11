@@ -20,3 +20,4 @@ export * from './goal-loop';
 export * from './thread';
 export * from './interrupted-turn';
 export * from './plugins';
+export * from './table-query';

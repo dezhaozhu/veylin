@@ -1,5 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import { TABLE_AGGREGATE_OPS, TABLE_FILTER_OPS } from '@veylin/shared';
 import {
   addTableColumn,
   addTableRow,
@@ -9,10 +10,9 @@ import {
   deleteTableRows,
   deleteTableSheet,
   isTableSheetNameTaken,
-  listTableColumns,
-  listTableRowsPage,
   listTableSheets,
   MAX_TABLE_GET_LIMIT,
+  queryTableRows,
   renameTableSheet,
   resolveTableSheetId,
   tryResolveTableSheetId,
@@ -335,71 +335,180 @@ export function applyTableStructureOps(
  * Exposed surface: table_get, table_sheets, table_update_cells, table_edit_structure.
  */
 export function buildTableTools() {
+  const filterSchema = z.object({
+    column: z.string().describe('Column key or display name.'),
+    op: z.enum(TABLE_FILTER_OPS).describe(
+      'eq|neq|contains|gt|gte|lt|lte|empty|not_empty',
+    ),
+    value: cellValueSchema.optional().describe('Compare value (omit for empty/not_empty).'),
+  });
+
+  const aggregateMetricSchema = z.object({
+    op: z.enum(TABLE_AGGREGATE_OPS).describe('count|sum|avg|min|max'),
+    column: z
+      .string()
+      .optional()
+      .describe('Column for sum/avg/min/max (or non-empty count). Omit for row count.'),
+  });
+
   const tableGet = createTool({
     id: 'table_get',
     description:
-      'Read rows and column definitions from a table sheet (paginated). ' +
-      'Always check totalRows in the response; call again with offset/limit for more. ' +
-      'Call table_sheets with action "list" first if sheet id is unknown.',
+      'Read or query a table sheet (same data as the right-panel 表格). ' +
+      'Everyday: use query (search box) and/or sort_by+sort_dir (column header sort), then paginate with offset/limit. ' +
+      'Advanced: filters (column operators), columns (projection), row_keys (exact rows), ' +
+      'aggregate (count/sum/avg/min/max + optional group_by). ' +
+      'For TOP-N groups: aggregate + sort_by=count (or sum_*) + sort_dir=desc + limit (default 50, max 200). ' +
+      'Do not request all groups of a high-cardinality column — page with offset when hasMore. ' +
+      'Pipeline: row_keys → query → filters → row sort → aggregate → group sort → offset/limit. ' +
+      'Call table_sheets action "list" if sheet id is unknown.',
     inputSchema: z.object({
       sheet: z.string().optional().describe('Sheet id. Defaults to main.'),
+      query: z
+        .string()
+        .optional()
+        .describe('Full-text search across all columns (same as the table search box).'),
+      sort_by: z
+        .string()
+        .optional()
+        .describe(
+          'Sort key: column name for rows, or aggregate metric key (e.g. count, sum_qty) after group_by.',
+        ),
+      sort_dir: z
+        .enum(['asc', 'desc'])
+        .optional()
+        .describe('Sort direction (default asc when sort_by is set).'),
+      filters: z
+        .array(filterSchema)
+        .optional()
+        .describe('AND column filters with operators.'),
+      columns: z
+        .array(z.string())
+        .optional()
+        .describe('Optional column projection for row mode (keys or names). row_id always included.'),
+      row_keys: z
+        .array(z.string())
+        .optional()
+        .describe('If set, start from these row_id values only.'),
+      aggregate: z
+        .object({
+          metrics: z.array(aggregateMetricSchema).min(1),
+          group_by: z.string().optional().describe('Optional group-by column key or name.'),
+        })
+        .optional()
+        .describe('When set, return aggregate groups (paginated) instead of row pages.'),
       offset: z
         .number()
         .int()
         .min(0)
         .optional()
-        .describe(`Row offset for pagination (default 0).`),
+        .describe('Offset for rows or aggregate groups (default 0).'),
       limit: z
         .number()
         .int()
         .min(1)
         .max(MAX_TABLE_GET_LIMIT)
         .optional()
-        .describe(`Rows per page (default ${DEFAULT_TABLE_GET_LIMIT}, max ${MAX_TABLE_GET_LIMIT}).`),
+        .describe(
+          `Page size for rows or aggregate groups (default ${DEFAULT_TABLE_GET_LIMIT}, max ${MAX_TABLE_GET_LIMIT}).`,
+        ),
     }),
     outputSchema: z.object({
       sheet: z.string(),
       totalRows: z.number(),
-      offset: z.number(),
-      limit: z.number(),
-      hasMore: z.boolean(),
+      matchedRows: z.number(),
+      matchedGroups: z.number().optional(),
+      mode: z.enum(['rows', 'aggregate']),
+      offset: z.number().optional(),
+      limit: z.number().optional(),
+      hasMore: z.boolean().optional(),
       columns: z.array(
         z.object({ key: z.string(), name: z.string(), type: z.string() }),
       ),
-      rows: z.array(rowSchema),
+      rows: z.array(rowSchema).optional(),
+      group_by: z.string().optional(),
+      groups: z
+        .array(z.record(z.string(), z.union([z.string(), z.number(), z.null()])))
+        .optional(),
       notice: z.string().optional(),
     }),
     execute: async (input) => {
       const sheet = resolveTableSheetId(input.sheet);
-      const offset = input.offset ?? 0;
-      const limit = input.limit ?? DEFAULT_TABLE_GET_LIMIT;
-      const { totalRows, rows } = listTableRowsPage(sheet, offset, limit);
-      const hasMore = offset + rows.length < totalRows;
+      const result = queryTableRows(sheet, {
+        query: input.query,
+        sortBy: input.sort_by,
+        sortDir: input.sort_dir,
+        filters: input.filters,
+        columns: input.columns,
+        rowKeys: input.row_keys,
+        aggregate: input.aggregate
+          ? {
+              metrics: input.aggregate.metrics,
+              groupBy: input.aggregate.group_by,
+            }
+          : undefined,
+        offset: input.offset,
+        limit: input.limit,
+      });
+
+      if (result.mode === 'aggregate') {
+        const hasMore = result.hasMore;
+        return {
+          sheet,
+          totalRows: result.totalRows,
+          matchedRows: result.matchedRows,
+          matchedGroups: result.matchedGroups,
+          mode: 'aggregate' as const,
+          offset: result.offset,
+          limit: result.limit,
+          hasMore,
+          columns: [],
+          group_by: result.groupBy,
+          groups: result.groups,
+          ...(result.matchedRows === 0
+            ? {
+                notice: 'No rows matched the query/filters; aggregates are empty or zero.',
+              }
+            : hasMore
+              ? {
+                  notice:
+                    `Showing ${result.groups.length} of ${result.matchedGroups} group(s) ` +
+                    `(${result.matchedRows} matched row(s)). ` +
+                    `Call table_get again with offset=${result.offset + result.groups.length} for more groups.`,
+                }
+              : {}),
+        };
+      }
+
+      const hasMore = result.hasMore;
       return {
         sheet,
-        totalRows,
-        offset,
-        limit,
+        totalRows: result.totalRows,
+        matchedRows: result.matchedRows,
+        mode: 'rows' as const,
+        offset: result.offset,
+        limit: result.limit,
         hasMore,
-        columns: listTableColumns(sheet).map((c) => ({
-          key: c.key,
-          name: c.name,
-          type: c.type,
-        })),
-        rows,
+        columns: result.columns,
+        rows: result.rows,
         ...(hasMore
           ? {
               notice:
-                `Showing rows ${offset + 1}–${offset + rows.length} of ${totalRows}. ` +
-                `Call table_get again with offset=${offset + rows.length} for the next page.`,
+                `Showing ${result.rows.length} of ${result.matchedRows} matched row(s) ` +
+                `(sheet has ${result.totalRows} total). ` +
+                `Call table_get again with offset=${result.offset + result.rows.length} for the next page.`,
             }
-          : totalRows === 0
+          : result.totalRows === 0
             ? {
                 notice:
                   'This sheet has zero rows in the server table store. ' +
                   'If the UI shows data, confirm the correct sheet id via table_sheets action "list".',
               }
-            : {}),
+            : result.matchedRows === 0
+              ? {
+                  notice: 'No rows matched query/filters. Broaden search or clear filters.',
+                }
+              : {}),
       };
     },
   });

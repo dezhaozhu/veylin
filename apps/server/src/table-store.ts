@@ -12,7 +12,7 @@ import {
   replaceTableRows,
   upsertTableSheet,
 } from '@veylin/db';
-import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
+import { DEFAULT_TABLE_STATUS_OPTIONS, runTableQuery, type TableQueryOptions, type TableQueryResult } from '@veylin/shared';
 import { EventEmitter } from 'node:events';
 
 export type TableColumnType = 'text' | 'number' | 'status';
@@ -418,20 +418,63 @@ export function countTableRows(sheetId: string = DEFAULT_TABLE_SHEET): number {
 export const DEFAULT_TABLE_GET_LIMIT = 50;
 export const MAX_TABLE_GET_LIMIT = 200;
 
-/** Paginated row read for table_get — avoids multi‑MB tool payloads on large sheets. */
-export function listTableRowsPage(
+export type QueryTableRowsOptions = Omit<TableQueryOptions, 'limit'> & {
+  limit?: number;
+};
+
+export type QueryTableRowsResult = TableQueryResult & {
+  totalRows: number;
+  columns: Array<{ key: string; name: string; type: string }>;
+};
+
+/**
+ * Query rows for table_get: text search, column filters, sort, projection,
+ * row_keys, aggregate (with group sort/limit), then paginate.
+ */
+export function queryTableRows(
   sheetId: string,
-  offset = 0,
-  limit = DEFAULT_TABLE_GET_LIMIT,
-): { totalRows: number; rows: TableRowData[] } {
+  options: QueryTableRowsOptions = {},
+): QueryTableRowsResult {
   const sheet = getSheet(resolveTableSheetId(sheetId));
-  if (!sheet) return { totalRows: 0, rows: [] };
-  const totalRows = sheet.rows.length;
-  const safeOffset = Math.max(0, Math.min(offset, totalRows));
-  const safeLimit = Math.max(1, Math.min(limit, MAX_TABLE_GET_LIMIT));
+  const columns = (sheet?.columns ?? []).map((c) => ({
+    key: c.key,
+    name: c.name,
+    type: c.type,
+  }));
+  const totalRows = sheet?.rows.length ?? 0;
+  const columnMeta = columns.map((c) => ({
+    key: c.key,
+    name: c.name,
+    type: c.type,
+  }));
+
+  if (!sheet) {
+    return {
+      mode: 'rows',
+      totalRows: 0,
+      matchedRows: 0,
+      offset: 0,
+      limit: DEFAULT_TABLE_GET_LIMIT,
+      hasMore: false,
+      rows: [],
+      columns: columnMeta,
+    };
+  }
+
+  const limit = Math.max(
+    1,
+    Math.min(options.limit ?? DEFAULT_TABLE_GET_LIMIT, MAX_TABLE_GET_LIMIT),
+  );
+  const result = runTableQuery(sheet.rows, columns, {
+    ...options,
+    limit,
+  });
+
+  // Aggregate responses omit full column schema to keep payloads small.
   return {
+    ...result,
     totalRows,
-    rows: sheet.rows.slice(safeOffset, safeOffset + safeLimit).map((r) => ({ ...r })),
+    columns: result.mode === 'aggregate' ? [] : columnMeta,
   };
 }
 
@@ -450,7 +493,7 @@ export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string
   const lines: string[] = [
     '# Table / spreadsheet data (live snapshot)',
     'The workspace **表格** panel holds multi-sheet spreadsheet data. This is separate from the knowledge base (uploaded documents).',
-    'Before saying there is no data, check this block and call `table_sheets` (action list) / `table_get` when row counts are non-zero.',
+    'Before saying there is no data, check this block and call `table_sheets` (action list) / `table_get` (query/sort/filters) when row counts are non-zero.',
   ];
 
   for (const sheet of snapshots) {
@@ -477,7 +520,7 @@ export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string
       }
     }
     lines.push(
-      `- Use \`table_get\` with \`{ "sheet": "${sheet.id}", "offset": 0, "limit": 50 }\` (paginate; ${sheet.rowCount} rows total).`,
+      `- Use \`table_get\` with query/sort/filters as needed, e.g. \`{ "sheet": "${sheet.id}", "offset": 0, "limit": 50 }\` (${sheet.rowCount} rows total).`,
     );
   }
 
