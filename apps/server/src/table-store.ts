@@ -170,7 +170,19 @@ function buildInitialStore(): Map<string, SheetState> {
 let sheetStore = buildInitialStore();
 let tableHydrated = false;
 
+// Serialize all sheet persists: the embedded SurrealDB aborts OVERLAPPING write
+// transactions with "Transaction read conflict" (seen on concurrent startup seeding).
+// Run every persist through one chain so they never overlap. (Our fork doesn't take
+// dezhao's dedicated persist queue; this is the minimal equivalent.)
+let persistChain: Promise<void> = Promise.resolve();
+
 async function persistSheet(sheetId: string): Promise<void> {
+  const next = persistChain.then(() => persistSheetInner(sheetId));
+  persistChain = next.catch(() => {}); // one failure must not stall later persists
+  return next;
+}
+
+async function persistSheetInner(sheetId: string): Promise<void> {
   const sheet = sheetStore.get(sheetId);
   if (!sheet) return;
   await upsertTableSheet({ ...sheet.meta });
