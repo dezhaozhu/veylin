@@ -27,7 +27,17 @@ export {
   localFastembed,
   resetLocalFastembedRuntime,
 } from './fastembed-local';
-export { buildStorage, buildObservability } from './storage';
+export {
+  buildStorage,
+  buildObservability,
+  resolveLangfuseConfig,
+  type LangfuseResolvedConfig,
+} from './storage';
+export {
+  collectLangfuseAttachments,
+  type TraceAttachmentPart,
+  type TraceAttachmentMeta,
+} from './langfuse-attachments';
 export {
   getModelConfig,
   getRuntimeModelOverrides,

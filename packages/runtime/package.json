@@ -13,18 +13,22 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@veylin/db": "*",
-    "@veylin/agent-package": "*",
-    "@veylin/policy": "*",
-    "@veylin/shared": "*",
-    "@veylin/tools": "*",
+    "@langfuse/core": "^5.9.1",
     "@mastra/core": "^1.45.0",
     "@mastra/fastembed": "^1.2.0",
+    "@mastra/langfuse": "^1.4.3",
     "@mastra/libsql": "^1.14.1",
     "@mastra/loggers": "^1.2.0",
     "@mastra/mcp": "^1.11.0",
     "@mastra/memory": "^1.21.0",
     "@mastra/observability": "^1.15.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/sdk-trace-base": "^2.9.0",
+    "@veylin/agent-package": "*",
+    "@veylin/db": "*",
+    "@veylin/policy": "*",
+    "@veylin/shared": "*",
+    "@veylin/tools": "*",
     "zod": "^4.4.3"
   }
 }

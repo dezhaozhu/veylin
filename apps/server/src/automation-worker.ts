@@ -43,6 +43,7 @@ export async function runAutomationJob(
       prompt: automation.prompt,
       eventContext: job.eventContext,
       title: automation.name,
+      automationId: automation.id,
     });
 
     await updateAutomationRun(run.id, {

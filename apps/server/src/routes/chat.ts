@@ -11,6 +11,7 @@ import {
   buildAgentOrchestrationBlock,
   buildCoordinatorOrchestrationBlock,
   isCoordinatorMode,
+  collectLangfuseAttachments,
   type ModelKey,
 } from '@veylin/runtime';
 import { setThreadPlanMode } from '@veylin/tools';
@@ -551,6 +552,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const runAbort = createRunAbortController(streamId);
     requestContext.set('runAbortSignal', runAbort.signal);
 
+    const attachments = collectLangfuseAttachments(messages);
     let stream;
     try {
       stream = await agent.stream(agentMessages as never, {
@@ -559,6 +561,18 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         ...(useThreadMemory ? { memory: { thread: threadId, resource: ctx.userId } } : {}),
         requestContext,
         toolsets: activeToolsets,
+        tracingOptions: {
+          tags: ['chat', agentId],
+          metadata: {
+            sessionId: threadId,
+            userId: ctx.userId,
+            threadId,
+            agentId,
+            model: body.model ?? effectiveModel ?? 'default',
+            streamId,
+            ...(attachments.length > 0 ? { attachments } : {}),
+          },
+        },
       } as never);
     } catch (err) {
       await hookBus.emit(

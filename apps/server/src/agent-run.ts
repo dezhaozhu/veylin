@@ -21,6 +21,10 @@ export interface RunAgentOptions {
   prompt: string;
   eventContext?: Record<string, unknown>;
   title?: string;
+  /** Langfuse / observability: automation that triggered this run. */
+  automationId?: string;
+  /** Langfuse / observability: workflow that triggered this run. */
+  workflowId?: string;
 }
 
 export interface RunAgentResult {
@@ -38,6 +42,8 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
     prompt,
     eventContext,
     title,
+    automationId,
+    workflowId,
   } = options;
 
   const identity = { threadId, tenantId, resourceId: userId };
@@ -113,6 +119,18 @@ export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgent
       memory: { thread: threadId, resource: userId },
       requestContext,
       toolsets: mcpToolsets,
+      tracingOptions: {
+        tags: ['agent-run', agentId],
+        metadata: {
+          sessionId: threadId,
+          userId,
+          threadId,
+          agentId,
+          ...(automationId ? { automationId } : {}),
+          ...(workflowId ? { workflowId } : {}),
+          ...(title ? { title } : {}),
+        },
+      },
     } as never)) as { text?: string };
 
     const text = result?.text ?? '';

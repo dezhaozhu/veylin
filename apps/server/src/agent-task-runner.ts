@@ -359,6 +359,18 @@ export async function runSubagentGenerate(options: {
     requestContext: subCtx,
     toolsets: toolsetsForPreset(options.preset, options.agentId, options.runtime, options.deps, options.fork),
     abortSignal: options.abortSignal,
+    tracingOptions: {
+      tags: ['subagent', options.agentId],
+      metadata: {
+        sessionId: options.parentThreadId ?? options.threadId,
+        userId: options.resourceId,
+        threadId: options.threadId,
+        agentId: options.agentId,
+        ...(parentThreadId ? { parentThreadId } : {}),
+        ...(taskId ? { taskId } : {}),
+        ...(options.preset?.key ? { preset: options.preset.key } : {}),
+      },
+    },
     onStepFinish: (step: unknown) => {
       if (!taskId) return;
       const names = toolNamesFromStep(step);

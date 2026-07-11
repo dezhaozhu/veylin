@@ -416,6 +416,16 @@ async function main() {
         mcp = null;
       }
       await flushTablePersists();
+      try {
+        await runtime.mastra.observability.getSelectedInstance({})?.flush();
+      } catch (err) {
+        app.log.warn({ err }, 'observability flush failed');
+      }
+      try {
+        await runtime.mastra.shutdown();
+      } catch (err) {
+        app.log.warn({ err }, 'mastra shutdown failed');
+      }
       await app.close();
       await closeDb();
     } catch (err) {

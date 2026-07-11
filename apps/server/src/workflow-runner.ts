@@ -87,6 +87,7 @@ async function executeNode(
   tenantId: string,
   userId: string,
   workflowName: string,
+  workflowId: string,
 ): Promise<unknown> {
   const data = nodeData(node);
   switch (kind) {
@@ -190,6 +191,7 @@ async function executeNode(
         prompt,
         eventContext,
         title: workflowName,
+        workflowId,
       });
       return { text: result.text };
     }
@@ -261,6 +263,7 @@ async function runNode(
   tenantId: string,
   userId: string,
   workflowName: string,
+  workflowId: string,
 ): Promise<ExecResult> {
   try {
     const output = await executeNode(
@@ -272,6 +275,7 @@ async function runNode(
       tenantId,
       userId,
       workflowName,
+      workflowId,
     );
     let outcome: NodeOutcome = 'success';
     if (kind === 'if_else') {
@@ -346,6 +350,7 @@ export async function runWorkflowJob(runtime: Runtime, job: WorkflowJob): Promis
           job.tenantId,
           workflow.userId,
           workflow.name,
+          workflow.id,
         );
         ctx[node.id] = output;
         await appendLog({

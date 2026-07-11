@@ -9,7 +9,7 @@ import type { AgentDefinition } from '@veylin/shared';
 import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { defaultPolicy, planModePolicy, type PolicyConfig } from '@veylin/policy';
 import { buildMemory } from './memory';
-import { buildStorage } from './storage';
+import { buildStorage, buildObservability } from './storage';
 import { buildAgent } from './agents';
 import { SUBAGENT_PRESETS, presetToDefinition } from './subagent-presets';
 
@@ -163,6 +163,7 @@ export async function createRuntime(
   const mastra = new Mastra({
     agents: Object.fromEntries(agentById),
     storage,
+    observability: buildObservability(),
     logger: new PinoLogger({ name: 'veylin', level: 'info' }),
   });
 
