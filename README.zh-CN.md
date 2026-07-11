@@ -42,7 +42,9 @@
 - 计划模式、Todos、向用户提问、Goal / Loop
 - 子智能体与预设（explore / plan / general-purpose 等）
 - 动态工具发现（`tool_search`）：表格、知识库、工作流、配置、agent 工具
+- 对话 Markdown：KaTeX 公式、Shiki 代码高亮、callout 提示块
 - 上下文工程：分层 system prompt、微压缩、LLM compaction
+- 可选 Langfuse 追踪（`.env.example` 中 `LANGFUSE_*`）：chat / agent / 附件
 
 ### 定制与扩展
 
@@ -119,7 +121,7 @@ npm run -w @veylin/desktop build
 - **微压缩**：旧的大工具结果可替换为占位，保留近轮完整输出
 - **Compaction**：历史超阈值时摘要较早消息（可按 context window 比例自动触发）
 
-环境变量见 `.env.example` 中 Context engineering 一节。
+环境变量见 `.env.example`（含 Context engineering、可选 Langfuse 等）。
 
 ## 安全
 

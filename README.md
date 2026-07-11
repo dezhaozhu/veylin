@@ -42,7 +42,9 @@ English · [简体中文](./README.zh-CN.md)
 - Plan mode, todos, ask-user questions, goal / loop
 - Subagents with presets (explore / plan / general-purpose / …)
 - Dynamic tool discovery (`tool_search`) for table, knowledge, workflow, config, agent tools
+- Rich chat markdown: KaTeX math, Shiki code highlighting, and callout blocks
 - Context engineering: layered system prompts, microcompact, LLM compaction
+- Optional Langfuse tracing (`LANGFUSE_*` in `.env.example`) for chat / agents / attachments
 
 ### Customize & extend
 
@@ -102,6 +104,8 @@ npm run -w @veylin/desktop dev
 ```
 
 Data directory: set `VEYLIN_DATA_DIR` (dev defaults to the repo `./data`). Desktop no-login mode uses `VEYLIN_DESKTOP_AUTH=1`.
+
+Optional env knobs (models, context engineering, Langfuse) are documented in [`.env.example`](./.env.example).
 
 ## Build the desktop app
 
