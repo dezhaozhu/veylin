@@ -182,6 +182,9 @@ export interface TableColumnRow {
   deletable: boolean;
   position: number;
   statusOptions?: string[];
+  // status columns: {value -> generic tone} supplied by the data source, so the
+  // grid colours badges from metadata instead of a hardcoded per-domain map.
+  semantics?: Record<string, string>;
 }
 
 export interface TableRowRecord {

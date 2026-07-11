@@ -126,17 +126,31 @@ function scheduleLateness(row: Record<string, unknown> | undefined): 'late' | 'a
   return null;
 }
 
-async function fetchScheduleDetail(orderId: unknown, stageCode: unknown): Promise<Record<string, unknown>[]> {
+interface ScheduleDetail {
+  rows: Record<string, unknown>[];
+  // status-column tone map (from the 三级 response's own columns), so the detail
+  // badges are metadata-driven exactly like the main grid — nothing hardcoded.
+  semantics?: Record<string, string>;
+}
+
+async function fetchScheduleDetail(orderId: unknown, stageCode: unknown): Promise<ScheduleDetail> {
   const qs = new URLSearchParams();
   if (orderId != null && orderId !== '') qs.set('order_id', String(orderId));
   if (stageCode != null && stageCode !== '') qs.set('stage_code', String(stageCode));
   try {
     const res = await fetch(`/api/schedule-detail?${qs.toString()}`);
-    if (!res.ok) return [];
-    const data = (await res.json()) as { rows?: Record<string, unknown>[] };
-    return Array.isArray(data.rows) ? data.rows : [];
+    if (!res.ok) return { rows: [] };
+    const data = (await res.json()) as {
+      rows?: Record<string, unknown>[];
+      columns?: Array<{ key?: string; type?: string; semantics?: Record<string, string> }>;
+    };
+    const statusCol = data.columns?.find((c) => c.type === 'status' && c.semantics);
+    return {
+      rows: Array.isArray(data.rows) ? data.rows : [],
+      semantics: statusCol?.semantics,
+    };
   } catch {
-    return [];
+    return { rows: [] };
   }
 }
 
@@ -148,6 +162,8 @@ interface TableColumnDef {
   frozen?: boolean;
   deletable: boolean;
   statusOptions?: string[];
+  // {status value -> generic tone} from the data source; drives badge colour.
+  semantics?: Record<string, string>;
 }
 
 interface TableSheet {
@@ -167,28 +183,25 @@ const STATUS_GREEN = 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text
 const STATUS_AMBER = 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300';
 const STATUS_RED = 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300';
 const STATUS_SLATE = 'bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-300';
+const STATUS_BLUE = 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300';
 
-const STATUS_STYLE: Record<string, string> = {
-  open: STATUS_SLATE,
-  in_progress: STATUS_AMBER,
-  done: STATUS_GREEN,
-  normal: STATUS_GREEN,
-  tight: STATUS_AMBER,
-  overdue: STATUS_RED,
-  // Compass 排产状态 (schedule_status)
-  solved: STATUS_GREEN,
-  derived: STATUS_AMBER,
-  infeasible: STATUS_RED,
-  unscheduled: STATUS_SLATE,
-  not_scheduled: STATUS_SLATE,
-  // Compass 执行状态 (exec_status, 三级 status)
-  已完工: STATUS_GREEN,
-  已开工: STATUS_AMBER,
-  未开工: STATUS_SLATE,
+// GENERIC tone → colour. The tone vocabulary is universal; which status VALUE is
+// which tone is DOMAIN knowledge the data source ships as column `semantics`
+// metadata (Compass: solved→positive, 已完工→positive…), never hardcoded here — so
+// this one grid renders scheduling, inventory, QA… each in its own colours. A value
+// with no declared tone is NEUTRAL (honest: no invented colour).
+type StatusTone = 'positive' | 'warning' | 'negative' | 'neutral' | 'info';
+const TONE_STYLE: Record<StatusTone, string> = {
+  positive: STATUS_GREEN,
+  warning: STATUS_AMBER,
+  negative: STATUS_RED,
+  neutral: STATUS_SLATE,
+  info: STATUS_BLUE,
 };
 
-function statusClass(value: string): string {
-  return STATUS_STYLE[value] ?? 'bg-muted text-muted-foreground';
+function statusClass(value: string, semantics?: Record<string, string>): string {
+  const tone = (semantics?.[value] as StatusTone | undefined) ?? 'neutral';
+  return TONE_STYLE[tone] ?? TONE_STYLE.neutral;
 }
 
 function humanizeStatus(value: string): string {
@@ -344,14 +357,20 @@ function TableGridFooter({ totals }: { totals: TableGridTotals }) {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({
+  status,
+  semantics,
+}: {
+  status: string;
+  semantics?: Record<string, string>;
+}) {
   const { t } = useTranslation();
   if (!status) return null;
   return (
     <span
       className={cn(
         'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-        statusClass(status),
+        statusClass(status, semantics),
       )}
     >
       {t(`table.status.${status}`, { defaultValue: humanizeStatus(status) })}
@@ -365,10 +384,14 @@ function StatusBadge({ status }: { status: string }) {
 // its content. Replaces the default bordered detail grid.
 function ScheduleDetailPanel(params: { data?: Record<string, unknown> }) {
   const [rows, setRows] = useState<Record<string, unknown>[] | null>(null);
+  const [semantics, setSemantics] = useState<Record<string, string> | undefined>(undefined);
   useEffect(() => {
     let alive = true;
-    void fetchScheduleDetail(params.data?.['order_id'], params.data?.['stage_code']).then((r) => {
-      if (alive) setRows(r);
+    void fetchScheduleDetail(params.data?.['order_id'], params.data?.['stage_code']).then((d) => {
+      if (alive) {
+        setRows(d.rows);
+        setSemantics(d.semantics);
+      }
     });
     return () => {
       alive = false;
@@ -396,7 +419,7 @@ function ScheduleDetailPanel(params: { data?: Record<string, unknown> }) {
               <span className="min-w-[6rem] shrink-0 text-muted-foreground">
                 {String(op['resource_id'] ?? '')}
               </span>
-              <StatusBadge status={String(op['status'] ?? '')} />
+              <StatusBadge status={String(op['status'] ?? '')} semantics={semantics} />
               <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
                 {day(op['planned_start'])}
                 {day(op['planned_end']) ? ` → ${day(op['planned_end'])}` : ''}
@@ -1341,8 +1364,8 @@ export function TableGrid() {
           cellEditor: 'agSelectCellEditor',
           cellEditorParams: { values: options },
           cellRenderer: (params: ICellRendererParams<TableRow>) => (
-            <div className="flex w-full justify-center px-2">
-              <StatusBadge status={String(params.value ?? '')} />
+            <div className="flex size-full items-center justify-center px-2">
+              <StatusBadge status={String(params.value ?? '')} semantics={def.semantics} />
             </div>
           ),
         });

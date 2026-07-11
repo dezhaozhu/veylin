@@ -42,6 +42,10 @@ export async function listTableColumns(sheetId: string): Promise<TableColumnRow[
     statusOptions: Array.isArray(r.status_options)
       ? (r.status_options as string[]).map(String)
       : undefined,
+    semantics:
+      r.semantics && typeof r.semantics === 'object'
+        ? (r.semantics as Record<string, string>)
+        : undefined,
   }));
 }
 
@@ -61,6 +65,7 @@ export async function replaceTableColumns(
       deletable: col.deletable,
       position: col.position,
       ...(col.statusOptions?.length ? { status_options: col.statusOptions } : {}),
+      ...(col.semantics && Object.keys(col.semantics).length ? { semantics: col.semantics } : {}),
     });
   }
 }

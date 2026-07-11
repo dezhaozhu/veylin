@@ -27,6 +27,9 @@ export interface TableColumnDef {
   frozen?: boolean;
   deletable: boolean;
   statusOptions?: string[];
+  // status columns: {value -> generic tone} from the data source (Compass etc.),
+  // so badge colours are metadata-driven, not hardcoded per domain in the grid.
+  semantics?: Record<string, string>;
 }
 
 export interface TableSheetMeta {
@@ -183,6 +186,7 @@ async function persistSheet(sheetId: string): Promise<void> {
       deletable: c.deletable,
       position: i,
       statusOptions: c.statusOptions,
+      semantics: c.semantics,
     })),
   );
   await replaceTableRows(
@@ -232,6 +236,7 @@ export async function initTableStore(): Promise<void> {
             frozen: c.frozen,
             deletable: c.deletable,
             statusOptions: c.statusOptions,
+            semantics: c.semantics,
           }),
         ),
         rows: rows.map((r) => ({ ...r.data } as TableRowData)),
@@ -588,6 +593,7 @@ export interface TableColumnDescriptor {
   name: string;
   type: TableColumnType;
   statusOptions?: string[];
+  semantics?: Record<string, string>;
 }
 
 function buildColumnsFromDescriptors(descriptors: TableColumnDescriptor[]): TableColumnDef[] {
@@ -603,6 +609,9 @@ function buildColumnsFromDescriptors(descriptors: TableColumnDescriptor[]): Tabl
     };
     if (d.type === 'status' && d.statusOptions?.length) {
       col.statusOptions = [...d.statusOptions];
+    }
+    if (d.type === 'status' && d.semantics && Object.keys(d.semantics).length) {
+      col.semantics = { ...d.semantics };
     }
     columns.push(col);
   }

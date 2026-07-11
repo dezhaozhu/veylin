@@ -88,11 +88,16 @@ export async function importCompassScheduleSheet(
       const type: 'text' | 'number' | 'status' =
         rawType === 'number' ? 'number' : rawType === 'status' ? 'status' : 'text';
       const opts = c['options'];
+      const sem = c['semantics'];
       return {
         key,
         name: String(c['name'] ?? key),
         type,
         statusOptions: type === 'status' && Array.isArray(opts) ? (opts as string[]) : undefined,
+        semantics:
+          type === 'status' && sem && typeof sem === 'object'
+            ? (sem as Record<string, string>)
+            : undefined,
       };
     })
     .filter((d): d is NonNullable<typeof d> => d !== null);
@@ -221,12 +226,18 @@ export async function importCompassOrderSheet(
     end: o.end, due_at: o.due_at, _wo_count: o._wo_count,
   }));
 
+  // Reuse the schedule_status tone map Compass shipped on the source columns, so the
+  // orders sheet colours identically to the schedule sheet — no domain map re-hardcoded here.
+  const srcColumns = (payload['columns'] as Array<Record<string, unknown>> | undefined) ?? [];
+  const srcSem = srcColumns.find((c) => c['key'] === 'schedule_status')?.['semantics'];
+  const statusSemantics =
+    srcSem && typeof srcSem === 'object' ? (srcSem as Record<string, string>) : undefined;
   const descriptors = [
     { key: 'order_id', name: '订单号', type: 'text' as const },
     { key: 'product_class', name: '产品', type: 'text' as const },
     { key: 'workshop', name: '分厂', type: 'text' as const },
     { key: 'stage_count', name: '工序数', type: 'number' as const },
-    { key: 'schedule_status', name: '排产状态', type: 'status' as const },
+    { key: 'schedule_status', name: '排产状态', type: 'status' as const, semantics: statusSemantics },
     { key: 'end', name: '计划完工', type: 'text' as const },
     { key: 'due_at', name: '交期', type: 'text' as const },
   ];
