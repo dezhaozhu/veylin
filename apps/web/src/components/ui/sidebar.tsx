@@ -402,7 +402,9 @@ function SidebarResizeHandle({
       className={cn(
         "absolute inset-y-0 z-30 w-3 cursor-col-resize border-0 bg-transparent p-0",
         side === "left" ? "right-0 translate-x-1/2" : "left-0 -translate-x-1/2",
-        "after:absolute after:inset-y-0 after:w-0.5 after:bg-sidebar-border after:opacity-40 hover:after:opacity-100",
+        // Keep the panel border-r/l as the only always-on divider; show the
+        // thicker resize cue only on hover so the seam is not a double line.
+        "after:absolute after:inset-y-0 after:w-0.5 after:bg-sidebar-border after:opacity-0 hover:after:opacity-100",
         side === "left" ? "after:right-1/2" : "after:left-1/2",
       )}
       onPointerDown={onPointerDown}

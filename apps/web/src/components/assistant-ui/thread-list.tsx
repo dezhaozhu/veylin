@@ -171,19 +171,45 @@ const ThreadListSkeleton: FC = () => {
 };
 
 const ThreadListItemTime: FC = () => {
+  const itemId = useAuiState((s) => s.threadListItem.id);
   const lastMessageAt = useAuiState((s) => s.threadListItem.lastMessageAt);
+  const threadIds = useAuiState((s) => s.threads.threadIds);
+  const threadItems = useAuiState((s) => s.threads.threadItems);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    const id = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(id);
   }, []);
 
-  if (!lastMessageAt) return null;
+  const isNewest = useMemo(() => {
+    if (threadIds.length === 0) return true;
+    let bestId = threadIds[0]!;
+    let bestTime = Number.NEGATIVE_INFINITY;
+    const byId = new Map(threadItems.map((item) => [item.id, item]));
+    for (const id of threadIds) {
+      // Missing lastMessageAt sorts as newest (just-created / in-flight).
+      const t = byId.get(id)?.lastMessageAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      if (t >= bestTime) {
+        bestTime = t;
+        bestId = id;
+      }
+    }
+    return itemId === bestId;
+  }, [itemId, threadIds, threadItems]);
+
+  // Only the single newest thread may show "now"; everyone else stays on 1m/2h/….
+  const label =
+    isNewest &&
+    (!lastMessageAt || now - lastMessageAt.getTime() < 60_000)
+      ? 'now'
+      : lastMessageAt
+        ? formatRelativeTimeShort(lastMessageAt, now)
+        : '1m';
 
   return (
     <span className="aui-thread-list-item-time text-muted-foreground w-9 shrink-0 text-right text-xs tabular-nums">
-      {formatRelativeTimeShort(lastMessageAt, now)}
+      {label}
     </span>
   );
 };
@@ -250,7 +276,7 @@ const ThreadListItem: FC = () => {
   }, [isMain, ackTerminal]);
 
   return (
-    <ThreadListItemPrimitive.Root className="aui-thread-list-item group hover:bg-muted focus-visible:bg-muted data-active:bg-muted relative flex h-8 items-center gap-1 rounded-md transition-colors focus-visible:outline-none">
+    <ThreadListItemPrimitive.Root className="aui-thread-list-item group/thread-item hover:bg-muted focus-visible:bg-muted data-active:bg-muted relative flex h-8 items-center gap-1 rounded-md transition-colors focus-visible:outline-none">
       <ThreadListItemPrimitive.Trigger
         className="aui-thread-list-item-trigger flex h-full min-w-0 flex-1 items-center gap-2 px-2 text-start text-sm"
         onClick={ackTerminal}
@@ -307,7 +333,7 @@ const ThreadListItemDelete: FC = () => {
   );
 
   return (
-    <div className="relative z-10 flex w-6 shrink-0 justify-center opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
+    <div className="relative z-10 flex w-6 shrink-0 justify-center opacity-0 pointer-events-none transition-opacity group-hover/thread-item:opacity-100 group-hover/thread-item:pointer-events-auto">
       <Button
         type="button"
         variant="ghost"
