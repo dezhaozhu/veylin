@@ -503,6 +503,10 @@ export function TableGrid() {
   const [compassLoading, setCompassLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
+  // Rows actually shown after AG-Grid's column filters (the search box pre-filters
+  // rowData; column filters narrow further inside the grid). null until first render.
+  const [displayedCount, setDisplayedCount] = useState<number | null>(null);
+  const [columnFilterActive, setColumnFilterActive] = useState(false);
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
   const [undoStack, setUndoStack] = useState<HistoryBatch[]>([]);
   const [redoStack, setRedoStack] = useState<HistoryBatch[]>([]);
@@ -620,6 +624,7 @@ export function TableGrid() {
 
   const resetSheetUiState = useCallback(() => {
     setFilters(EMPTY_FILTERS);
+    gridApiRef.current?.setFilterModel(null);   // drop the previous sheet's column filters
     setSelectedRows(new Set());
     setUndoStack([]);
     setRedoStack([]);
@@ -860,10 +865,10 @@ export function TableGrid() {
 
   const totals = useMemo<TableGridTotals>(
     () => ({
-      rowCount: filteredRows.length,
+      rowCount: displayedCount ?? filteredRows.length,
       selectedCount: selectedRows.size,
     }),
-    [filteredRows.length, selectedRows.size],
+    [displayedCount, filteredRows.length, selectedRows.size],
   );
 
   const commitRows = useCallback(
@@ -1164,6 +1169,22 @@ export function TableGrid() {
     gridApiRef.current = event.api;
   }, []);
 
+  // Keep the footer count honest under column filters. onModelUpdated fires on
+  // rowData (search) AND column-filter/sort/group changes → single source of truth.
+  const onModelUpdated = useCallback(() => {
+    const api = gridApiRef.current;
+    const c = api?.getDisplayedRowCount?.() ?? null;
+    setDisplayedCount((prev) => (prev === c ? prev : c));
+    const active = api?.isAnyFilterPresent?.() ?? false;
+    setColumnFilterActive((prev) => (prev === active ? prev : active));
+  }, []);
+
+  // Clear BOTH the global search and every AG-Grid column filter.
+  const clearAllFilters = useCallback(() => {
+    setFilters(EMPTY_FILTERS);
+    gridApiRef.current?.setFilterModel(null);
+  }, []);
+
   // Status options per column — includes values already present in rows
   const statusOptionsByKey = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -1302,6 +1323,12 @@ export function TableGrid() {
         tooltipValueGetter: (p) => (p.value == null || p.value === '' ? null : String(p.value)),
         cellDataType: false,
         suppressHeaderFilterButton: true,
+        // Per-column filtering. Text filter by default; number/status branches
+        // override with the right filter type. A floating filter row under the
+        // header makes it usable without depending on the custom header component,
+        // and the Filters side panel auto-populates from these.
+        filter: 'agTextColumnFilter',
+        floatingFilter: true,
         valueFormatter: (params: ValueFormatterParams<TableRow>) => {
           const v = params.value;
           return v === undefined || v === null ? '' : String(v);
@@ -1327,6 +1354,7 @@ export function TableGrid() {
         defs.push({
           ...baseColDef,
           type: 'rightAligned',   // right-align header + cells (numbers line up)
+          filter: 'agNumberColumnFilter',   // =, ≠, <, >, range
           aggFunc: 'sum',   // group rows roll up numeric columns (只在分组时出现)
           cellEditor: 'agNumberCellEditor',
           cellStyle: (params: CellClassParams<TableRow>) => {
@@ -1347,6 +1375,8 @@ export function TableGrid() {
           ...baseColDef,
           editable: false,
           sortable: false,
+          filter: false,           // cell holds an array series → not filterable
+          floatingFilter: false,
           valueGetter: (params) => {
             const raw = params.data?.[def.key];
             if (typeof raw !== 'string' || raw.trim() === '') return [];
@@ -1361,6 +1391,9 @@ export function TableGrid() {
         const options = statusOptionsByKey.get(def.key) ?? [];
         defs.push({
           ...baseColDef,
+          // Multi-select checklist of the distinct statuses (Enterprise); falls back
+          // to a text filter when Enterprise isn't licensed/loaded.
+          filter: proEnterprise ? 'agSetColumnFilter' : 'agTextColumnFilter',
           cellEditor: 'agSelectCellEditor',
           cellEditorParams: { values: options },
           cellRenderer: (params: ICellRendererParams<TableRow>) => (
@@ -1599,7 +1632,7 @@ export function TableGrid() {
     void handleImportFile(file);
   };
 
-  const hasActiveFilters = filters.query.trim() !== '';
+  const hasActiveFilters = filters.query.trim() !== '' || columnFilterActive;
 
   if ((compassLoading || loading) && rows.length === 0 && columnDefs.length === 0) {
     return (
@@ -1766,7 +1799,7 @@ export function TableGrid() {
             <button
               type="button"
               className="text-muted-foreground hover:text-foreground text-xs underline"
-              onClick={() => setFilters(EMPTY_FILTERS)}
+              onClick={clearAllFilters}
             >
               {t('table.clear')}
             </button>
@@ -1891,6 +1924,7 @@ export function TableGrid() {
               // 300px box that fills with empty space — AG-Grid master-detail-height guidance.
               detailRowAutoHeight={proMasterDetail || undefined}
               onGridReady={onGridReady}
+              onModelUpdated={onModelUpdated}
               onCellValueChanged={onCellValueChanged}
               onCellKeyDown={onGridCellKeyDown}
               onSelectionChanged={onSelectionChanged}
