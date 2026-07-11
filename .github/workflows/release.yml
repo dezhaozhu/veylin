@@ -34,9 +34,57 @@ jobs:
       - name: Test
         run: npm test
 
+  notes:
+    name: Release notes
+    runs-on: ubuntu-latest
+    outputs:
+      body: ${{ steps.gen.outputs.body }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes from commits
+        id: gen
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          PREV=$(git tag -l 'v*' --sort=-v:refname | awk -v t="$TAG" '$0 != t { print; exit }')
+          {
+            echo "## What's changed"
+            echo
+            if [ -n "${PREV:-}" ]; then
+              RANGE="${PREV}..${TAG}"
+              COMMITS=$(git log "$RANGE" --pretty=format:'- %s' --reverse)
+              FILTERED=$(printf '%s\n' "$COMMITS" | grep -v -E '^- chore: bump desktop to v' || true)
+              if [ -n "$FILTERED" ]; then
+                printf '%s\n' "$FILTERED"
+              elif [ -n "$COMMITS" ]; then
+                printf '%s\n' "$COMMITS"
+              else
+                echo "- No commits since \`${PREV}\`."
+              fi
+              echo
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV}...${TAG}"
+            else
+              git log -30 --pretty=format:'- %s' --reverse
+              echo
+            fi
+          } > /tmp/release-body.md
+
+          echo "Generated release notes:"
+          cat /tmp/release-body.md
+
+          {
+            echo "body<<RELEASE_BODY_EOF"
+            cat /tmp/release-body.md
+            echo "RELEASE_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
   release:
     name: Build desktop (${{ matrix.platform }})
-    needs: gate
+    needs: [gate, notes]
     permissions:
       contents: write
     strategy:
@@ -99,7 +147,7 @@ jobs:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
           releaseName: 'Veylin ${{ github.ref_name }}'
-          releaseBody: 'See the assets below to download and install this version.'
+          releaseBody: ${{ needs.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
