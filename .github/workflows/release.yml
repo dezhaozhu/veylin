@@ -65,8 +65,6 @@ jobs:
               else
                 echo "- No commits since \`${PREV}\`."
               fi
-              echo
-              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV}...${TAG}"
             else
               git log -30 --pretty=format:'- %s' --reverse
               echo
