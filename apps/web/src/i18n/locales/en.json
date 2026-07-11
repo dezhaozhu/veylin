@@ -949,14 +949,12 @@
   "splash": {
     "uiLoadFailed": "UI failed to load: {{message}}",
     "startingService": "Starting local service…",
-    "startingServiceProgress": "Starting local service… ({{count}})",
     "serviceNotReady": "Local service is not ready: {{message}}",
     "retry": "Retry",
     "uiLoadFailedTitle": "UI failed to load",
     "reload": "Reload",
     "serviceNotReadyTitle": "Local service is not ready",
     "desktopHint": "For desktop, run <code>npm run -w @veylin/desktop dev</code>; for web-only dev, ensure the server is running on port 8787.",
-    "sidecarSpawnFailed": "Failed to start the local service",
-    "loadingApp": "Loading…"
+    "sidecarSpawnFailed": "Failed to start the local service"
   }
 }

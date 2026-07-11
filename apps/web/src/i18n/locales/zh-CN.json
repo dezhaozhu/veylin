@@ -949,14 +949,12 @@
   "splash": {
     "uiLoadFailed": "界面加载失败：{{message}}",
     "startingService": "正在启动本地服务…",
-    "startingServiceProgress": "正在启动本地服务… ({{count}})",
     "serviceNotReady": "本地服务暂未就绪：{{message}}",
     "retry": "重试",
     "uiLoadFailedTitle": "界面加载失败",
     "reload": "重新加载",
     "serviceNotReadyTitle": "本地服务暂未就绪",
     "desktopHint": "桌面端请用 <code>npm run -w @veylin/desktop dev</code> 启动；仅 Web 开发请确认 8787 端口上的 server 已运行。",
-    "sidecarSpawnFailed": "本地服务启动失败",
-    "loadingApp": "加载中…"
+    "sidecarSpawnFailed": "本地服务启动失败"
   }
 }

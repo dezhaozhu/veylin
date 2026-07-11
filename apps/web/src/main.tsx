@@ -85,9 +85,7 @@ async function waitForApiReady(signal: { cancelled: boolean }): Promise<void> {
         lastError = err;
       }
     }
-    if (i > 0 && i % 5 === 0) {
-      setSplashHint(i18n.t('splash.startingServiceProgress', { count: i + 1 }));
-    }
+    // Keep splash logo-only during normal wait; progress text is intentionally omitted.
     await sleep(i < 20 ? 200 : 500);
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
@@ -170,12 +168,8 @@ function StartupError({ message, onRetry }: { message: string; onRetry: () => vo
 }
 
 function StartupLoading() {
-  const { t } = useTranslation();
-  return (
-    <div className="bg-background text-foreground flex min-h-dvh items-center justify-center p-8">
-      <p className="text-muted-foreground text-sm">{t('splash.startingService')}</p>
-    </div>
-  );
+  // Splash logo covers startup; keep a blank shell so React can mount underneath.
+  return <div className="bg-background min-h-dvh" aria-hidden="true" />;
 }
 
 function StartupGate() {
