@@ -72,7 +72,9 @@
   },
   "reasoning": {
     "thought": "Thought",
-    "thoughtDuration": "Thought, {{seconds}} seconds"
+    "thoughtDuration": "Thought, {{seconds}} seconds",
+    "workedFor": "Worked for {{seconds}}s",
+    "workedForNoDuration": "Worked for"
   },
   "toolSearch": {
     "searching": "Searching tools for \"{{query}}\"…",

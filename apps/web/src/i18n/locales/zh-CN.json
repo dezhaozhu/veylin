@@ -72,7 +72,9 @@
   },
   "reasoning": {
     "thought": "思考",
-    "thoughtDuration": "思考，{{seconds}} 秒"
+    "thoughtDuration": "思考，{{seconds}} 秒",
+    "workedFor": "工作了 {{seconds}} 秒",
+    "workedForNoDuration": "已完成工作"
   },
   "toolSearch": {
     "searching": "正在搜索工具「{{query}}」…",

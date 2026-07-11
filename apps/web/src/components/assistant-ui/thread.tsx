@@ -40,7 +40,9 @@ import {
   ComposerPrimitive,
   ErrorPrimitive,
   groupPartByType,
+  type GroupByContext,
   MessagePrimitive,
+  type PartState,
   ThreadPrimitive,
   type ToolCallMessagePartComponent,
   useAuiState,
@@ -58,6 +60,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useSyncExternalStore,
   type ComponentType,
   type FC,
@@ -67,6 +70,10 @@ import {
   getAskUserSessionForThread,
   subscribeAskUserSession,
 } from "@/lib/ask-user-question-session";
+import {
+  findLastSubstantialTextIndex,
+  hasPreFinalWork,
+} from "@/lib/assistant-final-output";
 import { usePlanModeBridge, useGoalLoopBridge } from "@/lib/use-composer-settings";
 import { dispatchOverlayDismiss } from "@/lib/overlay-dismiss";
 import { hideWebView, isTauri } from "@/lib/tauri-web-view";
@@ -76,8 +83,25 @@ import {
   retryHistoryLoad,
   subscribeHistoryLoadState,
 } from "@/lib/history-load-state";
+import { WorkedForBlock } from "@/components/assistant-ui/worked-for";
+import { useStreamingDuration } from "@/components/assistant-ui/collapsible-streaming";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
+
+type AssistantGroupKey =
+  | "group-worked-for"
+  | "group-chainOfThought"
+  | "group-reasoning"
+  | "group-prose"
+  | "group-tool"
+  | "group-final-prose";
+
+const baseAssistantGroupBy = groupPartByType({
+  reasoning: ["group-chainOfThought", "group-reasoning"],
+  text: ["group-chainOfThought", "group-prose"],
+  "tool-call": ["group-chainOfThought", "group-tool"],
+  "standalone-tool-call": [],
+});
 
 /**
  * Optional component overrides for the thread. `AssistantMessage` and
@@ -400,6 +424,38 @@ const AssistantMessage: FC = () => {
     ReasoningGroup,
   } = useContext(ThreadComponentsContext);
 
+  const parts = useAuiState((s) => s.message.parts);
+  const isRunning = useAuiState((s) => s.message.status?.type === "running");
+  const elapsedSeconds = useStreamingDuration(isRunning === true);
+  const lastTextIdx = useMemo(
+    () => findLastSubstantialTextIndex(parts),
+    [parts],
+  );
+  const foldWork =
+    !isRunning && hasPreFinalWork(parts, lastTextIdx);
+
+  const groupBy = useMemo(() => {
+    const fold: (
+      part: PartState,
+      context?: GroupByContext,
+    ) => readonly AssistantGroupKey[] = (part, context) => {
+      if (!foldWork) {
+        return baseAssistantGroupBy(part, context) as readonly AssistantGroupKey[];
+      }
+      const index = parts.indexOf(part);
+      const path = baseAssistantGroupBy(part, context);
+      if (index === lastTextIdx && part.type === "text") {
+        return ["group-final-prose"];
+      }
+      if (path.length === 0) return path as readonly AssistantGroupKey[];
+      if (path[0] === "group-chainOfThought") {
+        return ["group-worked-for", ...(path as AssistantGroupKey[])];
+      }
+      return path as readonly AssistantGroupKey[];
+    };
+    return fold;
+  }, [foldWork, parts, lastTextIdx]);
+
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
   // keeps hovered action bar from shifting layout (autohide doesn't support absolute positioning well)
   // for pt-[n] use -mb-[n + 6] & min-h-[n + 6] to preserve compensation
@@ -417,16 +473,15 @@ const AssistantMessage: FC = () => {
         // [contain-intrinsic-size:auto_24px] fixes issue #4104, don't change without checking for regressions
         className="text-foreground flex flex-col gap-2 px-2 leading-relaxed wrap-break-word [contain-intrinsic-size:auto_24px] [content-visibility:auto]"
       >
-        <MessagePrimitive.GroupedParts
-          groupBy={groupPartByType({
-            reasoning: ["group-chainOfThought", "group-reasoning"],
-            text: ["group-chainOfThought", "group-prose"],
-            "tool-call": ["group-chainOfThought", "group-tool"],
-            "standalone-tool-call": [],
-          })}
-        >
+        <MessagePrimitive.GroupedParts groupBy={groupBy}>
           {({ part, children }) => {
             switch (part.type) {
+              case "group-worked-for":
+                return (
+                  <WorkedForBlock elapsedSeconds={elapsedSeconds}>
+                    {children}
+                  </WorkedForBlock>
+                );
               case "group-chainOfThought":
                 return (
                   <div
@@ -457,6 +512,7 @@ const AssistantMessage: FC = () => {
                   </ReasoningGroupBlock>
                 );
               }
+              case "group-final-prose":
               case "group-prose":
                 return (
                   <div data-slot="aui_assistant-prose" className="flex flex-col gap-2">
