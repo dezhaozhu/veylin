@@ -74,7 +74,8 @@
     "thought": "Thought",
     "thoughtDuration": "Thought, {{seconds}} seconds",
     "workedFor": "Worked for {{seconds}}s",
-    "workedForNoDuration": "Worked for"
+    "workedForNoDuration": "Worked for",
+    "contextSummarized": "Chat context summarized"
   },
   "toolSearch": {
     "searching": "Searching tools for \"{{query}}\"…",

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import type { MastraDBMessage } from '@mastra/core/memory';
-import { ContextCompression, estimateTokens } from './contextCompression.js';
+import {
+  ContextCompression,
+  estimateTokens,
+  VEYLIN_CONTEXT_COMPACTED_KEY,
+  type VeylinContextCompacted,
+} from './contextCompression.js';
 import { resetCompactCircuitBreaker } from '../context-window.js';
 
 function textMessage(text: string, index: number): MastraDBMessage {
@@ -113,6 +118,51 @@ describe('ContextCompression', () => {
     const out = await compressor.processInput({ messages });
     assert.equal(out.length, 2);
     assert.equal(out[0], messages[0]);
+  });
+
+  it('sets requestContext when compaction runs', async () => {
+    const store = new Map<string, unknown>();
+    const requestContext = {
+      set: (key: string, value: unknown) => {
+        store.set(key, value);
+      },
+    };
+    const compressor = new ContextCompression({
+      keepRecent: 1,
+      triggerAt: 9999,
+      tokenTriggerAt: 999_999,
+      force: true,
+    });
+    const messages = [
+      textMessage('old a', 0),
+      textMessage('old b', 1),
+      textMessage('keep me', 2),
+    ];
+    const out = await compressor.processInput({ messages, requestContext });
+    const payload = store.get(VEYLIN_CONTEXT_COMPACTED_KEY) as VeylinContextCompacted | undefined;
+    assert.ok(payload);
+    assert.equal(payload.beforeMessages, 3);
+    assert.equal(payload.afterMessages, out.length);
+    assert.equal(typeof payload.beforeTokens, 'number');
+    assert.equal(typeof payload.afterTokens, 'number');
+    assert.ok(payload.afterMessages < payload.beforeMessages);
+  });
+
+  it('does not set requestContext when compaction is skipped', async () => {
+    const store = new Map<string, unknown>();
+    const requestContext = {
+      set: (key: string, value: unknown) => {
+        store.set(key, value);
+      },
+    };
+    const compressor = new ContextCompression({
+      keepRecent: 1,
+      triggerAt: 9999,
+      tokenTriggerAt: 999_999,
+    });
+    const messages = [textMessage('a', 0), textMessage('b', 1)];
+    await compressor.processInput({ messages, requestContext });
+    assert.equal(store.has(VEYLIN_CONTEXT_COMPACTED_KEY), false);
   });
 
   afterEach(() => {

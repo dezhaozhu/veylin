@@ -12,7 +12,9 @@ import {
   buildCoordinatorOrchestrationBlock,
   isCoordinatorMode,
   collectLangfuseAttachments,
+  VEYLIN_CONTEXT_COMPACTED_KEY,
   type ModelKey,
+  type VeylinContextCompacted,
 } from '@veylin/runtime';
 import { setThreadPlanMode } from '@veylin/tools';
 import { stripInterruptedAssistantTurnsForAgent, clampLoopWakeupSeconds, isGoalActive, isLoopActive, parseIntervalToSeconds, LOOP_WAKEUP_MIN_SECONDS } from '@veylin/shared';
@@ -694,6 +696,26 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
             /* writer already closed */
           }
         }, SSE_KEEPALIVE_INTERVAL_MS);
+
+        let wroteCompactNotice = false;
+        const writeCompactNoticeIfNeeded = () => {
+          if (wroteCompactNotice) return;
+          const payload = requestContext.get(VEYLIN_CONTEXT_COMPACTED_KEY) as
+            | VeylinContextCompacted
+            | undefined;
+          if (!payload) return;
+          wroteCompactNotice = true;
+          try {
+            writer.write({
+              type: 'data-veylin-context-summarized',
+              data: payload,
+            } as never);
+          } catch {
+            /* writer already closed */
+          }
+        };
+
+        writeCompactNoticeIfNeeded();
         try {
           for await (const part of toAISdkStream(stream as never, {
             from,
@@ -701,6 +723,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
             sendReasoning: true,
           } as never)) {
             if (runAbort.signal.aborted) break;
+            // Input processors may finish after stream() returns; emit before first chunk.
+            writeCompactNoticeIfNeeded();
             for (const repaired of repairUiStreamChunk(part as never, streamRepair)) {
               writer.write(repaired as never);
             }

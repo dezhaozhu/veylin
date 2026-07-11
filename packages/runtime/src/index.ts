@@ -9,7 +9,12 @@ export {
   type AgentContext,
 } from './registry';
 export { buildAgent, toolNeedsApproval, type BuildAgentOptions } from './agents';
-export { ContextCompression, estimateTokens } from './processors/contextCompression';
+export {
+  ContextCompression,
+  estimateTokens,
+  VEYLIN_CONTEXT_COMPACTED_KEY,
+  type VeylinContextCompacted,
+} from './processors/contextCompression';
 export {
   SUBAGENT_PRESETS,
   SUBAGENT_TYPES,

@@ -85,6 +85,22 @@ export function bumpCompactGeneration(): number {
   return compactGeneration;
 }
 
+/** RequestContext key set when auto/manual compaction rewrites the input transcript. */
+export const VEYLIN_CONTEXT_COMPACTED_KEY = 'veylinContextCompacted';
+
+export type VeylinContextCompacted = {
+  beforeTokens: number;
+  afterTokens: number;
+  beforeMessages: number;
+  afterMessages: number;
+  generation: number;
+};
+
+type ProcessInputArgs = {
+  messages: MastraDBMessage[];
+  requestContext?: { set: (key: string, value: unknown) => void };
+};
+
 /**
  * Two-tier context compaction: message count, token estimate, or context-window % threshold.
  */
@@ -111,7 +127,10 @@ export class ContextCompression implements Processor {
     this.force = opts.force === true;
   }
 
-  async processInput({ messages }: { messages: MastraDBMessage[] }): Promise<MastraDBMessage[]> {
+  async processInput({
+    messages,
+    requestContext,
+  }: ProcessInputArgs): Promise<MastraDBMessage[]> {
     if (isAutoCompactDisabled() && !this.force) return messages;
 
     const tokens = estimateTokens(messages);
@@ -136,14 +155,16 @@ export class ContextCompression implements Processor {
         tokens > this.tokenLlmTriggerAt ||
         overAutoWindow);
     let summaryText: string;
+    let generation = getCompactGeneration();
 
     try {
       if (useLlm && this.summarizer) {
         const transcript = head.map(transcriptLine).join('\n');
         try {
           const summary = await this.summarizer(transcript);
+          generation = bumpCompactGeneration();
           summaryText =
-            `[Conversation compacted (gen ${bumpCompactGeneration()}): the ${head.length} earlier message(s) were summarized below. ` +
+            `[Conversation compacted (gen ${generation}): the ${head.length} earlier message(s) were summarized below. ` +
             `Treat this as the authoritative record of that span. Resume unfinished work silently — ` +
             `do not greet, do not restate the whole summary, and do not ask whether to continue ` +
             `unless the summary conflicts with the latest user intent.]\n\n` +
@@ -169,7 +190,16 @@ export class ContextCompression implements Processor {
       },
     } as unknown as MastraDBMessage;
 
-    return [summaryMessage, ...tail];
+    const result = [summaryMessage, ...tail];
+    requestContext?.set(VEYLIN_CONTEXT_COMPACTED_KEY, {
+      beforeTokens: tokens,
+      afterTokens: estimateTokens(result),
+      beforeMessages: messages.length,
+      afterMessages: result.length,
+      generation,
+    } satisfies VeylinContextCompacted);
+
+    return result;
   }
 
   private deterministic(head: MastraDBMessage[]): string {
