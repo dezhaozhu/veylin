@@ -61,7 +61,6 @@ function RuleRow({
 export function RulesSettingsScreen() {
   const { t } = useTranslation();
   const [rules, setRules] = useState<Rule[]>([]);
-  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -77,15 +76,12 @@ export function RulesSettingsScreen() {
   });
 
   const load = useCallback(async () => {
-    setLoading(true);
     setLoadError(null);
     try {
       const data = await settingsApi.getRules();
       setRules(data.rules);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : t('customize.rulesPage.loadFailed'));
-    } finally {
-      setLoading(false);
     }
   }, [t]);
 
@@ -163,11 +159,7 @@ export function RulesSettingsScreen() {
     }
   };
 
-  if (loading) {
-    return <div className="text-muted-foreground text-sm">{t('customize.rulesPage.loading')}</div>;
-  }
-
-  if (loadError) {
+  if (loadError && rules.length === 0) {
     return (
       <div className="mx-auto flex max-w-4xl flex-col items-start gap-3">
         <p className="text-muted-foreground text-sm">{t('customize.rulesPage.loadFailed')}</p>

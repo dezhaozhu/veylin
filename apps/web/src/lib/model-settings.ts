@@ -4,6 +4,8 @@ import { getChatSettings, setChatSettings } from '@/lib/chat-settings';
 export type ModelCatalogEntry = {
   id: string;
   label: string;
+  modelId?: string;
+  contextWindow?: number;
 };
 
 export type ModelSettings = {

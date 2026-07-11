@@ -1,6 +1,9 @@
 //! Floating panel "+" menu as a separate always-on-top window so it can paint
 //! above the docked native webview without resizing or hiding the page.
 
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use serde::{Deserialize, Serialize};
 use tauri::{
     AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
@@ -9,6 +12,15 @@ use tauri::{
 const MENU_LABEL: &str = "panel-menu";
 const SELECT_EVENT: &str = "panel-menu-select";
 const CLOSED_EVENT: &str = "panel-menu-closed";
+/// Ignore Focused(false) briefly after show — macOS often flickers focus when
+/// an always-on-top child opens above a docked webview.
+const FOCUS_GRACE: Duration = Duration::from_millis(250);
+/// After an intentional destroy/replace, ignore teardown events briefly so
+/// Focused(false) + CloseRequested do not emit `panel-menu-closed`.
+const TEARDOWN_IGNORE: Duration = Duration::from_millis(400);
+
+static MENU_SHOWN_AT: Mutex<Option<Instant>> = Mutex::new(None);
+static IGNORE_WINDOW_EVENTS_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,8 +77,23 @@ window.addEventListener('keydown',(e)=>{{if(e.key==='Escape')window.__TAURI_INTE
     )
 }
 
+fn mark_intentional_teardown() {
+    if let Ok(mut guard) = IGNORE_WINDOW_EVENTS_UNTIL.lock() {
+        *guard = Some(Instant::now() + TEARDOWN_IGNORE);
+    }
+}
+
+fn should_ignore_window_event() -> bool {
+    IGNORE_WINDOW_EVENTS_UNTIL
+        .lock()
+        .ok()
+        .and_then(|g| *g)
+        .is_some_and(|until| Instant::now() < until)
+}
+
 fn close_existing(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(MENU_LABEL) {
+        mark_intentional_teardown();
         let _ = window.close();
     }
 }
@@ -125,6 +152,9 @@ pub async fn show_panel_menu(
     builder = builder.parent(&main).map_err(|e| e.to_string())?;
 
     let window = builder.build().map_err(|e| e.to_string())?;
+    if let Ok(mut guard) = MENU_SHOWN_AT.lock() {
+        *guard = Some(Instant::now());
+    }
     window.show().map_err(|e| e.to_string())?;
     let _ = window.set_focus();
     Ok(())
@@ -158,10 +188,30 @@ pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
     if window.label() != MENU_LABEL {
         return;
     }
-    if matches!(event, WindowEvent::Focused(false) | WindowEvent::CloseRequested { .. }) {
-        let app = window.app_handle().clone();
-        tauri::async_runtime::spawn(async move {
-            let _ = close_panel_menu(app).await;
-        });
+    if should_ignore_window_event() {
+        return;
+    }
+    match event {
+        WindowEvent::Focused(false) => {
+            let within_grace = MENU_SHOWN_AT
+                .lock()
+                .ok()
+                .and_then(|g| *g)
+                .is_some_and(|at| at.elapsed() < FOCUS_GRACE);
+            if within_grace {
+                return;
+            }
+            let app = window.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = close_panel_menu(app).await;
+            });
+        }
+        WindowEvent::CloseRequested { .. } => {
+            let app = window.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = close_panel_menu(app).await;
+            });
+        }
+        _ => {}
     }
 }

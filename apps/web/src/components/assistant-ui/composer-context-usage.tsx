@@ -13,7 +13,10 @@ import {
   onChatSettingsChange,
   type ModelKey,
 } from '@/lib/chat-settings';
+import { getServerModelCatalog } from '@/hooks/use-server-model-catalog';
+import { listCatalogModels, onModelSettingsChange } from '@/lib/model-settings';
 import { cn } from '@/lib/utils';
+import type { ModelContextWindowSource } from '@veylin/shared';
 import {
   Tooltip,
   TooltipContent,
@@ -50,9 +53,12 @@ function parseLastUsageKey(key: string): ApiUsageLike | null {
 /** Gray context ring — usage % via conic gradient; click or hover shows details. */
 export const ComposerContextUsage: FC<{ className?: string }> = ({ className }) => {
   const [model, setModel] = useState<ModelKey>(() => getChatSettings().model);
+  const [catalogEpoch, setCatalogEpoch] = useState(0);
   const [tipOpen, setTipOpen] = useState(false);
 
   useEffect(() => onChatSettingsChange((s) => setModel(s.model)), []);
+  // Catalog bootstrap may arrive after first paint with modelId / contextWindow.
+  useEffect(() => onModelSettingsChange(() => setCatalogEpoch((n) => n + 1)), []);
 
   // Cheap signature selector re-runs every token, but the expensive full-transcript
   // token scan below is gated on the signature so it does not run on every token.
@@ -70,12 +76,29 @@ export const ComposerContextUsage: FC<{ className?: string }> = ({ className }) 
 
   const lastUsageKey = useAuiState((s) => serializeLastUsageKey(s.thread.messages));
 
+  const catalogSource = useMemo((): ModelContextWindowSource => {
+    void catalogEpoch;
+    const entry =
+      getServerModelCatalog().find((m) => m.id === model) ??
+      listCatalogModels().find((m) => m.id === model);
+    return {
+      id: model,
+      label: entry?.label,
+      modelId: entry?.modelId,
+      contextWindow: entry?.contextWindow,
+    };
+  }, [model, catalogEpoch]);
+
   const snapshot = useMemo(() => {
     const lastUsage = parseLastUsageKey(lastUsageKey);
-    return computeContextUsageSnapshot(estimatedTokens, model, lastUsage);
-  }, [estimatedTokens, lastUsageKey, model]);
+    return computeContextUsageSnapshot(estimatedTokens, model, lastUsage, catalogSource);
+  }, [estimatedTokens, lastUsageKey, model, catalogSource]);
 
-  const tooltip = `${snapshot.usedPercent}% · ${formatTokenCount(snapshot.estimatedTokens)} / ${formatTokenCount(snapshot.contextWindow)} context used`;
+  const ringPercent = snapshot.usedPercent ?? 0;
+  const tooltip =
+    snapshot.contextWindow != null && snapshot.usedPercent != null
+      ? `${snapshot.usedPercent}% · ${formatTokenCount(snapshot.estimatedTokens)} / ${formatTokenCount(snapshot.contextWindow)} context used`
+      : `${formatTokenCount(snapshot.estimatedTokens)} tokens (context limit unknown)`;
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -97,7 +120,7 @@ export const ComposerContextUsage: FC<{ className?: string }> = ({ className }) 
               className="size-3.5 rounded-full"
               style={
                 {
-                  '--context-used': snapshot.usedPercent,
+                  '--context-used': ringPercent,
                   background: `
                     radial-gradient(circle, var(--color-background) 54%, transparent 56%),
                     conic-gradient(

@@ -61,6 +61,8 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
+  useState,
   useSyncExternalStore,
   type ComponentType,
   type FC,
@@ -73,6 +75,7 @@ import {
 import {
   findLastSubstantialTextIndex,
   hasPreFinalWork,
+  isSubstantialTextPart,
 } from "@/lib/assistant-final-output";
 import { usePlanModeBridge, useGoalLoopBridge } from "@/lib/use-composer-settings";
 import { dispatchOverlayDismiss } from "@/lib/overlay-dismiss";
@@ -433,6 +436,10 @@ const AssistantMessage: FC = () => {
   );
   const foldWork =
     !isRunning && hasPreFinalWork(parts, lastTextIdx);
+  const [workedForOpen, setWorkedForOpen] = useState(false);
+  const workedForPrimaryStartRef = useRef<number | null>(null);
+  // First group-worked-for in this render pass owns the label.
+  workedForPrimaryStartRef.current = null;
 
   const groupBy = useMemo(() => {
     const fold: (
@@ -442,19 +449,18 @@ const AssistantMessage: FC = () => {
       if (!foldWork) {
         return baseAssistantGroupBy(part, context) as readonly AssistantGroupKey[];
       }
-      const index = parts.indexOf(part);
-      const path = baseAssistantGroupBy(part, context);
-      if (index === lastTextIdx && part.type === "text") {
+      // Keep all user-visible prose outside the collapse shell.
+      if (part.type === "text" && isSubstantialTextPart(part)) {
         return ["group-final-prose"];
       }
-      if (path.length === 0) return path as readonly AssistantGroupKey[];
-      if (path[0] === "group-chainOfThought") {
-        return ["group-worked-for", ...(path as AssistantGroupKey[])];
-      }
-      return path as readonly AssistantGroupKey[];
+      const path = baseAssistantGroupBy(part, context);
+      // Include path=[] (step-start / leftover standalone) so islands can share
+      // one Worked-for label via WorkedForBlock coordination.
+      if (path.length === 0) return ["group-worked-for"];
+      return ["group-worked-for", ...(path as AssistantGroupKey[])];
     };
     return fold;
-  }, [foldWork, parts, lastTextIdx]);
+  }, [foldWork]);
 
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
   // keeps hovered action bar from shifting layout (autohide doesn't support absolute positioning well)
@@ -476,12 +482,26 @@ const AssistantMessage: FC = () => {
         <MessagePrimitive.GroupedParts groupBy={groupBy}>
           {({ part, children }) => {
             switch (part.type) {
-              case "group-worked-for":
+              case "group-worked-for": {
+                const start =
+                  part.indices.length > 0 ? Math.min(...part.indices) : -1;
+                const isPrimary =
+                  workedForPrimaryStartRef.current === null ||
+                  workedForPrimaryStartRef.current === start;
+                if (workedForPrimaryStartRef.current === null) {
+                  workedForPrimaryStartRef.current = start;
+                }
                 return (
-                  <WorkedForBlock elapsedSeconds={elapsedSeconds}>
+                  <WorkedForBlock
+                    elapsedSeconds={elapsedSeconds}
+                    isPrimary={isPrimary}
+                    open={workedForOpen}
+                    onOpenChange={setWorkedForOpen}
+                  >
                     {children}
                   </WorkedForBlock>
                 );
+              }
               case "group-chainOfThought":
                 return (
                   <div

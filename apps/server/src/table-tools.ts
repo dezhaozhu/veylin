@@ -355,10 +355,11 @@ export function buildTableTools() {
     id: 'table_get',
     description:
       'Read or query a table sheet (same data as the right-panel 表格). ' +
-      'Everyday: use query (search box) and/or sort_by+sort_dir (column header sort), then paginate with offset/limit. ' +
+      'Everyday: use query (search box) and/or top-level sort_by+sort_dir (column header sort), then paginate with offset/limit. ' +
       'Advanced: filters (column operators), columns (projection), row_keys (exact rows), ' +
       'aggregate (count/sum/avg/min/max + optional group_by). ' +
-      'For TOP-N groups: aggregate + sort_by=count (or sum_*) + sort_dir=desc + limit (default 50, max 200). ' +
+      'For TOP-N groups: aggregate + top-level sort_by=count (or sum_*) + sort_dir=desc + limit (default 50, max 200). ' +
+      'sort_by/sort_dir belong at the top level (also accepted inside aggregate as a compatibility alias). ' +
       'Do not request all groups of a high-cardinality column — page with offset when hasMore. ' +
       'Pipeline: row_keys → query → filters → row sort → aggregate → group sort → offset/limit. ' +
       'Call table_sheets action "list" if sheet id is unknown.',
@@ -372,12 +373,12 @@ export function buildTableTools() {
         .string()
         .optional()
         .describe(
-          'Sort key: column name for rows, or aggregate metric key (e.g. count, sum_qty) after group_by.',
+          'Top-level sort key: column name for rows, or aggregate metric key (e.g. count, sum_qty) after group_by.',
         ),
       sort_dir: z
         .enum(['asc', 'desc'])
         .optional()
-        .describe('Sort direction (default asc when sort_by is set).'),
+        .describe('Top-level sort direction (default asc when sort_by is set).'),
       filters: z
         .array(filterSchema)
         .optional()
@@ -394,6 +395,14 @@ export function buildTableTools() {
         .object({
           metrics: z.array(aggregateMetricSchema).min(1),
           group_by: z.string().optional().describe('Optional group-by column key or name.'),
+          sort_by: z
+            .string()
+            .optional()
+            .describe('Compatibility alias for top-level sort_by (top-level wins if both set).'),
+          sort_dir: z
+            .enum(['asc', 'desc'])
+            .optional()
+            .describe('Compatibility alias for top-level sort_dir (top-level wins if both set).'),
         })
         .optional()
         .describe('When set, return aggregate groups (paginated) instead of row pages.'),
@@ -434,10 +443,19 @@ export function buildTableTools() {
     }),
     execute: async (input) => {
       const sheet = resolveTableSheetId(input.sheet);
+      const nestedSortBy = input.aggregate?.sort_by;
+      const nestedSortDir = input.aggregate?.sort_dir;
+      const sortBy = input.sort_by ?? nestedSortBy;
+      const sortDir = input.sort_dir ?? nestedSortDir;
+      const usedNestedSortAlias =
+        Boolean(input.aggregate) &&
+        ((nestedSortBy != null && input.sort_by == null) ||
+          (nestedSortDir != null && input.sort_dir == null));
+
       const result = queryTableRows(sheet, {
         query: input.query,
-        sortBy: input.sort_by,
-        sortDir: input.sort_dir,
+        sortBy,
+        sortDir,
         filters: input.filters,
         columns: input.columns,
         rowKeys: input.row_keys,
@@ -451,8 +469,21 @@ export function buildTableTools() {
         limit: input.limit,
       });
 
+      const nestedSortNotice = usedNestedSortAlias
+        ? 'sort_by was read from aggregate; prefer top-level sort_by next time.'
+        : undefined;
+
       if (result.mode === 'aggregate') {
         const hasMore = result.hasMore;
+        const baseNotice =
+          result.matchedRows === 0
+            ? 'No rows matched the query/filters; aggregates are empty or zero.'
+            : hasMore
+              ? `Showing ${result.groups.length} of ${result.matchedGroups} group(s) ` +
+                `(${result.matchedRows} matched row(s)). ` +
+                `Call table_get again with offset=${result.offset + result.groups.length} for more groups.`
+              : undefined;
+        const notice = [nestedSortNotice, baseNotice].filter(Boolean).join(' ') || undefined;
         return {
           sheet,
           totalRows: result.totalRows,
@@ -465,22 +496,22 @@ export function buildTableTools() {
           columns: [],
           group_by: result.groupBy,
           groups: result.groups,
-          ...(result.matchedRows === 0
-            ? {
-                notice: 'No rows matched the query/filters; aggregates are empty or zero.',
-              }
-            : hasMore
-              ? {
-                  notice:
-                    `Showing ${result.groups.length} of ${result.matchedGroups} group(s) ` +
-                    `(${result.matchedRows} matched row(s)). ` +
-                    `Call table_get again with offset=${result.offset + result.groups.length} for more groups.`,
-                }
-              : {}),
+          ...(notice ? { notice } : {}),
         };
       }
 
       const hasMore = result.hasMore;
+      const baseNotice = hasMore
+        ? `Showing ${result.rows.length} of ${result.matchedRows} matched row(s) ` +
+          `(sheet has ${result.totalRows} total). ` +
+          `Call table_get again with offset=${result.offset + result.rows.length} for the next page.`
+        : result.totalRows === 0
+          ? 'This sheet has zero rows in the server table store. ' +
+            'If the UI shows data, confirm the correct sheet id via table_sheets action "list".'
+          : result.matchedRows === 0
+            ? 'No rows matched query/filters. Broaden search or clear filters.'
+            : undefined;
+      // nested sort alias only applies with aggregate; keep rows path unchanged beyond that
       return {
         sheet,
         totalRows: result.totalRows,
@@ -491,24 +522,7 @@ export function buildTableTools() {
         hasMore,
         columns: result.columns,
         rows: result.rows,
-        ...(hasMore
-          ? {
-              notice:
-                `Showing ${result.rows.length} of ${result.matchedRows} matched row(s) ` +
-                `(sheet has ${result.totalRows} total). ` +
-                `Call table_get again with offset=${result.offset + result.rows.length} for the next page.`,
-            }
-          : result.totalRows === 0
-            ? {
-                notice:
-                  'This sheet has zero rows in the server table store. ' +
-                  'If the UI shows data, confirm the correct sheet id via table_sheets action "list".',
-              }
-            : result.matchedRows === 0
-              ? {
-                  notice: 'No rows matched query/filters. Broaden search or clear filters.',
-                }
-              : {}),
+        ...(baseNotice ? { notice: baseNotice } : {}),
       };
     },
   });

@@ -1,6 +1,6 @@
 import type { Memory } from '@mastra/memory';
 import { queryRows, getDb } from '@veylin/db';
-import { getActiveStreamId } from './resumable-chat-stream.js';
+import { getLiveActiveStream } from './resumable-chat-stream.js';
 import { listThreadsForResource } from './thread-state.js';
 
 export type ThreadActivityKind = 'running' | 'finished' | 'interrupted';
@@ -68,9 +68,14 @@ export async function listThreadActivity(
   const out: Record<string, ThreadActivity> = {};
   await Promise.all(
     threadIds.map(async (threadId) => {
-      const activeStream = await getActiveStreamId(threadId);
-      if (activeStream) {
-        out[threadId] = { kind: 'running', at: new Date().toISOString() };
+      const live = await getLiveActiveStream(threadId);
+      if (live) {
+        // Use stream start time — not Date.now() — so the sidebar does not
+        // forever show "now" while a stale mapping is still within TTL.
+        out[threadId] = {
+          kind: 'running',
+          at: new Date(live.startedAt).toISOString(),
+        };
         return;
       }
 

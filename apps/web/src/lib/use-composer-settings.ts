@@ -41,6 +41,41 @@ function applyPlanModeForThread(threadId: string | undefined, on: boolean): void
   }
 }
 
+function postPlanMode(threadId: string | undefined, on: boolean): void {
+  applyPlanModeForThread(threadId, on);
+  if (!threadId) return;
+  void fetch('/api/plan-mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ threadId, planMode: on }),
+  }).catch(() => undefined);
+}
+
+/**
+ * Plan / Goal / Loop are mutually exclusive — enabling one clears the other two.
+ */
+function clearOtherComposerModes(
+  keep: 'plan' | 'goal' | 'loop',
+  threadId: string | undefined,
+): void {
+  if (keep !== 'plan') {
+    postPlanMode(threadId, false);
+  }
+  if (keep !== 'goal') {
+    setChatSettings({ pendingGoal: false });
+    if (threadId) {
+      void requestChatStop(threadId).catch(() => undefined);
+      void clearThreadGoalApi(threadId);
+    }
+  }
+  if (keep !== 'loop') {
+    setChatSettings({ pendingLoop: false });
+    if (threadId) {
+      void stopThreadLoopApi(threadId);
+    }
+  }
+}
+
 /** Mount once per thread view — keeps composer plan UI in sync with agent tool calls. */
 export function usePlanModeBridge(): void {
   const threadId = useAuiState(
@@ -111,14 +146,8 @@ export function usePlanMode() {
 
   const setPlanMode = useCallback(
     (on: boolean) => {
-      applyPlanModeForThread(threadId, on);
-      if (threadId) {
-        void fetch('/api/plan-mode', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ threadId, planMode: on }),
-        }).catch(() => undefined);
-      }
+      if (on) clearOtherComposerModes('plan', threadId);
+      postPlanMode(threadId, on);
     },
     [threadId],
   );
@@ -143,21 +172,29 @@ export function useGoalLoopState() {
   const loop =
     threadId != null ? (readCachedLoop(threadId) ?? null) : null;
 
-  const setPendingGoal = useCallback((on: boolean) => {
-    setChatSettings(
-      on
-        ? { pendingGoal: true, pendingLoop: false }
-        : { pendingGoal: false },
-    );
-  }, []);
+  const setPendingGoal = useCallback(
+    (on: boolean) => {
+      if (on) {
+        clearOtherComposerModes('goal', threadId);
+        setChatSettings({ pendingGoal: true, pendingLoop: false });
+        return;
+      }
+      setChatSettings({ pendingGoal: false });
+    },
+    [threadId],
+  );
 
-  const setPendingLoop = useCallback((on: boolean) => {
-    setChatSettings(
-      on
-        ? { pendingLoop: true, pendingGoal: false }
-        : { pendingLoop: false },
-    );
-  }, []);
+  const setPendingLoop = useCallback(
+    (on: boolean) => {
+      if (on) {
+        clearOtherComposerModes('loop', threadId);
+        setChatSettings({ pendingLoop: true, pendingGoal: false });
+        return;
+      }
+      setChatSettings({ pendingLoop: false });
+    },
+    [threadId],
+  );
 
   const clearGoal = useCallback(async () => {
     setChatSettings({ pendingGoal: false });
@@ -176,6 +213,7 @@ export function useGoalLoopState() {
   const setGoal = useCallback(
     async (condition: string) => {
       if (!threadId) return { ok: false as const, error: 'no_thread' };
+      clearOtherComposerModes('goal', threadId);
       return setThreadGoalApi(threadId, condition);
     },
     [threadId],
@@ -187,6 +225,7 @@ export function useGoalLoopState() {
       opts?: { intervalSeconds?: number; interval?: string; mode?: 'fixed' | 'dynamic' },
     ) => {
       if (!threadId) return { ok: false as const, error: 'no_thread' };
+      clearOtherComposerModes('loop', threadId);
       return setThreadLoopApi(threadId, prompt, opts);
     },
     [threadId],
@@ -197,38 +236,16 @@ export function useGoalLoopState() {
       void clearGoal();
       return;
     }
-    if (loop?.status === 'active' || pendingLoop) {
-      void stopLoop();
-    }
     setPendingGoal(true);
-  }, [
-    goal?.status,
-    pendingGoal,
-    loop?.status,
-    pendingLoop,
-    clearGoal,
-    stopLoop,
-    setPendingGoal,
-  ]);
+  }, [goal?.status, pendingGoal, clearGoal, setPendingGoal]);
 
   const toggleLoop = useCallback(() => {
     if (loop?.status === 'active' || pendingLoop) {
       void stopLoop();
       return;
     }
-    if (goal?.status === 'active' || pendingGoal) {
-      void clearGoal();
-    }
     setPendingLoop(true);
-  }, [
-    loop?.status,
-    pendingLoop,
-    goal?.status,
-    pendingGoal,
-    stopLoop,
-    clearGoal,
-    setPendingLoop,
-  ]);
+  }, [loop?.status, pendingLoop, stopLoop, setPendingLoop]);
 
   return {
     threadId,

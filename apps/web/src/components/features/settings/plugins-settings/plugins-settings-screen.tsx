@@ -24,7 +24,6 @@ export function PluginsSettingsScreen() {
   const { t } = useTranslation();
   const [installed, setInstalled] = useState<PluginInstall[]>([]);
   const [marketplace, setMarketplace] = useState<MarketplaceEntry[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [installForm, setInstallForm] = useState({ type: 'path' as 'path' | 'git', value: '' });
@@ -32,7 +31,6 @@ export function PluginsSettingsScreen() {
   const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
       const data = await settingsApi.getPlugins();
@@ -40,8 +38,6 @@ export function PluginsSettingsScreen() {
       setMarketplace(data.marketplace);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common.loadFailed'));
-    } finally {
-      setLoading(false);
     }
   }, [t]);
 
@@ -92,11 +88,7 @@ export function PluginsSettingsScreen() {
     }
   };
 
-  if (loading) {
-    return <div className="text-muted-foreground text-sm">{t('customize.pluginsPage.loading')}</div>;
-  }
-
-  if (error) {
+  if (error && installed.length === 0) {
     return (
       <div className="mx-auto flex max-w-4xl flex-col gap-3">
         <p className="text-muted-foreground text-sm">{error}</p>

@@ -10,6 +10,8 @@ export const modelCatalogEntrySchema = z.object({
   default: z.boolean().optional(),
   /** When true, chat may attach images/PDF page renders for this catalog id. */
   vision: z.boolean().optional(),
+  /** Optional input context window override (tokens). When omitted, resolved via provider `/models`, known modelId table, or 272k fallback. */
+  contextWindow: z.number().int().positive().optional(),
 });
 
 export type ModelCatalogEntry = z.infer<typeof modelCatalogEntrySchema>;

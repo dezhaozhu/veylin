@@ -1,16 +1,16 @@
 import { makeAssistantToolUI } from '@assistant-ui/react';
 
 /**
- * Mastra Memory injects working-memory tools when `workingMemory.enabled` is true.
- * They are framework-internal (not part of Veylin's tool registry) and are also
- * updated server-side via `memory.updateWorkingMemory()`. Hide them from chat UI.
+ * Mastra Memory injects working-memory tools when `workingMemory.enabled` is true
+ * and memory is not `readOnly`. Veylin runs Memory with `readOnly: true` so the
+ * main agent loop does not get these tools; writes use dream / syncWorkingMemory.
+ * Keep these UIs as a belt-and-suspenders hide if a tool part still appears.
  */
 export const UpdateWorkingMemoryToolUI = makeAssistantToolUI<
   Record<string, unknown>,
   unknown
 >({
   toolName: 'updateWorkingMemory',
-  display: 'standalone',
   render: () => null,
 });
 
@@ -19,6 +19,5 @@ export const SetWorkingMemoryToolUI = makeAssistantToolUI<
   unknown
 >({
   toolName: 'setWorkingMemory',
-  display: 'standalone',
   render: () => null,
 });

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import {
   getDefaultCatalogModel,
-  listModelCatalogPublic,
+  listModelCatalogPublicWithContextWindows,
   loadModelCatalog,
 } from '@veylin/runtime';
 import { modelProviderSettingsPatchSchema } from '@veylin/shared';
@@ -34,7 +34,7 @@ export function registerModelSettingsRoutes(app: FastifyInstance, deps: ServerDe
   });
 
   app.get('/api/model-catalog', async () => {
-    const models = listModelCatalogPublic();
+    const models = await listModelCatalogPublicWithContextWindows();
     const primary = getDefaultCatalogModel();
     return {
       models,

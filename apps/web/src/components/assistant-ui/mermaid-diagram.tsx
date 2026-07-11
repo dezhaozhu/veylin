@@ -50,8 +50,28 @@ function ensureMermaidInit() {
     theme: dark ? 'dark' : 'neutral',
     securityLevel: 'strict',
     fontFamily: 'inherit',
+    fontSize: 11,
     // Avoid injecting the built-in "Syntax error in text" SVG into document.body.
     suppressErrorRendering: true,
+    // Tighter defaults — chat cards feel oversized with Mermaid's stock spacing.
+    flowchart: {
+      htmlLabels: true,
+      curve: 'basis',
+      padding: 6,
+      nodeSpacing: 18,
+      rankSpacing: 22,
+      useMaxWidth: true,
+    },
+    sequence: {
+      useMaxWidth: true,
+      boxMargin: 5,
+      messageMargin: 22,
+      actorMargin: 28,
+      noteMargin: 6,
+    },
+    themeVariables: {
+      fontSize: '11px',
+    },
   });
   mermaidReady = true;
 }
@@ -105,17 +125,21 @@ function MermaidToolbar({
 function MermaidSvg({
   svg,
   className,
+  compact = false,
   onMount,
 }: {
   svg: string;
   className?: string;
+  /** Shrink inline chat cards; expanded dialog stays full size. */
+  compact?: boolean;
   onMount?: (node: HTMLDivElement | null) => void;
 }) {
   return (
     <div
       ref={onMount}
       className={cn(
-        '[&_svg]:mx-auto [&_svg]:max-w-full',
+        '[&_svg]:mx-auto [&_svg]:block [&_svg]:h-auto [&_svg]:max-w-full',
+        compact && '[&_svg]:w-[min(100%,_36rem)]',
         className,
       )}
       dangerouslySetInnerHTML={{ __html: svg }}
@@ -297,7 +321,7 @@ export function MermaidDiagram({ code, className }: { code: string; className?: 
     return (
       <div
         className={cn(
-          'aui-md-mermaid-error border-destructive/30 bg-destructive/5 text-destructive my-3 rounded-xl border p-3 text-xs',
+          'aui-md-mermaid-error border-destructive/30 bg-destructive/5 text-destructive my-2 rounded-lg border p-3 text-xs',
           className,
         )}
       >
@@ -310,7 +334,7 @@ export function MermaidDiagram({ code, className }: { code: string; className?: 
     return (
       <div
         className={cn(
-          'aui-md-mermaid-loading bg-muted/30 text-muted-foreground relative my-3 flex min-h-[120px] items-center justify-center rounded-xl border text-xs',
+          'aui-md-mermaid-loading bg-muted/30 text-muted-foreground relative my-2 flex min-h-[72px] items-center justify-center rounded-lg border text-xs',
           className,
         )}
       >
@@ -323,13 +347,14 @@ export function MermaidDiagram({ code, className }: { code: string; className?: 
     <>
       <div
         className={cn(
-          'aui-md-mermaid bg-card relative my-3 overflow-x-auto rounded-xl border p-4',
+          'aui-md-mermaid bg-card relative my-2 overflow-x-auto rounded-lg border p-2 pr-11',
           className,
         )}
       >
         <MermaidToolbar code={code} onExpand={() => setExpanded(true)} />
         <MermaidSvg
           svg={svg}
+          compact
           onMount={(node) => {
             displayRef.current = node;
           }}

@@ -13,8 +13,12 @@ import {
   isCoordinatorMode,
   collectLangfuseAttachments,
   VEYLIN_CONTEXT_COMPACTED_KEY,
+  buildContextSummarizedStreamChunk,
+  buildContextUsageStreamChunk,
+  normalizeContextUsage,
   type ModelKey,
   type VeylinContextCompacted,
+  type VeylinContextUsage,
 } from '@veylin/runtime';
 import { setThreadPlanMode } from '@veylin/tools';
 import { stripInterruptedAssistantTurnsForAgent, clampLoopWakeupSeconds, isGoalActive, isLoopActive, parseIntervalToSeconds, LOOP_WAKEUP_MIN_SECONDS } from '@veylin/shared';
@@ -552,6 +556,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
 
     const streamId = crypto.randomUUID();
     const runAbort = createRunAbortController(streamId);
+    // Thin defense for compact notice; full-answer dupes are fixed by client SSE cursor.
+    let wroteCompactNotice = false;
     requestContext.set('runAbortSignal', runAbort.signal);
 
     const attachments = collectLangfuseAttachments(messages);
@@ -681,9 +687,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       },
       execute: async ({ writer }) => {
         const streamRepair = createUiStreamRepairState();
-        // Also write transient data-keepalive into the UI stream (resumable tee).
-        // Primary liveness for the browser is the raw SSE comment interval below —
-        // that path cannot stall behind consumeSseStream backpressure.
+        // Client liveness watches response.body (45s). data-keepalive must travel on
+        // this UI stream — reply.raw SSE comments never enter the fetch body.
+        // consumeSseStream only tees encoded SSE; execute / toAISdkStream run once.
         const keepAlive = setInterval(() => {
           if (runAbort.signal.aborted) return;
           try {
@@ -697,7 +703,6 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
           }
         }, SSE_KEEPALIVE_INTERVAL_MS);
 
-        let wroteCompactNotice = false;
         const writeCompactNoticeIfNeeded = () => {
           if (wroteCompactNotice) return;
           const payload = requestContext.get(VEYLIN_CONTEXT_COMPACTED_KEY) as
@@ -706,27 +711,62 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
           if (!payload) return;
           wroteCompactNotice = true;
           try {
-            writer.write({
-              type: 'data-veylin-context-summarized',
-              data: payload,
-            } as never);
+            writer.write(buildContextSummarizedStreamChunk(payload) as never);
           } catch {
             /* writer already closed */
           }
         };
 
-        writeCompactNoticeIfNeeded();
+        // Last step only (Claude Code): do not sum multi-step input_tokens.
+        let lastStepUsage: VeylinContextUsage | null = null;
+        const writeContextUsageIfNeeded = (usage: VeylinContextUsage | null) => {
+          if (!usage) return;
+          const chunk = buildContextUsageStreamChunk(usage);
+          if (!chunk) return;
+          try {
+            writer.write(chunk as never);
+          } catch {
+            /* writer already closed */
+          }
+        };
+
         try {
           for await (const part of toAISdkStream(stream as never, {
             from,
             version: 'v6',
             sendReasoning: true,
+            // Mastra strips finish-step.usage from UI chunks; recover via messageMetadata
+            // on finish (+ explicit data part after each step for the composer ring).
+            messageMetadata: ({
+              part: streamPart,
+            }: {
+              part: { type?: string; usage?: unknown; totalUsage?: unknown };
+            }) => {
+              if (streamPart.type === 'finish-step') {
+                const usage = normalizeContextUsage(streamPart.usage);
+                if (usage) lastStepUsage = usage;
+                return undefined;
+              }
+              if (streamPart.type === 'finish') {
+                const usage =
+                  lastStepUsage ?? normalizeContextUsage(streamPart.totalUsage);
+                if (usage) {
+                  lastStepUsage = usage;
+                  return { usage };
+                }
+              }
+              return undefined;
+            },
           } as never)) {
             if (runAbort.signal.aborted) break;
-            // Input processors may finish after stream() returns; emit before first chunk.
+            // Input processors may finish after stream() returns; emit once when payload appears.
             writeCompactNoticeIfNeeded();
             for (const repaired of repairUiStreamChunk(part as never, streamRepair)) {
               writer.write(repaired as never);
+            }
+            const partType = (part as { type?: string }).type;
+            if (partType === 'finish-step' || partType === 'finish') {
+              writeContextUsageIfNeeded(lastStepUsage);
             }
           }
         } catch (err) {
@@ -758,7 +798,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       ),
     );
 
-    // Bypass AI SDK tee backpressure: comment frames always reach the client socket.
+    // Socket-level comments keep proxies/load-balancers awake; they do NOT reset
+    // client wrapStreamWithLiveness (that only sees response.body / data-keepalive).
     const rawKeepAlive = setInterval(() => {
       if (runAbort.signal.aborted || reply.raw.destroyed || reply.raw.writableEnded) {
         clearInterval(rawKeepAlive);

@@ -26,6 +26,7 @@
     "continuing": "继续任务 {{id}}…",
     "continueQueued": "跟进已排队 {{id}}…",
     "continueResult": "任务 {{id}} 已更新",
+    "complete": "complete",
     "duration": "{{ms}} 毫秒",
     "tokens": "{{count}} tokens"
   },
@@ -68,14 +69,14 @@
     "assistantWorking": "助手正在处理",
     "historyLoading": "正在加载会话…",
     "historyLoadFailed": "无法加载此会话。",
-    "historyRetry": "重试"
+    "historyRetry": "重试",
+    "contextSummarized": "对话上下文已压缩"
   },
   "reasoning": {
     "thought": "思考",
     "thoughtDuration": "思考，{{seconds}} 秒",
     "workedFor": "工作了 {{seconds}} 秒",
-    "workedForNoDuration": "已完成工作",
-    "contextSummarized": "对话上下文已压缩"
+    "workedForNoDuration": "已完成工作"
   },
   "toolSearch": {
     "searching": "正在搜索工具「{{query}}」…",
@@ -454,9 +455,7 @@
       "description": "添加 MCP 服务，扩展 Agent 能做的事情。已安装服务可随时启用或停用，无需卸载。",
       "addCustom": "添加 MCP",
       "searchPlaceholder": "搜索 MCP 服务…",
-      "filterAll": "全部",
       "connected": "已连接",
-      "installed": "已安装",
       "plugin": "插件",
       "serverLine": "{{transport}} · {{detail}}",
       "libraryTitle": "服务库",
@@ -468,7 +467,8 @@
       "transportHint": "SSE 用于流式端点；HTTP 用于 streamable HTTP MCP。",
       "headers": "Headers",
       "headersHint": "可选 JSON 对象，例如 {\"Authorization\":\"Bearer ...\"}",
-      "noInstalledMatch": "没有匹配的已安装服务。",
+      "connectedEmpty": "还没有已安装的 MCP 服务。",
+      "libraryEmpty": "没有匹配的服务库条目。",
       "toggle": "启用/停用 {{name}}",
       "confirmDelete": "删除 MCP 服务「{{name}}」？",
       "deleteTitle": "删除 MCP 服务",
@@ -813,8 +813,7 @@
       "rerankerDesc": "从 Hugging Face 官方仓库下载，对检索结果二次排序；不安装不影响基础检索。",
       "enableReranker": "启用精排",
       "enabledHint": "精排已启用，检索与对话中的 knowledge_search 会使用精排结果。",
-      "disabledHint": "精排已关闭，仍保留模型文件，需要时可重新开启。",
-      "hfEndpoint": "下载源：{{endpoint}}"
+      "disabledHint": "精排已关闭，仍保留模型文件，需要时可重新开启。"
     }
   },
   "wf": {

@@ -28,20 +28,28 @@ export function findLastSubstantialTextIndex(
 }
 
 /**
- * True when anything before the final text should be folded under Worked for
- * (reasoning, tools, or earlier prose).
+ * True when anything besides visible prose should be folded under Worked for
+ * (reasoning or tools). Substantial text stays outside the shell.
  */
 export function hasPreFinalWork(
   parts: readonly AssistantPartLike[],
   lastTextIndex = findLastSubstantialTextIndex(parts),
 ): boolean {
   if (lastTextIndex < 0) {
-    return parts.some((p) => p.type === 'reasoning' || p.type === 'tool-call');
+    return parts.some(
+      (p) =>
+        p.type === 'reasoning' ||
+        p.type === 'tool-call' ||
+        p.type === 'step-start' ||
+        (typeof p.type === 'string' && p.type.startsWith('tool-')),
+    );
   }
-  for (let i = 0; i < lastTextIndex; i++) {
+  for (let i = 0; i < parts.length; i++) {
     const type = parts[i]?.type;
-    if (type === 'reasoning' || type === 'tool-call' || type === 'text') {
-      if (type === 'text' && !isSubstantialTextPart(parts[i])) continue;
+    if (type === 'reasoning' || type === 'tool-call' || type === 'step-start') {
+      return true;
+    }
+    if (typeof type === 'string' && type.startsWith('tool-')) {
       return true;
     }
   }

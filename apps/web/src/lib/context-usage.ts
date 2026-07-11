@@ -1,4 +1,8 @@
 import type { ModelKey } from '@/lib/chat-settings';
+import {
+  resolveContextWindowSize,
+  type ModelContextWindowSource,
+} from '@veylin/shared';
 
 /**
  * Context-window usage helpers: estimate token counts and the percentage of a
@@ -6,10 +10,16 @@ import type { ModelKey } from '@/lib/chat-settings';
  * the composer status line and automatic compaction.
  */
 
-const DEFAULT_CONTEXT_WINDOW = 1_000_000;
-
-export function getModelContextWindow(_model: ModelKey): number {
-  return DEFAULT_CONTEXT_WINDOW;
+export function getModelContextWindow(
+  model: ModelKey,
+  catalog?: ModelContextWindowSource | null,
+): number {
+  return resolveContextWindowSize({
+    id: model,
+    label: catalog?.label,
+    modelId: catalog?.modelId ?? model,
+    contextWindow: catalog?.contextWindow,
+  });
 }
 
 /** char/4 heuristic for a rough token-count estimate when usage is unavailable. */
@@ -171,13 +181,13 @@ function parseUsageObject(raw: unknown): ApiUsageLike | null {
       : typeof u.inputTokens === 'number'
         ? u.inputTokens
         : null;
+  if (input == null) return null;
   const output =
     typeof u.output_tokens === 'number'
       ? u.output_tokens
       : typeof u.outputTokens === 'number'
         ? u.outputTokens
-        : null;
-  if (input == null || output == null) return null;
+        : 0;
   return {
     input_tokens: input,
     output_tokens: output,
@@ -192,8 +202,22 @@ function parseUsageObject(raw: unknown): ApiUsageLike | null {
         ? u.cache_read_input_tokens
         : typeof u.cacheReadInputTokens === 'number'
           ? u.cacheReadInputTokens
-          : 0,
+          : typeof u.cachedInputTokens === 'number'
+            ? u.cachedInputTokens
+            : 0,
   };
+}
+
+function usageFromSteps(steps: unknown): ApiUsageLike | null {
+  if (!Array.isArray(steps)) return null;
+  // Claude Code / last API call: use the final step only — summing step inputs double-counts.
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const step = steps[i];
+    if (!step || typeof step !== 'object') continue;
+    const parsed = parseUsageObject((step as { usage?: unknown }).usage);
+    if (parsed) return parsed;
+  }
+  return null;
 }
 
 function getTokenUsageFromMessage(message: unknown): ApiUsageLike | null {
@@ -214,9 +238,18 @@ function getTokenUsageFromMessage(message: unknown): ApiUsageLike | null {
     if (parsed) return parsed;
   }
 
+  const fromSteps = usageFromSteps(
+    (m.metadata as { steps?: unknown } | undefined)?.steps,
+  );
+  if (fromSteps) return fromSteps;
+
   for (const part of getMessageParts(message)) {
     if (!part || typeof part !== 'object') continue;
     const p = part as { type?: string; data?: unknown };
+    if (p.type === 'data-veylin-context-usage') {
+      const parsed = parseUsageObject(p.data);
+      if (parsed) return parsed;
+    }
     if (p.type !== 'data' || !p.data || typeof p.data !== 'object') continue;
     const data = p.data as { usage?: unknown; veylin_context_usage?: unknown };
     const parsed = parseUsageObject(data.usage ?? data.veylin_context_usage);
@@ -281,9 +314,12 @@ export function tokenCountWithEstimation(
 
 export type ContextUsageSnapshot = {
   estimatedTokens: number;
-  contextWindow: number;
-  usedPercent: number;
-  freePercent: number;
+  /** Null when provider/catalog did not supply a window — no guessed denominator. */
+  contextWindow: number | null;
+  usedPercent: number | null;
+  freePercent: number | null;
+  /** True when tokens/% come from transcript char estimate, not last API usage. */
+  isEstimate: boolean;
 };
 
 /** Composer ring + tooltip values for the active model. */
@@ -291,8 +327,8 @@ export function computeContextUsage(opts: {
   messages: readonly unknown[];
   composerText: string;
   model: ModelKey;
+  catalog?: ModelContextWindowSource | null;
 }): ContextUsageSnapshot {
-  const contextWindow = getModelContextWindow(opts.model);
   const estimatedTokens = tokenCountWithEstimation(opts.messages, opts.composerText);
 
   let lastUsage: ApiUsageLike | null = null;
@@ -304,7 +340,7 @@ export function computeContextUsage(opts: {
     }
   }
 
-  return computeContextUsageSnapshot(estimatedTokens, opts.model, lastUsage);
+  return computeContextUsageSnapshot(estimatedTokens, opts.model, lastUsage, opts.catalog);
 }
 
 export function getLastTokenUsageFromMessages(
@@ -321,8 +357,19 @@ export function computeContextUsageSnapshot(
   estimatedTokens: number,
   model: ModelKey,
   lastUsage: ApiUsageLike | null,
+  catalog?: ModelContextWindowSource | null,
 ): ContextUsageSnapshot {
-  const contextWindow = getModelContextWindow(model);
+  const contextWindow = getModelContextWindow(model, catalog);
+  if (contextWindow == null || contextWindow <= 0) {
+    return {
+      estimatedTokens,
+      contextWindow: null,
+      usedPercent: null,
+      freePercent: null,
+      isEstimate: lastUsage == null,
+    };
+  }
+
   const fromApi = calculateContextPercentages(lastUsage, contextWindow);
   if (fromApi.used != null && fromApi.remaining != null) {
     return {
@@ -330,9 +377,11 @@ export function computeContextUsageSnapshot(
       contextWindow,
       usedPercent: fromApi.used,
       freePercent: fromApi.remaining,
+      isEstimate: false,
     };
   }
 
+  // No API usage: rough transcript estimate. Floor tiny non-zero usage to 1% so the ring is visible.
   const rawPercent = (estimatedTokens / contextWindow) * 100;
   const usedPercent =
     estimatedTokens <= 0
@@ -344,6 +393,7 @@ export function computeContextUsageSnapshot(
     contextWindow,
     usedPercent,
     freePercent: 100 - usedPercent,
+    isEstimate: true,
   };
 }
 
@@ -355,28 +405,44 @@ export function measureContextTokenCount(
   return tokenCountWithEstimation(messages, composerText);
 }
 
+/** Bucket size for last-message text growth so the ring refreshes during long streams. */
+const CONTEXT_USAGE_TEXT_BUCKET = 256;
+
 /**
  * Cheap signature for memoizing {@link measureContextTokenCount} at the React
  * layer. The full count re-scans and JSON.stringifies the transcript, which can
  * block the main thread on long conversations if run on every streamed token.
  * The context ring is an estimate, so recomputing only when the signature
- * changes (message added/removed, last-message part count, composer length) is
- * an acceptable trade-off.
+ * changes (message added/removed, last-message part count / text bucket,
+ * composer length) is an acceptable trade-off.
+ *
+ * ThreadMessage uses `content`; UIMessage uses `parts` — both via
+ * {@link getMessageParts}.
  */
 export function contextUsageSignature(
   messages: readonly unknown[],
   composerText = '',
 ): string {
-  const last = messages[messages.length - 1] as
-    | { id?: string; parts?: unknown[] }
-    | undefined;
+  const last = messages[messages.length - 1] as { id?: string } | undefined;
   const lastId = last?.id ?? '';
-  const lastPartsLen = Array.isArray(last?.parts) ? last.parts.length : 0;
-  return `${messages.length}:${lastId}:${lastPartsLen}:${composerText.length}`;
+  const lastParts = getMessageParts(last);
+  let textChars = 0;
+  for (const part of lastParts) {
+    if (!part || typeof part !== 'object') continue;
+    const text = (part as { text?: unknown }).text;
+    if (typeof text === 'string') textChars += text.length;
+  }
+  const textBucket = Math.floor(textChars / CONTEXT_USAGE_TEXT_BUCKET);
+  return `${messages.length}:${lastId}:${lastParts.length}:${textBucket}:${composerText.length}`;
 }
 
 export function formatTokenCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000_000) {
+    const millions = n / 1_000_000;
+    if (Number.isInteger(millions)) return `${millions}M`;
+    const rounded = Math.round(millions * 100) / 100;
+    return `${rounded}M`;
+  }
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
   return String(n);
 }

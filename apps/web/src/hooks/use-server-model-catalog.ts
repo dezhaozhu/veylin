@@ -6,7 +6,13 @@ import { notifyModelProviderChange } from '@/lib/model-availability';
 import type { ModelProviderSettings } from '@/hooks/settings/api';
 
 type CatalogResponse = {
-  models: Array<{ id: string; label: string; default?: boolean }>;
+  models: Array<{
+    id: string;
+    label: string;
+    modelId?: string;
+    contextWindow?: number;
+    default?: boolean;
+  }>;
   defaultId: string | null;
 };
 
@@ -21,7 +27,12 @@ export function getServerModelCatalog(): ModelCatalogEntry[] {
 }
 
 function applyServerCatalog(data: CatalogResponse): ModelCatalogEntry[] {
-  const models = data.models.map((m) => ({ id: m.id, label: m.label }));
+  const models = data.models.map((m) => ({
+    id: m.id,
+    label: m.label,
+    ...(m.modelId ? { modelId: m.modelId } : {}),
+    ...(typeof m.contextWindow === 'number' ? { contextWindow: m.contextWindow } : {}),
+  }));
   serverCatalog = models;
 
   setModelSettings({

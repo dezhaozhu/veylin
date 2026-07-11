@@ -253,7 +253,6 @@ export const RagLocalModelsCard = forwardRef<RagLocalModelsCardHandle>(function 
 ) {
   const { t } = useTranslation();
   const [models, setModels] = useState<LocalModel[]>([]);
-  const [hfEndpoint, setHfEndpoint] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -261,7 +260,6 @@ export const RagLocalModelsCard = forwardRef<RagLocalModelsCardHandle>(function 
     try {
       const next = await fetchLocalModels();
       setModels(next.models);
-      setHfEndpoint(next.hfEndpoint);
       setActionError(null);
       setLoading(false);
       return next;
@@ -306,11 +304,6 @@ export const RagLocalModelsCard = forwardRef<RagLocalModelsCardHandle>(function 
       <div>
         <div className="text-xs font-medium">{t('rag.localModels.title')}</div>
         <div className="text-muted-foreground mt-0.5 text-[11px] leading-relaxed">{t('rag.localModels.subtitle')}</div>
-        {hfEndpoint ? (
-          <div className="text-muted-foreground mt-1 font-mono text-[10px]">
-            {t('rag.localModels.hfEndpoint', { endpoint: hfEndpoint })}
-          </div>
-        ) : null}
       </div>
       {actionError ? (
         <div className="border-destructive/20 bg-destructive/10 text-destructive mt-2 rounded-md border px-2 py-1.5 text-[11px]">

@@ -2,10 +2,11 @@ import { RESUMABLE_STREAM_ID_HEADER } from '@assistant-ui/react-ai-sdk';
 import i18n from '@/i18n';
 import { useNetworkReconnectStore } from '@/lib/network-reconnect-store';
 import { resumableStorage } from '@/lib/resumable-storage';
+import { clearActiveChatRun, setActiveChatRun } from '@/lib/active-chat-run';
 import {
+  advanceCursorBySseBytes,
   cursorToSequenceNum,
   getResumeCursor,
-  nextCursorAfterChunk,
   setResumeCursor,
 } from '@/lib/stream-resume-cursor';
 import {
@@ -43,6 +44,20 @@ function isChatStreamResume(url: string, method: string): boolean {
     /\/api\/chat\/[^/]+\/stream/.test(url) ||
     /\/api\/chat\/streams\//.test(url)
   );
+}
+
+function threadIdFromChatBody(body: BodyInit | null | undefined): string | null {
+  if (typeof body !== 'string') return null;
+  try {
+    const parsed = JSON.parse(body) as { id?: unknown; threadId?: unknown };
+    const id =
+      (typeof parsed.id === 'string' && parsed.id) ||
+      (typeof parsed.threadId === 'string' && parsed.threadId) ||
+      '';
+    return id || null;
+  } catch {
+    return null;
+  }
 }
 
 async function readResponseErrorDetail(response: Response): Promise<string | undefined> {
@@ -131,6 +146,7 @@ async function reconnectingGetStream(
       if (response.status === 204) return response;
       if (response.status === 204 || response.status === 404) {
         resumableStorage.clear();
+        clearActiveChatRun();
         banner.clearTransientBanner();
         return response;
       }
@@ -196,6 +212,7 @@ async function resilientChatPost(
   let finishedSeen = false;
   const decoder = new TextDecoder();
   let accumulator = '';
+  const requestThreadId = threadIdFromChatBody(init?.body ?? null);
 
   const fetchPost = () =>
     postChatWithRetry(
@@ -251,6 +268,7 @@ async function resilientChatPost(
       if (headerId) {
         streamId = headerId;
         resumableStorage.setStreamId(headerId);
+        if (requestThreadId) setActiveChatRun(requestThreadId, headerId);
       }
 
       if (reconnectAttempts > 0) banner.clearReconnecting();
@@ -290,6 +308,7 @@ async function resilientChatPost(
           const resumed = await fetchResume();
           if (isResumableStreamGone(resumed.status)) {
             resumableStorage.clear();
+            clearActiveChatRun(streamId || undefined);
             banner.clearTransientBanner();
             return null;
           }
@@ -304,6 +323,7 @@ async function resilientChatPost(
         onFinished: () => {
           finishedSeen = true;
           resumableStorage.clear();
+          clearActiveChatRun(streamId || undefined);
           banner.clearTransientBanner();
         },
       });
@@ -470,6 +490,7 @@ function wrapTrackedStream(
   },
 ): ReadableStream<Uint8Array> {
   let cursor = options.streamId ? getResumeCursor(options.streamId) : '';
+  let sseCarry = '';
   const live = wrapStreamWithLiveness(body, {
     signal: options.signal,
     onLivenessTimeout: options.onLivenessTimeout,
@@ -484,7 +505,10 @@ function wrapTrackedStream(
         return;
       }
       if (options.streamId) {
-        cursor = nextCursorAfterChunk(cursor);
+        // Count complete SSE frames, not TCP reads — must match store entry seq.
+        const advanced = advanceCursorBySseBytes(cursor, value, sseCarry);
+        cursor = advanced.cursor;
+        sseCarry = advanced.carry;
         setResumeCursor(options.streamId, cursor);
       }
       controller.enqueue(value);

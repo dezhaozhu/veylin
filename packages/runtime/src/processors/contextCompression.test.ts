@@ -5,6 +5,7 @@ import {
   ContextCompression,
   estimateTokens,
   VEYLIN_CONTEXT_COMPACTED_KEY,
+  buildContextSummarizedStreamChunk,
   type VeylinContextCompacted,
 } from './contextCompression.js';
 import { resetCompactCircuitBreaker } from '../context-window.js';
@@ -23,14 +24,15 @@ describe('ContextCompression', () => {
   const prevPct = process.env.VEYLIN_AUTOCOMPACT_PCT;
   const prevBuffer = process.env.VEYLIN_AUTOCOMPACT_BUFFER;
   const prevKeep = process.env.VEYLIN_COMPACT_KEEP;
-
-  const prevTokenTrigger = process.env.VEYLIN_COMPACT_TOKEN_TRIGGER;
+  const prevTokenLimit = process.env.VEYLIN_TOKEN_LIMIT;
 
   beforeEach(() => {
     resetCompactCircuitBreaker();
     delete process.env.VEYLIN_COMPACT_KEEP;
-    delete process.env.VEYLIN_COMPACT_TRIGGER;
-    delete process.env.VEYLIN_COMPACT_TOKEN_TRIGGER;
+    delete process.env.VEYLIN_AUTOCOMPACT_PCT;
+    delete process.env.VEYLIN_AUTOCOMPACT_BUFFER;
+    delete process.env.VEYLIN_AUTOCOMPACT_WINDOW;
+    delete process.env.VEYLIN_TOKEN_LIMIT;
   });
 
   it('estimates tokens from message text', () => {
@@ -57,28 +59,28 @@ describe('ContextCompression', () => {
     assert.ok(tokens > 50, `expected tool payload to count toward tokens, got ${tokens}`);
   });
 
-  it('default token trigger is 4000 (proactive)', () => {
-    delete process.env.VEYLIN_COMPACT_TOKEN_TRIGGER;
-    const compressor = new ContextCompression({ keepRecent: 1, triggerAt: 9999 });
-    // Access via behavior: 4001 tokens worth of text should trigger
+  it('does not auto-compact on short threads under window threshold', async () => {
+    // Large window → high threshold; ~4k tokens must not trigger (old 4k absolute line removed).
+    process.env.VEYLIN_TOKEN_LIMIT = '1_048_576'.replace('_', '');
+    process.env.VEYLIN_TOKEN_LIMIT = '1048576';
+    const compressor = new ContextCompression({ keepRecent: 1 });
     const big = textMessage('a'.repeat(16_004), 0); // ~4001 tokens
     const recent = textMessage('tail', 1);
-    return compressor.processInput({ messages: [big, recent] }).then((out) => {
-      assert.equal(out.length, 2);
-      const summary =
-        (out[0] as { content: { parts: { text?: string }[] } }).content.parts[0]?.text ?? '';
-      assert.match(summary, /compacted/i);
-    });
+    const out = await compressor.processInput({ messages: [big, recent] });
+    assert.equal(out.length, 2);
+    assert.equal(out[0], big);
   });
 
-  it('compacts when estimated tokens exceed token trigger', async () => {
-    process.env.VEYLIN_COMPACT_TOKEN_TRIGGER = '50';
+  it('compacts when estimated tokens exceed autocompact threshold', async () => {
+    process.env.VEYLIN_TOKEN_LIMIT = '50000';
+    process.env.VEYLIN_AUTOCOMPACT_WINDOW = '50000';
+    process.env.VEYLIN_AUTOCOMPACT_PCT = '5'; // effective 30k → threshold 1500
     process.env.VEYLIN_COMPACT_KEEP = '1';
 
-    const compressor = new ContextCompression({ keepRecent: 1, triggerAt: 999 });
+    const compressor = new ContextCompression({ keepRecent: 1 });
     const messages = [
-      textMessage('old context '.repeat(30), 0),
-      textMessage('old context '.repeat(30), 1),
+      textMessage('old context '.repeat(800), 0), // ~2400 tokens
+      textMessage('old context '.repeat(800), 1),
       textMessage('recent tail', 2),
     ];
 
@@ -91,10 +93,9 @@ describe('ContextCompression', () => {
   });
 
   it('force=true compacts even under thresholds', async () => {
+    process.env.VEYLIN_TOKEN_LIMIT = '1048576';
     const compressor = new ContextCompression({
       keepRecent: 1,
-      triggerAt: 9999,
-      tokenTriggerAt: 999_999,
       force: true,
     });
     const messages = [
@@ -109,11 +110,8 @@ describe('ContextCompression', () => {
   });
 
   it('without force leaves short threads unchanged', async () => {
-    const compressor = new ContextCompression({
-      keepRecent: 1,
-      triggerAt: 9999,
-      tokenTriggerAt: 999_999,
-    });
+    process.env.VEYLIN_TOKEN_LIMIT = '1048576';
+    const compressor = new ContextCompression({ keepRecent: 1 });
     const messages = [textMessage('a', 0), textMessage('b', 1)];
     const out = await compressor.processInput({ messages });
     assert.equal(out.length, 2);
@@ -126,11 +124,10 @@ describe('ContextCompression', () => {
       set: (key: string, value: unknown) => {
         store.set(key, value);
       },
+      get: (key: string) => store.get(key),
     };
     const compressor = new ContextCompression({
       keepRecent: 1,
-      triggerAt: 9999,
-      tokenTriggerAt: 999_999,
       force: true,
     });
     const messages = [
@@ -149,20 +146,33 @@ describe('ContextCompression', () => {
   });
 
   it('does not set requestContext when compaction is skipped', async () => {
+    process.env.VEYLIN_TOKEN_LIMIT = '1048576';
     const store = new Map<string, unknown>();
     const requestContext = {
       set: (key: string, value: unknown) => {
         store.set(key, value);
       },
     };
-    const compressor = new ContextCompression({
-      keepRecent: 1,
-      triggerAt: 9999,
-      tokenTriggerAt: 999_999,
-    });
+    const compressor = new ContextCompression({ keepRecent: 1 });
     const messages = [textMessage('a', 0), textMessage('b', 1)];
     await compressor.processInput({ messages, requestContext });
     assert.equal(store.has(VEYLIN_CONTEXT_COMPACTED_KEY), false);
+  });
+
+  it('buildContextSummarizedStreamChunk uses a stable id from generation', () => {
+    const payload: VeylinContextCompacted = {
+      beforeTokens: 100,
+      afterTokens: 40,
+      beforeMessages: 10,
+      afterMessages: 3,
+      generation: 7,
+    };
+    const chunk = buildContextSummarizedStreamChunk(payload);
+    assert.equal(chunk.type, 'data-veylin-context-summarized');
+    assert.equal(chunk.id, 'veylin-context-summarized-7');
+    assert.equal(chunk.data, payload);
+    // Same generation → same id (AI SDK upserts; prevents duplicate notice lines on redelivery).
+    assert.equal(buildContextSummarizedStreamChunk(payload).id, chunk.id);
   });
 
   afterEach(() => {
@@ -174,8 +184,8 @@ describe('ContextCompression', () => {
     else process.env.VEYLIN_AUTOCOMPACT_BUFFER = prevBuffer;
     if (prevKeep === undefined) delete process.env.VEYLIN_COMPACT_KEEP;
     else process.env.VEYLIN_COMPACT_KEEP = prevKeep;
-    if (prevTokenTrigger === undefined) delete process.env.VEYLIN_COMPACT_TOKEN_TRIGGER;
-    else process.env.VEYLIN_COMPACT_TOKEN_TRIGGER = prevTokenTrigger;
+    if (prevTokenLimit === undefined) delete process.env.VEYLIN_TOKEN_LIMIT;
+    else process.env.VEYLIN_TOKEN_LIMIT = prevTokenLimit;
     resetCompactCircuitBreaker();
   });
 });

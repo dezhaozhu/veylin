@@ -8,6 +8,27 @@ const MISPARSED_TOOL_SUFFIXES = new Set(['call']);
 const ASK_USER_CONTINUATION_RE =
   /User has answered your questions:[\s\S]*?You can now continue with the user's answers in mind\.?/gi;
 
+/** Mastra Working Memory blocks the model sometimes echoes into assistant text. */
+const WORKING_MEMORY_BLOCK_RE =
+  /<\/?(?:working_memory_data|working_memory_template)\b[^>]*>|<\/?(?:working-memory)\b[^>]*>/gi;
+const WORKING_MEMORY_DATA_RE =
+  /<working_memory_data\b[^>]*>[\s\S]*?<\/working_memory_data>/gi;
+const WORKING_MEMORY_TEMPLATE_RE =
+  /<working_memory_template\b[^>]*>[\s\S]*?<\/working_memory_template>/gi;
+const WORKING_MEMORY_INSTRUCTION_RE =
+  /WORKING_MEMORY_SYSTEM_INSTRUCTION(?:\s*\(READ-ONLY\))?:\s*/gi;
+
+/** Strip Mastra working-memory XML / instruction echoes from assistant-visible text. */
+export function stripWorkingMemoryEchoText(text: string): string {
+  return text
+    .replace(WORKING_MEMORY_DATA_RE, '')
+    .replace(WORKING_MEMORY_TEMPLATE_RE, '')
+    .replace(WORKING_MEMORY_INSTRUCTION_RE, '')
+    .replace(WORKING_MEMORY_BLOCK_RE, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /** Model-only continuation copy from answered ask_user_question (not for chat UI). */
 export function stripInternalModelContinuationText(text: string): string {
   return text
@@ -29,17 +50,21 @@ export function isModelInjectedUserText(text: string): boolean {
   return isInternalModelContinuationText(trimmed) || isTaskNotificationText(trimmed);
 }
 
-/** Drop or trim text parts that only exist for the model continuation path. */
-export function sanitizeDisplayTextPart(text: string): string | null {
-  if (isModelInjectedUserText(text)) return null;
-  const cleaned = stripInternalModelContinuationText(text);
-  return cleaned.length > 0 ? cleaned : null;
+function cleanAssistantVisibleText(text: string): string {
+  return stripWorkingMemoryEchoText(stripInternalModelContinuationText(text));
 }
 
-/** Agent context recall — keep task notifications, drop ask-user continuation boilerplate. */
+/** Drop or trim text parts that only exist for the model continuation path. */
+export function sanitizeDisplayTextPart(text: string): string | null {
+  const cleaned = cleanAssistantVisibleText(text);
+  if (!cleaned) return null;
+  if (isTaskNotificationText(cleaned)) return null;
+  return cleaned;
+}
+
+/** Agent context recall — keep task notifications, drop ask-user continuation + WM echoes. */
 export function sanitizeAgentContextTextPart(text: string): string | null {
-  if (isInternalModelContinuationText(text)) return null;
-  const cleaned = stripInternalModelContinuationText(text);
+  const cleaned = stripWorkingMemoryEchoText(stripInternalModelContinuationText(text));
   return cleaned.length > 0 ? cleaned : null;
 }
 

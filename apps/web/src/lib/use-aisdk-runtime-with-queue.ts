@@ -53,6 +53,7 @@ import { stripAllPendingSkillTokens } from "./pending-skill-text";
 import { setThreadGoalApi } from "./goal-loop-sync";
 import { requestChatStop } from "./chat-stop";
 import { resumableStorage } from "./resumable-storage";
+import { clearActiveChatRun, getActiveChatRun, setActiveChatRun } from "./active-chat-run";
 import { useNetworkReconnectStore } from "./network-reconnect-store";
 import {
   findFirstAwaitingFrontendToolIndex,
@@ -337,6 +338,17 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     hasExecutingTools ||
     awaitingFrontendToolAnswer;
 
+  // Keep a non-React copy so Cmd+R / unload can stop without reading URL.
+  useEffect(() => {
+    const threadId = getThreadId?.() ?? chatHelpers.id;
+    const streamId = resumableStorage.getStreamId();
+    if (isRunning && isPersistableThreadId(threadId) && streamId) {
+      setActiveChatRun(threadId, streamId);
+      return;
+    }
+    if (!isRunning) clearActiveChatRun();
+  }, [isRunning, chatHelpers.id, getThreadId, chatHelpers.status]);
+
   const messageTiming = useStreamingTiming(chatHelpers.messages, isRunning);
 
   // Flag the streaming message optimistic: its id can be swapped for a server
@@ -491,14 +503,45 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       void syncThreadMessagesToServer(threadId, messages, { forceReplace: true });
     };
 
+    const stopIfRunning = () => {
+      const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
+      if (!isPersistableThreadId(threadId)) return;
+      const status = chatHelpersRef.current.status;
+      const streaming = status === 'submitted' || status === 'streaming';
+      const hasStream = Boolean(
+        resumableStorage.getStreamId() ?? getActiveChatRun()?.streamId,
+      );
+      if (!streaming && !hasStream) return;
+      void requestChatStop(threadId, { keepalive: true });
+    };
+
+    const onPageHide = (event: PageTransitionEvent) => {
+      // bfcache: keep the run so resume can reconnect.
+      if (event.persisted) {
+        flushTranscript();
+        return;
+      }
+      flushTranscript();
+      stopIfRunning();
+    };
+
+    const onBeforeUnload = () => {
+      flushTranscript();
+      stopIfRunning();
+    };
+
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') flushTranscript();
     };
 
-    window.addEventListener('beforeunload', flushTranscript);
+    // pagehide is the reliable unload signal; beforeunload is a backup for
+    // environments (e.g. some WebViews) that fire it more consistently.
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onBeforeUnload);
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      window.removeEventListener('beforeunload', flushTranscript);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onBeforeUnload);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [getThreadId]);

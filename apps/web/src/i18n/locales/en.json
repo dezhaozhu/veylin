@@ -26,6 +26,7 @@
     "continuing": "Continuing task {{id}}…",
     "continueQueued": "Follow-up queued for {{id}}…",
     "continueResult": "Task {{id}} updated",
+    "complete": "complete",
     "duration": "{{ms}} ms",
     "tokens": "{{count}} tokens"
   },
@@ -68,14 +69,14 @@
     "assistantWorking": "Assistant is working",
     "historyLoading": "Loading conversation…",
     "historyLoadFailed": "Could not load this conversation.",
-    "historyRetry": "Retry"
+    "historyRetry": "Retry",
+    "contextSummarized": "Chat context summarized"
   },
   "reasoning": {
     "thought": "Thought",
     "thoughtDuration": "Thought, {{seconds}} seconds",
     "workedFor": "Worked for {{seconds}}s",
-    "workedForNoDuration": "Worked for",
-    "contextSummarized": "Chat context summarized"
+    "workedForNoDuration": "Worked for"
   },
   "toolSearch": {
     "searching": "Searching tools for \"{{query}}\"…",
@@ -454,9 +455,7 @@
       "description": "Add Model Context Protocol servers to expand what your agent can do. Toggle installed servers on or off without uninstalling.",
       "addCustom": "Add MCP",
       "searchPlaceholder": "Search MCP servers…",
-      "filterAll": "All",
       "connected": "Connected",
-      "installed": "Installed",
       "plugin": "Plugin",
       "serverLine": "{{transport}} · {{detail}}",
       "libraryTitle": "Library",
@@ -468,7 +467,8 @@
       "transportHint": "SSE for streaming endpoints; HTTP for streamable HTTP MCP.",
       "headers": "Headers",
       "headersHint": "Optional JSON object, e.g. {\"Authorization\":\"Bearer ...\"}",
-      "noInstalledMatch": "No installed servers match your search.",
+      "connectedEmpty": "No MCP servers installed yet.",
+      "libraryEmpty": "No library entries match your search.",
       "toggle": "Toggle {{name}}",
       "confirmDelete": "Delete MCP server \"{{name}}\"?",
       "deleteTitle": "Delete MCP server",
@@ -813,8 +813,7 @@
       "rerankerDesc": "Downloaded from the official Hugging Face repo to re-rank hits; basic search works without it.",
       "enableReranker": "Enable reranking",
       "enabledHint": "Reranking is on — search and knowledge_search in chat will use the reranker.",
-      "disabledHint": "Reranking is off — the model stays on disk and can be re-enabled anytime.",
-      "hfEndpoint": "Download source: {{endpoint}}"
+      "disabledHint": "Reranking is off — the model stays on disk and can be re-enabled anytime."
     }
   },
   "wf": {

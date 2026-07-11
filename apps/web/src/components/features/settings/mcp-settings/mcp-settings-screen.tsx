@@ -133,10 +133,8 @@ export function McpSettingsScreen() {
   const [disabledMcp, setDisabledMcp] = useState<Set<string>>(new Set());
   const [health, setHealth] = useState<McpHealthSnapshot | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'installed' | 'library'>('all');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<InstalledItem | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -148,7 +146,6 @@ export function McpSettingsScreen() {
   });
 
   const load = useCallback(async () => {
-    setLoading(true);
     setLoadError(null);
     try {
       const data = await settingsApi.getMcpServers();
@@ -158,8 +155,6 @@ export function McpSettingsScreen() {
       setHealth(data.health);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : t('customize.mcpPage.loadFailed'));
-    } finally {
-      setLoading(false);
     }
   }, [t]);
 
@@ -205,12 +200,8 @@ export function McpSettingsScreen() {
 
   const libraryItems = LIBRARY.filter(
     (item) =>
-      (filter === 'all' || filter === 'library') &&
-      (!q || item.name.toLowerCase().includes(q) || t(item.descriptionKey).toLowerCase().includes(q)),
+      !q || item.name.toLowerCase().includes(q) || t(item.descriptionKey).toLowerCase().includes(q),
   );
-
-  const showInstalled = filter === 'all' || filter === 'installed';
-  const showLibrary = filter === 'all' || filter === 'library';
 
   const toggleInstalled = async (item: InstalledItem, enabled: boolean) => {
     if (item.source === 'bundled') {
@@ -282,13 +273,9 @@ export function McpSettingsScreen() {
     Boolean(health?.lastError) ||
     (health?.servers ?? []).some((server) => !server.connected);
 
-  if (loading) {
-    return <div className="text-muted-foreground text-sm">{t('customize.mcpPage.loading')}</div>;
-  }
-
-  if (loadError) {
+  if (loadError && bundled.length === 0 && remote.length === 0) {
     return (
-      <div className="mx-auto flex max-w-5xl flex-col items-start gap-3">
+      <div className="mx-auto flex max-w-4xl flex-col items-start gap-3">
         <p className="text-muted-foreground text-sm">{t('customize.mcpPage.loadFailed')}</p>
         <button
           type="button"
@@ -302,7 +289,7 @@ export function McpSettingsScreen() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-4xl">
       <PageHeader
         title={t('customize.mcpPage.title')}
         description={t('customize.mcpPage.description')}
@@ -318,8 +305,14 @@ export function McpSettingsScreen() {
         }
       />
 
+      <PageSearchBar
+        value={query}
+        onChange={setQuery}
+        placeholder={t('customize.mcpPage.searchPlaceholder')}
+      />
+
       {(health?.lastError || hasConnectionIssues) && (
-        <div className="border-destructive/30 bg-destructive/5 mb-4 rounded-lg border px-4 py-3 text-sm">
+        <div className="border-destructive/30 bg-destructive/5 mb-6 rounded-lg border px-4 py-3 text-sm">
           <p className="text-destructive font-medium">{t('customize.mcpPage.connectionFailed')}</p>
           {health?.lastError && (
             <p className="text-muted-foreground mt-1 text-xs">{health.lastError}</p>
@@ -334,23 +327,6 @@ export function McpSettingsScreen() {
           </button>
         </div>
       )}
-
-      <PageSearchBar
-        value={query}
-        onChange={setQuery}
-        placeholder={t('customize.mcpPage.searchPlaceholder')}
-        filter={
-          <FormSelect
-            className="w-auto min-w-[8rem]"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value as typeof filter)}
-          >
-            <option value="all">{t('customize.mcpPage.filterAll')}</option>
-            <option value="installed">{t('customize.mcpPage.installed')}</option>
-            <option value="library">{t('customize.mcpPage.libraryTitle')}</option>
-          </FormSelect>
-        }
-      />
 
       <SettingsFormDialog
         open={dialogOpen}
@@ -398,61 +374,59 @@ export function McpSettingsScreen() {
         </FormField>
       </SettingsFormDialog>
 
-      {showInstalled && (
-        <section className="mb-8">
-          <SectionHeading
-            title={t('customize.mcpPage.connected')}
-            count={installedItems.length}
-          />
-          {installedItems.length === 0 ? (
-            <p className="text-muted-foreground text-sm">{t('customize.mcpPage.noInstalledMatch')}</p>
-          ) : (
-            <SettingsConnectedList>
-              {installedItems.map((item) => (
-                <InstalledRow
-                  key={item.key}
-                  item={item}
-                  health={healthByName.get(item.name)}
-                  onToggle={(on) => void toggleInstalled(item, on)}
-                  onDelete={item.source === 'remote' ? () => setDeleteTarget(item) : undefined}
-                />
-              ))}
-            </SettingsConnectedList>
-          )}
-        </section>
-      )}
+      <section className="mb-8">
+        <SectionHeading
+          title={t('customize.mcpPage.connected')}
+          count={installedItems.length}
+        />
+        {installedItems.length > 0 ? (
+          <SettingsConnectedList>
+            {installedItems.map((item) => (
+              <InstalledRow
+                key={item.key}
+                item={item}
+                health={healthByName.get(item.name)}
+                onToggle={(on) => void toggleInstalled(item, on)}
+                onDelete={item.source === 'remote' ? () => setDeleteTarget(item) : undefined}
+              />
+            ))}
+          </SettingsConnectedList>
+        ) : (
+          <p className="text-muted-foreground mb-6 text-sm">{t('customize.mcpPage.connectedEmpty')}</p>
+        )}
+      </section>
 
-      {showLibrary && (
-        <section>
-          <SectionHeading title={t('customize.mcpPage.libraryTitle')} count={libraryItems.length} />
-          {libraryItems.length > 0 ? (
-            <SettingsConnectedList>
-              {libraryItems.map((item) => {
-                const installed = installedNames.has(item.id) || installedNames.has(item.name.toLowerCase());
-                return (
-                  <SettingsListRow
-                    key={item.id}
-                    asButton={!installed}
-                    onClick={() => !installed && openLibraryAdd(item.name)}
-                    icon={
-                      <SettingsListIcon className="text-[10px] font-semibold">
-                        <span>{item.name.slice(0, 2).toUpperCase()}</span>
-                      </SettingsListIcon>
-                    }
-                    title={item.name}
-                    subtitle={t(item.descriptionKey)}
-                    trailing={
-                      installed ? (
-                        <Check className="text-emerald-600 size-4 shrink-0" />
-                      ) : undefined
-                    }
-                  />
-                );
-              })}
-            </SettingsConnectedList>
-          ) : null}
-        </section>
-      )}
+      <section className="mb-8">
+        <SectionHeading title={t('customize.mcpPage.libraryTitle')} count={libraryItems.length} />
+        {libraryItems.length > 0 ? (
+          <SettingsConnectedList>
+            {libraryItems.map((item) => {
+              const installed = installedNames.has(item.id) || installedNames.has(item.name.toLowerCase());
+              return (
+                <SettingsListRow
+                  key={item.id}
+                  asButton={!installed}
+                  onClick={() => !installed && openLibraryAdd(item.name)}
+                  icon={
+                    <SettingsListIcon className="text-[10px] font-semibold">
+                      <span>{item.name.slice(0, 2).toUpperCase()}</span>
+                    </SettingsListIcon>
+                  }
+                  title={item.name}
+                  subtitle={t(item.descriptionKey)}
+                  trailing={
+                    installed ? (
+                      <Check className="text-emerald-600 size-4 shrink-0" />
+                    ) : undefined
+                  }
+                />
+              );
+            })}
+          </SettingsConnectedList>
+        ) : (
+          <p className="text-muted-foreground mb-6 text-sm">{t('customize.mcpPage.libraryEmpty')}</p>
+        )}
+      </section>
 
       <SettingsDeleteDialog
         open={deleteTarget !== null}

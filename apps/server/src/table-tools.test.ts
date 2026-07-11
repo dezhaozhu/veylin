@@ -106,6 +106,40 @@ describe('table_get query', () => {
     assert.match(result.notice ?? '', /offset=1/);
   });
 
+  it('honors sort_by nested inside aggregate as a compatibility alias', async () => {
+    importTableSheet('main', ['name', 'qty', 'status'], [
+      { name: 'A', qty: 10, status: 'open' },
+      { name: 'B', qty: 5, status: 'done' },
+      { name: 'C', qty: 20, status: 'open' },
+      { name: 'D', qty: 1, status: 'blocked' },
+    ]);
+
+    const { table_get } = buildTableTools();
+    const result = asTableGet(
+      await table_get.execute!(
+        {
+          aggregate: {
+            metrics: [{ op: 'count' }],
+            group_by: 'status',
+            sort_by: 'count',
+            sort_dir: 'desc',
+          },
+          limit: 3,
+        },
+        {} as never,
+      ),
+    );
+    assert.equal(result.mode, 'aggregate');
+    assert.equal(result.groups?.length, 3);
+    assert.equal(result.groups?.[0]?.status, 'open');
+    assert.equal(result.groups?.[0]?.count, 2);
+    assert.deepEqual(
+      result.groups?.slice(1).map((g) => g.count).sort(),
+      [1, 1],
+    );
+    assert.match(result.notice ?? '', /read from aggregate/);
+  });
+
   it('queryTableRows caps limit at MAX', () => {
     importTableSheet('main', ['name'], Array.from({ length: 5 }, (_, i) => ({ name: `r${i}` })));
     const result = queryTableRows('main', { limit: 9999 });

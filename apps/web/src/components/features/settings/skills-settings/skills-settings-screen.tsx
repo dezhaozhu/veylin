@@ -96,7 +96,6 @@ export function SkillsSettingsScreen() {
   const [installedPlugins, setInstalledPlugins] = useState<PluginInstall[]>([]);
   const [marketplace, setMarketplace] = useState<MarketplaceEntry[]>([]);
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -106,7 +105,6 @@ export function SkillsSettingsScreen() {
   const [form, setForm] = useState({ name: '', description: '', content: '' });
 
   const load = useCallback(async () => {
-    setLoading(true);
     setLoadError(null);
     try {
       const [skillsData, pluginsData] = await Promise.all([
@@ -119,8 +117,6 @@ export function SkillsSettingsScreen() {
       setMarketplace(pluginsData.marketplace);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : t('customize.skillsPage.loadFailed'));
-    } finally {
-      setLoading(false);
     }
   }, [t]);
 
@@ -231,11 +227,7 @@ export function SkillsSettingsScreen() {
     }
   };
 
-  if (loading) {
-    return <div className="text-muted-foreground text-sm">{t('customize.skillsPage.loading')}</div>;
-  }
-
-  if (loadError) {
+  if (loadError && skills.length === 0) {
     return (
       <div className="mx-auto flex max-w-4xl flex-col items-start gap-3">
         <p className="text-muted-foreground text-sm">{t('customize.skillsPage.loadFailed')}</p>

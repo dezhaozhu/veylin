@@ -14,6 +14,7 @@ import {
   getCatalogModel,
   getDefaultCatalogModel,
   listModelCatalogPublic,
+  listModelCatalogPublicWithContextWindows,
   loadModelCatalog,
   normalizeOpenAICompatibleUrl,
   type ModelCatalogEntry,
@@ -22,6 +23,7 @@ import {
 export {
   loadModelCatalog,
   listModelCatalogPublic,
+  listModelCatalogPublicWithContextWindows,
   getDefaultCatalogModel,
   getCatalogModel,
   normalizeOpenAICompatibleUrl,

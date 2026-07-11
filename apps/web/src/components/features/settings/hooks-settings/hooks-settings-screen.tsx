@@ -112,7 +112,6 @@ export function HooksSettingsScreen() {
   const [marketplace, setMarketplace] = useState<MarketplaceEntry[]>([]);
   const [installedPlugins, setInstalledPlugins] = useState<PluginInstall[]>([]);
   const [logs, setLogs] = useState<HookLogItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -123,7 +122,6 @@ export function HooksSettingsScreen() {
 
   const load = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!opts?.quiet) {
-      setLoading(true);
       setError(null);
     }
     try {
@@ -141,8 +139,6 @@ export function HooksSettingsScreen() {
       } else {
         alert(err instanceof Error ? err.message : t('common.loadFailed'));
       }
-    } finally {
-      if (!opts?.quiet) setLoading(false);
     }
   }, [t]);
 
@@ -300,11 +296,7 @@ export function HooksSettingsScreen() {
     }
   };
 
-  if (loading) {
-    return <div className="text-muted-foreground text-sm">{t('customize.hooksPage.loading')}</div>;
-  }
-
-  if (error) {
+  if (error && hooks.length === 0) {
     return (
       <div className="mx-auto flex max-w-4xl flex-col gap-3">
         <p className="text-muted-foreground text-sm">{error}</p>

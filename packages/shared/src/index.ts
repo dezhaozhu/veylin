@@ -15,6 +15,8 @@ export * from './assistant-display-parts';
 export * from './working-memory';
 export * from './constants';
 export * from './model';
+export * from './model-context-window';
+export * from './known-model-context-windows';
 export * from './plan-mode';
 export * from './goal-loop';
 export * from './thread';
