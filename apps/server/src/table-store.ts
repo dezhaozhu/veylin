@@ -123,7 +123,8 @@ function migrateLegacyEmptySheet(sheet: SheetState): boolean {
   sheet.columns = [];
   sheet.rows = [];
   if (sheet.meta.builtin && sheet.meta.name === 'Main Plan') {
-    sheet.meta.name = 'Sheet 1';
+    // Prefer "Sheet 1", but never collide with an existing tab name.
+    sheet.meta.name = allocateUniqueSheetName('Sheet 1', sheet.meta.id);
   }
   return true;
 }
@@ -258,6 +259,7 @@ export async function initTableStore(): Promise<void> {
     if (!sheetStore.has(DEFAULT_TABLE_SHEET)) {
       const initial = buildInitialStore();
       const main = initial.get(DEFAULT_TABLE_SHEET)!;
+      main.meta.name = allocateUniqueSheetName(main.meta.name, DEFAULT_TABLE_SHEET);
       sheetStore.set(DEFAULT_TABLE_SHEET, main);
       await enqueuePersist(DEFAULT_TABLE_SHEET);
     }
@@ -265,6 +267,7 @@ export async function initTableStore(): Promise<void> {
     for (const sheet of sheetStore.values()) {
       if (migrateLegacyEmptySheet(sheet)) migrated = true;
     }
+    if (repairDuplicateTableSheetNames()) migrated = true;
     if (migrated) await persistAll();
   }
   tableHydrated = true;
@@ -390,6 +393,10 @@ export function tryResolveTableSheetId(value: string | undefined): string | null
 }
 
 export function listTableSheets(): TableSheetMeta[] {
+  // One-shot repair for processes that hydrated before duplicate-name repair existed.
+  if (repairDuplicateTableSheetNames()) {
+    for (const id of sheetStore.keys()) tablePersist(id);
+  }
   return [...sheetStore.values()].map((s) => ({ ...s.meta }));
 }
 
@@ -643,6 +650,62 @@ export function isTableSheetNameTaken(name: string, excludeSheetId?: string): bo
   return false;
 }
 
+/**
+ * Pick a display name that does not collide with existing sheets.
+ * "Sheet 1" style names bump the number; other names get " (2)", " (3)", …
+ */
+export function allocateUniqueSheetName(preferred: string, excludeSheetId?: string): string {
+  const trimmed = preferred.trim() || 'Sheet';
+  if (!isTableSheetNameTaken(trimmed, excludeSheetId)) return trimmed;
+
+  const sheetMatch = trimmed.match(/^sheet\s*(\d+)$/i);
+  if (sheetMatch || /^sheet$/i.test(trimmed)) {
+    let n = sheetMatch ? Number(sheetMatch[1]) + 1 : 2;
+    while (isTableSheetNameTaken(`Sheet ${n}`, excludeSheetId)) n += 1;
+    return `Sheet ${n}`;
+  }
+
+  let n = 2;
+  while (isTableSheetNameTaken(`${trimmed} (${n})`, excludeSheetId)) n += 1;
+  return `${trimmed} (${n})`;
+}
+
+/**
+ * Repair legacy duplicate display names (created before uniqueness was enforced,
+ * or by Main Plan → Sheet 1 migration colliding with an existing tab).
+ * Keeps `main` / earlier ids; renames later collisions.
+ */
+export function repairDuplicateTableSheetNames(): boolean {
+  const ordered = [...sheetStore.values()].sort((a, b) => {
+    if (a.meta.id === DEFAULT_TABLE_SHEET) return -1;
+    if (b.meta.id === DEFAULT_TABLE_SHEET) return 1;
+    return a.meta.id.localeCompare(b.meta.id);
+  });
+  const claimed = new Set<string>();
+  let changed = false;
+  for (const sheet of ordered) {
+    const key = sheetNameKey(sheet.meta.name);
+    if (!key) continue;
+    if (!claimed.has(key)) {
+      claimed.add(key);
+      continue;
+    }
+    const next = allocateUniqueSheetName(sheet.meta.name, sheet.meta.id);
+    if (next === sheet.meta.name) continue;
+    sheet.meta = { ...sheet.meta, name: next };
+    claimed.add(sheetNameKey(next));
+    changed = true;
+  }
+  return changed;
+}
+
+/** Test-only: set a display name without uniqueness checks (to seed duplicate fixtures). */
+export function unsafeSetTableSheetNameForTests(sheetId: string, name: string): void {
+  const sheet = sheetStore.get(sheetId);
+  if (!sheet) throw new Error(`sheet not found: ${sheetId}`);
+  sheet.meta = { ...sheet.meta, name };
+}
+
 export function createTableSheet(name: string): TableSheetMeta | null {
   const trimmed = name.trim();
   if (!trimmed) return null;
@@ -677,29 +740,35 @@ export function renameTableSheet(sheetId: string, name: string): TableSheetMeta 
 export async function deleteTableSheet(sheetId: string): Promise<boolean> {
   const sheet = sheetStore.get(sheetId);
   if (!sheet) return false;
-  const snapshot: SheetState = {
-    meta: { ...sheet.meta },
-    columns: sheet.columns.map((c) => ({ ...c })),
-    rows: sheet.rows.map((r) => ({ ...r })),
-  };
-  sheetStore.delete(sheetId);
+
+  // Finish any in-flight persist first — otherwise a queued write can resurrect
+  // the sheet (or race Surreal) after DELETE. Avoid cloning all rows for rollback:
+  // large sheets (10k+ rows) would spike memory and make delete feel like a hang.
+  const pending = persistChains.get(sheetId);
+  if (pending) {
+    try {
+      await pending;
+    } catch {
+      /* persist errors are already logged */
+    }
+  }
+  persistChains.delete(sheetId);
+
   try {
     await deleteTableSheetDb(sheetId);
-    await ensureAtLeastOneSheet();
-    emitTable({ type: 'sheetsChange' });
-    return true;
   } catch (e) {
     console.error('[table] delete sheet failed:', e);
-    sheetStore.set(sheetId, snapshot);
-    if (sheetStore.size === 0) {
-      try {
-        await ensureAtLeastOneSheet();
-      } catch (ensureError) {
-        console.error('[table] ensure default sheet after rollback failed:', ensureError);
-      }
-    }
     return false;
   }
+
+  sheetStore.delete(sheetId);
+  try {
+    await ensureAtLeastOneSheet();
+  } catch (ensureError) {
+    console.error('[table] ensure default sheet after delete failed:', ensureError);
+  }
+  emitTable({ type: 'sheetsChange' });
+  return true;
 }
 
 /** After deleting the last sheet, seed a fresh default Sheet 1. */
@@ -707,6 +776,7 @@ async function ensureAtLeastOneSheet(): Promise<void> {
   if (sheetStore.size > 0) return;
   const initial = buildInitialStore();
   const main = initial.get(DEFAULT_TABLE_SHEET)!;
+  main.meta.name = allocateUniqueSheetName(main.meta.name, DEFAULT_TABLE_SHEET);
   sheetStore.set(DEFAULT_TABLE_SHEET, main);
   await enqueuePersist(DEFAULT_TABLE_SHEET);
 }

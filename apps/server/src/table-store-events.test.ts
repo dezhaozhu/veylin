@@ -16,6 +16,10 @@ import {
   importTableSheet,
   createTableSheet,
   renameTableSheet,
+  allocateUniqueSheetName,
+  repairDuplicateTableSheetNames,
+  unsafeSetTableSheetNameForTests,
+  listTableSheets,
   type TableEvent,
 } from './table-store.js';
 
@@ -89,6 +93,25 @@ describe('table-store change events', () => {
     const cased = renameTableSheet(a.id, `UNIQUE ${stamp}`);
     assert.ok(cased);
     assert.equal(cased!.name, `UNIQUE ${stamp}`);
+  });
+
+  it('allocateUniqueSheetName bumps Sheet N and repairs legacy duplicates', () => {
+    const stamp = Date.now();
+    const a = createTableSheet(`Dup Base ${stamp}`)!;
+    assert.equal(allocateUniqueSheetName(`Dup Base ${stamp}`), `Dup Base ${stamp} (2)`);
+    // Builtin main is "Sheet 1" in a fresh store — next free tab is Sheet 2+.
+    assert.match(allocateUniqueSheetName('Sheet 1'), /^Sheet \d+$/);
+    assert.notEqual(allocateUniqueSheetName('Sheet 1'), 'Sheet 1');
+
+    const b = createTableSheet(`Dup Other ${stamp}`)!;
+    unsafeSetTableSheetNameForTests(a.id, `Clash ${stamp}`);
+    unsafeSetTableSheetNameForTests(b.id, `Clash ${stamp}`);
+    assert.equal(repairDuplicateTableSheetNames(), true);
+    const names = listTableSheets()
+      .filter((s) => s.id === a.id || s.id === b.id)
+      .map((s) => s.name)
+      .sort();
+    assert.deepEqual(names, [`Clash ${stamp}`, `Clash ${stamp} (2)`]);
   });
 
   it('unsubscribe stops delivery', () => {

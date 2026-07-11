@@ -56,3 +56,5 @@ jobs:
         env:
           VEYLIN_DESKTOP_AUTH: '1'
           VEYLIN_DATA_DIR: ./data
+          VEYLIN_SKIP_SIDECAR: '1'
+          VEYLIN_LAZY_MCP_BOOT: '1'

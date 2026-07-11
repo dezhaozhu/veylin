@@ -33,6 +33,9 @@ export default defineConfig({
       env: {
         VEYLIN_DESKTOP_AUTH: '1',
         VEYLIN_DATA_DIR: './data',
+        // CI/smoke has no prebuilt sidecar; use the same tsx path as desktop dev.
+        VEYLIN_SKIP_SIDECAR: '1',
+        VEYLIN_LAZY_MCP_BOOT: '1',
       },
     },
     {

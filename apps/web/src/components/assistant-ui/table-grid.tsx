@@ -150,6 +150,15 @@ async function fetchSchedule(sheetId: string): Promise<SchedulePayload> {
   return data;
 }
 
+async function fetchSheetList(): Promise<TableSheet[]> {
+  const res = await fetch('/api/table/sheets');
+  const data = await readJsonResponse<{ ok?: boolean; sheets?: TableSheet[] }>(res);
+  if (!res.ok || !data.sheets) {
+    throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
+  }
+  return data.sheets;
+}
+
 async function patchRow(sheetId: string, row: TableRow): Promise<boolean> {
   try {
     const res = await fetch('/api/table', {
@@ -851,7 +860,21 @@ export function TableGrid() {
         return;
       }
       if (e.type === 'sheetsChange') {
-        void load(activeSheetId, false);
+        // Only refresh tab metadata — do NOT full-reload rows (large sheets time out
+        // and surface as a spurious load/delete failure).
+        void fetchSheetList()
+          .then((nextSheets) => {
+            setSheets(nextSheets);
+            if (nextSheets.some((s) => s.id === activeSheetId)) return;
+            const fallback = nextSheets[0]?.id;
+            if (!fallback) return;
+            resetSheetUiState();
+            setActiveSheetId(fallback);
+            setLoading(true);
+          })
+          .catch(() => {
+            /* ignore — next user action will resync */
+          });
         return;
       }
       if (e.sheet !== activeSheetId) return;
@@ -873,7 +896,7 @@ export function TableGrid() {
       }
     };
     return () => es.close();
-  }, [activeSheetId, load]);
+  }, [activeSheetId, load, resetSheetUiState]);
 
   const filteredRows = useMemo(() => {
     const filtered = applyFilters(rows, filters);

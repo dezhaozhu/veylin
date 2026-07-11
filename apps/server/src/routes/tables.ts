@@ -60,6 +60,12 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     });
   });
 
+  // Lightweight sheet-tab list (no row payload) — used after sheetsChange SSE.
+  app.get('/api/table/sheets', async (req) => {
+    await deps.resolveContext(req.headers);
+    return { ok: true, sheets: listTableSheets() };
+  });
+
   app.post('/api/table/sheets', async (req, reply) => {
     await deps.resolveContext(req.headers);
     const { name } = (req.body ?? {}) as { name?: string };

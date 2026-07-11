@@ -12,7 +12,7 @@
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933">
 </p>
 
-![Veylin 桌面：对话、定制/自动化与右侧工作区](docs/images/veylin-desktop.jpg)
+![Veylin 桌面：对话、定制/自动化与右侧工作区](docs/images/veylin-desktop.zh-CN.jpg)
 
 ## 适合谁
 
