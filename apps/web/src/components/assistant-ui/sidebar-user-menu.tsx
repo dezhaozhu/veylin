@@ -107,7 +107,7 @@ export function SidebarUserMenu() {
                 {initials(displayName)}
               </AvatarFallback>
             </Avatar>
-            <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
+            <div className="grid min-w-0 flex-1 pl-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">{displayName}</span>
               <span className="text-muted-foreground truncate text-xs">free</span>
             </div>

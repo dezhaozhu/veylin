@@ -23,6 +23,8 @@ const ALWAYS_ON_TOOLS: BuiltinToolId[] = [
   'request_3d_selection',
   'enter_plan_mode',
   'exit_plan_mode',
+  'loop_set',
+  'loop_schedule_wakeup',
 ];
 
 function resolveActiveToolIds(

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Zap } from 'lucide-react';
+import { Puzzle, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { SkillListItem } from '@/hooks/settings/api';
+import type { MarketplaceEntry, PluginInstall, SkillListItem } from '@/hooks/settings/api';
 import { settingsApi } from '@/hooks/settings/api';
 import {
   PageHeader,
@@ -22,7 +22,7 @@ import {
   SettingsListRow,
 } from '../settings-list';
 
-function skillSubtitle(skill: SkillListItem): string {
+function skillSubtitle(skill: SkillListItem, sourceLabel: string): string {
   const raw =
     skill.description?.trim() ||
     (skill.content?.trim()
@@ -34,19 +34,25 @@ function skillSubtitle(skill: SkillListItem): string {
       : '') ||
     skill.triggers?.join(', ') ||
     '';
-  return raw.replace(/\s+/g, ' ').trim();
+  const desc = raw.replace(/\s+/g, ' ').trim();
+  return desc ? `${sourceLabel} · ${desc}` : sourceLabel;
 }
 
 function SkillRow({
   skill,
+  sourceLabel,
   onToggle,
   onEdit,
   onDelete,
+  deleteDisabled,
 }: {
   skill: SkillListItem;
+  sourceLabel: string;
   onToggle: (enabled: boolean) => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  /** Show delete in menu but not clickable (built-in). */
+  deleteDisabled?: boolean;
 }) {
   const { t } = useTranslation();
 
@@ -55,11 +61,18 @@ function SkillRow({
       label: skill.enabled ? t('common.disable') : t('common.enable'),
       onClick: () => onToggle(!skill.enabled),
     },
-    ...(onEdit
-      ? [{ label: t('common.edit'), onClick: onEdit }]
-      : []),
-    ...(onDelete
-      ? [{ label: t('common.delete'), onClick: onDelete, destructive: true }]
+    ...(onEdit ? [{ label: t('common.edit'), onClick: onEdit }] : []),
+    ...(onDelete || deleteDisabled
+      ? [
+          {
+            label: t('common.delete'),
+            onClick: () => {
+              if (!deleteDisabled) onDelete?.();
+            },
+            destructive: true,
+            disabled: Boolean(deleteDisabled),
+          },
+        ]
       : []),
   ];
 
@@ -71,7 +84,7 @@ function SkillRow({
         </SettingsListIcon>
       }
       title={skill.name}
-      subtitle={skillSubtitle(skill)}
+      subtitle={skillSubtitle(skill, sourceLabel)}
       menuItems={menuItems}
     />
   );
@@ -80,8 +93,11 @@ function SkillRow({
 export function SkillsSettingsScreen() {
   const { t } = useTranslation();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
+  const [installedPlugins, setInstalledPlugins] = useState<PluginInstall[]>([]);
+  const [marketplace, setMarketplace] = useState<MarketplaceEntry[]>([]);
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<SkillListItem | null>(null);
@@ -91,38 +107,68 @@ export function SkillsSettingsScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const data = await settingsApi.getSkills();
-      setSkills(data.skills);
-      setDisabled(new Set(data.disabledSkills));
+      const [skillsData, pluginsData] = await Promise.all([
+        settingsApi.getSkills(),
+        settingsApi.getPlugins(),
+      ]);
+      setSkills(skillsData.skills);
+      setDisabled(new Set(skillsData.disabledSkills));
+      setInstalledPlugins(pluginsData.installed);
+      setMarketplace(pluginsData.marketplace);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : t('customize.skillsPage.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const q = query.trim().toLowerCase();
-  const bundled = useMemo(
-    () => skills.filter((s) => s.source === 'bundled' && (!q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))),
-    [skills, q],
-  );
-  const custom = useMemo(
-    () => skills.filter((s) => s.source === 'custom' && (!q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))),
+  const installed = useMemo(
+    () =>
+      skills.filter(
+        (s) =>
+          !q ||
+          s.name.toLowerCase().includes(q) ||
+          s.description.toLowerCase().includes(q) ||
+          s.source.toLowerCase().includes(q),
+      ),
     [skills, q],
   );
 
-  const toggleBundled = async (name: string, enabled: boolean) => {
+  const marketplaceFiltered = useMemo(
+    () =>
+      marketplace.filter(
+        (e) =>
+          !q ||
+          e.name.toLowerCase().includes(q) ||
+          e.description.toLowerCase().includes(q),
+      ),
+    [marketplace, q],
+  );
+
+  const sourceLabel = (skill: SkillListItem) =>
+    t(`customize.skillsPage.source.${skill.source}`, {
+      defaultValue: skill.source,
+    });
+
+  const toggleSkill = async (name: string, enabled: boolean) => {
     const next = new Set(disabled);
     if (enabled) next.delete(name);
     else next.add(name);
     setDisabled(next);
-    setSkills((prev) =>
-      prev.map((s) => (s.name === name && s.source === 'bundled' ? { ...s, enabled } : s)),
-    );
-    await settingsApi.saveDisabledSkills([...next]);
+    setSkills((prev) => prev.map((s) => (s.name === name ? { ...s, enabled } : s)));
+    try {
+      await settingsApi.saveDisabledSkills([...next]);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+      await load();
+    }
   };
 
   const openCreate = () => {
@@ -142,37 +188,46 @@ export function SkillsSettingsScreen() {
   };
 
   const confirmDelete = async () => {
-    if (!deleteTarget?.id || deleting) return;
+    if (!deleteTarget || deleting) return;
     setDeleting(true);
     try {
-      await settingsApi.deleteSkill(deleteTarget.id);
+      if (deleteTarget.source === 'plugin') {
+        const pluginName = deleteTarget.pluginId ?? deleteTarget.name.split(':')[0];
+        const plugin = installedPlugins.find((p) => p.name === pluginName);
+        if (!plugin) throw new Error(t('customize.skillsPage.pluginNotFound'));
+        await settingsApi.uninstallPlugin(plugin.id);
+      } else {
+        const id = deleteTarget.id ?? deleteTarget.name;
+        await settingsApi.deleteSkill(id);
+      }
       setDeleteTarget(null);
       await load();
     } catch (err) {
-      alert(t('customize.skillsPage.saveFailed', { error: err instanceof Error ? err.message : String(err) }));
+      alert(
+        t('customize.skillsPage.saveFailed', {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
     } finally {
       setDeleting(false);
     }
   };
 
-  const saveCustom = async () => {
+  const saveSkill = async () => {
     if (!form.name.trim() || !form.content.trim()) return;
     try {
-      const saved = editing?.id
-        ? await settingsApi.updateSkill(editing.id, form)
-        : await settingsApi.createSkill(form);
-      setSkills((prev) =>
-        editing?.id
-          ? prev.map((skill) =>
-              skill.source === 'custom' && skill.id === saved.skill.id ? saved.skill : skill,
-            )
-          : [saved.skill, ...prev],
-      );
+      const id = editing?.id ?? editing?.name;
+      if (id) await settingsApi.updateSkill(id, form);
+      else await settingsApi.createSkill(form);
       setDialogOpen(false);
       setEditing(null);
       await load();
     } catch (err) {
-      alert(t('customize.skillsPage.saveFailed', { error: err instanceof Error ? err.message : String(err) }));
+      alert(
+        t('customize.skillsPage.saveFailed', {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
     }
   };
 
@@ -180,12 +235,29 @@ export function SkillsSettingsScreen() {
     return <div className="text-muted-foreground text-sm">{t('customize.skillsPage.loading')}</div>;
   }
 
+  if (loadError) {
+    return (
+      <div className="mx-auto flex max-w-4xl flex-col items-start gap-3">
+        <p className="text-muted-foreground text-sm">{t('customize.skillsPage.loadFailed')}</p>
+        <button
+          type="button"
+          className="text-foreground border-border hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
+          onClick={() => void load()}
+        >
+          {t('common.retry')}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader
         title={t('customize.skillsPage.title')}
         description={t('customize.skillsPage.description')}
-        action={<PrimaryActionButton onClick={openCreate}>{t('customize.skillsPage.addCustom')}</PrimaryActionButton>}
+        action={
+          <PrimaryActionButton onClick={openCreate}>{t('customize.skillsPage.addSkill')}</PrimaryActionButton>
+        }
       />
 
       <PageSearchBar value={query} onChange={setQuery} placeholder={t('customize.skillsPage.searchPlaceholder')} />
@@ -199,7 +271,7 @@ export function SkillsSettingsScreen() {
         title={editing ? t('customize.skillsPage.editTitle') : t('customize.skillsPage.addTitle')}
         description={t('customize.skillsPage.editorDescription')}
         submitLabel={editing ? t('common.saveChanges') : t('customize.skillsPage.addSkill')}
-        onSubmit={() => void saveCustom()}
+        onSubmit={() => void saveSkill()}
         onCancel={() => setEditing(null)}
       >
         <FormField label={t('common.name')} required>
@@ -207,6 +279,7 @@ export function SkillsSettingsScreen() {
             placeholder={t('customize.skillsPage.namePlaceholder')}
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            disabled={Boolean(editing)}
           />
         </FormField>
         <FormField label={t('common.description')} hint={t('customize.skillsPage.descriptionHint')}>
@@ -226,45 +299,86 @@ export function SkillsSettingsScreen() {
       </SettingsFormDialog>
 
       <section className="mb-8">
-        <SectionHeading title={t('customize.skillsPage.builtIn')} count={bundled.length} />
-        <SettingsConnectedList>
-          {bundled.map((s) => (
-            <SkillRow
-              key={s.name}
-              skill={s}
-              onToggle={(on) => void toggleBundled(s.name, on)}
-            />
-          ))}
-        </SettingsConnectedList>
-      </section>
-
-      <section className="mb-8">
-        <SectionHeading title={t('customize.skillsPage.custom')} count={custom.length} />
-        {custom.length > 0 ? (
+        <SectionHeading title={t('customize.skillsPage.installed')} count={installed.length} />
+        {installed.length > 0 ? (
           <SettingsConnectedList>
-            {custom.map((s) => (
+            {installed.map((s) => (
               <SkillRow
-                key={s.id ?? s.name}
+                key={`${s.source}:${s.pluginId ?? ''}:${s.id ?? s.name}`}
                 skill={s}
-                onToggle={async (on) => {
-                  if (s.id) {
-                    await settingsApi.updateSkill(s.id, { enabled: on });
-                    await load();
-                  }
-                }}
-                onEdit={() => openEdit(s)}
-                onDelete={() => setDeleteTarget(s)}
+                sourceLabel={sourceLabel(s)}
+                onToggle={(on) => void toggleSkill(s.name, on)}
+                onEdit={s.source === 'user' ? () => openEdit(s) : undefined}
+                onDelete={
+                  s.source === 'user' || s.source === 'plugin'
+                    ? () => setDeleteTarget(s)
+                    : undefined
+                }
+                deleteDisabled={s.source === 'bundled'}
               />
             ))}
           </SettingsConnectedList>
-        ) : null}
+        ) : (
+          <p className="text-muted-foreground mb-6 text-sm">{t('customize.skillsPage.installedEmpty')}</p>
+        )}
+      </section>
+
+      <section className="mb-8">
+        <SectionHeading title={t('customize.skillsPage.marketplace')} count={marketplaceFiltered.length} />
+        {marketplaceFiltered.length > 0 ? (
+          <SettingsConnectedList>
+            {marketplaceFiltered.map((entry) => (
+              <SettingsListRow
+                key={entry.name}
+                icon={
+                  <SettingsListIcon>
+                    <Puzzle className="size-4" />
+                  </SettingsListIcon>
+                }
+                title={entry.name}
+                subtitle={entry.description}
+                menuItems={[
+                  {
+                    label: t('customize.skillsPage.installFromMarket'),
+                    onClick: () => {
+                      void settingsApi
+                        .installPlugin({ type: 'marketplace', name: entry.name })
+                        .then((res) => {
+                          if (!res.ok) {
+                            alert(res.message ?? t('customize.pluginsPage.installFailed'));
+                            return;
+                          }
+                          return load();
+                        })
+                        .catch((err) => {
+                          alert(err instanceof Error ? err.message : String(err));
+                        });
+                    },
+                  },
+                ]}
+              />
+            ))}
+          </SettingsConnectedList>
+        ) : (
+          <p className="text-muted-foreground mb-6 text-sm">{t('customize.skillsPage.marketplaceEmpty')}</p>
+        )}
       </section>
 
       <SettingsDeleteDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title={t('customize.skillsPage.deleteTitle')}
-        description={t('customize.skillsPage.confirmDelete')}
+        title={
+          deleteTarget?.source === 'plugin'
+            ? t('customize.skillsPage.deletePluginTitle')
+            : t('customize.skillsPage.deleteTitle')
+        }
+        description={
+          deleteTarget?.source === 'plugin'
+            ? t('customize.skillsPage.confirmDeletePlugin', {
+                name: deleteTarget.pluginId ?? deleteTarget.name,
+              })
+            : t('customize.skillsPage.confirmDelete')
+        }
         onConfirm={confirmDelete}
         busy={deleting}
       />

@@ -29,6 +29,16 @@ describe('transcript-persist', () => {
       ['reasoning', 'step-start', 'text'],
     );
   });
+
+  it('round-trips interrupted flag in transcript meta', () => {
+    const parts = embedTranscriptEnvelope(
+      [{ type: 'text', text: 'partial reply' }],
+      { custom: { sentAt: 99, interrupted: true } },
+    );
+    const restored = extractTranscriptEnvelope(parts);
+    assert.equal(restored.meta?.sentAt, 99);
+    assert.equal(restored.meta?.interrupted, true);
+  });
 });
 
 describe('filterPersistableUiMessageParts', () => {

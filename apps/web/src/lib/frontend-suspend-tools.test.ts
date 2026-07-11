@@ -5,6 +5,7 @@ import { lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
 import {
   conversationAwaitsResume,
   hasAskUserAnswers,
+  hasFrontendToolOutput,
   isAwaitingFrontendToolPart,
   isAwaitingFrontendToolAnswer,
   registerFrontendToolStop,
@@ -297,6 +298,20 @@ describe('frontend-suspend-tools', () => {
     ] as UIMessage[];
 
     assert.equal(shouldAutoSendChat({ messages }), true);
+  });
+
+  it('treats empty-page read_open_page output as complete', () => {
+    assert.equal(
+      hasFrontendToolOutput('read_open_page', {
+        mode: 'text',
+        url: 'about:blank',
+        title: '',
+        content: '',
+      }),
+      true,
+    );
+    assert.equal(hasFrontendToolOutput('read_open_page', { error: 'no webview' }), true);
+    assert.equal(hasFrontendToolOutput('read_open_page', {}), false);
   });
 
   it('does not auto-continue while approval is pending', () => {

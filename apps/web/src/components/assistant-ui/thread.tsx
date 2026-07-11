@@ -43,7 +43,9 @@ import {
   ComposerPrimitive,
   ErrorPrimitive,
   groupPartByType,
+  type GroupByContext,
   MessagePrimitive,
+  type PartState,
   ThreadPrimitive,
   type ToolCallMessagePartComponent,
   useAuiState,
@@ -61,6 +63,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useSyncExternalStore,
   type ComponentType,
   type FC,
@@ -70,12 +73,38 @@ import {
   getAskUserSessionForThread,
   subscribeAskUserSession,
 } from "@/lib/ask-user-question-session";
-import { usePlanModeBridge } from "@/lib/use-composer-settings";
+import {
+  findLastSubstantialTextIndex,
+  hasPreFinalWork,
+} from "@/lib/assistant-final-output";
+import { usePlanModeBridge, useGoalLoopBridge } from "@/lib/use-composer-settings";
 import { dispatchOverlayDismiss } from "@/lib/overlay-dismiss";
 import { hideWebView, isTauri } from "@/lib/tauri-web-view";
 import { isTaskNotificationText } from "@veylin/shared";
+import {
+  getHistoryLoadState,
+  retryHistoryLoad,
+  subscribeHistoryLoadState,
+} from "@/lib/history-load-state";
+import { WorkedForBlock } from "@/components/assistant-ui/worked-for";
+import { useStreamingDuration } from "@/components/assistant-ui/collapsible-streaming";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
+
+type AssistantGroupKey =
+  | "group-worked-for"
+  | "group-chainOfThought"
+  | "group-reasoning"
+  | "group-prose"
+  | "group-tool"
+  | "group-final-prose";
+
+const baseAssistantGroupBy = groupPartByType({
+  reasoning: ["group-chainOfThought", "group-reasoning"],
+  text: ["group-chainOfThought", "group-prose"],
+  "tool-call": ["group-chainOfThought", "group-tool"],
+  "standalone-tool-call": [],
+});
 
 /**
  * Optional component overrides for the thread. `AssistantMessage` and
@@ -107,24 +136,47 @@ const ThreadComponentsContext =
 
 // Startup exposes a loading placeholder thread; treat it as a new chat so
 // the composer mounts centered. Loads after startup keep the docked layout.
-const isNewChatView = (s: AssistantState) =>
-  s.thread.messages.length === 0 &&
-  (!s.thread.isLoading || s.threads.isLoading);
+// History threads with remoteId must not show Welcome while empty (loading or
+// error) — that looked like a blank conversation.
+const isNewChatView = (s: AssistantState) => {
+  if (s.thread.messages.length > 0) return false;
+  if (s.threadListItem.remoteId) return false;
+  return !s.thread.isLoading || s.threads.isLoading;
+};
 
 export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
   const isEmpty = useAuiState(isNewChatView);
+  const hasNoMessages = useAuiState((s) => s.thread.messages.length === 0);
 
   return (
     <ThreadComponentsContext.Provider value={components}>
-      <ThreadRoot isEmpty={isEmpty} />
+      <ThreadRoot isEmpty={isEmpty} hasNoMessages={hasNoMessages} />
     </ThreadComponentsContext.Provider>
   );
 };
 
-const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
+const ThreadRoot: FC<{ isEmpty: boolean; hasNoMessages: boolean }> = ({
+  isEmpty,
+  hasNoMessages,
+}) => {
+  const { t } = useTranslation();
   const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
   const threadId = useAuiState((s) => s.threadListItem.id);
+  const remoteId = useAuiState((s) => s.threadListItem.remoteId);
+  const threadLoading = useAuiState((s) => s.thread.isLoading);
+  const historyLoad = useSyncExternalStore(
+    subscribeHistoryLoadState,
+    getHistoryLoadState,
+    getHistoryLoadState,
+  );
+  const historyError =
+    remoteId && historyLoad.remoteId === remoteId ? historyLoad.error : null;
+  const showHistoryStatus =
+    Boolean(remoteId) &&
+    hasNoMessages &&
+    (threadLoading || Boolean(historyError));
   usePlanModeBridge();
+  useGoalLoopBridge();
   const askOpen = useSyncExternalStore(
     subscribeAskUserSession,
     () => getAskUserSessionForThread(threadId) != null,
@@ -133,14 +185,16 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
 
   useEffect(() => {
     dispatchOverlayDismiss('thread-switch');
-    if (isTauri()) void hideWebView();
+    if (isTauri()) void hideWebView(undefined, { force: true });
   }, [threadId]);
 
   useEffect(() => {
     if (!isTauri() || !askOpen) return;
-    void hideWebView();
+    void hideWebView(undefined, { force: true });
     return subscribeAskUserSession(() => {
-      if (getAskUserSessionForThread(threadId) != null) void hideWebView();
+      if (getAskUserSessionForThread(threadId) != null) {
+        void hideWebView(undefined, { force: true });
+      }
     });
   }, [askOpen, threadId]);
 
@@ -174,6 +228,30 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
           <AuiIf condition={isNewChatView}>
             <Welcome />
           </AuiIf>
+
+          {showHistoryStatus ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+              {historyError ? (
+                <>
+                  <p className="text-muted-foreground text-sm">
+                    {t("thread.historyLoadFailed")}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => retryHistoryLoad()}
+                  >
+                    {t("thread.historyRetry")}
+                  </Button>
+                </>
+              ) : (
+                <p className="text-muted-foreground text-sm">
+                  {t("thread.historyLoading")}
+                </p>
+              )}
+            </div>
+          ) : null}
 
           <div
             data-slot="aui_message-group"
@@ -319,9 +397,7 @@ const ComposerAction: FC = () => {
 const MessageError: FC = () => {
   const { t } = useTranslation();
   const error = useMessageError();
-  const isRunning = useAuiState((s) => s.thread.isRunning);
   if (error === undefined) return null;
-  if (!isRunning) return null;
 
   const formatted =
     formatChatError(error instanceof Error ? error : new Error(String(error))) ?? {
@@ -353,6 +429,38 @@ const AssistantMessage: FC = () => {
     ReasoningGroup,
   } = useContext(ThreadComponentsContext);
 
+  const parts = useAuiState((s) => s.message.parts);
+  const isRunning = useAuiState((s) => s.message.status?.type === "running");
+  const elapsedSeconds = useStreamingDuration(isRunning === true);
+  const lastTextIdx = useMemo(
+    () => findLastSubstantialTextIndex(parts),
+    [parts],
+  );
+  const foldWork =
+    !isRunning && hasPreFinalWork(parts, lastTextIdx);
+
+  const groupBy = useMemo(() => {
+    const fold: (
+      part: PartState,
+      context?: GroupByContext,
+    ) => readonly AssistantGroupKey[] = (part, context) => {
+      if (!foldWork) {
+        return baseAssistantGroupBy(part, context) as readonly AssistantGroupKey[];
+      }
+      const index = parts.indexOf(part);
+      const path = baseAssistantGroupBy(part, context);
+      if (index === lastTextIdx && part.type === "text") {
+        return ["group-final-prose"];
+      }
+      if (path.length === 0) return path as readonly AssistantGroupKey[];
+      if (path[0] === "group-chainOfThought") {
+        return ["group-worked-for", ...(path as AssistantGroupKey[])];
+      }
+      return path as readonly AssistantGroupKey[];
+    };
+    return fold;
+  }, [foldWork, parts, lastTextIdx]);
+
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
   // keeps hovered action bar from shifting layout (autohide doesn't support absolute positioning well)
   // for pt-[n] use -mb-[n + 6] & min-h-[n + 6] to preserve compensation
@@ -370,16 +478,15 @@ const AssistantMessage: FC = () => {
         // [contain-intrinsic-size:auto_24px] fixes issue #4104, don't change without checking for regressions
         className="text-foreground flex flex-col gap-2 px-2 leading-relaxed wrap-break-word [contain-intrinsic-size:auto_24px] [content-visibility:auto]"
       >
-        <MessagePrimitive.GroupedParts
-          groupBy={groupPartByType({
-            reasoning: ["group-chainOfThought", "group-reasoning"],
-            text: ["group-chainOfThought", "group-prose"],
-            "tool-call": ["group-chainOfThought", "group-tool"],
-            "standalone-tool-call": [],
-          })}
-        >
+        <MessagePrimitive.GroupedParts groupBy={groupBy}>
           {({ part, children }) => {
             switch (part.type) {
+              case "group-worked-for":
+                return (
+                  <WorkedForBlock elapsedSeconds={elapsedSeconds}>
+                    {children}
+                  </WorkedForBlock>
+                );
               case "group-chainOfThought":
                 return (
                   <div
@@ -410,6 +517,7 @@ const AssistantMessage: FC = () => {
                   </ReasoningGroupBlock>
                 );
               }
+              case "group-final-prose":
               case "group-prose":
                 return (
                   <div data-slot="aui_assistant-prose" className="flex flex-col gap-2">
@@ -472,7 +580,7 @@ const AssistantActionBar: FC = () => {
     <ActionBarPrimitive.Root
       hideWhenRunning
       autohide="not-last"
-      className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in col-start-3 row-start-2 -ms-1 flex items-center gap-1 duration-200"
+      className="aui-assistant-action-bar-root text-muted-foreground/50 animate-in fade-in col-start-3 row-start-2 -ms-1 flex items-center gap-1 duration-200"
     >
       <MessageCopyButton />
       <MessageTimestamp className="ms-0.5" align="start" inline />
@@ -542,7 +650,7 @@ const UserMessageFooter: FC = () => {
       <ActionBarPrimitive.Root
         hideWhenRunning
         autohide="not-last"
-        className="aui-user-message-footer text-muted-foreground flex w-max shrink-0 items-center gap-1.5 whitespace-nowrap"
+        className="aui-user-message-footer text-muted-foreground/50 flex w-max shrink-0 items-center gap-1.5 whitespace-nowrap"
       >
         <MessageTimestamp align="end" inline />
         <MessageCopyButton />

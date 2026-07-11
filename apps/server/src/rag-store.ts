@@ -5,6 +5,7 @@ import {
   insertChunk,
   insertDocument,
   listDocuments,
+  listIndexingDocuments,
   deleteDocument,
   updateDocumentStatus,
   saveAgentCitation,
@@ -17,6 +18,19 @@ import { embedTextsIfInstalled } from './embedding-service';
 
 const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 150;
+
+const RAG_INGEST_INTERRUPTED_MESSAGE =
+  'Indexing interrupted (server restarted or the worker stopped before completion)';
+
+/** Mark documents stuck in `indexing` as failed after a restart. */
+export async function sweepInterruptedRagIngests(): Promise<number> {
+  const rows = await listIndexingDocuments();
+  if (rows.length === 0) return 0;
+  for (const doc of rows) {
+    await updateDocumentStatus(doc.id, 'failed', RAG_INGEST_INTERRUPTED_MESSAGE);
+  }
+  return rows.length;
+}
 
 export type AgentCitationRecord = {
   query: string;
@@ -200,7 +214,7 @@ export async function buildKnowledgeContextBlock(tenantId: string): Promise<stri
     return [
       '# Knowledge base (local)',
       'No documents are uploaded yet. The **知识库** panel is empty until the user adds files.',
-      'Spreadsheet/table data in the **表格** panel is separate — use `table_list_sheets` / `table_get`, not `knowledge_search`, for grid data.',
+      'Spreadsheet/table data in the **表格** panel is separate — use `table_sheets` (list) / `table_get`, not `knowledge_search`, for grid data.',
       'After documents are uploaded, call `knowledge_search` before answering document questions.',
     ].join('\n');
   }

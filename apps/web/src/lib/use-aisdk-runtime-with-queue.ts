@@ -42,19 +42,22 @@ import {
   useExternalHistory,
   toExportedMessageRepository,
 } from './use-external-history';
-import { stampMessageWithSentAt } from "./message-timestamp";
+import { stampInterruptedAssistant, stampMessageWithSentAt } from "./message-timestamp";
 import { stampOutgoingUserMessage } from "./pending-skill-message";
 import { createMessageQueueWithDrafts } from "./create-message-queue-with-drafts";
 import { setComposerQueueRuntime } from "./composer-queue-runtime";
+import { setSilentChatContinue } from "./silent-chat-continue";
 import { getChatSettings, setChatSettings } from "./chat-settings";
 import { setForceReplaceNextChat } from "./chat-force-replace-ref";
 import { stripAllPendingSkillTokens } from "./pending-skill-text";
+import { setThreadGoalApi } from "./goal-loop-sync";
 import { requestChatStop } from "./chat-stop";
 import { resumableStorage } from "./resumable-storage";
 import { useNetworkReconnectStore } from "./network-reconnect-store";
 import {
   findFirstAwaitingFrontendToolIndex,
   FRONTEND_SUSPEND_TOOL_NAMES,
+  getFrontendSuspendToolName,
   isAwaitingFrontendToolAnswer,
   pendingFrontendToolCallId,
   registerFrontendToolStop,
@@ -74,7 +77,9 @@ import {
   unmarkToolContinuationAttempt,
 } from "./frontend-tool-continuation";
 import {
+  buildInterruptedBackgroundTaskRows,
   collectCoordinatorDispatchTaskIds,
+  collectOptimisticBackgroundTasksFromMessages,
   mergePanelBackgroundTasks,
   stripTaskNotificationUserMessages,
   type BackgroundTaskRow,
@@ -90,6 +95,14 @@ import {
   type BackgroundTasksApiSnapshot,
 } from "./background-task-events";
 import { registerAskUserResultSubmitter } from "./ask-user-submit-bridge";
+import {
+  abortAllReadOpenPageReads,
+  clearReadOpenPageSubmitted,
+  executeReadOpenPageForToolCall,
+  isReadOpenPageSubmitted,
+  markReadOpenPageSubmitted,
+  registerReadOpenPageResultSubmitter,
+} from "./read-open-page-submit-bridge";
 import {
   isThreadMessageInput,
   resolveThreadMessagesToUi,
@@ -132,6 +145,38 @@ const toUIMessage = <UI_MESSAGE extends UIMessage>(
     id: createMessage.id ?? generateId(),
     role: createMessage.role ?? fallbackRole,
   }) as UI_MESSAGE;
+
+function extractUserText(message: {
+  content?: unknown;
+  parts?: readonly unknown[];
+}): string {
+  if (typeof message.content === 'string') return message.content;
+  if (Array.isArray(message.content)) {
+    return message.content
+      .filter(
+        (part): part is { type: 'text'; text: string } =>
+          !!part &&
+          typeof part === 'object' &&
+          (part as { type?: string }).type === 'text' &&
+          typeof (part as { text?: unknown }).text === 'string',
+      )
+      .map((part) => part.text)
+      .join('');
+  }
+  if (Array.isArray(message.parts)) {
+    return message.parts
+      .filter(
+        (part): part is { type: 'text'; text: string } =>
+          !!part &&
+          typeof part === 'object' &&
+          (part as { type?: string }).type === 'text' &&
+          typeof (part as { text?: unknown }).text === 'string',
+      )
+      .map((part) => part.text)
+      .join('');
+  }
+  return '';
+}
 
 function stripPendingSkillToken<UI_MESSAGE extends UIMessage>(
   message: CreateUIMessage<UI_MESSAGE>,
@@ -247,6 +292,8 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   const restoredHistoryHeadRef = useRef<string | null>(null);
   const frontendContinuationRef = useRef(createFrontendToolContinuationController());
   const refreshBackgroundTasksRef = useRef<(() => void) | null>(null);
+  /** Task ids cancelled by Stop — keep them cancelled until the API reports a terminal status. */
+  const interruptedTaskIdsRef = useRef<Set<string>>(new Set());
   backgroundTasksRef.current = backgroundTasks;
 
   const resolvedThreadId = getThreadId?.() ?? chatHelpers.id;
@@ -346,11 +393,17 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
 
   historyLoadingRef.current = isLoading;
 
+  useEffect(() => {
+    if (isLoading) return;
+    if (!isPersistableThreadId(resolvedThreadId)) return;
+    refreshBackgroundTasksRef.current?.();
+  }, [isLoading, resolvedThreadId]);
+
   const chatHelpersRef = useRef(chatHelpers);
   chatHelpersRef.current = chatHelpers;
 
-  const completePendingToolCalls = async () => {
-    if (!cancelPendingToolCallsOnSend) return;
+  const completePendingToolCalls = async (reason = 'User cancelled tool call by sending a new message.') => {
+    if (!cancelPendingToolCallsOnSend && reason.includes('sending a new message')) return;
 
     chatHelpers.setMessages((messages) => {
       const lastMessage = messages.at(-1);
@@ -367,7 +420,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         return {
           ...rest,
           state: "output-error" as const,
-          errorText: "User cancelled tool call by sending a new message.",
+          errorText: reason,
         };
       });
 
@@ -388,15 +441,8 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         void (async () => {
           try {
             if (steer) {
-              chatHelpersRef.current.stop();
-              const threadId = chatHelpersRef.current.id;
-              if (threadId) {
-                try {
-                  await requestChatStop(threadId);
-                } catch (err) {
-                  console.warn("[chat] steer stop failed", err);
-                }
-              }
+              // Same interrupt path as Stop: mark interrupted, suppress auto-continue.
+              interruptChatRun();
             }
             await dispatchNewRef.current(message);
           } finally {
@@ -421,6 +467,16 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     });
     return () => setComposerQueueRuntime(null);
   }, [queueCtrl]);
+
+  useEffect(() => {
+    setSilentChatContinue(async () => {
+      resumableStorage.clear();
+      await chatHelpersRef.current.sendMessage(undefined, {
+        metadata: lastRunConfigRef.current,
+      });
+    });
+    return () => setSilentChatContinue(null);
+  }, []);
 
   useEffect(() => {
     rememberUiMessages(chatHelpers.messages);
@@ -480,26 +536,89 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     chatHelpersRef.current.setMessages((current) => {
       const last = current.at(-1);
       if (last?.role !== "assistant") return current;
-      const custom = (last.metadata as { custom?: { sentAt?: number } } | undefined)
-        ?.custom;
-      if (typeof custom?.sentAt === "number") return current;
+      const custom = (
+        last.metadata as { custom?: { sentAt?: number; interrupted?: boolean } } | undefined
+      )?.custom;
+      if (custom?.interrupted === true && typeof custom.sentAt === "number") {
+        return current;
+      }
       stampedAssistantIdsRef.current.add(last.id);
-      return [...current.slice(0, -1), stampMessageWithSentAt(last)];
+      return [...current.slice(0, -1), stampInterruptedAssistant(last)];
     });
   };
 
   const interruptChatRun = () => {
     suppressToolContinuation();
+    abortAllReadOpenPageReads();
+    // Prevent the pending-tool effect from starting a new read after Stop.
+    const last = chatHelpersRef.current.messages.at(-1);
+    if (last?.role === 'assistant' && last.parts?.length) {
+      for (let i = 0; i < last.parts.length; i++) {
+        const part = last.parts[i] as { toolCallId?: string; type?: string };
+        if (getFrontendSuspendToolName(part) !== 'read_open_page') continue;
+        const id = pendingFrontendToolCallId(last, i, part);
+        markReadOpenPageSubmitted(id);
+      }
+    }
     useNetworkReconnectStore.getState().clearBanner();
     const streamId = resumableStorage.getStreamId();
     chatHelpersRef.current.stop();
     setToolStatuses({});
+    // Mark in-flight tool parts cancelled so TaskToolUI / tool groups leave "running"
+    // (Claude Code synthesizes interrupted tool_result on user-cancel).
+    void completePendingToolCalls('Interrupted by user.');
     finalizeInterruptedAssistant();
+
     const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
+
+    // Optimistically cancel local + transcript-dispatched subagent rows so the
+    // status bar does not fall back to optimistic "running" placeholders.
+    // Collect from UI parts AND coordinator dispatch ids (real task_id), including
+    // temporary task-call-* ids so empty-filter races cannot wipe the panel.
+    const prevSnapshot = getBackgroundTasksSnapshot();
+    const messages = chatHelpersRef.current.messages;
+    const optimistic = collectOptimisticBackgroundTasksFromMessages(messages);
+    const dispatchIds = collectCoordinatorDispatchTaskIds(messages);
+    const cancelledTasks = buildInterruptedBackgroundTaskRows(
+      [...prevSnapshot.tasks, ...prevSnapshot.batchTasks],
+      optimistic,
+      [...(prevSnapshot.dispatchTaskIds ?? []), ...dispatchIds],
+    );
+    const nextDispatchIds = Array.from(
+      new Set([
+        ...(prevSnapshot.dispatchTaskIds ?? []),
+        ...dispatchIds,
+        ...optimistic.map((row) => row.id),
+        ...cancelledTasks.map((row) => row.id),
+      ]),
+    );
+    // Only the rows we actually cancelled — not the entire dispatch history.
+    const interruptedTaskIds = Array.from(
+      new Set([
+        ...(prevSnapshot.interruptedTaskIds ?? []),
+        ...cancelledTasks.map((row) => row.id),
+      ]),
+    );
+    for (const id of interruptedTaskIds) interruptedTaskIdsRef.current.add(id);
+    setBackgroundTasks(cancelledTasks);
+    backgroundTasksRef.current = cancelledTasks;
+    setBackgroundTasksSnapshot({
+      ...prevSnapshot,
+      threadId: prevSnapshot.threadId ?? threadId ?? null,
+      tasks: cancelledTasks,
+      batchTasks: cancelledTasks,
+      dispatchTaskIds: nextDispatchIds,
+      interruptedTaskIds,
+    });
+
     if (threadId) {
-      void requestChatStop(threadId, { activeStreamId: streamId }).catch((err) => {
-        console.warn("[chat] interrupt stop failed", err);
-      });
+      void requestChatStop(threadId, { activeStreamId: streamId })
+        .catch((err) => {
+          console.warn("[chat] interrupt stop failed", err);
+        })
+        .finally(() => {
+          refreshBackgroundTasksRef.current?.();
+        });
     } else {
       resumableStorage.clear();
     }
@@ -701,7 +820,18 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         result,
       });
     });
-    return () => registerAskUserResultSubmitter(threadId, null);
+    registerReadOpenPageResultSubmitter(threadId, (toolCallId, result, options) => {
+      return applyToolResult({
+        toolCallId,
+        toolName: "read_open_page",
+        result: options?.isError ? (result.error ?? result) : result,
+        isError: options?.isError,
+      });
+    });
+    return () => {
+      registerAskUserResultSubmitter(threadId, null);
+      registerReadOpenPageResultSubmitter(threadId, null);
+    };
   }, [applyToolResult, chatHelpers.id]);
 
   useEffect(() => {
@@ -725,8 +855,18 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       if (!data) return;
       // Ignore late responses for a thread we already navigated away from.
       if (snapshotThreadId && snapshotThreadId !== resolvePersistableThreadId()) return;
-      const tasks = data.tasks ?? [];
-      const ready = Boolean(data.batch?.synthesisReady ?? data.batch?.notificationsReady);
+      let tasks = data.tasks ?? [];
+      if (interruptedTaskIdsRef.current.size > 0) {
+        tasks = tasks.map((task) => {
+          if (!interruptedTaskIdsRef.current.has(task.id)) return task;
+          if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') {
+            interruptedTaskIdsRef.current.delete(task.id);
+            return task;
+          }
+          return { ...task, status: 'cancelled' };
+        });
+      }
+      const ready = Boolean(data.batch?.notificationsReady);
 
       const dispatchIds = collectCoordinatorDispatchTaskIds(localMessages);
       const lastMsg = localMessages.at(-1);
@@ -750,6 +890,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       const panelTasks = mergePanelBackgroundTasks(localMessages, tasks, {
         pinnedTaskIds: nextDispatchIds,
       });
+      const interruptedTaskIds = Array.from(interruptedTaskIdsRef.current);
       setBackgroundTasks(tasks);
       backgroundTasksRef.current = tasks;
       setBackgroundTasksSnapshot({
@@ -757,13 +898,12 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         tasks,
         batchTasks: panelTasks,
         dispatchTaskIds: nextDispatchIds,
+        interruptedTaskIds,
         notificationsReady: ready,
-        synthesisReady: ready,
+        synthesisReady: false,
       });
 
-      // Display-only: the background-tasks snapshot drives the subagent panel UI.
-      // It no longer triggers a client-side synthesis re-POST — subagents run
-      // synchronously in the `task` tool and the parent continues natively.
+      // Display-only: drives the subagent panel / TaskToolUI progress.
     };
 
     const refreshBackgroundTasks = async () => {
@@ -835,6 +975,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       setBackgroundTasks([]);
       backgroundTasksRef.current = [];
       backgroundDispatchTaskIdsRef.current = [];
+      interruptedTaskIdsRef.current.clear();
       resetBackgroundTasksSnapshot();
     };
   }, [chatHelpers.id, getThreadId]);
@@ -843,6 +984,8 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     stampedAssistantIdsRef.current = new Set();
     stoppedFrontendToolIdsRef.current = new Set();
     restoredHistoryHeadRef.current = null;
+    clearReadOpenPageSubmitted();
+    abortAllReadOpenPageReads();
     setToolStatuses({});
     resetFrontendToolContinuationController(frontendContinuationRef.current);
     resetToolContinuationAttemptTracker(toolContinuationAttemptRef.current);
@@ -921,8 +1064,15 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     const pendingIndex = findFirstAwaitingFrontendToolIndex(last.parts);
     if (pendingIndex < 0) return;
 
-    const pendingPart = last.parts[pendingIndex] as { toolCallId?: string; type?: string };
+    const pendingPart = last.parts[pendingIndex] as {
+      toolCallId?: string;
+      type?: string;
+      input?: { mode?: 'text' | 'html'; maxChars?: number };
+      args?: { mode?: 'text' | 'html'; maxChars?: number };
+    };
     const toolCallId = pendingFrontendToolCallId(last, pendingIndex, pendingPart);
+    const toolName = getFrontendSuspendToolName(pendingPart);
+
     if (!stoppedFrontendToolIdsRef.current.has(toolCallId)) {
       stoppedFrontendToolIdsRef.current.add(toolCallId);
       const stopIds = [toolCallId];
@@ -930,6 +1080,18 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         stopIds.push(pendingPart.toolCallId);
       }
       stopFrontendToolStream("open", stopIds);
+    }
+
+    // Drive read_open_page via bridge — does not depend on ToolUI addResult after chat.stop().
+    if (toolName === 'read_open_page' && !isReadOpenPageSubmitted(toolCallId)) {
+      const threadId = getThreadId?.() ?? chatHelpers.id;
+      const input = pendingPart.input ?? pendingPart.args ?? {};
+      void executeReadOpenPageForToolCall({
+        threadId,
+        toolCallId,
+        mode: input.mode,
+        maxChars: input.maxChars,
+      });
     }
 
     const trimmed = trimAssistantAfterAwaitingTool(chatHelpers.messages);
@@ -992,17 +1154,49 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       return;
     }
 
-    clearToolContinuationSuppression();
+    const last = chatHelpersRef.current.messages.at(-1);
+    const lastCustom = (
+      last?.metadata as { custom?: { interrupted?: boolean } } | undefined
+    )?.custom;
+    const lastInterrupted =
+      last?.role === "assistant" && lastCustom?.interrupted === true;
+    // Align with onEdit: after interrupt/stop, force-replace so transcript sync
+    // does not race a partial auto-continue against the new user turn.
+    if (lastInterrupted || suppressedForAssistantIdRef.current != null) {
+      setForceReplaceNextChat(true);
+    }
+
     backgroundDispatchTaskIdsRef.current = [];
+    interruptedTaskIdsRef.current.clear();
     resetBackgroundTasksSnapshot();
     lastRunConfigRef.current = message.runConfig;
     await completePendingToolCalls();
+    let ensuredThreadId: string | undefined;
     if (ensureThreadInitialized) {
-      await ensureThreadInitialized();
+      ensuredThreadId = await ensureThreadInitialized();
     }
+
+    // Pending goal from + menu: first user message becomes the completion condition.
+    const settings = getChatSettings();
+    if (settings.pendingGoal) {
+      const threadId =
+        ensuredThreadId ?? getThreadId?.() ?? chatHelpersRef.current.id;
+      const condition = extractUserText(createMessage).trim();
+      if (threadId && condition) {
+        const result = await setThreadGoalApi(threadId, condition);
+        if (result.ok) {
+          setChatSettings({ pendingGoal: false });
+        }
+      }
+    }
+    // Pending loop: do not start here. The model analyzes completeness and calls loop_set.
+
     await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage), {
       metadata: message.runConfig,
     });
+    // Clear suppression only after the new user message is in flight so a
+    // pending sendMessage(undefined) auto-continue cannot race.
+    clearToolContinuationSuppression();
     setChatSettings({ pendingSkill: null });
   };
 
@@ -1104,6 +1298,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
 
       clearToolContinuationSuppression();
       backgroundDispatchTaskIdsRef.current = [];
+      interruptedTaskIdsRef.current.clear();
       resetBackgroundTasksSnapshot();
       setForceReplaceNextChat(true);
       lastRunConfigRef.current = message.runConfig;

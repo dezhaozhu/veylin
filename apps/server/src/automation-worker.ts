@@ -43,6 +43,7 @@ export async function runAutomationJob(
       prompt: automation.prompt,
       eventContext: job.eventContext,
       title: automation.name,
+      automationId: automation.id,
     });
 
     await updateAutomationRun(run.id, {
@@ -50,7 +51,7 @@ export async function runAutomationJob(
       result: result.text,
       finishedAt: new Date().toISOString(),
     });
-    await touchAutomationLastRun(automation.id);
+    await touchAutomationLastRun(tenantId, automation.id);
   } catch (err) {
     await updateAutomationRun(run.id, {
       status: 'failed',

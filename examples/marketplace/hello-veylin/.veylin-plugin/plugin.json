@@ -1,0 +1,6 @@
+{
+  "name": "hello-veylin",
+  "version": "0.1.0",
+  "description": "Example Veylin plugin: sample skill + Stop prompt hook",
+  "author": "Veylin"
+}

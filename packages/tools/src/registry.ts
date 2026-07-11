@@ -5,6 +5,8 @@ import type { RiskLevel } from '@veylin/shared';
 import { webFetch } from './web';
 import { todoWrite, askUserQuestion, readOpenPage, request3dSelection } from './interaction';
 import { enterPlanMode, exitPlanMode } from './plan-mode';
+import { loopScheduleWakeup } from './loop-wakeup';
+import { loopSet } from './loop-set';
 
 export const builtinTools = {
   // file_read: fileRead,
@@ -21,6 +23,8 @@ export const builtinTools = {
   request_3d_selection: request3dSelection,
   enter_plan_mode: enterPlanMode,
   exit_plan_mode: exitPlanMode,
+  loop_set: loopSet,
+  loop_schedule_wakeup: loopScheduleWakeup,
 } as const;
 
 export type BuiltinToolId = keyof typeof builtinTools;
@@ -34,6 +38,8 @@ export const toolRisk: Record<BuiltinToolId, RiskLevel> = {
   request_3d_selection: 'safe',
   enter_plan_mode: 'safe',
   exit_plan_mode: 'safe',
+  loop_set: 'safe',
+  loop_schedule_wakeup: 'safe',
 };
 
 /** Meta tools not in builtinTools but evaluated by policy. */
@@ -51,4 +57,6 @@ export const toolKeywords: Record<BuiltinToolId, string[]> = {
   request_3d_selection: ['3d', 'select', 'face', '选面', '点选'],
   enter_plan_mode: ['plan', 'planning', 'explore', 'read-only'],
   exit_plan_mode: ['execute', 'exit plan', 'implement'],
+  loop_set: ['loop', 'interval', 'recurring', 'schedule', 'repeat', '循环'],
+  loop_schedule_wakeup: ['loop', 'schedule', 'wakeup', 'interval', 'recurring'],
 };

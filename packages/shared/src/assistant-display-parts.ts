@@ -120,6 +120,33 @@ function coalesceEmptyReasoning(parts: readonly unknown[]): unknown[] {
   return out;
 }
 
+/**
+ * Drop finished empty text shells that would otherwise split adjacent reasoning
+ * groups into two Thought blocks (live stream often emits text-start with '').
+ */
+function coalesceEmptyText(parts: readonly unknown[]): unknown[] {
+  const out: unknown[] = [];
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+    if (!isTextPart(part) || partText(part)) {
+      out.push(part);
+      continue;
+    }
+
+    const next = parts[i + 1];
+    if (isReasoningPart(next) && partText(next)) {
+      continue;
+    }
+    if (isToolLikePart(next) || isStepStart(next) || isReasoningPart(next)) {
+      continue;
+    }
+    // Trailing empty text at end of message — drop.
+  }
+
+  return out;
+}
+
 function narrativeKey(parts: readonly unknown[]): string {
   return parts
     .filter(isReasoningOrText)
@@ -315,6 +342,7 @@ function normalizeInner(
   const mode = options.mode ?? 'persist';
   let work = migrateLegacyTools(parts);
   work = coalesceEmptyReasoning(work);
+  work = coalesceEmptyText(work);
   work = dedupeAcrossSteps(work);
   if (mode === 'display') {
     work = mergeProseAcrossTextOnlySteps(work);

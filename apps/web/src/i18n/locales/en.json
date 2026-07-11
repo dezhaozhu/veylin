@@ -1,11 +1,26 @@
 {
   "panels": {
     "empty": "Click + above to create a panel",
-    "table": { "label": "Table", "desc": "Editable multi-sheet spreadsheet" },
-    "web": { "label": "Web", "desc": "Embedded browser for internal pages and tools" },
-    "rag": { "label": "Knowledge", "desc": "Local document retrieval, citations and knowledge graph" },
-    "workflow": { "label": "Workflow", "desc": "Visual workflow orchestration" },
-    "3d": { "label": "3D", "desc": "CAD model viewer with face picking and result overlay" }
+    "table": {
+      "label": "Table",
+      "desc": "Editable multi-sheet spreadsheet"
+    },
+    "web": {
+      "label": "Web",
+      "desc": "Embedded browser for internal pages and tools"
+    },
+    "rag": {
+      "label": "Knowledge",
+      "desc": "Local document retrieval, citations and knowledge graph"
+    },
+    "workflow": {
+      "label": "Workflow",
+      "desc": "Visual workflow orchestration"
+    },
+    "3d": {
+      "label": "3D",
+      "desc": "CAD model viewer with face picking and result overlay"
+    }
   },
   "subagent": {
     "dispatching": "Dispatching {{label}}…",
@@ -41,20 +56,32 @@
     "forward": "Forward",
     "newChat": "New Chat"
   },
+  "window": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close"
+  },
   "thread": {
     "welcome": "How can I help you today?",
     "composerPlaceholder": "Ask anything…",
     "composerAriaLabel": "Message input",
     "scrollToBottom": "Scroll to bottom",
-    "questionRailLabel": "Conversation questions",
-    "selectionAsk": "Ask",
     "sendMessage": "Send message",
     "stopGenerating": "Stop generating",
-    "assistantWorking": "Assistant is working"
+    "assistantWorking": "Assistant is working",
+    "historyLoading": "Loading conversation…",
+    "historyLoadFailed": "Could not load this conversation.",
+    "historyRetry": "Retry",
+    "questionRailLabel": "Conversation questions",
+    "selectionAsk": "Ask"
   },
   "reasoning": {
     "thought": "Thought",
-    "thoughtDuration": "Thought, {{seconds}} seconds"
+    "thoughtDuration": "Thought, {{seconds}} seconds",
+    "workedFor": "Worked for {{seconds}}s",
+    "workedForNoDuration": "Worked for",
+    "contextSummarized": "Chat context summarized"
   },
   "toolSearch": {
     "searching": "Searching tools for \"{{query}}\"…",
@@ -78,10 +105,16 @@
     "browserDesc": "Attach a page from the right-side browser",
     "filesFolders": "Files & Folders",
     "filesFoldersDesc": "Attach files from your computer",
+    "file": "File",
+    "fileDesc": "Attach an image, PDF, or text file",
     "image": "Image",
     "imageDesc": "Attach an image from your computer",
     "document": "Document",
     "documentDesc": "Attach a PDF, spreadsheet, or text file",
+    "searchPlaceholder": "Add context, tools...",
+    "noMcpServers": "No MCP servers",
+    "openMcpSettings": "Open MCP Settings",
+    "searchMcp": "Search MCP servers...",
     "mcp": "MCP Servers",
     "mcpDesc": "Enable or disable tool servers for this chat",
     "mcpToggle": "Toggle {{name}}",
@@ -96,7 +129,9 @@
     "browserChip": "Browser: {{name}}",
     "removeBrowser": "Remove browser context",
     "skillChip": "Skill: {{name}}",
-    "skillType": "Skill"
+    "skillType": "Skill",
+    "activatedSkillChip": "Activated skill: {{name}}",
+    "activatedSkillType": "Active"
   },
   "slash": {
     "title": "Commands",
@@ -108,15 +143,32 @@
     "planDesc": "Read-only planning mode before making changes",
     "exitPlan": "Exit plan",
     "exitPlanDesc": "Return to normal mode and allow edits",
+    "goal": "Goal",
+    "goalDesc": "Select, then type the completion condition in the composer and send",
+    "exitGoal": "Clear goal",
+    "goalPlaceholder": "e.g. all tests pass and lint is clean",
+    "goalStart": "Start goal",
+    "goalFailed": "Could not set goal",
+    "loop": "Loop",
+    "loopDesc": "Select, then describe the recurring task; the model checks completeness, asks if needed, and starts only when ready",
+    "stopLoop": "Stop loop",
+    "loopIntervalPlaceholder": "Interval (e.g. 5m; leave empty for dynamic)",
+    "loopPromptPlaceholder": "Prompt to run each iteration",
+    "loopPromptRequired": "Loop prompt is required",
+    "loopStart": "Start loop",
+    "loopFailed": "Could not start loop",
     "compact": "Compact context",
     "compactDesc": "Summarize this thread to free context space",
     "compacting": "Compressing…",
+    "compactDone": "Context compacted: {{before}} → {{after}} messages",
+    "compactFailed": "Could not compact context: {{error}}",
     "showMore": "Show {{count}} more",
     "noMatches": "No matching skills or commands",
     "removeSkill": "Remove skill"
   },
   "status": {
     "allDone": "All done",
+    "todosProgress": "{{done}}/{{total}} todos",
     "agentsRunning": "{{count}} agents running",
     "agentsQueued": "{{count}} agents queued",
     "agentsDone": "{{count}} agents finished",
@@ -128,6 +180,12 @@
     "taskDone": "Done",
     "taskFailed": "Failed",
     "taskCancelled": "Cancelled",
+    "taskInterrupted": "Interrupted",
+    "taskInitializing": "Initializing…",
+    "taskProgressTool": "{{tool}} · {{count}} tool uses",
+    "taskProgressCount": "{{count}} tool uses",
+    "taskDoneMeta": "{{count}} tool uses",
+    "stopAgent": "Stop subagent",
     "agentsQueueHint": "{{queued}} queued (max {{max}} parallel workers)"
   },
   "queue": {
@@ -162,27 +220,22 @@
   "readPage": {
     "reading": "Reading {{mode}}…",
     "failed": "Failed to read page",
+    "stopped": "Stopped reading",
+    "emptyContent": "(no text content)",
     "read": "Read {{host}}",
     "currentPage": "current page",
     "titleLabel": "Title: ",
     "urlLabel": "URL: ",
     "truncated": "Content truncated to {{chars}} characters"
   },
-  "viewer3d": {
-    "awaitingSelection": "Waiting for you to pick faces on the 3D panel: {{prompt}}",
-    "selectionConfirmed": "Selection confirmed",
-    "selectionCancelled": "Selection cancelled",
-    "selectedFaces": "Selected faces: {{ids}}",
-    "promptConfirm": "Confirm",
-    "promptCancel": "Cancel",
-    "promptHint": "Pick faces on the model, then confirm.",
-    "promptPickFirst": "Pick at least one face on the model first.",
-    "promptNoModel": "No model is shown yet — ask the agent to display one first, or cancel this request."
-  },
   "web": {
     "enterUrl": "Please enter a URL",
     "urlPlaceholder": "https://internal-address or localhost:8080",
     "open": "Open",
+    "back": "Back",
+    "forward": "Forward",
+    "reload": "Reload",
+    "recents": "Recents",
     "empty": "Enter a URL and the page will be embedded here",
     "requiresDesktopOpen": "Opening internal web pages requires the desktop app (Tauri). The browser-only dev mode cannot dock a webview; please use npm run dev:desktop.",
     "requiresDesktopRead": "Reading page content requires the desktop app (Tauri); for public URLs use the web_fetch tool instead."
@@ -218,13 +271,21 @@
     "name": "Name",
     "open": "Open",
     "content": "Content",
-    "saveChanges": "Save changes"
+    "saveChanges": "Save changes",
+    "retry": "Retry",
+    "loadFailed": "Failed to load. Please retry."
   },
   "settings": {
     "navTitle": "Settings",
     "general": {
       "nav": "General",
-      "title": "General"
+      "title": "General",
+      "workspaceTitle": "Workspace",
+      "workspaceHint": "Used to resolve project-level Hooks. An environment workspace root overrides this when set.",
+      "workspaceRoot": "Workspace root",
+      "importClaudeHooks": "Import hooks from Claude Code settings (~/.claude/settings.json)",
+      "saving": "Saving…",
+      "saved": "Saved"
     },
     "language": {
       "title": "Language",
@@ -236,6 +297,7 @@
       "title": "Models",
       "notConfigured": "Not configured",
       "emptyUnconfigured": "No models available yet. Configure a provider below.",
+      "loadFailed": "Failed to load model provider settings.",
       "noSearchResults": "No models match your search.",
       "searchPlaceholder": "Search models",
       "resetEnabled": "Reset enabled models",
@@ -266,6 +328,7 @@
     "rules": "Rules",
     "mcp": "MCP",
     "plugins": "Plugins",
+    "hooks": "Hooks",
     "soon": "Soon",
     "skillsPage": {
       "title": "Skills",
@@ -283,16 +346,89 @@
       "contentHint": "Markdown body injected when the skill is activated.",
       "contentPlaceholder": "## When to use\n...",
       "builtIn": "Built-in",
+      "filesystem": "User",
+      "filesystemEmpty": "No user skills yet.",
       "custom": "Custom",
       "source": {
         "bundled": "Built-in",
+        "user": "User",
+        "plugin": "Plugin",
         "custom": "Custom"
       },
       "triggers": "Triggers: {{triggers}}",
       "toggle": "Toggle {{name}}",
       "confirmDelete": "Delete this skill?",
       "deleteTitle": "Delete skill",
-      "saveFailed": "Failed to save skill: {{error}}"
+      "saveFailed": "Failed to save skill: {{error}}",
+      "loadFailed": "Failed to load skills.",
+      "user": "User",
+      "userEmpty": "No user skills yet. Click “Add skill” to create one — then Edit/Delete appear in the row menu.",
+      "plugin": "Plugins",
+      "installed": "Installed",
+      "installedEmpty": "No skills yet. Add one, or install from Marketplace.",
+      "marketplace": "Marketplace",
+      "marketplaceEmpty": "No marketplace entries.",
+      "installFromMarket": "Install",
+      "otherInstalled": "Built-in & plugins",
+      "otherInstalledEmpty": "No built-in or plugin skills loaded.",
+      "deletePluginTitle": "Uninstall plugin",
+      "confirmDeletePlugin": "Uninstall plugin “{{name}}”? Its skills and hooks will be removed.",
+      "pluginNotFound": "Plugin install not found"
+    },
+    "hooksPage": {
+      "title": "Hooks",
+      "description": "Loaded hooks in one list. User hooks can be edited or deleted; plugin hooks can be disabled or removed (uninstalls the plugin).",
+      "loading": "Loading hooks…",
+      "reload": "Reload",
+      "searchPlaceholder": "Search hooks…",
+      "loaded": "Loaded",
+      "recentLogs": "Recent runs",
+      "dormant": "dormant",
+      "addHook": "Add hook",
+      "addTitle": "Add hook",
+      "editTitle": "Edit hook",
+      "editorDescription": "Define handlers that run on session lifecycle events.",
+      "event": "Event",
+      "matcher": "Matcher",
+      "matcherHint": "Optional. Tool name or pattern; leave empty for all.",
+      "handlerType": "Handler type",
+      "confirmDelete": "Delete this user hook?",
+      "deleteTitle": "Delete hook",
+      "userHooks": "User",
+      "userHooksEmpty": "No user hooks yet. Click “Add hook” to create one.",
+      "otherHooks": "Plugin & other",
+      "otherHooksEmpty": "No plugin or project hooks loaded.",
+      "loadedEmpty": "No hooks loaded yet. Click “Add hook”, or install a pack from Marketplace.",
+      "marketplace": "Marketplace",
+      "marketplaceEmpty": "No marketplace entries.",
+      "installFromMarket": "Install",
+      "deletePluginTitle": "Uninstall plugin",
+      "confirmDeletePlugin": "Uninstall plugin “{{name}}”? Its hooks and skills will be removed.",
+      "pluginNotFound": "Plugin install not found",
+      "installSuccess": "Installed “{{name}}”.",
+      "alreadyInstalled": "“{{name}}” is already installed."
+    },
+    "pluginsPage": {
+      "title": "Plugins",
+      "description": "Install plugins that bundle skills, hooks, and MCP definitions.",
+      "loading": "Loading plugins…",
+      "install": "Add plugin",
+      "installTitle": "Add plugin",
+      "installDescription": "Install from a local path or git repository.",
+      "installFailed": "Install failed",
+      "sourceType": "Source",
+      "fromPath": "Local path",
+      "fromGit": "Git URL",
+      "path": "Path",
+      "gitUrl": "Git URL",
+      "installed": "Installed",
+      "marketplace": "Marketplace",
+      "addPlugin": "Add plugin",
+      "deleteTitle": "Delete plugin",
+      "confirmDelete": "Uninstall “{{name}}”? This removes the install record and local copy.",
+      "installedEmpty": "No plugins installed yet.",
+      "marketplaceEmpty": "No marketplace entries.",
+      "installFromMarket": "Add"
     },
     "rulesPage": {
       "title": "Rules",
@@ -316,7 +452,9 @@
       "toggle": "Toggle {{name}}",
       "confirmDelete": "Delete rule?",
       "deleteTitle": "Delete rule",
-      "saveFailed": "Failed to save rule: {{error}}"
+      "saveFailed": "Failed to save rule: {{error}}",
+      "loading": "Loading rules…",
+      "loadFailed": "Failed to load rules."
     },
     "mcpPage": {
       "title": "Model Context Protocol (MCP)",
@@ -348,6 +486,8 @@
       "connectionError": "{{name}}: {{error}}",
       "reconnect": "Retry connections",
       "reconnecting": "Reconnecting…",
+      "loading": "Loading MCP servers…",
+      "loadFailed": "Failed to load MCP servers.",
       "toolsCount": "{{count}} tools",
       "disconnected": "Disconnected",
       "library": {
@@ -357,7 +497,8 @@
         "notion": "Publish reports and structured notes to shared team workspaces.",
         "tavily": "Web search and research for agents that need fresh external context.",
         "supabase": "Query project data and run operational checks against your database."
-      }
+      },
+      "addMcp": "Add MCP"
     }
   },
   "automate": {
@@ -396,6 +537,8 @@
     "inactive": "Inactive",
     "noActive": "No active automations.",
     "noInactive": "No inactive automations.",
+    "loading": "Loading automations…",
+    "loadFailed": "Failed to load automations.",
     "confirmDelete": "Delete automation?",
     "deleteAutomationTitle": "Delete automation",
     "details": "Details · {{name}}",
@@ -486,27 +629,66 @@
     "postRetryMsg": "{{reason}} · retrying in {{seconds}}s"
   },
   "chatError": {
-    "rateLimited": { "title": "Rate limited", "detail": "Too many requests. Please wait a moment and try again." },
-    "serverError": { "title": "Server error", "detail": "The server ran into a problem. Please try again later." },
-    "serviceBusy": { "title": "Service busy", "detail": "The service is temporarily unavailable. Please retry shortly." },
+    "rateLimited": {
+      "title": "Rate limited",
+      "detail": "Too many requests. Please wait a moment and try again."
+    },
+    "serverError": {
+      "title": "Server error",
+      "detail": "The server ran into a problem. Please try again later."
+    },
+    "serviceBusy": {
+      "title": "Service busy",
+      "detail": "The service is temporarily unavailable. Please retry shortly."
+    },
     "backendUnavailable": {
       "title": "Backend unavailable",
       "detail": "Backend unavailable (HTTP {{status}}). Please ensure the server is running on :8787"
     },
-    "gatewayTimeout": { "title": "Gateway timeout", "detail": "The request took too long. Please try again." },
-    "requestFailed": { "title": "Request failed" },
+    "gatewayTimeout": {
+      "title": "Gateway timeout",
+      "detail": "The request took too long. Please try again."
+    },
+    "requestFailed": {
+      "title": "Request failed"
+    },
     "requestFailedHttp": "Request failed (HTTP {{status}})",
-    "stopped": { "title": "Generation stopped", "detail": "The response was stopped." },
-    "livenessTimeout": { "title": "Connection timed out", "detail": "No response from the server. Please check your network and retry." },
-    "reconnectFailed": { "title": "Reconnect failed", "detail": "Could not restore the connection. Please retry." },
+    "stopped": {
+      "title": "Generation stopped",
+      "detail": "The response was stopped."
+    },
+    "livenessTimeout": {
+      "title": "Connection timed out",
+      "detail": "No response from the server. Please check your network and retry."
+    },
+    "reconnectFailed": {
+      "title": "Reconnect failed",
+      "detail": "Could not restore the connection. Please retry."
+    },
     "reconnectExhausted": "Reconnect time budget exhausted (10 minutes). Please try again later.",
-    "network": { "title": "Network issue", "detail": "Cannot reach the local backend. Check that the service is running." },
-    "busyRetry": { "title": "Service busy", "detail": "Please retry in a moment." },
-    "unauthorized": { "title": "Unauthorized", "detail": "Your session is invalid or has expired. Please sign in again." },
-    "modelNotConfigured": { "title": "Model not configured", "detail": "Open Settings -> Models and add your own API key before chatting." },
-    "unknown": { "detail": "Something went wrong. Please try again." },
+    "network": {
+      "title": "Network issue",
+      "detail": "Cannot reach the local backend. Check that the service is running."
+    },
+    "busyRetry": {
+      "title": "Service busy",
+      "detail": "Please retry in a moment."
+    },
+    "unauthorized": {
+      "title": "Unauthorized",
+      "detail": "Your session is invalid or has expired. Please sign in again."
+    },
+    "modelNotConfigured": {
+      "title": "Model not configured",
+      "detail": "Open Settings -> Models and add your own API key before chatting."
+    },
+    "unknown": {
+      "detail": "Something went wrong. Please try again."
+    },
     "retryLater": "Please try again later.",
-    "connectFailed": { "title": "Connection failed" },
+    "connectFailed": {
+      "title": "Connection failed"
+    },
     "providerClosed": {
       "title": "Model API connection closed",
       "detail": "The upstream model closed the connection. Automatic summary retry will continue; you can also send a follow-up to request the report."
@@ -530,6 +712,40 @@
     },
     "loadFailedGeneric": "Failed to load table data",
     "deleteSheetFailed": "Failed to delete sheet",
+    "createSheetFailed": "Failed to create sheet",
+    "renameSheetFailed": "Failed to rename sheet",
+    "sheetNameDuplicate": "Sheet name already exists. Names must be unique.",
+    "newSheetName": "New sheet name",
+    "renameSheet": "Rename sheet",
+    "confirmDeleteSheet": "Delete this sheet? This cannot be undone.",
+    "newColumnName": "New column name",
+    "columnNotDeletable": "This column cannot be deleted.",
+    "confirmImport": "Importing will replace current data. Continue?",
+    "importFailed": "Import failed",
+    "importEmpty": "No data rows found in the file (first row should be headers, with at least one data row below)",
+    "importSuccess": "Imported {{count}} row(s)",
+    "exportSuccess": "Exported to {{path}}",
+    "loading": "Loading table data…",
+    "sseDisconnected": "Live table sync disconnected; data may be stale",
+    "loadError": "Failed to load table data: {{error}}",
+    "deleteSheet": "Delete sheet {{name}}",
+    "newSheet": "New sheet",
+    "rowsN": "Rows ({{count}})",
+    "rows": "Rows",
+    "columns": "Columns",
+    "importing": "Importing…",
+    "import": "Import",
+    "export": "Export",
+    "filterPlaceholder": "Filter…",
+    "clear": "Clear",
+    "undo": "Undo",
+    "redo": "Redo",
+    "noData": "No data",
+    "noColumns": "No columns yet — add columns or import a file",
+    "addFirstColumn": "Add column",
+    "noMatch": "No matching data",
+    "addFirstRow": "Add first row",
+    "ariaGrid": "Table grid",
     "draftBar": "Schedule draft: {{count}} pending edit(s), not yet applied",
     "draftPreview": "Preview impact",
     "draftCommit": "Commit",
@@ -553,39 +769,8 @@
     "commitDone": "Committed {{committed}} edit(s); {{deferred}} deferred to approval proposals",
     "commitConflict": "The schedule changed under you — re-preview and commit again",
     "discardDone": "All draft edits discarded",
-    "createSheetFailed": "Failed to create sheet",
-    "newSheetName": "New sheet name",
-    "confirmDeleteSheet": "Delete this sheet? This cannot be undone.",
-    "newColumnName": "New column name",
-    "columnNotDeletable": "This column cannot be deleted.",
-    "confirmImport": "Importing will replace current data. Continue?",
-    "importFailed": "Import failed",
-    "importEmpty": "No data rows found in the file (first row should be headers, with at least one data row below)",
-    "importSuccess": "Imported {{count}} row(s)",
-    "exportSuccess": "Exported to {{path}}",
-    "loading": "Loading table data…",
     "loadingCompass": "Loading schedule data from Compass…",
-    "compassUnavailable": "Compass schedule not loaded (MCP disconnected or unavailable); showing default empty sheet",
-    "sseDisconnected": "Live table sync disconnected; data may be stale",
-    "loadError": "Failed to load table data: {{error}}",
-    "deleteSheet": "Delete sheet {{name}}",
-    "newSheet": "New sheet",
-    "rowsN": "Rows ({{count}})",
-    "rows": "Rows",
-    "columns": "Columns",
-    "importing": "Importing…",
-    "import": "Import",
-    "export": "Export",
-    "filterPlaceholder": "Filter…",
-    "clear": "Clear",
-    "undo": "Undo",
-    "redo": "Redo",
-    "noData": "No data",
-    "noColumns": "No columns yet — add columns or import a file",
-    "addFirstColumn": "Add column",
-    "noMatch": "No matching data",
-    "addFirstRow": "Add first row",
-    "ariaGrid": "Table grid"
+    "compassUnavailable": "Compass schedule not loaded (MCP disconnected or unavailable); showing default empty sheet"
   },
   "rag": {
     "unknownTime": "Unknown time",
@@ -606,8 +791,17 @@
     "upload": "Upload",
     "searchPlaceholder": "Search the knowledge base, e.g. what are the key concepts in this document?",
     "search": "Search",
-    "stat": { "documents": "Documents", "entities": "Entities", "edges": "Relations" },
-    "tab": { "search": "Search", "documents": "Documents", "graph": "Graph", "citations": "Citations" },
+    "stat": {
+      "documents": "Documents",
+      "entities": "Entities",
+      "edges": "Relations"
+    },
+    "tab": {
+      "search": "Search",
+      "documents": "Documents",
+      "graph": "Graph",
+      "citations": "Citations"
+    },
     "searchEmptyTitle": "Search the local knowledge base",
     "searchEmptyDesc": "After uploading documents, enter a question above; search combines full-text and semantic similarity.",
     "foundSnippets": "Found {{count}} relevant snippets",
@@ -649,9 +843,9 @@
       "embeddingDesc": "Downloaded from the official Hugging Face repo for chunk vectorization; without it, only full-text search is used.",
       "rerankerTitle": "Search reranking (Cross-Encoder)",
       "rerankerDesc": "Downloaded from the official Hugging Face repo to re-rank hits; basic search works without it.",
-    "enableReranker": "Enable reranking",
-    "enabledHint": "Reranking is on — search and knowledge_search in chat will use the reranker.",
-    "disabledHint": "Reranking is off — the model stays on disk and can be re-enabled anytime.",
+      "enableReranker": "Enable reranking",
+      "enabledHint": "Reranking is on — search and knowledge_search in chat will use the reranker.",
+      "disabledHint": "Reranking is off — the model stays on disk and can be re-enabled anytime.",
       "hfEndpoint": "Download source: {{endpoint}}"
     }
   },
@@ -672,7 +866,37 @@
     "nodes": "Nodes",
     "saveAsNew": "Save as new flow",
     "save": "Save",
-    "run": "Run",
+    "run": {
+      "history": "Run history",
+      "status": {
+        "queued": "Queued",
+        "running": "Running",
+        "done": "Done",
+        "failed": "Failed"
+      },
+      "tab": {
+        "result": "Result",
+        "tracing": "Tracing",
+        "variables": "Variables"
+      },
+      "selectRun": "Select a run to inspect details",
+      "failed": "Workflow failed",
+      "inProgress": "Workflow is still running…",
+      "inProgressStep": "Running: {{step}}",
+      "finalText": "Output text",
+      "finalOutput": "Final output",
+      "rawJson": "Raw JSON",
+      "noFinalOutput": "No final output yet (connect an Output node and wait for completion)",
+      "nodeOutput": "Node output",
+      "pickStep": "Click a step on the left to view node output",
+      "noVariables": "No node outputs in this run",
+      "noOutput": "No output",
+      "emptyOutput": "(empty)",
+      "copy": "Copy",
+      "lastRun": "Last run",
+      "notExecuted": "This node did not run in the selected execution",
+      "insertVar": "Insert upstream variable"
+    },
     "runLogs": "Run logs",
     "label": "Label",
     "noRuns": "No run history",
@@ -752,43 +976,11 @@
       "errorHandling": "Error handling",
       "errorAbort": "Abort flow on error",
       "errorBranch": "Take error branch (red handle)"
-    },
-    "run": {
-      "history": "Run history",
-      "status": {
-        "queued": "Queued",
-        "running": "Running",
-        "done": "Done",
-        "failed": "Failed"
-      },
-      "tab": {
-        "result": "Result",
-        "tracing": "Tracing",
-        "variables": "Variables"
-      },
-      "selectRun": "Select a run to inspect details",
-      "failed": "Workflow failed",
-      "inProgress": "Workflow is still running…",
-      "inProgressStep": "Running: {{step}}",
-      "finalText": "Output text",
-      "finalOutput": "Final output",
-      "rawJson": "Raw JSON",
-      "noFinalOutput": "No final output yet (connect an Output node and wait for completion)",
-      "nodeOutput": "Node output",
-      "pickStep": "Click a step on the left to view node output",
-      "noVariables": "No node outputs in this run",
-      "noOutput": "No output",
-      "emptyOutput": "(empty)",
-      "copy": "Copy",
-      "lastRun": "Last run",
-      "notExecuted": "This node did not run in the selected execution",
-      "insertVar": "Insert upstream variable"
     }
   },
   "splash": {
     "uiLoadFailed": "UI failed to load: {{message}}",
     "startingService": "Starting local service…",
-    "startingServiceProgress": "Starting local service… ({{count}})",
     "serviceNotReady": "Local service is not ready: {{message}}",
     "retry": "Retry",
     "uiLoadFailedTitle": "UI failed to load",
@@ -796,6 +988,18 @@
     "serviceNotReadyTitle": "Local service is not ready",
     "desktopHint": "For desktop, run <code>npm run -w @veylin/desktop dev</code>; for web-only dev, ensure the server is running on port 8787.",
     "sidecarSpawnFailed": "Failed to start the local service",
+    "startingServiceProgress": "Starting local service… ({{count}})",
     "loadingApp": "Loading…"
+  },
+  "viewer3d": {
+    "awaitingSelection": "Waiting for you to pick faces on the 3D panel: {{prompt}}",
+    "selectionConfirmed": "Selection confirmed",
+    "selectionCancelled": "Selection cancelled",
+    "selectedFaces": "Selected faces: {{ids}}",
+    "promptConfirm": "Confirm",
+    "promptCancel": "Cancel",
+    "promptHint": "Pick faces on the model, then confirm.",
+    "promptPickFirst": "Pick at least one face on the model first.",
+    "promptNoModel": "No model is shown yet — ask the agent to display one first, or cancel this request."
   }
 }

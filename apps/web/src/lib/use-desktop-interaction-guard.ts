@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { PANEL_WEB_VIEW_RESTORE_EVENT } from '@/components/assistant-ui/right-panel/panel-events';
 import { dispatchOverlayDismiss } from '@/lib/overlay-dismiss';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import type { WorkspaceView } from '@/lib/workspace-navigation';
@@ -14,7 +15,7 @@ function clearSidebarResizeBodyStyles(): void {
 export function recoverDesktopInteraction(): void {
   dispatchOverlayDismiss('recovery');
   clearSidebarResizeBodyStyles();
-  if (isTauri()) void hideWebView();
+  if (isTauri()) void hideWebView(undefined, { force: true });
 }
 
 export function useDesktopInteractionGuard(options: {
@@ -23,6 +24,8 @@ export function useDesktopInteractionGuard(options: {
   hasVisibleWebTab: boolean;
 }): void {
   const { rightSidebarOpen, workspaceView, hasVisibleWebTab } = options;
+  const hasVisibleWebTabRef = useRef(hasVisibleWebTab);
+  hasVisibleWebTabRef.current = hasVisibleWebTab;
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -33,11 +36,17 @@ export function useDesktopInteractionGuard(options: {
 
   useEffect(() => {
     if (!isTauri()) return;
-    // Hide when the app is minimized or fully backgrounded — NOT on window blur:
-    // opening the native panel webview steals focus from the main window and would
-    // otherwise flash-then-hide the page immediately.
+    // Hide only when there is no web tab that should stay visible.
+    // Child webview focus must not tear down an active panel page; when the
+    // document returns to visible, ask the panel to re-show/sync bounds.
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') void hideWebView();
+      if (document.visibilityState === 'hidden') {
+        if (!hasVisibleWebTabRef.current) void hideWebView();
+        return;
+      }
+      if (hasVisibleWebTabRef.current) {
+        window.dispatchEvent(new CustomEvent(PANEL_WEB_VIEW_RESTORE_EVENT));
+      }
     };
 
     document.addEventListener('visibilitychange', onVisibilityChange);

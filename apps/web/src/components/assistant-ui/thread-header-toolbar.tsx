@@ -6,7 +6,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
-import { collapsedSidebarTriggerReservePx } from '@/lib/titlebar-layout';
+import { collapsedSidebarTriggerReservePx, titlebarTrailingInset } from '@/lib/titlebar-layout';
 import { startWindowDrag } from '@/lib/window-drag';
 
 export function ThreadHeaderToolbar() {
@@ -15,11 +15,15 @@ export function ThreadHeaderToolbar() {
   const { state: rightState } = useRightSidebar();
   const title = useAuiState((s) => s.threadListItem.title);
   const displayTitle = title?.trim() || t('header.newChat');
+  const trailingInset = titlebarTrailingInset();
 
   return (
     <header
-      className="flex h-8 shrink-0 items-center gap-0.5 bg-background pr-2"
-      style={{ paddingLeft: sidebarOpen ? 8 : collapsedSidebarTriggerReservePx() }}
+      className="flex h-8 shrink-0 items-center gap-0.5 bg-background"
+      style={{
+        paddingLeft: sidebarOpen ? 8 : collapsedSidebarTriggerReservePx(),
+        paddingRight: rightState === 'collapsed' ? trailingInset : 8,
+      }}
     >
       {!sidebarOpen && (
         <div
@@ -42,7 +46,10 @@ export function ThreadHeaderToolbar() {
         </h1>
       )}
       {rightState === 'collapsed' && (
-        <RightSidebarTrigger className="fixed right-2 top-0.5 z-50 size-7" />
+        <RightSidebarTrigger
+          className="fixed top-0.5 z-50 size-7"
+          style={{ right: trailingInset }}
+        />
       )}
     </header>
   );

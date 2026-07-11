@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import { Bot, SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   Sidebar,
@@ -9,7 +9,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarRail,
 } from '@/components/ui/sidebar';
 import { ThreadList } from '@/components/assistant-ui/thread-list';
 import { SidebarUserMenu } from '@/components/assistant-ui/sidebar-user-menu';
@@ -45,7 +44,7 @@ export function ThreadListSidebar({ ...props }: React.ComponentProps<typeof Side
                 className={cn(view === 'automate' && 'bg-accent font-medium')}
               >
                 <span className="flex size-4 shrink-0 items-center justify-center">
-                  <Bot className="size-4" />
+                  <Zap className="size-4" />
                 </span>
                 <span>{t('sidebar.automate')}</span>
               </SidebarMenuButton>
@@ -59,7 +58,6 @@ export function ThreadListSidebar({ ...props }: React.ComponentProps<typeof Side
       <SidebarFooter className="p-2">
         <SidebarUserMenu />
       </SidebarFooter>
-      <SidebarRail />
     </Sidebar>
   );
 }

@@ -9,6 +9,7 @@ import { listConfiguredModels } from '@/lib/model-availability';
 import { useModelProvider } from '@/hooks/use-model-provider';
 import { useServerModelCatalog } from '@/hooks/use-server-model-catalog';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
+import { subscribeLayoutSync } from '@/lib/overlay-bounds';
 import {
   ComposerTriggerMenuShell,
   type MenuAnchor,
@@ -41,10 +42,10 @@ function useModelPickerAnchor(open: boolean, anchorRef: RefObject<HTMLElement | 
     };
 
     updateAnchor();
-    window.addEventListener('resize', updateAnchor);
+    const stopLayout = subscribeLayoutSync(updateAnchor);
     window.addEventListener('scroll', updateAnchor, true);
     return () => {
-      window.removeEventListener('resize', updateAnchor);
+      stopLayout();
       window.removeEventListener('scroll', updateAnchor, true);
     };
   }, [open, anchorRef]);

@@ -1,41 +1,33 @@
 #!/usr/bin/env node
 /**
- * Dev-only: free 5174/8787 so Vite + sidecar are not blocked by zombie processes.
- * Set VEYLIN_DEV_KILL_PORTS=0 to skip.
+ * Dev-only: free Vite :5174; reclaim :8787 only when the owned server is not healthy.
+ * Set VEYLIN_DEV_KILL_PORTS=0 to skip entirely.
  */
-import { execSync } from 'node:child_process';
-import { platform } from 'node:os';
+import { dirname, isAbsolute, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { probeVeylinHealth } from './health-probe.mjs';
+import {
+  isLiveRepoWatchdog,
+  killPortListener,
+  killRepoWatchdogsByCommand,
+  readPidFile,
+  reclaimDevServerSingleton,
+  watchdogPidPath,
+} from './server-dev-singleton.mjs';
 
-function killPort(port) {
-  if (platform() === 'win32') {
-    try {
-      const out = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' });
-      const pids = new Set(
-        out
-          .split('\n')
-          .map((line) => line.trim().split(/\s+/).pop())
-          .filter((pid) => pid && /^\d+$/.test(pid)),
-      );
-      for (const pid of pids) {
-        try {
-          execSync(`taskkill /PID ${pid} /F`, { stdio: 'ignore' });
-        } catch {
-          // already gone
-        }
-      }
-    } catch {
-      // nothing listening
-    }
-    return;
-  }
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(scriptDir, '../../..');
+const port = process.env.PORT ?? '8787';
+const healthUrl = `http://127.0.0.1:${port}/health`;
 
-  try {
-    execSync(`lsof -ti :${port} 2>/dev/null | xargs kill -9 2>/dev/null`, {
-      stdio: 'ignore',
-    });
-  } catch {
-    // nothing listening
-  }
+function resolveDevDataDir() {
+  const raw = process.env.VEYLIN_DATA_DIR?.trim();
+  if (!raw) return resolve(repoRoot, 'data');
+  return isAbsolute(raw) ? raw : resolve(repoRoot, raw);
+}
+
+if (process.env.VEYLIN_DEV_KILL_PORTS === '0') {
+  process.exit(0);
 }
 
 const ports = (process.env.VEYLIN_DEV_KILL_PORTS ?? '5174,8787')
@@ -43,10 +35,27 @@ const ports = (process.env.VEYLIN_DEV_KILL_PORTS ?? '5174,8787')
   .map((p) => p.trim())
   .filter(Boolean);
 
-if (process.env.VEYLIN_DEV_KILL_PORTS === '0') {
-  process.exit(0);
+const dataDir = resolveDevDataDir();
+console.log(`[prep-dev] VEYLIN_DATA_DIR=${dataDir}`);
+
+const pid = readPidFile(watchdogPidPath(dataDir));
+const owned = pid != null && isLiveRepoWatchdog(pid, repoRoot);
+const healthy = await probeVeylinHealth(healthUrl);
+
+if (ports.includes('8787') && owned && healthy) {
+  console.log(`[prep-dev] keeping healthy server on :${port} (watchdog pid=${pid})`);
+  killRepoWatchdogsByCommand(repoRoot, { log: console.log, keepPid: pid });
+} else if (ports.includes('8787')) {
+  reclaimDevServerSingleton({
+    dataDir,
+    repoRoot,
+    port,
+    log: console.log,
+  });
+  killRepoWatchdogsByCommand(repoRoot, { log: console.log });
 }
 
-for (const port of ports) {
-  killPort(port);
+for (const p of ports) {
+  if (p === '8787') continue;
+  killPortListener(p);
 }

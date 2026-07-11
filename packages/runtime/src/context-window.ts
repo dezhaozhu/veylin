@@ -1,6 +1,6 @@
 import { inputTokenLimit } from './token-limit';
 
-const DEFAULT_AUTOCOMPACT_PCT = 0.85;
+const DEFAULT_AUTOCOMPACT_PCT = 0.7;
 const DEFAULT_AUTOCOMPACT_BUFFER = 13_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 

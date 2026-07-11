@@ -7,11 +7,15 @@ import {
   listAutomationRows,
   listAutomationRunRows,
   listEventAutomationRows,
+  listIncompleteAutomationRunRows,
   updateAutomationRow,
   updateAutomationRunRow,
 } from '@veylin/db';
 import type { Automation, AutomationInput, AutomationRun } from '@veylin/shared';
 import { validateWebhookFilter } from './webhook-filter';
+
+const RUN_INTERRUPTED_MESSAGE =
+  'Run interrupted (server restarted or the worker stopped before completion)';
 
 function rowToAutomation(row: NonNullable<Awaited<ReturnType<typeof getAutomationRow>>>): Automation {
   return {
@@ -114,13 +118,28 @@ export async function deleteAutomation(tenantId: string, id: string): Promise<bo
   return deleteAutomationRow(tenantId, id);
 }
 
-export async function touchAutomationLastRun(automationId: string): Promise<void> {
-  const rows = await listAllCronAutomationRows();
-  const hit = rows.find((r) => r.id === automationId);
-  if (!hit) return;
-  await updateAutomationRow(hit.tenantId, automationId, {
+export async function touchAutomationLastRun(
+  tenantId: string,
+  automationId: string,
+): Promise<void> {
+  await updateAutomationRow(tenantId, automationId, {
     lastRunAt: new Date().toISOString(),
   });
+}
+
+/** Mark automation runs stuck in running/queued as failed after a restart. */
+export async function sweepInterruptedAutomationRuns(): Promise<number> {
+  const rows = await listIncompleteAutomationRunRows();
+  if (rows.length === 0) return 0;
+  const finishedAt = new Date().toISOString();
+  for (const row of rows) {
+    await updateAutomationRunRow(row.id, {
+      status: 'failed',
+      result: RUN_INTERRUPTED_MESSAGE,
+      finishedAt,
+    });
+  }
+  return rows.length;
 }
 
 export async function createAutomationRun(

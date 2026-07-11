@@ -13,6 +13,11 @@ import { getTaskRow, updateTaskRow, type TaskRow, type TaskStatus } from '@veyli
 import type { SubagentJob } from './queue';
 import { seedForkWorkerThread } from './agent-fork';
 import { publishTaskEvent, subscribeTaskEvents } from './task-events';
+import {
+  clearTaskProgress,
+  formatTaskActivity,
+  setTaskProgress,
+} from './task-progress-store';
 
 const DEV_TENANT_FALLBACK = '00000000-0000-0000-0000-000000000000';
 
@@ -217,6 +222,75 @@ function extractUsage(result: unknown): { totalTokens?: number } {
   return {};
 }
 
+function formatToolArgsPreview(args: unknown, maxLen = 120): string | null {
+  if (args == null) return null;
+  let text: string;
+  try {
+    text = typeof args === 'string' ? args : JSON.stringify(args);
+  } catch {
+    return null;
+  }
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (!compact || compact === '{}' || compact === 'null') return null;
+  return compact.length > maxLen ? `${compact.slice(0, maxLen - 1)}…` : compact;
+}
+
+function lastToolCallFromStep(step: unknown): {
+  name: string;
+  argsPreview: string | null;
+} | null {
+  if (!step || typeof step !== 'object') return null;
+  const s = step as Record<string, unknown>;
+  const calls = s.toolCalls;
+  if (!Array.isArray(calls) || calls.length === 0) return null;
+
+  let last: { name: string; argsPreview: string | null } | null = null;
+  for (const call of calls) {
+    if (!call || typeof call !== 'object') continue;
+    const c = call as Record<string, unknown>;
+    const payload =
+      c.payload && typeof c.payload === 'object'
+        ? (c.payload as Record<string, unknown>)
+        : c;
+    const name =
+      (typeof payload.toolName === 'string' && payload.toolName) ||
+      (typeof c.toolName === 'string' && c.toolName) ||
+      null;
+    if (!name) continue;
+    const args =
+      payload.args ??
+      payload.input ??
+      c.args ??
+      c.input ??
+      null;
+    last = { name, argsPreview: formatToolArgsPreview(args) };
+  }
+  return last;
+}
+
+/** @deprecated Prefer lastToolCallFromStep — kept for call-site clarity. */
+function toolNamesFromStep(step: unknown): string[] {
+  if (!step || typeof step !== 'object') return [];
+  const s = step as Record<string, unknown>;
+  const calls = s.toolCalls;
+  if (!Array.isArray(calls)) return [];
+  const names: string[] = [];
+  for (const call of calls) {
+    if (!call || typeof call !== 'object') continue;
+    const c = call as Record<string, unknown>;
+    const payload =
+      c.payload && typeof c.payload === 'object'
+        ? (c.payload as Record<string, unknown>)
+        : c;
+    const name =
+      (typeof payload.toolName === 'string' && payload.toolName) ||
+      (typeof c.toolName === 'string' && c.toolName) ||
+      null;
+    if (name) names.push(name);
+  }
+  return names;
+}
+
 export async function runSubagentGenerate(options: {
   runtime: Runtime;
   deps: AgentTaskRunnerDeps;
@@ -228,9 +302,31 @@ export async function runSubagentGenerate(options: {
   tenantId: string;
   abortSignal?: AbortSignal;
   fork?: boolean;
+  /** Parent chat thread — used to publish live progress for TaskToolUI. */
+  parentThreadId?: string | null;
+  taskId?: string | null;
 }): Promise<SubagentRunResult> {
   const agent = options.runtime.getAgent(options.agentId);
   if (!agent) throw new Error(`Agent not registered: ${options.agentId}`);
+
+  const { getHookBus } = await import('./hooks-service.js');
+  const hookBus = getHookBus(options.tenantId);
+  const agentType = options.preset?.key ?? options.agentId;
+  await hookBus.emit(
+    'SubagentStart',
+    {
+      agent_type: agentType,
+      subagent_type: agentType,
+      thread_id: options.threadId,
+      parent_thread_id: options.parentThreadId,
+    },
+    { threadId: options.parentThreadId ?? options.threadId },
+  );
+  await hookBus.emit(
+    'TaskCreated',
+    { task_id: options.taskId, agent_type: agentType },
+    { threadId: options.parentThreadId ?? options.threadId },
+  );
 
   const subCtx = new RequestContext();
   subCtx.set('tenantId', options.tenantId);
@@ -240,15 +336,98 @@ export async function runSubagentGenerate(options: {
   subCtx.set('discoveredToolIds', []);
   subCtx.set('subagentActive', true);
 
+  const taskId = options.taskId ?? null;
+  const parentThreadId = options.parentThreadId ?? null;
+  let toolUseCount = 0;
+
+  if (taskId) {
+    setTaskProgress(taskId, {
+      toolUseCount: 0,
+      lastToolName: null,
+      lastToolArgs: null,
+      currentActivity: 'Initializing…',
+      totalTokens: null,
+    });
+    if (parentThreadId) {
+      publishTaskEvent({ kind: 'task.updated', threadId: parentThreadId, taskId });
+    }
+  }
+
   const started = Date.now();
   const result = (await agent.generate(options.prompt, {
     memory: { thread: options.threadId, resource: options.resourceId },
     requestContext: subCtx,
     toolsets: toolsetsForPreset(options.preset, options.agentId, options.runtime, options.deps, options.fork),
     abortSignal: options.abortSignal,
+    tracingOptions: {
+      tags: ['subagent', options.agentId],
+      metadata: {
+        sessionId: options.parentThreadId ?? options.threadId,
+        userId: options.resourceId,
+        threadId: options.threadId,
+        agentId: options.agentId,
+        ...(parentThreadId ? { parentThreadId } : {}),
+        ...(taskId ? { taskId } : {}),
+        ...(options.preset?.key ? { preset: options.preset.key } : {}),
+      },
+    },
+    onStepFinish: (step: unknown) => {
+      if (!taskId) return;
+      const names = toolNamesFromStep(step);
+      if (names.length === 0) return;
+      toolUseCount += names.length;
+      const lastCall = lastToolCallFromStep(step);
+      const lastToolName = lastCall?.name ?? names[names.length - 1] ?? null;
+      const lastToolArgs = lastCall?.argsPreview ?? null;
+      const progress = setTaskProgress(taskId, {
+        toolUseCount,
+        lastToolName,
+        lastToolArgs,
+        currentActivity: lastToolName
+          ? lastToolArgs
+            ? `${lastToolName} ${lastToolArgs}`
+            : lastToolName
+          : formatTaskActivity({
+              toolUseCount,
+              lastToolName: null,
+              lastToolArgs: null,
+              currentActivity: null,
+              totalTokens: null,
+              updatedAt: Date.now(),
+            }),
+      });
+      if (parentThreadId) {
+        publishTaskEvent({ kind: 'task.updated', threadId: parentThreadId, taskId });
+      }
+      void progress;
+    },
   } as never)) as { text?: string };
   const durationMs = Date.now() - started;
   const { totalTokens } = extractUsage(result);
+
+  if (taskId) {
+    setTaskProgress(taskId, {
+      toolUseCount,
+      totalTokens: totalTokens ?? null,
+      currentActivity: null,
+    });
+  }
+
+  await hookBus.emit(
+    'SubagentStop',
+    {
+      agent_type: agentType,
+      subagent_type: agentType,
+      thread_id: options.threadId,
+      task_id: taskId,
+    },
+    { threadId: options.parentThreadId ?? options.threadId },
+  );
+  await hookBus.emit(
+    'TaskCompleted',
+    { task_id: taskId, agent_type: agentType },
+    { threadId: options.parentThreadId ?? options.threadId },
+  );
 
   return {
     text: result?.text ?? '(no output)',
@@ -368,7 +547,14 @@ export async function executeSubagentJob(
       resourceId: job.parentResource ?? job.tenantId,
       tenantId: job.tenantId,
       fork: isFork,
+      parentThreadId: job.parentThreadId,
+      taskId: job.taskId,
+      abortSignal: job.abortSignal,
     });
+
+    if (job.abortSignal?.aborted) {
+      throw new CancelledTaskError();
+    }
 
     if (job.taskId) {
       const row = await getTaskRow(job.taskId);
@@ -379,6 +565,10 @@ export async function executeSubagentJob(
         totalTokens: result.totalTokens ?? null,
         durationMs: result.durationMs,
         workerThreadId: workerThread,
+      });
+      setTaskProgress(job.taskId, {
+        currentActivity: null,
+        totalTokens: result.totalTokens ?? null,
       });
       if (job.parentThreadId) {
         publishTaskEvent({ kind: 'task.updated', threadId: job.parentThreadId, taskId: job.taskId });
@@ -393,13 +583,27 @@ export async function executeSubagentJob(
 
     return result;
   } catch (err) {
-    if (err instanceof CancelledTaskError) throw err;
+    const aborted =
+      err instanceof CancelledTaskError ||
+      job.abortSignal?.aborted ||
+      (err instanceof Error && (err.name === 'AbortError' || /aborted/i.test(err.message)));
+    if (aborted) {
+      if (job.taskId) {
+        await updateTaskRow(job.taskId, { status: 'cancelled' }).catch(() => undefined);
+        clearTaskProgress(job.taskId);
+        if (job.parentThreadId) {
+          publishTaskEvent({ kind: 'task.updated', threadId: job.parentThreadId, taskId: job.taskId });
+        }
+      }
+      throw err instanceof CancelledTaskError ? err : new CancelledTaskError();
+    }
     const message = err instanceof Error ? err.message : String(err);
     if (job.taskId) {
       await updateTaskRow(job.taskId, {
         status: 'failed',
         result: message,
       }).catch(() => undefined);
+      clearTaskProgress(job.taskId);
       if (job.parentThreadId) {
         publishTaskEvent({ kind: 'task.updated', threadId: job.parentThreadId, taskId: job.taskId });
       }

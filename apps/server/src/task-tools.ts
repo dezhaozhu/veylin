@@ -1,10 +1,10 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { getTaskRow, listTasksByParentThread, updateTaskRow } from '@veylin/db';
+import { getTaskRow, listTasksByParentThread } from '@veylin/db';
 import type { Memory } from '@mastra/memory';
-import { SUBAGENT_QUEUE, type QueuePort } from './queue';
+import type { QueuePort } from './queue';
 import { writeTaskNotificationToParent } from './agent-task-runner';
-import { publishTaskEvent } from './task-events';
+import { cancelSubagentTask } from './cancel-thread-tasks';
 
 interface TaskCtx {
   requestContext?: { get(key: string): unknown; set?(key: string, value: unknown): void };
@@ -101,16 +101,8 @@ export function buildTaskManagementTools(
     execute: async (input, ctx?: TaskCtx) => {
       const row = await getTaskRow(input.task_id);
       if (!row) return { ok: false, status: 'unknown' };
-      if (row.status === 'done' || row.status === 'failed' || row.status === 'cancelled') {
-        return { ok: false, status: row.status };
-      }
-      await updateTaskRow(input.task_id, { status: 'cancelled' });
-      if (row.parentThreadId) {
-        publishTaskEvent({ kind: 'task.updated', threadId: row.parentThreadId, taskId: row.id });
-      }
-      if (row.jobId) await boss.cancel(SUBAGENT_QUEUE, row.jobId).catch(() => undefined);
-      ctx?.requestContext?.set?.(`cancelledTask:${input.task_id}`, true);
-      if (opts?.memory && row.parentThreadId) {
+      const result = await cancelSubagentTask(input.task_id, boss);
+      if (result.ok && opts?.memory && row.parentThreadId) {
         const userId = ctxValue(ctx, 'userId') ?? row.tenantId;
         await writeTaskNotificationToParent({
           memory: opts.memory,
@@ -125,7 +117,7 @@ export function buildTaskManagementTools(
           },
         }).catch(() => undefined);
       }
-      return { ok: true, status: 'cancelled' };
+      return result;
     },
   });
 

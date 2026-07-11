@@ -13,19 +13,28 @@ export function PageHeader({
 }) {
   return (
     <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-      <div
-        className="min-w-0"
-        data-tauri-drag-region
-        onMouseDown={startWindowDrag}
-      >
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+      <div className="min-w-0 flex-1">
+        <h1
+          className="text-2xl font-semibold tracking-tight"
+          data-tauri-drag-region
+          onMouseDown={startWindowDrag}
+        >
+          {title}
+        </h1>
         {description && (
-          <p className="text-muted-foreground mt-1 max-w-2xl text-sm leading-relaxed">
+          <p
+            className="text-muted-foreground mt-1 max-w-2xl select-text text-sm leading-relaxed"
+            data-no-window-drag
+          >
             {description}
           </p>
         )}
       </div>
-      {action && <div className="shrink-0" data-no-window-drag>{action}</div>}
+      {action && (
+        <div className="relative z-10 shrink-0" data-no-window-drag>
+          {action}
+        </div>
+      )}
     </div>
   );
 }

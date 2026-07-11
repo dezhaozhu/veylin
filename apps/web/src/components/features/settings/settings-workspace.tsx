@@ -2,6 +2,7 @@ import { Box, Settings2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { WorkspaceSideNav } from '@/components/features/workspace-side-nav';
+import { WorkspaceMain } from '@/components/features/workspace-main';
 import { GeneralSettingsScreen } from './general-settings/general-settings-screen';
 import { ModelsSettingsScreen } from './models-settings/models-settings-screen';
 
@@ -20,9 +21,9 @@ export function SettingsWorkspace() {
           { id: 'models', label: t('settings.models.nav'), icon: Box },
         ]}
       />
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-8 py-6">
+      <WorkspaceMain>
         {tab === 'general' ? <GeneralSettingsScreen /> : <ModelsSettingsScreen />}
-      </main>
+      </WorkspaceMain>
     </div>
   );
 }

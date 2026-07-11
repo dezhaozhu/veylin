@@ -1,5 +1,4 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 
 const AssistantChat = lazy(() =>
@@ -25,10 +24,5 @@ export function App() {
 }
 
 function AppLoadingFallback() {
-  const { t } = useTranslation();
-  return (
-    <div className="bg-background text-foreground flex min-h-dvh items-center justify-center p-8">
-      <p className="text-muted-foreground text-sm">{t('splash.loadingApp')}</p>
-    </div>
-  );
+  return <div className="bg-background min-h-dvh" aria-hidden="true" />;
 }

@@ -44,6 +44,30 @@ describe('message-sync transcript round-trip', () => {
     assert.ok(types?.includes('text'));
   });
 
+  it('preserves interrupted metadata through mastra round-trip', () => {
+    const identity = { threadId: 't1', tenantId: 'tenant', resourceId: 'user' };
+    const source = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        metadata: { custom: { sentAt: 42, interrupted: true } },
+        parts: [{ type: 'text', text: '说到一半…' }],
+      },
+    ];
+    const mastra = uiMessagesToMastra(source, identity);
+    const ui = mastraMessagesToUi(
+      mastra.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+      })),
+    );
+    const custom = (ui[0]?.metadata as { custom?: { sentAt?: number; interrupted?: boolean } })
+      ?.custom;
+    assert.equal(custom?.sentAt, 42);
+    assert.equal(custom?.interrupted, true);
+  });
+
   it('extractTranscriptEnvelope matches embed output from mastra parts', () => {
     const parts = embedTranscriptEnvelope(
       [{ type: 'text', text: 'hello' }],

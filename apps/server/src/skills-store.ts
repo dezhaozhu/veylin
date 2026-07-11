@@ -1,11 +1,3 @@
-import {
-  deleteCustomSkillRow,
-  getTenantSettingsRow,
-  insertCustomSkill,
-  listCustomSkills,
-  updateCustomSkillRow,
-  upsertTenantSettings,
-} from '@veylin/db';
 import type { CustomSkillInput, SkillListItem } from '@veylin/shared';
 import {
   DEFAULT_AGENT_ID,
@@ -15,74 +7,92 @@ import {
   skillActivationBody,
 } from '@veylin/shared';
 import { dirname } from 'node:path';
+import {
+  deleteVeylinSkill,
+  importSkillDirToVeylin,
+  loadVeylinSkills,
+  veylinSkillsDir,
+  writeVeylinSkill,
+  type Skill,
+} from '@veylin/agent-package';
 import type { Runtime } from '@veylin/runtime';
+export {
+  getDisabledSkills,
+  setDisabledSkills,
+  getDisabledMcpServers,
+  setDisabledMcpServers,
+  getDisabledHooks,
+  setDisabledHooks,
+  getWorkspaceRootSetting,
+  setWorkspaceRootSetting,
+} from './veylin-settings-file.js';
+import { getDisabledSkills } from './veylin-settings-file.js';
 
-export async function getDisabledSkills(tenantId: string): Promise<string[]> {
-  const row = await getTenantSettingsRow(tenantId);
-  return row?.disabledSkills ?? [];
+export function getVeylinSkillsDir(): string {
+  return veylinSkillsDir();
 }
 
-export async function setDisabledSkills(tenantId: string, disabled: string[]): Promise<void> {
-  const existingMcp = await getDisabledMcpServers(tenantId);
-  await upsertTenantSettings(tenantId, { disabledSkills: disabled, disabledMcpServers: existingMcp });
-}
-
-export async function getDisabledMcpServers(tenantId: string): Promise<string[]> {
-  const row = await getTenantSettingsRow(tenantId);
-  return row?.disabledMcpServers ?? [];
-}
-
-export async function setDisabledMcpServers(tenantId: string, disabled: string[]): Promise<void> {
-  const existingSkills = await getDisabledSkills(tenantId);
-  await upsertTenantSettings(tenantId, { disabledSkills: existingSkills, disabledMcpServers: disabled });
-}
-
-export async function createCustomSkill(tenantId: string, input: CustomSkillInput) {
-  return insertCustomSkill(tenantId, {
-    name: input.name.trim(),
-    description: input.description ?? '',
-    content: input.content,
-    enabled: input.enabled ?? true,
-  });
-}
-
-export async function updateCustomSkill(
-  tenantId: string,
-  id: string,
-  patch: Partial<CustomSkillInput>,
-) {
-  return updateCustomSkillRow(tenantId, id, {
-    ...(patch.name != null ? { name: patch.name.trim() } : {}),
-    ...(patch.description != null ? { description: patch.description } : {}),
-    ...(patch.content != null ? { content: patch.content } : {}),
-    ...(patch.enabled != null ? { enabled: patch.enabled } : {}),
-  });
-}
-
-export async function deleteCustomSkill(tenantId: string, id: string): Promise<boolean> {
-  return deleteCustomSkillRow(tenantId, id);
-}
-
-function customSkillListItem(row: {
-  id: string;
-  name: string;
-  description: string;
-  content: string;
-  enabled: boolean;
-}): SkillListItem {
-  const frontmatter = parseSkillFrontmatter(row.content);
+function userSkillListItem(skill: Skill, disabled: Set<string>): SkillListItem {
+  const frontmatter = parseSkillFrontmatter(skill.content);
   return {
-    id: row.id,
-    name: frontmatter.name ?? row.name,
-    description: formatSkillCatalogDescription(frontmatter, row.description),
-    source: 'custom',
+    id: skill.name,
+    name: skill.name,
+    description: formatSkillCatalogDescription(frontmatter, skill.description),
+    source: 'user',
     type: 'knowledge',
     triggers: [],
-    enabled: row.enabled,
-    disableModelInvocation: frontmatter.disableModelInvocation ?? false,
-    userInvocable: frontmatter.userInvocable ?? true,
-    content: row.content,
+    enabled: !disabled.has(skill.name),
+    disableModelInvocation: skill.disableModelInvocation,
+    userInvocable: skill.userInvocable,
+    content: skill.content,
+    path: skill.path,
   };
+}
+
+/** Optional plugin skills injected by the plugin registry (namespaced). */
+let pluginSkillsProvider: ((tenantId: string) => Promise<SkillListItem[]>) | null = null;
+
+export function setPluginSkillsProvider(
+  provider: ((tenantId: string) => Promise<SkillListItem[]>) | null,
+): void {
+  pluginSkillsProvider = provider;
+}
+
+export async function createUserSkill(input: CustomSkillInput): Promise<SkillListItem> {
+  const skill = await writeVeylinSkill({
+    name: input.name,
+    description: input.description,
+    content: input.content,
+  });
+  const disabled = new Set(input.enabled === false ? [skill.name] : []);
+  return userSkillListItem(skill, disabled);
+}
+
+export async function updateUserSkill(
+  name: string,
+  patch: Partial<CustomSkillInput>,
+): Promise<SkillListItem | null> {
+  const existing = (await loadVeylinSkills()).find((s) => s.name === name);
+  if (!existing) return null;
+  const nextName = patch.name?.trim() || existing.name;
+  const skill = await writeVeylinSkill({
+    name: nextName,
+    description: patch.description ?? existing.description,
+    content: patch.content ?? existing.content,
+  });
+  if (nextName !== name) {
+    await deleteVeylinSkill(name);
+  }
+  return userSkillListItem(skill, new Set());
+}
+
+export async function deleteUserSkill(name: string): Promise<boolean> {
+  return deleteVeylinSkill(name);
+}
+
+export async function importUserSkillFromDir(sourceDir: string): Promise<SkillListItem> {
+  const skill = await importSkillDirToVeylin(sourceDir);
+  return userSkillListItem(skill, new Set());
 }
 
 export async function listMergedSkills(
@@ -92,22 +102,39 @@ export async function listMergedSkills(
 ): Promise<SkillListItem[]> {
   const ctx = runtime.getAgentContext(agentId);
   const disabled = new Set(await getDisabledSkills(tenantId));
-  const custom = await listCustomSkills(tenantId);
+  const userSkills = await loadVeylinSkills();
 
-  const bundled: SkillListItem[] = ctx.skills.map((s) => ({
-    name: s.name,
-    description: s.description,
-    source: 'bundled' as const,
-    type: 'knowledge',
-    triggers: [],
-    enabled: !disabled.has(s.name),
-    disableModelInvocation: s.disableModelInvocation,
-    userInvocable: s.userInvocable,
-  }));
+  const byName = new Map<string, SkillListItem>();
 
-  const customItems: SkillListItem[] = custom.map(customSkillListItem);
+  for (const s of ctx.skills) {
+    byName.set(s.name, {
+      name: s.name,
+      description: s.description,
+      source: 'bundled',
+      type: 'knowledge',
+      triggers: [],
+      enabled: !disabled.has(s.name),
+      disableModelInvocation: s.disableModelInvocation,
+      userInvocable: s.userInvocable,
+      path: 'path' in s ? (s as { path?: string }).path : undefined,
+    });
+  }
 
-  return [...bundled, ...customItems];
+  for (const skill of userSkills) {
+    byName.set(skill.name, userSkillListItem(skill, disabled));
+  }
+
+  if (pluginSkillsProvider) {
+    const pluginSkills = await pluginSkillsProvider(tenantId);
+    for (const item of pluginSkills) {
+      byName.set(item.name, {
+        ...item,
+        enabled: item.enabled && !disabled.has(item.name),
+      });
+    }
+  }
+
+  return [...byName.values()];
 }
 
 export { buildSkillsCatalogBlock } from '@veylin/shared';
@@ -123,7 +150,8 @@ export async function resolveSkillContent(
   if (!hit) return null;
 
   if (hit.content) {
-    return skillActivationBody(hit.content);
+    const baseDir = hit.path ? dirname(hit.path) : undefined;
+    return skillActivationBody(hit.content, baseDir);
   }
 
   const loaded = runtime.definitions.get(agentId ?? DEFAULT_AGENT_ID);

@@ -4,7 +4,11 @@ import { updateTodos, type TodoItem } from './todo-store';
 
 const todoSchema = z.object({
   id: z.string(),
-  content: z.string(),
+  content: z.string().describe('Imperative description of the work item.'),
+  activeForm: z
+    .string()
+    .optional()
+    .describe('Present-tense form shown while in_progress (e.g. "Reading the report").'),
   status: z.enum(['pending', 'in_progress', 'completed', 'cancelled']),
 });
 
@@ -13,11 +17,18 @@ export const todoWrite = createTool({
   id: 'todo_write',
   description:
     'Create or update the structured todo list for the current task. Each call REPLACES the ' +
-    'full list, so always send every item with its current status. Use this for any task with ' +
-    'multiple steps: create the checklist up front, mark exactly one item in_progress when you ' +
-    'start it, flip it to completed the moment it is done, and use cancelled for items no longer ' +
-    'needed. Before ending your turn, make sure no item is left pending or in_progress. ' +
-    'Skip the list only for trivial single-step requests.',
+    'full list, so always send every item with its current status. ' +
+    'WHEN TO USE: any non-trivial multi-step request (roughly 3+ steps), or whenever you would ' +
+    'otherwise lose track of remaining work. ' +
+    'WHEN NOT TO USE: trivial single-step asks, pure Q&A, or one-shot lookups. ' +
+    'Rules: create the checklist up front; mark exactly one item in_progress when you start it; ' +
+    'flip it to completed the moment it is done (update immediately — do not batch several ' +
+    'completions until the end of the turn); use cancelled for items no longer needed; ' +
+    'include activeForm (present tense) for items that may be in_progress. ' +
+    'If work fails or is blocked, keep the item in_progress (or split a new item that states ' +
+    'the blocker) — never mark incomplete work completed. ' +
+    'Before ending your turn, make sure no item is left pending or in_progress unless it is ' +
+    'genuinely blocked and called out.',
   inputSchema: z.object({
     todos: z.array(todoSchema).describe('The complete, current todo list (replaces the previous one)'),
   }),
@@ -86,7 +97,9 @@ export const askUserQuestion = createTool({
   id: 'ask_user_question',
   description:
     'Prompt the user with 1-4 multiple-choice questions when you need a decision. ' +
-    'Each question has a header and 2-4 options with descriptions. An "Other" choice is always offered in the UI.',
+    'Each question has a header and 2-4 options with descriptions. An "Other" choice is always offered in the UI. ' +
+    'In plan mode: use this to clarify requirements or trade-offs while exploring. ' +
+    'Do NOT use it to ask whether the plan may be executed — call exit_plan_mode for that approval.',
   inputSchema: z.object({
     questions: z.array(questionSchema).min(1).max(4),
   }),
@@ -132,7 +145,8 @@ export const readOpenPage = createTool({
     '(right-side docked browser). Use this for intranet pages the user has already opened ' +
     'and logged into — it captures JS-rendered DOM with session cookies. ' +
     'Do NOT use web_fetch for that case (web_fetch has no login session). ' +
-    'Requires the desktop app and an open web-view window.',
+    'Requires the desktop app and an open web-view window. ' +
+    'If a recent read_open_page result for the same page is already in context, analyze it directly — do not re-read without a reason (e.g. the user navigated or refreshed).',
   inputSchema: z.object({
     mode: z
       .enum(['text', 'html'])

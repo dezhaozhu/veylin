@@ -1,6 +1,8 @@
 export type TodoItem = {
   id: string;
   content: string;
+  /** Present-tense form shown while in_progress (e.g. "Writing outline"). */
+  activeForm?: string;
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
 };
 

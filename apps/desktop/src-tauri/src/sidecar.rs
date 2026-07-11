@@ -59,6 +59,7 @@ impl Sidecar {
                 .env("VEYLIN_DATA_DIR", &data_dir)
                 .env("VEYLIN_DESKTOP_AUTH", "1")
                 .env("VEYLIN_REQUIRE_USER_MODEL_SETTINGS", "1")
+                .env("VEYLIN_LAZY_MCP_BOOT", "1")
                 .env("PORT", &port);
             if let Some(path) = model_catalog_path(&data_dir) {
                 cmd = cmd.env("VEYLIN_MODEL_CATALOG_PATH", path);
@@ -96,6 +97,7 @@ impl Sidecar {
                     .env("VEYLIN_DATA_DIR", &data_dir)
                     .env("VEYLIN_DESKTOP_AUTH", "1")
                     .env("VEYLIN_REQUIRE_USER_MODEL_SETTINGS", "1")
+                    .env("VEYLIN_LAZY_MCP_BOOT", "1")
                     .env("PORT", &port)
                     .spawn()
                 {
@@ -158,6 +160,7 @@ impl Sidecar {
             )
             .env("VEYLIN_DESKTOP_AUTH", "1")
             .env("VEYLIN_REQUIRE_USER_MODEL_SETTINGS", "1")
+            .env("VEYLIN_LAZY_MCP_BOOT", "1")
             .env(
                 "VEYLIN_MODEL_CATALOG_PATH",
                 root.join("data/models.local.json").to_string_lossy().as_ref(),

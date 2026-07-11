@@ -416,24 +416,22 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   }, [nodes]);
 
   useEffect(() => {
-    void loadWorkflowList(6).catch(() => {
-      setWorkflows([]);
-      setError(null);
-      if (!workflowId) startNewWorkflow([]);
+    void loadWorkflowList(6).catch((err) => {
+      setError(err instanceof Error ? err.message : String(err));
     });
   }, []);
 
   useEffect(() => {
     if (workflowId) return;
     if (nodes.length > 0) return;
+    if (error) return;
     startNewWorkflow();
-  }, [workflowId, nodes.length, startNewWorkflow]);
+  }, [workflowId, nodes.length, startNewWorkflow, error]);
 
   useEffect(() => {
     if (!workflowId) return;
-    void loadWorkflow(workflowId, 6).catch(() => {
-      setError(null);
-      startNewWorkflow(workflows);
+    void loadWorkflow(workflowId, 6).catch((err) => {
+      setError(err instanceof Error ? err.message : String(err));
     });
   }, [workflowId]);
 

@@ -347,7 +347,7 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
   }, [ragFocusAt, panelTab.state?.ragSubTab, panelTab.state?.ragFocus, updateState]);
 
   useEffect(() => {
-    void refresh({ attempts: 6 });
+    void refresh({ showError: true, attempts: 6 });
     const hasPendingWork =
       embeddingNotice != null ||
       documents.some((doc) => doc.status === 'processing' || doc.status === 'pending');

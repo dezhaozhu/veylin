@@ -44,15 +44,35 @@ function envInt(key: string, fallback: number): number {
   return Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
+export function buildCompactionSystemPrompt(focusInstructions?: string): string {
+  const focus = focusInstructions?.trim();
+  if (!focus) return COMPACTION_SYSTEM_PROMPT;
+  return (
+    COMPACTION_SYSTEM_PROMPT +
+    '\n\n## User focus instructions\n' +
+    'Preserve the following with extra care (do not omit):\n' +
+    focus
+  );
+}
+
+export type BuildSummarizerOptions = {
+  focusInstructions?: string;
+};
+
 /**
  * Build an LLM summarizer hitting the OpenAI-compatible endpoint directly.
  * Returns undefined when the model has no API key (falls back to deterministic tier).
  */
-export function buildSummarizer(modelKey: ModelKey = DEFAULT_MODEL): Summarizer | undefined {
+export function buildSummarizer(
+  modelKey: ModelKey = DEFAULT_MODEL,
+  opts: BuildSummarizerOptions = {},
+): Summarizer | undefined {
   const cfg = getModelConfig(modelKey);
   if (!cfg.apiKey) return undefined;
 
   const maxTokens = envInt('VEYLIN_COMPACT_MAX_TOKENS', 2000);
+  const transcriptChars = envInt('VEYLIN_COMPACT_TRANSCRIPT_CHARS', 48_000);
+  const systemPrompt = buildCompactionSystemPrompt(opts.focusInstructions);
 
   return async (transcript: string): Promise<string> => {
     const res = await fetch(`${cfg.url.replace(/\/$/, '')}/chat/completions`, {
@@ -64,8 +84,8 @@ export function buildSummarizer(modelKey: ModelKey = DEFAULT_MODEL): Summarizer 
       body: JSON.stringify({
         model: cfg.modelId,
         messages: [
-          { role: 'system', content: COMPACTION_SYSTEM_PROMPT },
-          { role: 'user', content: transcript.slice(0, 12000) },
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: transcript.slice(0, transcriptChars) },
         ],
         temperature: 0,
         max_tokens: maxTokens,

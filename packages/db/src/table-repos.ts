@@ -73,13 +73,14 @@ export async function replaceTableColumns(
 export async function listTableRows(sheetId: string): Promise<TableRowRecord[]> {
   const rows = await queryRows<Record<string, unknown>>(
     getDb(),
-    'SELECT * FROM table_row WHERE sheet_id = $sheetId',
+    'SELECT * FROM table_row WHERE sheet_id = $sheetId ORDER BY position ASC',
     { sheetId },
   );
   return rows.map((r) => ({
     sheetId: String(r.sheet_id),
     rowKey: String(r.row_key),
     data: (r.data as Record<string, string | number>) ?? {},
+    position: Number(r.position ?? 0),
   }));
 }
 
@@ -88,11 +89,13 @@ export async function replaceTableRows(
   rows: TableRowRecord[],
 ): Promise<void> {
   await getDb().query('DELETE table_row WHERE sheet_id = $sheetId', { sheetId });
-  for (const row of rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
     await createRecord(getDb(), 'table_row', {
       sheet_id: sheetId,
       row_key: row.rowKey,
       data: row.data,
+      position: row.position ?? i,
     });
   }
 }
@@ -114,6 +117,7 @@ export async function upsertTableRow(row: TableRowRecord): Promise<void> {
     sheet_id: row.sheetId,
     row_key: row.rowKey,
     data: row.data,
+    position: row.position ?? 0,
   });
 }
 

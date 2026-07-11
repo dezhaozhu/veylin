@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react';
+import { ContextSummarizedRenderers } from '@/components/assistant-ui/context-summarized';
 import { HandoffRenderers } from '@/components/assistant-ui/handoff';
 
 const AskUserQuestionToolUI = lazy(() =>
@@ -68,6 +69,7 @@ export function LazyAssistantToolUIs() {
   return (
     <>
       <HandoffRenderers />
+      <ContextSummarizedRenderers />
       <Suspense fallback={null}>
         <AskUserQuestionToolUI />
         <TodoWriteToolUI />

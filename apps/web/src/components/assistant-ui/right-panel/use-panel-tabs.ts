@@ -42,7 +42,16 @@ function readState(): StoredState {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return seededState();
     const parsed = JSON.parse(raw) as Partial<StoredState>;
-    const tabs = Array.isArray(parsed.tabs) ? parsed.tabs.filter(isValidTab) : [];
+    const tabs = (Array.isArray(parsed.tabs) ? parsed.tabs.filter(isValidTab) : []).map(
+      (tab) => {
+        if (tab.kind !== 'web') return tab;
+        const def = getPanelKindDef('web');
+        return {
+          ...tab,
+          title: def?.defaultTitle ?? 'panels.web.label',
+        };
+      },
+    );
     if (tabs.length === 0) return seededState();
     const activeId =
       typeof parsed.activeId === 'string' && tabs.some((t) => t.id === parsed.activeId)
@@ -129,7 +138,12 @@ export function usePanelTabsState(): PanelTabsApi {
           ...t,
           state: { ...t.state, ...patch },
         };
-        if (typeof patch.title === 'string' && patch.title.trim()) {
+        // Web tabs keep the kind label ("Web"); page titles live in tab.state.
+        if (
+          t.kind !== 'web' &&
+          typeof patch.title === 'string' &&
+          patch.title.trim()
+        ) {
           next.title = patch.title.trim();
         }
         return next;

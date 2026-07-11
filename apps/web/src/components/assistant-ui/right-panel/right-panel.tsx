@@ -27,7 +27,7 @@ export function RightPanel() {
   useEffect(() => {
     if (!isTauri()) return;
     if (!rightOpen || view !== 'chat' || activeTab?.kind !== 'web') {
-      void hideWebView();
+      void hideWebView(undefined, { force: true });
     }
   }, [rightOpen, view, activeTab?.kind, activeTab?.id]);
 

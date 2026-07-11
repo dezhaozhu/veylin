@@ -9,7 +9,12 @@ export {
   type AgentContext,
 } from './registry';
 export { buildAgent, toolNeedsApproval, type BuildAgentOptions } from './agents';
-export { ContextCompression, estimateTokens } from './processors/contextCompression';
+export {
+  ContextCompression,
+  estimateTokens,
+  VEYLIN_CONTEXT_COMPACTED_KEY,
+  type VeylinContextCompacted,
+} from './processors/contextCompression';
 export {
   SUBAGENT_PRESETS,
   SUBAGENT_TYPES,
@@ -27,7 +32,17 @@ export {
   localFastembed,
   resetLocalFastembedRuntime,
 } from './fastembed-local';
-export { buildStorage, buildObservability } from './storage';
+export {
+  buildStorage,
+  buildObservability,
+  resolveLangfuseConfig,
+  type LangfuseResolvedConfig,
+} from './storage';
+export {
+  collectLangfuseAttachments,
+  type TraceAttachmentPart,
+  type TraceAttachmentMeta,
+} from './langfuse-attachments';
 export {
   getModelConfig,
   getRuntimeModelOverrides,
@@ -53,7 +68,7 @@ export {
   recordCompactSuccess,
   recordCompactFailure,
 } from './context-window';
-export { buildSummarizer, COMPACTION_SYSTEM_PROMPT, formatCompactSummary } from './summarizer';
+export { buildSummarizer, buildCompactionSystemPrompt, COMPACTION_SYSTEM_PROMPT, formatCompactSummary } from './summarizer';
 export { selectTools } from './processors/toolSearch';
 export {
   BASE_SYSTEM_PROMPT,

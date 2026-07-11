@@ -29,7 +29,7 @@ export const MessageTimestamp: FC<MessageTimestampProps> = ({
     <time
       dateTime={new Date(sentAt).toISOString()}
       className={cn(
-        'text-muted-foreground text-[13px] leading-none whitespace-nowrap tabular-nums',
+        'text-muted-foreground/50 text-[13px] leading-none whitespace-nowrap tabular-nums',
         inline ? 'inline' : 'block',
         !inline && (align === 'end' ? 'text-end' : 'text-start'),
         className,

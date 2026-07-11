@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { startWindowDrag } from '@/lib/window-drag';
+import { useWorkspaceCollapsedInset } from '@/components/features/workspace-view-frame';
 
 export type WorkspaceSideNavItem<T extends string> = {
   id: T;
@@ -23,11 +24,14 @@ export function WorkspaceSideNav<T extends string>({
   onSelect: (id: T) => void;
   footer?: React.ReactNode;
 }) {
+  const collapsedInset = useWorkspaceCollapsedInset();
+
   return (
     <aside className="border-border bg-muted/20 flex w-52 shrink-0 flex-col border-r">
       <div
         data-tauri-drag-region
         className="border-border border-b px-4 py-3"
+        style={collapsedInset > 0 ? { paddingLeft: collapsedInset } : undefined}
         onMouseDown={startWindowDrag}
       >
         <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">

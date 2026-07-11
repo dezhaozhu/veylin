@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useAui } from '@assistant-ui/store';
 import { useTranslation } from 'react-i18next';
 import {
@@ -204,6 +204,9 @@ export function AutomationsSettingsScreen() {
   const [copiedCurlId, setCopiedCurlId] = useState<string | null>(null);
   const [copiedSecretCurl, setCopiedSecretCurl] = useState(false);
   const [hookError, setHookError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const runsLoadGenRef = useRef(0);
   const [deleteWebhookTarget, setDeleteWebhookTarget] = useState<WebhookEndpoint | null>(null);
   const [deletingWebhook, setDeletingWebhook] = useState(false);
   const [deleteAutomationTarget, setDeleteAutomationTarget] = useState<Automation | null>(null);
@@ -249,13 +252,21 @@ export function AutomationsSettingsScreen() {
   );
 
   const load = useCallback(async () => {
-    const [autoData, hookData] = await Promise.all([
-      settingsApi.getAutomations(),
-      settingsApi.getWebhooks(),
-    ]);
-    setAutomations(autoData.automations);
-    setWebhooks(hookData.endpoints);
-  }, []);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [autoData, hookData] = await Promise.all([
+        settingsApi.getAutomations(),
+        settingsApi.getWebhooks(),
+      ]);
+      setAutomations(autoData.automations);
+      setWebhooks(hookData.endpoints);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : t('automate.loadFailed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -266,7 +277,18 @@ export function AutomationsSettingsScreen() {
       setRuns([]);
       return;
     }
-    void settingsApi.getAutomationRuns(detailId).then((d) => setRuns(d.runs));
+    const generation = ++runsLoadGenRef.current;
+    setRuns([]);
+    void settingsApi
+      .getAutomationRuns(detailId)
+      .then((d) => {
+        if (generation !== runsLoadGenRef.current) return;
+        setRuns(d.runs);
+      })
+      .catch(() => {
+        if (generation !== runsLoadGenRef.current) return;
+        setRuns([]);
+      });
   }, [detailId]);
 
   const confirmDeleteWebhook = useCallback(async () => {
@@ -514,6 +536,21 @@ export function AutomationsSettingsScreen() {
 
   return (
     <div className="mx-auto max-w-6xl">
+      {loading ? (
+        <div className="text-muted-foreground text-sm">{t('automate.loading')}</div>
+      ) : loadError ? (
+        <div className="flex flex-col items-start gap-3">
+          <p className="text-muted-foreground text-sm">{t('automate.loadFailed')}</p>
+          <button
+            type="button"
+            className="text-foreground border-border hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
+            onClick={() => void load()}
+          >
+            {t('common.retry')}
+          </button>
+        </div>
+      ) : (
+        <>
       <PageHeader
         title={t('automate.title')}
         description={t('automate.description')}
@@ -721,7 +758,7 @@ export function AutomationsSettingsScreen() {
         </SettingsConnectedList>
       </section>
 
-      <section className="border-border border-t pt-6">
+      <section className="mb-8">
         <SectionHeading title={t('automate.webhooks')} count={webhooks.length} />
         <div className="mb-3 flex flex-wrap gap-2">
           <Button type="button" size="sm" variant="outline" onClick={openGithubHookDialog}>
@@ -905,6 +942,8 @@ export function AutomationsSettingsScreen() {
         busy={deletingWebhook}
         busyLabel={t('automate.deletingWebhook')}
       />
+        </>
+      )}
     </div>
   );
 }

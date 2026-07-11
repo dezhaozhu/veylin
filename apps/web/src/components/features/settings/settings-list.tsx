@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Children, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronRight, MoreHorizontal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 import { cn } from '@/lib/utils';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
+import { subscribeLayoutSync } from '@/lib/overlay-bounds';
 
 export function SettingsConnectedList({
   children,
@@ -14,6 +15,9 @@ export function SettingsConnectedList({
   children: ReactNode;
   className?: string;
 }) {
+  const items = Children.toArray(children).filter(Boolean);
+  if (items.length === 0) return null;
+
   return (
     <div
       className={cn(
@@ -21,7 +25,7 @@ export function SettingsConnectedList({
         className,
       )}
     >
-      {children}
+      {items}
     </div>
   );
 }
@@ -179,10 +183,10 @@ function SettingsRowMenu({ items }: { items: SettingsRowMenuItem[] }) {
       return;
     }
     updateMenuPos();
-    window.addEventListener('resize', updateMenuPos);
+    const stopLayout = subscribeLayoutSync(updateMenuPos);
     window.addEventListener('scroll', updateMenuPos, true);
     return () => {
-      window.removeEventListener('resize', updateMenuPos);
+      stopLayout();
       window.removeEventListener('scroll', updateMenuPos, true);
     };
   }, [open, updateMenuPos]);
@@ -205,9 +209,17 @@ function SettingsRowMenu({ items }: { items: SettingsRowMenuItem[] }) {
                     'hover:bg-accent flex w-full rounded-md px-2.5 py-1.5 text-left text-sm transition-colors disabled:opacity-50',
                     item.destructive && 'text-destructive hover:bg-destructive/10',
                   )}
-                  onClick={() => {
-                    close();
+                  onMouseDown={(e) => {
+                    // Prevent backdrop from stealing the gesture before click fires.
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (item.disabled) return;
                     item.onClick();
+                    close();
                   }}
                 >
                   {item.label}

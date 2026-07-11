@@ -419,6 +419,7 @@ const WHOLE_PACKAGE_COPIES = [
   '@mastra/ai-sdk',
   '@mastra/loggers',
   '@mastra/observability',
+  '@mastra/langfuse',
   '@surrealdb',
   '@anush008',
   '@libsql',

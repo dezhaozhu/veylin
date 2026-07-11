@@ -45,6 +45,8 @@ function mapThreadState(r: Record<string, unknown>): ThreadStateRow {
     activatedSkills: (r.activated_skills as Record<string, string>) ?? {},
     workingMemory: (r.working_memory as string | null) ?? null,
     title: (r.title as string | null) ?? null,
+    goal: (r.goal as unknown) ?? null,
+    loop: (r.loop as unknown) ?? null,
     updatedAt: r.updated_at ? String(r.updated_at) : undefined,
   };
 }
@@ -218,7 +220,6 @@ export async function getThreadStateRow(threadId: string): Promise<ThreadStateRo
 }
 
 export async function insertThreadState(row: Omit<ThreadStateRow, 'updatedAt'>): Promise<void> {
-  const id = row.threadId;
   await createRecord(getDb(), 'thread_state', {
     thread_id: row.threadId,
     tenant_id: row.tenantId,
@@ -228,6 +229,8 @@ export async function insertThreadState(row: Omit<ThreadStateRow, 'updatedAt'>):
     activated_skills: row.activatedSkills,
     working_memory: row.workingMemory ?? null,
     title: row.title ?? null,
+    goal: row.goal ?? null,
+    loop: row.loop ?? null,
     updated_at: new Date(),
   });
 }
@@ -257,6 +260,14 @@ export async function updateThreadState(
   if (patch.title !== undefined) {
     sets.push('title = $title');
     vars.title = patch.title;
+  }
+  if (patch.goal !== undefined) {
+    sets.push('goal = $goal');
+    vars.goal = patch.goal;
+  }
+  if (patch.loop !== undefined) {
+    sets.push('loop = $loop');
+    vars.loop = patch.loop;
   }
   if (patch.tenantId !== undefined) {
     sets.push('tenant_id = $tenantId');
@@ -311,7 +322,10 @@ export async function getTenantSettingsRow(tenantId: string): Promise<TenantSett
     tenantId: String(r.tenant_id),
     disabledSkills: (r.disabled_skills as string[]) ?? [],
     disabledMcpServers: (r.disabled_mcp_servers as string[]) ?? [],
+    disabledHooks: (r.disabled_hooks as string[]) ?? [],
     modelSettings: (r.model_settings as TenantSettingsRow['modelSettings']) ?? undefined,
+    workspaceRoot: r.workspace_root != null ? String(r.workspace_root) : null,
+    importClaudeHooks: r.import_claude_hooks === true,
     updatedAt: r.updated_at ? String(r.updated_at) : undefined,
   };
 }
@@ -322,7 +336,17 @@ function isTransactionReadConflict(err: unknown): boolean {
 
 export async function upsertTenantSettings(
   tenantId: string,
-  patch: Partial<Pick<TenantSettingsRow, 'disabledSkills' | 'disabledMcpServers' | 'modelSettings'>>,
+  patch: Partial<
+    Pick<
+      TenantSettingsRow,
+      | 'disabledSkills'
+      | 'disabledMcpServers'
+      | 'disabledHooks'
+      | 'modelSettings'
+      | 'workspaceRoot'
+      | 'importClaudeHooks'
+    >
+  >,
 ): Promise<void> {
   const maxAttempts = 3;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -331,13 +355,25 @@ export async function upsertTenantSettings(
         tenantId,
         disabledSkills: [],
         disabledMcpServers: [],
+        disabledHooks: [],
         modelSettings: undefined,
+        workspaceRoot: null,
+        importClaudeHooks: false,
       };
       await upsertById(getDb(), 'tenant_settings', tenantId, {
         tenant_id: tenantId,
         disabled_skills: patch.disabledSkills ?? existing.disabledSkills,
         disabled_mcp_servers: patch.disabledMcpServers ?? existing.disabledMcpServers,
+        disabled_hooks: patch.disabledHooks ?? existing.disabledHooks,
         model_settings: patch.modelSettings ?? existing.modelSettings,
+        workspace_root:
+          patch.workspaceRoot !== undefined
+            ? patch.workspaceRoot || undefined
+            : existing.workspaceRoot || undefined,
+        import_claude_hooks:
+          patch.importClaudeHooks !== undefined
+            ? patch.importClaudeHooks
+            : (existing.importClaudeHooks ?? false),
         updated_at: new Date(),
       });
       return;
@@ -770,6 +806,15 @@ export async function listAutomationRunRows(
     getDb(),
     'SELECT * FROM automation_run WHERE tenant_id = $tenantId AND automation_id = $automationId ORDER BY started_at DESC',
     { tenantId, automationId },
+  );
+  return rows.map(mapAutomationRun);
+}
+
+/** Runs left mid-flight after a crash/restart. */
+export async function listIncompleteAutomationRunRows(): Promise<AutomationRunRow[]> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    "SELECT * FROM automation_run WHERE status = 'running' OR status = 'queued'",
   );
   return rows.map(mapAutomationRun);
 }

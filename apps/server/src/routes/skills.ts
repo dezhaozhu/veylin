@@ -2,24 +2,25 @@ import type { FastifyInstance } from 'fastify';
 import { customSkillInputSchema } from '@veylin/shared';
 import { refreshAgentPackages } from '../agent-packages-sync.js';
 import {
-  createCustomSkill,
-  deleteCustomSkill,
+  createUserSkill,
+  deleteUserSkill,
   getDisabledSkills,
+  getVeylinSkillsDir,
+  importUserSkillFromDir,
   listMergedSkills,
   setDisabledSkills,
-  updateCustomSkill,
+  updateUserSkill,
 } from '../skills-store.js';
 import type { ServerDeps } from './types.js';
 
 export function registerSkillsRoutes(app: FastifyInstance, deps: ServerDeps): void {
-  // --- Customize: Skills ---
   app.get('/api/skills', async (req) => {
     const ctx = await deps.resolveContext(req.headers);
     const { agentId } = req.query as { agentId?: string };
     await refreshAgentPackages(deps.runtime, { force: true });
     const skills = await listMergedSkills(deps.runtime, ctx.tenantId, agentId);
     const disabledSkills = await getDisabledSkills(ctx.tenantId);
-    return { skills, disabledSkills };
+    return { skills, disabledSkills, skillsDir: getVeylinSkillsDir() };
   });
 
   app.post('/api/skills/disabled', async (req) => {
@@ -36,8 +37,35 @@ export function registerSkillsRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code(400);
       return { ok: false, message: parsed.error.message };
     }
-    const row = await createCustomSkill(ctx.tenantId, parsed.data);
-    return { ok: true, skill: row };
+    try {
+      const skill = await createUserSkill(parsed.data);
+      if (parsed.data.enabled === false) {
+        const disabled = await getDisabledSkills(ctx.tenantId);
+        if (!disabled.includes(skill.name)) {
+          await setDisabledSkills(ctx.tenantId, [...disabled, skill.name]);
+        }
+      }
+      return { ok: true, skill };
+    } catch (err) {
+      reply.code(400);
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  app.post('/api/skills/import', async (req, reply) => {
+    await deps.resolveContext(req.headers);
+    const body = (req.body ?? {}) as { path?: string };
+    if (!body.path?.trim()) {
+      reply.code(400);
+      return { ok: false, message: 'path required' };
+    }
+    try {
+      const skill = await importUserSkillFromDir(body.path.trim());
+      return { ok: true, skill };
+    } catch (err) {
+      reply.code(400);
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   app.put('/api/skills/:id', async (req, reply) => {
@@ -48,24 +76,39 @@ export function registerSkillsRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code(400);
       return { ok: false, message: parsed.error.message };
     }
-    const row = await updateCustomSkill(ctx.tenantId, id, parsed.data);
-    if (!row) {
-      reply.code(404);
-      return { ok: false };
+    try {
+      const skill = await updateUserSkill(decodeURIComponent(id), parsed.data);
+      if (!skill) {
+        reply.code(404);
+        return { ok: false };
+      }
+      if (parsed.data.enabled === false) {
+        const disabled = await getDisabledSkills(ctx.tenantId);
+        if (!disabled.includes(skill.name)) {
+          await setDisabledSkills(ctx.tenantId, [...disabled, skill.name]);
+        }
+      } else if (parsed.data.enabled === true) {
+        const disabled = await getDisabledSkills(ctx.tenantId);
+        await setDisabledSkills(
+          ctx.tenantId,
+          disabled.filter((n) => n !== skill.name),
+        );
+      }
+      return { ok: true, skill };
+    } catch (err) {
+      reply.code(400);
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
-    return { ok: true, skill: row };
   });
 
   app.delete('/api/skills/:id', async (req, reply) => {
-    const ctx = await deps.resolveContext(req.headers);
+    await deps.resolveContext(req.headers);
     const { id } = req.params as { id: string };
-    const ok = await deleteCustomSkill(ctx.tenantId, id);
+    const ok = await deleteUserSkill(decodeURIComponent(id));
     if (!ok) {
       reply.code(404);
       return { ok: false };
     }
     return { ok: true };
   });
-
-
 }

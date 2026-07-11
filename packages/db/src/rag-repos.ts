@@ -165,6 +165,15 @@ export async function updateDocumentStatus(
   });
 }
 
+/** Documents left mid-ingest after a crash/restart. */
+export async function listIndexingDocuments(): Promise<DocumentRow[]> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    "SELECT * FROM document WHERE status = 'indexing'",
+  );
+  return rows.map(mapDocument);
+}
+
 export async function deleteDocument(tenantId: string, documentId: string): Promise<boolean> {
   const doc = await getDocument(documentId);
   if (!doc || doc.tenantId !== tenantId) return false;

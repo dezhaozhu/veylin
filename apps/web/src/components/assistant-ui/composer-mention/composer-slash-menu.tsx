@@ -1,4 +1,4 @@
-import { Minimize2Icon, NotebookPenIcon, SparklesIcon } from 'lucide-react';
+import { ListTodoIcon, Minimize2Icon, SparklesIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type FC, Fragment } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAui, useAuiState } from '@assistant-ui/store';
@@ -192,7 +192,7 @@ export const ComposerSlashMenu: FC<{
           ) : row.kind === 'plan' ? (
             <ComposerMenuOption
               active={activeIndex === index}
-              icon={<NotebookPenIcon className="size-4" />}
+              icon={<ListTodoIcon className="size-4" />}
               label={row.exit ? t('slash.exitPlan') : t('slash.plan')}
               description={row.exit ? t('slash.exitPlanDesc') : t('slash.planDesc')}
               onMouseEnter={() => setActiveIndex(index)}

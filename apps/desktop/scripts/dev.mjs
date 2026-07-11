@@ -13,6 +13,8 @@ const devEnv = {
   VEYLIN_SKIP_SIDECAR: '1',
   VEYLIN_REPO_ROOT: process.env.VEYLIN_REPO_ROOT ?? repoRoot,
   VEYLIN_DATA_DIR: process.env.VEYLIN_DATA_DIR ?? resolve(repoRoot, 'data'),
+  // Match web `npm run dev`: don't block listen on remote MCP connect.
+  VEYLIN_LAZY_MCP_BOOT: process.env.VEYLIN_LAZY_MCP_BOOT ?? '1',
 };
 
 function runNode(scriptName, envPatch = {}) {
@@ -30,6 +32,7 @@ function runNode(scriptName, envPatch = {}) {
 runNode('prep-dev.mjs');
 // Tauri compile still needs externalBin on disk; runtime uses tsx via VEYLIN_SKIP_SIDECAR.
 runNode('ensure-sidecar.mjs', { VEYLIN_SKIP_SIDECAR: '0' });
+console.log(`[desktop] VEYLIN_DATA_DIR=${devEnv.VEYLIN_DATA_DIR}`);
 runNode('ensure-server.mjs');
 
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';

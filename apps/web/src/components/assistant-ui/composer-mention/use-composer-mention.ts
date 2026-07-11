@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { subscribeLayoutSync } from '@/lib/overlay-bounds';
 
 export type MentionTrigger = {
   query: string;
@@ -50,10 +51,10 @@ export function useComposerMentionAnchor(open: boolean) {
       return;
     }
     updateAnchor();
-    window.addEventListener('resize', updateAnchor);
+    const stopLayout = subscribeLayoutSync(updateAnchor);
     window.addEventListener('scroll', updateAnchor, true);
     return () => {
-      window.removeEventListener('resize', updateAnchor);
+      stopLayout();
       window.removeEventListener('scroll', updateAnchor, true);
     };
   }, [open, updateAnchor]);

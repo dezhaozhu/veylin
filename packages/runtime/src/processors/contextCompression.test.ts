@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import type { MastraDBMessage } from '@mastra/core/memory';
-import { ContextCompression, estimateTokens } from './contextCompression.js';
+import {
+  ContextCompression,
+  estimateTokens,
+  VEYLIN_CONTEXT_COMPACTED_KEY,
+  type VeylinContextCompacted,
+} from './contextCompression.js';
 import { resetCompactCircuitBreaker } from '../context-window.js';
 
 function textMessage(text: string, index: number): MastraDBMessage {
@@ -33,6 +38,39 @@ describe('ContextCompression', () => {
     assert.equal(tokens, 100);
   });
 
+  it('estimates tokens including tool-result parts', () => {
+    const msg = {
+      id: 'tool-1',
+      role: 'tool',
+      createdAt: new Date(),
+      content: {
+        parts: [
+          {
+            type: 'tool-result',
+            toolName: 'web_fetch',
+            result: { body: 'x'.repeat(400) },
+          },
+        ],
+      },
+    } as unknown as MastraDBMessage;
+    const tokens = estimateTokens([msg]);
+    assert.ok(tokens > 50, `expected tool payload to count toward tokens, got ${tokens}`);
+  });
+
+  it('default token trigger is 4000 (proactive)', () => {
+    delete process.env.VEYLIN_COMPACT_TOKEN_TRIGGER;
+    const compressor = new ContextCompression({ keepRecent: 1, triggerAt: 9999 });
+    // Access via behavior: 4001 tokens worth of text should trigger
+    const big = textMessage('a'.repeat(16_004), 0); // ~4001 tokens
+    const recent = textMessage('tail', 1);
+    return compressor.processInput({ messages: [big, recent] }).then((out) => {
+      assert.equal(out.length, 2);
+      const summary =
+        (out[0] as { content: { parts: { text?: string }[] } }).content.parts[0]?.text ?? '';
+      assert.match(summary, /compacted/i);
+    });
+  });
+
   it('compacts when estimated tokens exceed token trigger', async () => {
     process.env.VEYLIN_COMPACT_TOKEN_TRIGGER = '50';
     process.env.VEYLIN_COMPACT_KEEP = '1';
@@ -48,7 +86,83 @@ describe('ContextCompression', () => {
     assert.equal(out.length, 2);
     const summary = (out[0] as { content: { parts: { text?: string }[] } }).content.parts[0]?.text ?? '';
     assert.match(summary, /compacted/i);
+    assert.match(summary, /Resume unfinished work silently/i);
     assert.match((out[1] as { content: { parts: { text?: string }[] } }).content.parts[0]?.text ?? '', /recent tail/);
+  });
+
+  it('force=true compacts even under thresholds', async () => {
+    const compressor = new ContextCompression({
+      keepRecent: 1,
+      triggerAt: 9999,
+      tokenTriggerAt: 999_999,
+      force: true,
+    });
+    const messages = [
+      textMessage('old a', 0),
+      textMessage('old b', 1),
+      textMessage('keep me', 2),
+    ];
+    const out = await compressor.processInput({ messages });
+    assert.equal(out.length, 2);
+    const summary = (out[0] as { content: { parts: { text?: string }[] } }).content.parts[0]?.text ?? '';
+    assert.match(summary, /compacted/i);
+  });
+
+  it('without force leaves short threads unchanged', async () => {
+    const compressor = new ContextCompression({
+      keepRecent: 1,
+      triggerAt: 9999,
+      tokenTriggerAt: 999_999,
+    });
+    const messages = [textMessage('a', 0), textMessage('b', 1)];
+    const out = await compressor.processInput({ messages });
+    assert.equal(out.length, 2);
+    assert.equal(out[0], messages[0]);
+  });
+
+  it('sets requestContext when compaction runs', async () => {
+    const store = new Map<string, unknown>();
+    const requestContext = {
+      set: (key: string, value: unknown) => {
+        store.set(key, value);
+      },
+    };
+    const compressor = new ContextCompression({
+      keepRecent: 1,
+      triggerAt: 9999,
+      tokenTriggerAt: 999_999,
+      force: true,
+    });
+    const messages = [
+      textMessage('old a', 0),
+      textMessage('old b', 1),
+      textMessage('keep me', 2),
+    ];
+    const out = await compressor.processInput({ messages, requestContext });
+    const payload = store.get(VEYLIN_CONTEXT_COMPACTED_KEY) as VeylinContextCompacted | undefined;
+    assert.ok(payload);
+    assert.equal(payload.beforeMessages, 3);
+    assert.equal(payload.afterMessages, out.length);
+    assert.equal(typeof payload.beforeTokens, 'number');
+    assert.equal(typeof payload.afterTokens, 'number');
+    assert.ok(payload.afterMessages < payload.beforeMessages);
+  });
+
+  it('does not set requestContext when compaction is skipped', async () => {
+    const store = new Map<string, unknown>();
+    const requestContext = {
+      set: (key: string, value: unknown) => {
+        store.set(key, value);
+      },
+    };
+    const compressor = new ContextCompression({
+      keepRecent: 1,
+      triggerAt: 9999,
+      tokenTriggerAt: 999_999,
+    });
+    const messages = [textMessage('a', 0), textMessage('b', 1)];
+    await compressor.processInput({ messages, requestContext });
+    assert.equal(store.has(VEYLIN_CONTEXT_COMPACTED_KEY), false);
   });
 
   afterEach(() => {

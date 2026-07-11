@@ -1,6 +1,13 @@
 "use client";
 
-import { type PropsWithChildren, useEffect, useState, type FC } from "react";
+import {
+  type PropsWithChildren,
+  useEffect,
+  useState,
+  type FC,
+  type MouseEvent,
+} from "react";
+import { createPortal } from "react-dom";
 import { XIcon, PlusIcon, FileText } from "lucide-react";
 import {
   AttachmentPrimitive,
@@ -15,16 +22,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { FileIcon } from "@react-symbols/icons/utils";
 import { cn } from "@/lib/utils";
+import { useChatColumnBounds } from "@/lib/overlay-bounds";
 
 function fileTypeLabel(name: string, contentType?: string): string {
   if (contentType === "application/pdf" || name.toLowerCase().endsWith(".pdf")) {
@@ -90,28 +92,74 @@ const AttachmentPreview: FC<AttachmentPreviewProps> = ({ src }) => {
   );
 };
 
+/**
+ * Image preview scoped to the chat column.
+ * Native right-panel webviews paint above HTML, so a full-window dialog would
+ * either be clipped by the page or force us to hide the webview (white flash).
+ * Clipping the overlay to the chat inset keeps the webpage visible and normal.
+ * Bounds track sidebar drag/collapse via ResizeObserver + transitionend.
+ */
 const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
   const src = useAttachmentSrc();
+  const [open, setOpen] = useState(false);
+  const bounds = useChatColumnBounds(open);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
 
   if (!src) return children;
 
+  const overlay =
+    open && bounds
+      ? createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Image Attachment Preview"
+            className="fixed z-[201] flex items-center justify-center bg-black/50 p-4"
+            style={{
+              left: bounds.left,
+              top: bounds.top,
+              width: bounds.width,
+              height: bounds.height,
+            }}
+            onClick={() => setOpen(false)}
+          >
+            <div
+              className="bg-background relative flex max-h-full max-w-full items-center justify-center overflow-hidden rounded-lg border p-2 shadow-lg"
+              onClick={(event: MouseEvent) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                aria-label="Close"
+                className="bg-foreground/60 text-background hover:[&_svg]:text-destructive absolute top-2 right-2 z-10 rounded-full p-1 opacity-100 ring-0"
+                onClick={() => setOpen(false)}
+              >
+                <XIcon className="size-4" />
+              </button>
+              <AttachmentPreview src={src} />
+            </div>
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
-    <Dialog>
-      <DialogTrigger
-        className="aui-attachment-preview-trigger hover:bg-accent/50 cursor-pointer transition-colors"
-        asChild
+    <>
+      <span
+        className="aui-attachment-preview-trigger contents cursor-pointer"
+        onClick={() => setOpen(true)}
       >
         {children}
-      </DialogTrigger>
-      <DialogContent className="aui-attachment-preview-dialog-content [&>button]:bg-foreground/60 [&_svg]:text-background [&>button]:hover:[&_svg]:text-destructive p-2 sm:max-w-3xl [&>button]:rounded-full [&>button]:p-1 [&>button]:opacity-100 [&>button]:ring-0!">
-        <DialogTitle className="aui-sr-only sr-only">
-          Image Attachment Preview
-        </DialogTitle>
-        <div className="aui-attachment-preview bg-background relative mx-auto flex max-h-[80dvh] w-full items-center justify-center overflow-hidden">
-          <AttachmentPreview src={src} />
-        </div>
-      </DialogContent>
-    </Dialog>
+      </span>
+      {overlay}
+    </>
   );
 };
 

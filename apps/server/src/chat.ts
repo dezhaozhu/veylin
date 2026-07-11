@@ -37,6 +37,8 @@ type ChatBody = {
   model?: string;
   toolQuery?: string;
   planMode?: boolean;
+  /** Loop chip armed; model should analyze conditions and call loop_set when ready. */
+  pendingLoop?: boolean;
   mcpEnabled?: Record<string, boolean>;
   /** Skill to auto-activate when sending the next message. */
   pendingSkill?: string;
@@ -351,7 +353,7 @@ export function buildWorkspacePanelHintBlock(
         '## User focus (right panel)\n' +
         'The user is viewing the **表格 (spreadsheet)** panel. ' +
         'Spreadsheet rows live in `table_*` tools — not in the knowledge base. ' +
-        'Call `table_list_sheets` and `table_get` before claiming there is no data.'
+        'Call `table_sheets` (action list) and `table_get` before claiming there is no data.'
       );
     case 'rag':
       return (

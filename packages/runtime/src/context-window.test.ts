@@ -22,11 +22,19 @@ describe('context-window', () => {
 
   it('computes auto-compact threshold from window percentage', () => {
     process.env.VEYLIN_AUTOCOMPACT_WINDOW = '100000';
-    process.env.VEYLIN_AUTOCOMPACT_PCT = '0.85';
+    process.env.VEYLIN_AUTOCOMPACT_PCT = '0.70';
     process.env.VEYLIN_AUTOCOMPACT_BUFFER = '10000';
 
     const threshold = getAutoCompactThreshold();
-    assert.equal(threshold, 75000);
+    assert.equal(threshold, 60000);
+  });
+
+  it('defaults to 70% of window when pct unset', () => {
+    process.env.VEYLIN_AUTOCOMPACT_WINDOW = '100000';
+    process.env.VEYLIN_AUTOCOMPACT_BUFFER = '1000';
+    const threshold = getAutoCompactThreshold();
+    // 100000 * 0.70 - 1000
+    assert.equal(threshold, 69000);
   });
 
   it('trips circuit breaker after repeated failures', () => {

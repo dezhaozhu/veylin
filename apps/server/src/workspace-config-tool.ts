@@ -4,14 +4,14 @@ import type { Runtime } from '@veylin/runtime';
 import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import type { QueuePort } from './queue';
 import {
-  createCustomSkill,
-  deleteCustomSkill,
+  createUserSkill,
+  deleteUserSkill,
   getDisabledMcpServers,
   getDisabledSkills,
   listMergedSkills,
   setDisabledMcpServers,
   setDisabledSkills,
-  updateCustomSkill,
+  updateUserSkill,
 } from './skills-store';
 import {
   createRemoteMcpServer,
@@ -194,13 +194,13 @@ async function runSkillAction(
       return { ok: true };
     }
     if (!hit.id) return { ok: false };
-    const row = await updateCustomSkill(opts.tenantId, hit.id, { enabled: input.enabled });
+    const row = await updateUserSkill(hit.id, { enabled: input.enabled });
     return { ok: row != null };
   }
 
   if (input.action === 'create') {
     if (!input.name || !input.content) throw new Error('create requires name and content');
-    const row = await createCustomSkill(opts.tenantId, {
+    const row = await createUserSkill({
       name: input.name,
       description: input.description ?? '',
       content: input.content,
@@ -211,7 +211,7 @@ async function runSkillAction(
 
   if (input.action === 'update') {
     if (!input.id) throw new Error('update requires id');
-    const row = await updateCustomSkill(opts.tenantId, input.id, {
+    const row = await updateUserSkill(input.id, {
       ...(input.name != null ? { name: input.name } : {}),
       ...(input.description != null ? { description: input.description } : {}),
       ...(input.content != null ? { content: input.content } : {}),
@@ -222,7 +222,7 @@ async function runSkillAction(
 
   if (input.action === 'delete') {
     if (!input.id) throw new Error('delete requires id');
-    const ok = await deleteCustomSkill(opts.tenantId, input.id);
+    const ok = await deleteUserSkill(input.id);
     return { ok };
   }
 

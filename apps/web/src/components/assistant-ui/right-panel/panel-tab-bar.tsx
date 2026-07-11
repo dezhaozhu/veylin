@@ -8,19 +8,23 @@ import {
 } from '@/components/assistant-ui/composer-menu-flyout';
 import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
 import { RightSidebarTrigger, useRightSidebar, useSidebar } from '@/components/ui/sidebar';
-import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import { readChatWorkspaceWidth, rightPanelWidthMax } from '@/lib/chat-panel-ratio';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
+import { subscribeLayoutSync } from '@/lib/overlay-bounds';
+import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import {
   collapsedSidebarTriggerReservePx,
   isRightPanelNearlyMaximized,
   panelTabBarPaddingLeft,
+  titlebarTrailingInset,
 } from '@/lib/titlebar-layout';
 import { cn } from '@/lib/utils';
 import { startWindowDrag } from '@/lib/window-drag';
 import { PANEL_KINDS, getPanelKindDef } from './panel-registry';
 import { PANEL_TAB_MENU_CLOSED_EVENT } from './panel-events';
 import type { PanelKind, PanelTab } from './panel-types';
+
+const MENU_WIDTH = 220;
 
 interface PanelTabBarProps {
   tabs: PanelTab[];
@@ -49,6 +53,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   const tabBarPaddingLeft = showCollapsedChrome
     ? collapsedSidebarTriggerReservePx()
     : panelTabBarPaddingLeft();
+  const tabBarPaddingRight = titlebarTrailingInset();
   const [menuOpen, setMenuOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement>(null);
   const menuWasOpen = useRef(false);
@@ -58,10 +63,12 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
 
   useOverlayDismiss(close);
 
+  // Hide the docked native webview while the menu is open so the HTML portal
+  // is clickable; restore via PANEL_TAB_MENU_CLOSED_EVENT when it closes.
   useEffect(() => {
     if (!isTauri()) return;
     if (menuOpen) {
-      void hideWebView();
+      void hideWebView(undefined, { force: true });
     } else if (menuWasOpen.current) {
       window.dispatchEvent(new CustomEvent(PANEL_TAB_MENU_CLOSED_EVENT));
     }
@@ -72,13 +79,11 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
     const el = addBtnRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const menuWidth = 220;
     const padding = 8;
-    // "+" sits on the right edge — anchor menu's right side to the button.
     let right = window.innerWidth - rect.right;
-    const left = rect.right - menuWidth;
+    const left = rect.right - MENU_WIDTH;
     if (left < padding) {
-      right = window.innerWidth - menuWidth - padding;
+      right = window.innerWidth - MENU_WIDTH - padding;
     }
     setMenuPos({ top: rect.bottom + 6, right });
   }, []);
@@ -89,24 +94,25 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
       return;
     }
     updateMenuPos();
-    window.addEventListener('resize', updateMenuPos);
+    const stopLayout = subscribeLayoutSync(updateMenuPos);
     window.addEventListener('scroll', updateMenuPos, true);
     return () => {
-      window.removeEventListener('resize', updateMenuPos);
+      stopLayout();
       window.removeEventListener('scroll', updateMenuPos, true);
     };
   }, [menuOpen, updateMenuPos]);
 
-  const menu =
+  const htmlMenu =
     menuOpen && menuPos
       ? createPortal(
           <>
             <DismissibleBackdrop
               ariaLabel={t('panelTab.closeMenu')}
               onClose={close}
+              className="fixed inset-0 z-[300] cursor-default bg-transparent"
             />
             <div
-              className="fixed z-[201]"
+              className="fixed z-[301]"
               style={{ top: menuPos.top, right: menuPos.right }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -133,10 +139,10 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   return (
     <>
       <div
-        className="border-border bg-background flex h-8 shrink-0 items-center border-b pr-1.5"
-        style={{ paddingLeft: tabBarPaddingLeft }}
+        className="border-border bg-background flex h-8 shrink-0 items-center border-b"
+        style={{ paddingLeft: tabBarPaddingLeft, paddingRight: tabBarPaddingRight }}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
           {tabs.map((tab) => {
             const active = activeId === tab.id;
             const def = getPanelKindDef(tab.kind);
@@ -145,7 +151,6 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
                 key={tab.id}
                 className={cn(
                   'group/tab flex max-w-[11rem] shrink-0 items-center rounded-lg text-xs transition-colors',
-                  '[&:hover_.panel-tab-close]:ml-0.5 [&:hover_.panel-tab-close]:max-w-5 [&:hover_.panel-tab-close]:opacity-100',
                   active
                     ? 'bg-muted text-foreground shadow-sm'
                     : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
@@ -154,7 +159,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
                 <button
                   type="button"
                   onClick={() => onActivate(tab.id)}
-                  className="panel-tab-label flex min-w-0 items-center gap-1.5 py-1.5 pl-2.5 pr-1"
+                  className="panel-tab-label flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-2.5 pr-1"
                 >
                   <span className="flex size-3.5 shrink-0 items-center justify-center opacity-70">
                     {def?.icon}
@@ -169,9 +174,9 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
                     onClose(tab.id);
                   }}
                   className={cn(
-                    'panel-tab-close mr-1 overflow-hidden rounded-md p-0.5 transition-all duration-150',
-                    'max-w-0 opacity-0',
-                    'hover:bg-foreground/10',
+                    'panel-tab-close mr-1 flex size-5 shrink-0 items-center justify-center rounded-md transition-opacity duration-150',
+                    'opacity-0 group-hover/tab:opacity-70',
+                    'hover:bg-foreground/10 hover:opacity-100',
                   )}
                 >
                   <X className="size-3" />
@@ -201,7 +206,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
         </button>
         <RightSidebarTrigger className="ml-1 size-7" />
       </div>
-      {menu}
+      {htmlMenu}
     </>
   );
 };
