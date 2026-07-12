@@ -30,7 +30,7 @@ interface PanelTabBarProps {
   activeId: string | null;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
-  onOpen: (kind: PanelKind) => void;
+  onOpen: (kind: PanelKind) => void | Promise<void>;
 }
 
 /** Browser-style tab strip + "+" menu (reference: pill active tab, icon + label). */

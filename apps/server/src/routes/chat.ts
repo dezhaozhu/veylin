@@ -48,6 +48,7 @@ import {
   ensureThreadTitleIfMissing,
   getSkillMemoryBlock,
   getThreadState,
+  refreshActivatedSkills,
   type ThreadStateRow,
   setPlanMode as setThreadPlanModeDb,
   setTodos as setThreadTodosDb,
@@ -384,7 +385,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       }
     }
 
-    let skillBlock = getSkillMemoryBlock(threadRowState?.activatedSkills ?? {});
+    const activatedSkills = await refreshActivatedSkills(threadId, (name) =>
+      resolveSkillContent(deps.runtime, ctx.tenantId, agentId, name),
+    );
+    let skillBlock = getSkillMemoryBlock(activatedSkills);
 
     let useThreadMemory = threadStoreOk;
     try {
@@ -461,10 +465,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const goalBlock = buildGoalBlock(threadRowState?.goal);
     const loopBlock = buildLoopBlock(threadRowState?.loop);
     // Live workspace awareness (table + knowledge base + right-panel focus).
-    const tableBlock = planMode ? '' : buildTableContextBlock();
+    const tableBlock = planMode ? '' : buildTableContextBlock(threadId);
     const knowledgeBlock = planMode
       ? ''
-      : await withDatastoreFallback(() => buildKnowledgeContextBlock(ctx.tenantId), '');
+      : await withDatastoreFallback(() => buildKnowledgeContextBlock(ctx.tenantId, threadId), '');
     const workspacePanelBlock = planMode
       ? ''
       : buildWorkspacePanelHintBlock(body.workspacePanel);

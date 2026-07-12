@@ -287,6 +287,26 @@
       "hint": "应用 UI 语言",
       "closeMenu": "关闭语言菜单"
     },
+    "langfuse": {
+      "title": "Langfuse",
+      "hint": "观测追踪配置；保存后立即生效",
+      "enabled": "启用 Langfuse",
+      "publicKey": "Public Key",
+      "publicKeyPlaceholder": "pk-lf-…",
+      "secretKey": "Secret Key",
+      "secretKeyPlaceholder": "sk-lf-…",
+      "secretKeyHint": "必填，保存后不会回显密钥。",
+      "secretKeyHintSaved": "已保存密钥。留空则保持不变；填写则覆盖。",
+      "baseUrl": "Base URL",
+      "save": "保存",
+      "saving": "保存中…",
+      "saved": "已保存",
+      "clear": "清除",
+      "clearing": "清除中…",
+      "loadFailed": "加载 Langfuse 设置失败。",
+      "saveFailed": "保存失败，请重试。",
+      "clearFailed": "清除失败，请重试。"
+    },
     "models": {
       "nav": "模型",
       "title": "模型",

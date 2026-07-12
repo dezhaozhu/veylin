@@ -31,6 +31,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { exportTableToExcel, parseTableExcelFile } from '@/lib/table-excel';
+import {
+  createNextThreadSheet,
+  createThreadSheet,
+  fetchThreadSheets,
+  nextSequentialSheetName,
+  type TableSheetMeta,
+} from '@/lib/table-sheets';
 import { DEFAULT_TABLE_STATUS_OPTIONS, applyTextQuery, sortRows } from '@veylin/shared';
 
 type TableColumnType = 'text' | 'number' | 'status';
@@ -65,6 +72,10 @@ interface TableSheet {
   id: string;
   name: string;
   builtin: boolean;
+}
+
+function asTableSheet(meta: TableSheetMeta): TableSheet {
+  return { id: meta.id, name: meta.name, builtin: meta.builtin };
 }
 
 interface TableGridTotals {
@@ -141,8 +152,10 @@ async function readJsonResponse<T>(res: Response): Promise<T> {
   }
 }
 
-async function fetchSchedule(sheetId: string): Promise<SchedulePayload> {
-  const res = await fetch(`/api/table?sheet=${encodeURIComponent(sheetId)}`);
+async function fetchSchedule(sheetId: string, threadId?: string | null): Promise<SchedulePayload> {
+  const q = new URLSearchParams({ sheet: sheetId });
+  if (threadId?.trim()) q.set('threadId', threadId.trim());
+  const res = await fetch(`/api/table?${q}`);
   const data = await readJsonResponse<SchedulePayload>(res);
   if (!res.ok) {
     throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
@@ -150,21 +163,26 @@ async function fetchSchedule(sheetId: string): Promise<SchedulePayload> {
   return data;
 }
 
-async function fetchSheetList(): Promise<TableSheet[]> {
-  const res = await fetch('/api/table/sheets');
-  const data = await readJsonResponse<{ ok?: boolean; sheets?: TableSheet[] }>(res);
-  if (!res.ok || !data.sheets) {
-    throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
-  }
-  return data.sheets;
+async function fetchSheetList(threadId?: string | null): Promise<TableSheet[]> {
+  const sheets = await fetchThreadSheets(threadId);
+  return sheets.map(asTableSheet);
 }
 
-async function patchRow(sheetId: string, row: TableRow): Promise<boolean> {
+async function patchRow(
+  sheetId: string,
+  row: TableRow,
+  threadId?: string | null,
+): Promise<boolean> {
   try {
     const res = await fetch('/api/table', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: sheetId, row_key: rowKey(row), ...row }),
+      body: JSON.stringify({
+        sheet: sheetId,
+        row_key: rowKey(row),
+        ...(threadId?.trim() ? { threadId: threadId.trim() } : {}),
+        ...row,
+      }),
     });
     const data = (await res.json()) as { ok?: boolean };
     return res.ok && data.ok === true;
@@ -512,10 +530,37 @@ function makeOnCellPaste(editableKeys: ReadonlySet<string>) {
   };
 }
 
-export function TableGrid() {
+export type TableGridProps = {
+  /** Current chat session — sheets are isolated per thread. */
+  threadId?: string | null;
+  /**
+   * Sheet owned by this panel tab. Created when the user opens the tab (+),
+   * then passed in — TableGrid never auto-creates on mount.
+   * When `onBoundSheet` is set (right-panel binding), only this sheet is shown.
+   */
+  boundSheetId?: string | null;
+  /** Persist the sheet id onto the panel tab after switch / recreate. */
+  onBoundSheet?: (sheetId: string) => void;
+};
+
+export function TableGrid({
+  threadId = null,
+  boundSheetId,
+  onBoundSheet,
+}: TableGridProps = {}) {
   const { t } = useTranslation();
+  const onBoundSheetRef = useRef(onBoundSheet);
+  onBoundSheetRef.current = onBoundSheet;
+  const bindingEnabled = onBoundSheet != null;
+
   const [sheets, setSheets] = useState<TableSheet[]>([]);
-  const [activeSheetId, setActiveSheetId] = useState('main');
+  const [activeSheetId, setActiveSheetId] = useState(() =>
+    typeof boundSheetId === 'string' && boundSheetId.trim()
+      ? boundSheetId.trim()
+      : bindingEnabled
+        ? ''
+        : 'main',
+  );
   const [columnDefs, setColumnDefs] = useState<TableColumnDef[]>([]);
   const [rows, setRows] = useState<TableRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -591,26 +636,43 @@ export function TableGrid() {
     lastSerialized.current = '';
   }, []);
 
-  const applyPayload = useCallback((data: SchedulePayload, initial: boolean) => {
-    if (data.sheets?.length) setSheets(data.sheets);
-    if (data.columns) setColumnDefs(data.columns);
-    const next = data.rows ?? [];
-    if (initial) setLoading(false);
-    if (Date.now() < editingUntil.current) return;
-    const serialized = JSON.stringify(next);
-    if (serialized === lastSerialized.current) return;
-    lastSerialized.current = serialized;
-    setRows(next);
-  }, []);
+  const activeSheetIdRef = useRef(activeSheetId);
+  activeSheetIdRef.current = activeSheetId;
+
+  const applyPayload = useCallback(
+    (data: SchedulePayload, initial: boolean, preferSheetId?: string) => {
+      if (data.sheets?.length) {
+        if (bindingEnabled) {
+          const id = preferSheetId?.trim() || activeSheetIdRef.current;
+          const mine = id
+            ? data.sheets.find((s) => s.id === id)
+            : undefined;
+          if (mine) setSheets([mine]);
+          else if (data.sheets.length === 1) setSheets([data.sheets[0]!]);
+        } else {
+          setSheets(data.sheets);
+        }
+      }
+      if (data.columns) setColumnDefs(data.columns);
+      const next = data.rows ?? [];
+      if (initial) setLoading(false);
+      if (Date.now() < editingUntil.current) return;
+      const serialized = JSON.stringify(next);
+      if (serialized === lastSerialized.current) return;
+      lastSerialized.current = serialized;
+      setRows(next);
+    },
+    [bindingEnabled],
+  );
 
   const load = useCallback(
     async (sheetId: string, initial: boolean) => {
       const attempts = initial ? 6 : 1;
       for (let i = 0; i < attempts; i++) {
         try {
-          const data = await fetchSchedule(sheetId);
+          const data = await fetchSchedule(sheetId, threadId);
           setLoadError(null);
-          applyPayload(data, initial);
+          applyPayload(data, initial, sheetId);
           return;
         } catch (err) {
           if (i < attempts - 1) {
@@ -626,7 +688,7 @@ export function TableGrid() {
         }
       }
     },
-    [applyPayload, t],
+    [applyPayload, t, threadId],
   );
 
   const switchSheet = useCallback(
@@ -635,6 +697,7 @@ export function TableGrid() {
       resetSheetUiState();
       setActiveSheetId(sheetId);
       setLoading(true);
+      onBoundSheetRef.current?.(sheetId);
     },
     [activeSheetId, resetSheetUiState],
   );
@@ -643,10 +706,10 @@ export function TableGrid() {
     if (!deleteSheetTarget || deletingSheet) return;
     setDeletingSheet(true);
     try {
-      const res = await fetch(
-        `/api/table/sheets/${encodeURIComponent(deleteSheetTarget.id)}`,
-        { method: 'DELETE' },
-      );
+      const delUrl = threadId?.trim()
+        ? `/api/table/sheets/${encodeURIComponent(deleteSheetTarget.id)}?threadId=${encodeURIComponent(threadId.trim())}`
+        : `/api/table/sheets/${encodeURIComponent(deleteSheetTarget.id)}`;
+      const res = await fetch(delUrl, { method: 'DELETE' });
       const data = await readJsonResponse<{
         ok?: boolean;
         message?: string;
@@ -657,11 +720,38 @@ export function TableGrid() {
         showToast(data.message ?? t('table.deleteSheetFailed'), 'error');
         return;
       }
+      if (bindingEnabled) {
+        // Bound panel: after deleting the only visible sheet, create a fresh empty one
+        // (user-initiated delete — not mount).
+        if (deleteSheetTarget.id === activeSheetId) {
+          if (!threadId?.trim()) {
+            showToast(t('table.createSheetFailed'), 'error');
+            setDeleteSheetTarget(null);
+            return;
+          }
+          try {
+            const created = await createNextThreadSheet(threadId.trim());
+            resetSheetUiState();
+            setSheets([asTableSheet(created)]);
+            setActiveSheetId(created.id);
+            setLoading(true);
+            onBoundSheetRef.current?.(created.id);
+          } catch (err) {
+            showToast(
+              err instanceof Error ? err.message : t('table.createSheetFailed'),
+              'error',
+            );
+          }
+        }
+        setDeleteSheetTarget(null);
+        return;
+      }
       if (data.sheets) setSheets(data.sheets);
       if (deleteSheetTarget.id === activeSheetId && data.nextSheet) {
         resetSheetUiState();
         setActiveSheetId(data.nextSheet);
         setLoading(true);
+        onBoundSheetRef.current?.(data.nextSheet);
       }
       setDeleteSheetTarget(null);
     } catch (e: unknown) {
@@ -671,21 +761,20 @@ export function TableGrid() {
     }
   };
 
-  const suggestNewSheetName = useCallback(() => {
-    const used = new Set(sheets.map((s) => s.name.trim().toLowerCase()));
-    let n = sheets.length + 1;
-    while (used.has(`sheet ${n}`)) n++;
-    return `Sheet ${n}`;
-  }, [sheets]);
-
   const openAddSheetDialog = useCallback(() => {
-    setNewSheetName(suggestNewSheetName());
-    setAddSheetOpen(true);
-  }, [suggestNewSheetName]);
+    void nextSequentialSheetName(threadId, sheets).then((name) => {
+      setNewSheetName(name);
+      setAddSheetOpen(true);
+    });
+  }, [sheets, threadId]);
 
   const submitAddSheet = async () => {
     const name = newSheetName.trim();
     if (!name) return;
+    if (!threadId?.trim()) {
+      showToast(t('table.createSheetFailed'), 'error');
+      return;
+    }
     const taken = sheets.some((s) => s.name.trim().toLowerCase() === name.toLowerCase());
     if (taken) {
       showToast(t('table.sheetNameDuplicate'), 'error');
@@ -693,25 +782,19 @@ export function TableGrid() {
     }
     setAddingSheet(true);
     try {
-      const res = await fetch('/api/table/sheets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-      });
-      const data = await readJsonResponse<{
-        ok?: boolean;
-        message?: string;
-        sheet?: TableSheet;
-        sheets?: TableSheet[];
-      }>(res);
-      if (!res.ok || !data.ok || !data.sheet) {
-        showToast(data.message ?? t('table.createSheetFailed'), 'error');
-        return;
+      const sheet = asTableSheet(
+        await createThreadSheet(threadId.trim(), name),
+      );
+      if (bindingEnabled) {
+        setSheets([sheet]);
+      } else {
+        const list = await fetchSheetList(threadId);
+        setSheets(list);
       }
-      if (data.sheets) setSheets(data.sheets);
       resetSheetUiState();
-      setActiveSheetId(data.sheet.id);
+      setActiveSheetId(sheet.id);
       setLoading(true);
+      onBoundSheetRef.current?.(sheet.id);
       setAddSheetOpen(false);
       setNewSheetName('');
     } catch (e: unknown) {
@@ -756,7 +839,10 @@ export function TableGrid() {
       const res = await fetch(`/api/table/sheets/${encodeURIComponent(renamingSheetId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({
+          name,
+          ...(threadId?.trim() ? { threadId: threadId.trim() } : {}),
+        }),
       });
       const data = await readJsonResponse<{
         ok?: boolean;
@@ -773,8 +859,11 @@ export function TableGrid() {
         showToast(data.message ?? t('table.renameSheetFailed'), 'error');
         return;
       }
-      if (data.sheets) setSheets(data.sheets);
-      else if (data.sheet) {
+      if (bindingEnabled && data.sheet) {
+        setSheets([data.sheet]);
+      } else if (data.sheets) {
+        setSheets(data.sheets);
+      } else if (data.sheet) {
         setSheets((prev) =>
           prev.map((s) => (s.id === data.sheet!.id ? { ...s, ...data.sheet! } : s)),
         );
@@ -791,6 +880,7 @@ export function TableGrid() {
       setRenamingSheet(false);
     }
   }, [
+    bindingEnabled,
     cancelRenameSheet,
     renameDraft,
     renamingSheet,
@@ -798,6 +888,7 @@ export function TableGrid() {
     sheets,
     showToast,
     t,
+    threadId,
   ]);
 
   useEffect(() => {
@@ -808,7 +899,27 @@ export function TableGrid() {
     el.select();
   }, [renamingSheetId]);
 
+  // Bind to the sheet id created at tab-open time. Never create on mount.
   useEffect(() => {
+    const existing =
+      typeof boundSheetId === 'string' && boundSheetId.trim()
+        ? boundSheetId.trim()
+        : null;
+    if (existing) {
+      setActiveSheetId((prev) => (prev === existing ? prev : existing));
+      return;
+    }
+    if (!bindingEnabled) {
+      setActiveSheetId((prev) => prev || 'main');
+      return;
+    }
+    // Bound panel without a sheet id (legacy / failed open) — do not invent one here.
+    setLoadError(t('table.createSheetFailed'));
+    setLoading(false);
+  }, [boundSheetId, bindingEnabled, t]);
+
+  useEffect(() => {
+    if (!activeSheetId) return;
     void load(activeSheetId, true);
     const es = new EventSource('/api/table/stream');
     es.onopen = () => {
@@ -825,8 +936,17 @@ export function TableGrid() {
       if (e.type === 'sheetsChange') {
         // Only refresh tab metadata — do NOT full-reload rows (large sheets time out
         // and surface as a spurious load/delete failure).
-        void fetchSheetList()
+        void fetchSheetList(threadId)
           .then((nextSheets) => {
+            if (bindingEnabled) {
+              const current = nextSheets.find((s) => s.id === activeSheetId);
+              if (current) {
+                setSheets([current]);
+                return;
+              }
+              // Bound sheet gone — keep UI; next create/load will recover.
+              return;
+            }
             setSheets(nextSheets);
             if (nextSheets.some((s) => s.id === activeSheetId)) return;
             const fallback = nextSheets[0]?.id;
@@ -834,6 +954,7 @@ export function TableGrid() {
             resetSheetUiState();
             setActiveSheetId(fallback);
             setLoading(true);
+            onBoundSheetRef.current?.(fallback);
           })
           .catch(() => {
             /* ignore — next user action will resync */
@@ -859,7 +980,7 @@ export function TableGrid() {
       }
     };
     return () => es.close();
-  }, [activeSheetId, load, resetSheetUiState]);
+  }, [activeSheetId, bindingEnabled, load, resetSheetUiState, threadId]);
 
   const filteredRows = useMemo(() => {
     const filtered = applyTextQuery(rows, filters.query);
@@ -965,10 +1086,10 @@ export function TableGrid() {
       editingUntil.current = Date.now() + 3000;
       setRows(merged);
       for (const row of merged) {
-        if (touchedKeys.has(rowKey(row))) void patchRow(activeSheetId, row);
+        if (touchedKeys.has(rowKey(row))) void patchRow(activeSheetId, row, threadId);
       }
     },
-    [activeSheetId],
+    [activeSheetId, threadId],
   );
 
   const pushHistory = useCallback((batch: HistoryBatch) => {
@@ -990,7 +1111,7 @@ export function TableGrid() {
         editingUntil.current = Date.now() + 3000;
         const touched = new Set(batch.map((e) => e.rowKey));
         for (const row of merged) {
-          if (touched.has(rowKey(row))) void patchRow(activeSheetId, row);
+          if (touched.has(rowKey(row))) void patchRow(activeSheetId, row, threadId);
         }
         return merged;
       });
@@ -998,7 +1119,7 @@ export function TableGrid() {
         isApplyingHistory.current = false;
       });
     },
-    [activeSheetId],
+    [activeSheetId, threadId],
   );
 
   const handleUndo = useCallback(() => {
@@ -1150,7 +1271,10 @@ export function TableGrid() {
     const res = await fetch('/api/table/rows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: activeSheetId }),
+      body: JSON.stringify({
+        sheet: activeSheetId,
+        ...(threadId?.trim() ? { threadId: threadId.trim() } : {}),
+      }),
     });
     const data = (await res.json()) as { ok?: boolean; rows?: TableRow[] };
     if (data.ok && data.rows) {
@@ -1165,7 +1289,11 @@ export function TableGrid() {
     const res = await fetch('/api/table/rows', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: activeSheetId, row_keys: [...selectedRows] }),
+      body: JSON.stringify({
+        sheet: activeSheetId,
+        row_keys: [...selectedRows],
+        ...(threadId?.trim() ? { threadId: threadId.trim() } : {}),
+      }),
     });
     const data = (await res.json()) as { ok?: boolean; rows?: TableRow[] };
     if (!data.ok || !data.rows) return;
@@ -1188,7 +1316,11 @@ export function TableGrid() {
       const res = await fetch('/api/table/columns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheet: activeSheetId, name }),
+        body: JSON.stringify({
+          sheet: activeSheetId,
+          name,
+          ...(threadId?.trim() ? { threadId: threadId.trim() } : {}),
+        }),
       });
       const data = (await res.json()) as {
         ok?: boolean;
@@ -1219,7 +1351,11 @@ export function TableGrid() {
     const res = await fetch('/api/table/columns', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: activeSheetId, key: selectedColumnKey }),
+      body: JSON.stringify({
+        sheet: activeSheetId,
+        key: selectedColumnKey,
+        ...(threadId?.trim() ? { threadId: threadId.trim() } : {}),
+      }),
     });
     const data = (await res.json()) as {
       ok?: boolean;
@@ -1289,6 +1425,7 @@ export function TableGrid() {
           sheet: activeSheetId,
           column_names: columnNames,
           rows: importedRows,
+          ...(threadId?.trim() ? { threadId: threadId.trim() } : {}),
         }),
       });
       const data = (await res.json()) as {
@@ -1336,6 +1473,10 @@ export function TableGrid() {
 
   const hasActiveFilters = filters.query.trim() !== '';
 
+  const visibleSheets = bindingEnabled
+    ? sheets.filter((s) => s.id === activeSheetId).slice(0, 1)
+    : sheets;
+
   if (loadError && rows.length === 0 && columnDefs.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
@@ -1382,8 +1523,15 @@ export function TableGrid() {
       ) : null}
       {/* Sheet tabs — top */}
       <div className="border-border flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          {sheets.map((sheet) => {
+        <div
+          className={cn(
+            'flex min-w-0 flex-1 items-center gap-1',
+            bindingEnabled
+              ? 'overflow-hidden'
+              : 'overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+          )}
+        >
+          {visibleSheets.map((sheet) => {
             const active = activeSheetId === sheet.id;
             const renaming = renamingSheetId === sheet.id;
             return (
@@ -1441,7 +1589,7 @@ export function TableGrid() {
                     {sheet.name}
                   </button>
                 )}
-                {sheets.length > 1 && !renaming ? (
+                {(bindingEnabled || visibleSheets.length > 1) && !renaming ? (
                   <button
                     type="button"
                     aria-label={t('table.deleteSheet', { name: sheet.name })}

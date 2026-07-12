@@ -92,6 +92,7 @@ async function llmExtractChunk(
 
 export async function extractAndStoreGraph(
   tenantId: string,
+  threadId: string,
   documentId: string,
   chunks: Array<{ id: string; text: string }>,
   options?: { model?: string },
@@ -115,6 +116,7 @@ export async function extractAndStoreGraph(
       const key = normalizeEntityKey(ent.name);
       const row = await upsertEntity({
         tenantId,
+        threadId,
         name: ent.name,
         type: ent.type || 'concept',
         description: ent.description,

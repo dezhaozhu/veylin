@@ -43,8 +43,12 @@ export {
 export {
   buildStorage,
   buildObservability,
+  buildObservabilityFromConfig,
   resolveLangfuseConfig,
+  setRuntimeLangfuseOverrides,
+  getRuntimeLangfuseOverrides,
   type LangfuseResolvedConfig,
+  type RuntimeLangfuseOverrides,
 } from './storage';
 export {
   collectLangfuseAttachments,

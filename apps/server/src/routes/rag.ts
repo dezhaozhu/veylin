@@ -20,10 +20,24 @@ import {
 import { listGraphForTenant, getChunksForEntity } from '@veylin/db';
 import type { ServerDeps } from './types.js';
 
+function requireThreadId(
+  source: { threadId?: string } | undefined,
+  reply: { code: (n: number) => unknown },
+): string | null {
+  const threadId = source?.threadId?.trim();
+  if (!threadId) {
+    reply.code(400);
+    return null;
+  }
+  return threadId;
+}
+
 export function registerRagRoutes(app: FastifyInstance, deps: ServerDeps): void {
-  app.get('/api/rag/documents', async (req) => {
+  app.get('/api/rag/documents', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const documents = await listKnowledgeDocuments(ctx.tenantId);
+    const threadId = requireThreadId(req.query as { threadId?: string }, reply);
+    if (!threadId) return { ok: false, message: 'threadId is required' };
+    const documents = await listKnowledgeDocuments(ctx.tenantId, threadId);
     return { documents };
   });
 
@@ -49,7 +63,15 @@ export function registerRagRoutes(app: FastifyInstance, deps: ServerDeps): void 
 
   app.post('/api/rag/documents', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const body = req.body as { filename: string; text: string; mimeType?: string; model?: string };
+    const body = req.body as {
+      filename: string;
+      text: string;
+      mimeType?: string;
+      model?: string;
+      threadId?: string;
+    };
+    const threadId = requireThreadId(body, reply);
+    if (!threadId) return { ok: false, message: 'threadId is required' };
     const textBytes = Buffer.byteLength(body.text ?? '', 'utf8');
     if (textBytes > RAG_UPLOAD_MAX_BYTES) {
       reply.code(413);
@@ -58,6 +80,7 @@ export function registerRagRoutes(app: FastifyInstance, deps: ServerDeps): void 
     await applyTenantModelSettings(ctx.tenantId);
     const result = await ingestDocumentText(
       ctx.tenantId,
+      threadId,
       body.filename,
       body.text,
       body.mimeType,
@@ -69,7 +92,9 @@ export function registerRagRoutes(app: FastifyInstance, deps: ServerDeps): void 
   app.delete('/api/rag/documents/:id', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
     const id = (req.params as { id: string }).id;
-    const ok = await removeKnowledgeDocument(ctx.tenantId, id);
+    const threadId = requireThreadId(req.query as { threadId?: string }, reply);
+    if (!threadId) return { ok: false, message: 'threadId is required' };
+    const ok = await removeKnowledgeDocument(ctx.tenantId, id, threadId);
     if (!ok) {
       reply.code(404);
       return { ok: false, message: 'document not found' };
@@ -91,13 +116,15 @@ export function registerRagRoutes(app: FastifyInstance, deps: ServerDeps): void 
 
   app.post('/api/rag/search', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const body = (req.body ?? {}) as { query?: string };
+    const body = (req.body ?? {}) as { query?: string; threadId?: string };
+    const threadId = requireThreadId(body, reply);
+    if (!threadId) return { ok: false, message: 'threadId is required' };
     const query = body.query?.trim();
     if (!query) {
       reply.code(400);
       return { ok: false, message: 'query is required' };
     }
-    const result = await searchKnowledge(ctx.tenantId, query);
+    const result = await searchKnowledge(ctx.tenantId, query, { threadId });
     return { ok: true, ...result };
   });
 
@@ -148,11 +175,17 @@ export function registerRagRoutes(app: FastifyInstance, deps: ServerDeps): void 
     }
   });
 
-  app.get('/api/kg', async (req) => {
+  app.get('/api/kg', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const { documentId } = req.query as { documentId?: string };
+    const { documentId, threadId: rawThreadId } = req.query as {
+      documentId?: string;
+      threadId?: string;
+    };
+    const threadId = requireThreadId({ threadId: rawThreadId }, reply);
+    if (!threadId) return { ok: false, message: 'threadId is required' };
     const graph = await listGraphForTenant(ctx.tenantId, {
       documentId: documentId?.trim() || undefined,
+      threadId,
     });
     return {
       entities: graph.entities.map((e) => ({
@@ -173,7 +206,9 @@ export function registerRagRoutes(app: FastifyInstance, deps: ServerDeps): void 
   app.get('/api/kg/entities/:entityId/chunks', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
     const { entityId } = req.params as { entityId: string };
-    const chunks = await getChunksForEntity(ctx.tenantId, entityId, 8);
+    const threadId = requireThreadId(req.query as { threadId?: string }, reply);
+    if (!threadId) return { ok: false, message: 'threadId is required', chunks: [] };
+    const chunks = await getChunksForEntity(ctx.tenantId, entityId, 8, threadId);
     if (chunks.length === 0) {
       reply.code(404);
       return { ok: false, chunks: [] };

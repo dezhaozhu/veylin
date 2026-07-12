@@ -73,12 +73,13 @@ function buildSearchContext(references: KnowledgeReference[]): string {
 
 export async function ingestDocumentText(
   tenantId: string,
+  threadId: string,
   filename: string,
   text: string,
   mimeType?: string,
   options?: { model?: string },
 ): Promise<{ documentId: string; chunks: number; graphEntities: number; graphEdges: number }> {
-  const doc = await insertDocument(tenantId, {
+  const doc = await insertDocument(tenantId, threadId, {
     filename,
     mimeType,
     sizeBytes: text.length,
@@ -93,6 +94,7 @@ export async function ingestDocumentText(
       const chunk = await insertChunk({
         documentId: doc.id,
         tenantId,
+        threadId,
         text: piece.text,
         source: piece.source,
         offset: piece.offset,
@@ -103,7 +105,7 @@ export async function ingestDocumentText(
     let graphEntities = 0;
     let graphEdges = 0;
     try {
-      const graph = await extractAndStoreGraph(tenantId, doc.id, storedChunks, {
+      const graph = await extractAndStoreGraph(tenantId, threadId, doc.id, storedChunks, {
         model: options?.model,
       });
       graphEntities = graph.entities;
@@ -122,17 +124,21 @@ export async function ingestDocumentText(
 export async function searchKnowledge(
   tenantId: string,
   query: string,
-  options?: { recordAgentCitation?: boolean; threadId?: string | null },
+  options: { threadId: string; recordAgentCitation?: boolean },
 ): Promise<{ references: KnowledgeReference[]; context: string }> {
+  const threadId = options.threadId.trim();
+  if (!threadId) {
+    return { references: [], context: '' };
+  }
   let embedding: number[] | null = null;
   const embeddings = await embedTextsIfInstalled([query]);
   embedding = embeddings?.[0] ?? null;
-  const candidates = await hybridSearchChunks(tenantId, query, embedding, 8);
+  const candidates = await hybridSearchChunks(tenantId, threadId, query, embedding, 8);
   const references = await rerankReferences(query, candidates, 8);
-  if (options?.recordAgentCitation) {
+  if (options.recordAgentCitation) {
     await saveAgentCitation({
       tenantId,
-      threadId: options.threadId ?? null,
+      threadId,
       query,
       references,
     });
@@ -182,16 +188,19 @@ export function buildKnowledgeSearchTool() {
         return { references: [], context: '' };
       }
       const threadId = ctx?.requestContext?.get('threadId') as string | undefined;
+      if (!threadId) {
+        return { references: [], context: '' };
+      }
       return searchKnowledge(tenantId, input.query, {
         recordAgentCitation: true,
-        threadId: threadId ?? null,
+        threadId,
       });
     },
   });
 }
 
-export async function listKnowledgeDocuments(tenantId: string) {
-  return listDocuments(tenantId);
+export async function listKnowledgeDocuments(tenantId: string, threadId: string) {
+  return listDocuments(tenantId, threadId);
 }
 
 const KNOWLEDGE_BLOCK_DOC_LIMIT = 40;
@@ -203,10 +212,21 @@ const DOC_STATUS_LABEL: Record<string, string> = {
   failed: 'failed',
 };
 
-export async function buildKnowledgeContextBlock(tenantId: string): Promise<string> {
+export async function buildKnowledgeContextBlock(
+  tenantId: string,
+  threadId: string,
+): Promise<string> {
+  if (!threadId.trim()) {
+    return [
+      '# Knowledge base (local)',
+      'No documents are uploaded yet. The **知识库** panel is empty until the user adds files.',
+      'Spreadsheet/table data in the **表格** panel is separate — use `table_sheets` (list) / `table_get`, not `knowledge_search`, for grid data.',
+      'After documents are uploaded, call `knowledge_search` before answering document questions.',
+    ].join('\n');
+  }
   let docs: Awaited<ReturnType<typeof listDocuments>>;
   try {
-    docs = await listDocuments(tenantId);
+    docs = await listDocuments(tenantId, threadId);
   } catch {
     return '';
   }
@@ -239,6 +259,10 @@ export async function buildKnowledgeContextBlock(tenantId: string): Promise<stri
   ].join('\n');
 }
 
-export async function removeKnowledgeDocument(tenantId: string, documentId: string): Promise<boolean> {
-  return deleteDocument(tenantId, documentId);
+export async function removeKnowledgeDocument(
+  tenantId: string,
+  documentId: string,
+  threadId: string,
+): Promise<boolean> {
+  return deleteDocument(tenantId, documentId, threadId);
 }

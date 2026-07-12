@@ -90,6 +90,12 @@ export interface TenantSettingsRow {
     requestUrl?: string;
     apiKey?: string;
   };
+  langfuseSettings?: {
+    enabled?: boolean;
+    publicKey?: string;
+    secretKey?: string;
+    baseUrl?: string;
+  };
   workspaceRoot?: string | null;
   importClaudeHooks?: boolean;
   updatedAt?: string;
@@ -175,6 +181,8 @@ export interface TableSheetRow {
   id: string;
   name: string;
   builtin: boolean;
+  /** Chat session isolation key; null/absent = global (e.g. builtin main). */
+  threadId?: string | null;
 }
 
 export interface TableColumnRow {
@@ -200,6 +208,7 @@ export interface TableRowRecord {
 export interface DocumentRow {
   id: string;
   tenantId: string;
+  threadId: string;
   filename: string;
   mimeType?: string | null;
   sizeBytes?: number | null;
@@ -212,6 +221,7 @@ export interface ChunkRow {
   id: string;
   documentId: string;
   tenantId: string;
+  threadId: string;
   text: string;
   source: string;
   offset: number;
@@ -221,6 +231,7 @@ export interface ChunkRow {
 export interface EntityRow {
   id: string;
   tenantId: string;
+  threadId?: string | null;
   name: string;
   nameKey: string;
   type: string;
@@ -260,6 +271,7 @@ export interface WorkflowRow {
   id: string;
   tenantId: string;
   userId: string;
+  threadId: string;
   name: string;
   kind: WorkflowKind;
   enabled: boolean;

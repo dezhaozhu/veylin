@@ -4,12 +4,19 @@ const API = process.env.PLAYWRIGHT_API_URL ?? 'http://127.0.0.1:8787';
 
 test.describe('Table panel API', () => {
   test('import rows with custom column names', async ({ request }) => {
+    const threadId = `e2e-thread-${Date.now()}`;
     const sheet = `e2e-${Date.now()}`;
-    await request.post(`${API}/api/table/sheets`, { data: { name: sheet } });
+    const createRes = await request.post(`${API}/api/table/sheets`, {
+      data: { name: sheet, threadId },
+    });
+    expect(createRes.ok()).toBeTruthy();
+    const created = (await createRes.json()) as { sheet?: { id: string } };
+    const sheetId = created.sheet?.id ?? sheet;
 
     const res = await request.post(`${API}/api/table/import`, {
       data: {
-        sheet,
+        sheet: sheetId,
+        threadId,
         column_names: ['col_a', 'col_b'],
         rows: [{ col_a: '1', col_b: '2' }],
       },

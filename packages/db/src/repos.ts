@@ -324,6 +324,7 @@ export async function getTenantSettingsRow(tenantId: string): Promise<TenantSett
     disabledMcpServers: (r.disabled_mcp_servers as string[]) ?? [],
     disabledHooks: (r.disabled_hooks as string[]) ?? [],
     modelSettings: (r.model_settings as TenantSettingsRow['modelSettings']) ?? undefined,
+    langfuseSettings: (r.langfuse_settings as TenantSettingsRow['langfuseSettings']) ?? undefined,
     workspaceRoot: r.workspace_root != null ? String(r.workspace_root) : null,
     importClaudeHooks: r.import_claude_hooks === true,
     updatedAt: r.updated_at ? String(r.updated_at) : undefined,
@@ -343,6 +344,7 @@ export async function upsertTenantSettings(
       | 'disabledMcpServers'
       | 'disabledHooks'
       | 'modelSettings'
+      | 'langfuseSettings'
       | 'workspaceRoot'
       | 'importClaudeHooks'
     >
@@ -357,6 +359,7 @@ export async function upsertTenantSettings(
         disabledMcpServers: [],
         disabledHooks: [],
         modelSettings: undefined,
+        langfuseSettings: undefined,
         workspaceRoot: null,
         importClaudeHooks: false,
       };
@@ -366,6 +369,7 @@ export async function upsertTenantSettings(
         disabled_mcp_servers: patch.disabledMcpServers ?? existing.disabledMcpServers,
         disabled_hooks: patch.disabledHooks ?? existing.disabledHooks,
         model_settings: patch.modelSettings ?? existing.modelSettings,
+        langfuse_settings: patch.langfuseSettings ?? existing.langfuseSettings,
         workspace_root:
           patch.workspaceRoot !== undefined
             ? patch.workspaceRoot || undefined

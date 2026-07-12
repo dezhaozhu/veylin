@@ -32,6 +32,8 @@ export interface TableSheetMeta {
   id: string;
   name: string;
   builtin: boolean;
+  /** Chat session isolation; null = global (builtin main). */
+  threadId?: string | null;
 }
 
 export type TableRowData = Record<string, string | number> & { row_id: string };
@@ -70,7 +72,7 @@ export const DEFAULT_TABLE_SHEET = 'main';
 const DEFAULT_COLUMNS: TableColumnDef[] = [];
 
 const BUILTIN_SHEETS: TableSheetMeta[] = [
-  { id: 'main', name: 'Sheet 1', builtin: true },
+  { id: 'main', name: 'Sheet 1', builtin: true, threadId: null },
 ];
 
 interface SheetState {
@@ -343,8 +345,33 @@ export function tryResolveTableSheetId(value: string | undefined): string | null
   return sheetStore.has(value) ? value : null;
 }
 
-export function listTableSheets(): TableSheetMeta[] {
-  return [...sheetStore.values()].map((s) => ({ ...s.meta }));
+export function listTableSheets(threadId?: string | null): TableSheetMeta[] {
+  const all = [...sheetStore.values()].map((s) => ({ ...s.meta }));
+  if (threadId === undefined) return all;
+  if (threadId == null) return all.filter((s) => !s.threadId);
+  const key = String(threadId).trim();
+  return all.filter((s) => (s.threadId ?? '') === key);
+}
+
+export function getTableSheetMeta(sheetId: string): TableSheetMeta | undefined {
+  const id = tryResolveTableSheetId(sheetId);
+  if (!id) return undefined;
+  const sheet = getSheet(id);
+  return sheet ? { ...sheet.meta } : undefined;
+}
+
+/**
+ * Session-scoped access: a sheet is visible only when its threadId matches.
+ * Sheets with no threadId are treated as legacy/global and only match an empty scope.
+ */
+export function sheetBelongsToThread(
+  sheetId: string,
+  threadId: string | null | undefined,
+): boolean {
+  const meta = getTableSheetMeta(sheetId);
+  if (!meta) return false;
+  const scoped = threadId?.trim() || '';
+  return (meta.threadId ?? '') === scoped;
 }
 
 export function listTableColumns(sheetId: string): TableColumnDef[] {
@@ -475,8 +502,8 @@ export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string
 }
 
 /** Inject current table state so the model does not miss right-panel spreadsheet data. */
-export function buildTableContextBlock(): string {
-  const snapshots = listTableSheets().map((meta) => {
+export function buildTableContextBlock(threadId?: string | null): string {
+  const snapshots = listTableSheets(threadId).map((meta) => {
     const columns = listTableColumns(meta.id);
     const rows = listTableRows(meta.id);
     return {
@@ -629,24 +656,38 @@ function sheetNameKey(name: string): string {
   return name.trim().toLowerCase();
 }
 
-/** True if another sheet already uses this display name (case-insensitive). */
-export function isTableSheetNameTaken(name: string, excludeSheetId?: string): boolean {
+/** True if another sheet in the same thread already uses this display name (case-insensitive). */
+export function isTableSheetNameTaken(
+  name: string,
+  excludeSheetId?: string,
+  threadId?: string | null,
+): boolean {
   const key = sheetNameKey(name);
   if (!key) return false;
+  const scope = (threadId ?? '').trim();
   for (const other of sheetStore.values()) {
     if (excludeSheetId && other.meta.id === excludeSheetId) continue;
+    if ((other.meta.threadId ?? '') !== scope) continue;
     if (sheetNameKey(other.meta.name) === key) return true;
   }
   return false;
 }
 
-export function createTableSheet(name: string): TableSheetMeta | null {
+export function createTableSheet(
+  name: string,
+  threadId?: string | null,
+): TableSheetMeta | null {
   const trimmed = name.trim();
   if (!trimmed) return null;
-  // Display names must be unique so the model can tell sheets apart in context.
-  if (isTableSheetNameTaken(trimmed)) return null;
+  const scope = threadId?.trim() || null;
+  if (isTableSheetNameTaken(trimmed, undefined, scope)) return null;
   const id = slugifySheetId(trimmed);
-  const meta: TableSheetMeta = { id, name: trimmed, builtin: false };
+  const meta: TableSheetMeta = {
+    id,
+    name: trimmed,
+    builtin: false,
+    threadId: scope,
+  };
   sheetStore.set(id, {
     meta,
     columns: cloneColumns(),
@@ -664,7 +705,7 @@ export function renameTableSheet(sheetId: string, name: string): TableSheetMeta 
   const trimmed = name.trim();
   if (!trimmed) return null;
   if (sheet.meta.name === trimmed) return { ...sheet.meta };
-  if (isTableSheetNameTaken(trimmed, sheetId)) return null;
+  if (isTableSheetNameTaken(trimmed, sheetId, sheet.meta.threadId)) return null;
   sheet.meta = { ...sheet.meta, name: trimmed };
   tablePersist(sheetId);
   emitTable({ type: 'sheetsChange' });

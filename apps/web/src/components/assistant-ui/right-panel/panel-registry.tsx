@@ -11,6 +11,7 @@
  *
  * label/description/defaultTitle hold i18n keys, resolved with t() at render.
  */
+import { useAuiState } from '@assistant-ui/react';
 import { BookOpen, Globe, Table, Workflow } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { TableGrid } from '@/components/assistant-ui/table-grid';
@@ -19,8 +20,24 @@ import { RagPanel } from '@/components/assistant-ui/right-panel/panels/rag-panel
 import { WorkflowPanel } from '@/components/assistant-ui/right-panel/panels/workflow-panel';
 import type { PanelContentProps, PanelKind, PanelKindDef } from './panel-types';
 
-function TablePanel(_props: PanelContentProps) {
-  return <TableGrid />;
+function TablePanel({ tab, updateState }: PanelContentProps) {
+  const localId = useAuiState((s) => s.threadListItem.id);
+  const remoteId = useAuiState(
+    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+  );
+  const threadId = remoteId ?? localId ?? null;
+  const sheetId =
+    typeof tab.state?.sheetId === 'string' && tab.state.sheetId.trim()
+      ? tab.state.sheetId.trim()
+      : null;
+  return (
+    <TableGrid
+      key={`${threadId ?? 'no-thread'}:${tab.id}`}
+      threadId={threadId}
+      boundSheetId={sheetId}
+      onBoundSheet={(id) => updateState({ sheetId: id })}
+    />
+  );
 }
 
 function WebPanel(props: PanelContentProps) {
@@ -43,6 +60,8 @@ export const PANEL_KINDS: PanelKindDef[] = [
     description: 'panels.table.desc',
     icon: <Table className="size-4" />,
     defaultTitle: 'panels.table.label',
+    // Sheet is created when the user opens a table tab (+), then bound here.
+    createState: () => ({ sheetId: null as string | null }),
     Component: TablePanel,
   },
   {

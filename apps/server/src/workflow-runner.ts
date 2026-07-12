@@ -88,6 +88,7 @@ async function executeNode(
   userId: string,
   workflowName: string,
   workflowId: string,
+  workflowThreadId: string,
 ): Promise<unknown> {
   const data = nodeData(node);
   switch (kind) {
@@ -171,7 +172,7 @@ async function executeNode(
     case 'knowledge_retrieval': {
       const query = interpolate(String(data.query ?? ''), ctx);
       if (!query.trim()) throw new Error('knowledge_retrieval requires query');
-      const result = await searchKnowledge(tenantId, query);
+      const result = await searchKnowledge(tenantId, query, { threadId: workflowThreadId });
       return { result: result.references, context: result.context };
     }
 
@@ -264,6 +265,7 @@ async function runNode(
   userId: string,
   workflowName: string,
   workflowId: string,
+  workflowThreadId: string,
 ): Promise<ExecResult> {
   try {
     const output = await executeNode(
@@ -276,6 +278,7 @@ async function runNode(
       userId,
       workflowName,
       workflowId,
+      workflowThreadId,
     );
     let outcome: NodeOutcome = 'success';
     if (kind === 'if_else') {
@@ -351,6 +354,7 @@ export async function runWorkflowJob(runtime: Runtime, job: WorkflowJob): Promis
           workflow.userId,
           workflow.name,
           workflow.id,
+          workflow.threadId,
         );
         ctx[node.id] = output;
         await appendLog({

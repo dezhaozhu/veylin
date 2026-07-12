@@ -243,16 +243,25 @@ describe('table_edit_structure / table_sheets', () => {
 
   it('table_sheets lists, creates, and renames', async () => {
     const tools = buildTableTools();
+    const threadId = `test-thread-${Date.now()}`;
+    const ctx = {
+      requestContext: {
+        get(key: string) {
+          return key === 'threadId' ? threadId : undefined;
+        },
+      },
+    };
+
     const listed = (await tools.table_sheets.execute!(
       { action: 'list' },
-      {} as never,
+      ctx as never,
     )) as { ok: boolean; sheets: Array<{ id: string }> };
     assert.equal(listed.ok, true);
-    assert.ok(listed.sheets.length >= 1);
+    assert.ok(Array.isArray(listed.sheets));
 
     const created = (await tools.table_sheets.execute!(
       { action: 'create', name: `sheet-${Date.now()}` },
-      {} as never,
+      ctx as never,
     )) as { ok: boolean; sheet: { id: string; name: string } | null };
     assert.equal(created.ok, true);
     assert.ok(created.sheet?.id);
@@ -263,7 +272,7 @@ describe('table_edit_structure / table_sheets', () => {
         sheet: created.sheet!.id,
         name: `renamed-${Date.now()}`,
       },
-      {} as never,
+      ctx as never,
     )) as { ok: boolean; sheet: { id: string; name: string } | null };
     assert.equal(renamed.ok, true);
     assert.equal(renamed.sheet?.id, created.sheet!.id);

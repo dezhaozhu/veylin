@@ -14,7 +14,7 @@ import {
   MAX_TABLE_GET_LIMIT,
   queryTableRows,
   renameTableSheet,
-  resolveTableSheetId,
+  sheetBelongsToThread,
   tryResolveTableSheetId,
   updateTableRow,
   type DeletedTableRowSnapshot,
@@ -25,6 +25,12 @@ import {
 
 const rowSchema = z.record(z.string(), z.union([z.string(), z.number()]));
 const cellValueSchema = z.union([z.string(), z.number()]);
+
+type ToolRequestCtx = { requestContext?: { get(key: string): unknown } };
+
+function toolThreadId(ctx?: ToolRequestCtx): string | null {
+  return (ctx?.requestContext?.get('threadId') as string | undefined)?.trim() || null;
+}
 
 /** Hard cap so one tool call cannot rewrite an entire sheet. */
 export const MAX_TABLE_CELL_UPDATES = 20;
@@ -39,6 +45,7 @@ function formatRejected(rejected: RejectedPatchField[]): string {
 
 function resolveWriteSheet(
   sheet: string | undefined,
+  threadId?: string | null,
 ): { ok: true; sheet: string } | { ok: false; sheet: string; message: string } {
   if (sheet !== undefined && sheet !== '') {
     const id = tryResolveTableSheetId(sheet);
@@ -49,11 +56,25 @@ function resolveWriteSheet(
         message: `Sheet "${sheet}" not found. Call table_sheets with action "list" for valid ids.`,
       };
     }
+    if (threadId && !sheetBelongsToThread(id, threadId)) {
+      return {
+        ok: false,
+        sheet,
+        message: `Sheet "${sheet}" not found in this session. Call table_sheets with action "list".`,
+      };
+    }
     return { ok: true, sheet: id };
   }
   const id = tryResolveTableSheetId(undefined);
   if (!id) {
     return { ok: false, sheet: 'main', message: 'No table sheet available' };
+  }
+  if (threadId && !sheetBelongsToThread(id, threadId)) {
+    return {
+      ok: false,
+      sheet: id,
+      message: 'Default sheet is not available in this session. Create one via table_sheets.',
+    };
   }
   return { ok: true, sheet: id };
 }
@@ -441,8 +462,21 @@ export function buildTableTools() {
         .optional(),
       notice: z.string().optional(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: ToolRequestCtx) => {
+      const threadId = toolThreadId(ctx);
+      const resolved = resolveWriteSheet(input.sheet, threadId);
+      if (!resolved.ok) {
+        return {
+          sheet: resolved.sheet,
+          totalRows: 0,
+          matchedRows: 0,
+          mode: 'rows' as const,
+          columns: [],
+          rows: [],
+          notice: resolved.message,
+        };
+      }
+      const sheet = resolved.sheet;
       const nestedSortBy = input.aggregate?.sort_by;
       const nestedSortDir = input.aggregate?.sort_dir;
       const sortBy = input.sort_by ?? nestedSortBy;
@@ -564,8 +598,8 @@ export function buildTableTools() {
         .optional(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const resolved = resolveWriteSheet(input.sheet);
+    execute: async (input, ctx?: ToolRequestCtx) => {
+      const resolved = resolveWriteSheet(input.sheet, toolThreadId(ctx));
       if (!resolved.ok) {
         return {
           ok: false,
@@ -652,8 +686,8 @@ export function buildTableTools() {
       ),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const resolved = resolveWriteSheet(input.sheet);
+    execute: async (input, ctx?: ToolRequestCtx) => {
+      const resolved = resolveWriteSheet(input.sheet, toolThreadId(ctx));
       if (!resolved.ok) {
         return {
           ok: false,
@@ -700,9 +734,10 @@ export function buildTableTools() {
       sheet: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
       message: z.string(),
     }),
-    execute: async (input) => {
+    execute: async (input, ctx?: ToolRequestCtx) => {
+      const threadId = toolThreadId(ctx);
       if (input.action === 'list') {
-        const sheets = listTableSheets();
+        const sheets = listTableSheets(threadId);
         return {
           ok: true,
           action: 'list' as const,
@@ -720,16 +755,24 @@ export function buildTableTools() {
             message: 'name is required for create',
           };
         }
-        if (isTableSheetNameTaken(name)) {
+        if (!threadId) {
           return {
             ok: false,
             action: 'create' as const,
             sheet: null,
-            sheets: listTableSheets(),
+            message: 'threadId required to create a session-scoped sheet',
+          };
+        }
+        if (isTableSheetNameTaken(name, undefined, threadId)) {
+          return {
+            ok: false,
+            action: 'create' as const,
+            sheet: null,
+            sheets: listTableSheets(threadId),
             message: `Sheet name "${name}" already exists. Sheet names must be unique.`,
           };
         }
-        const sheet = createTableSheet(name);
+        const sheet = createTableSheet(name, threadId);
         if (!sheet) {
           return {
             ok: false,
@@ -764,12 +807,21 @@ export function buildTableTools() {
             message: 'name is required for rename',
           };
         }
-        if (isTableSheetNameTaken(name, sheetId)) {
+        const existing = listTableSheets().find((s) => s.id === sheetId);
+        if (!existing || (threadId && (existing.threadId ?? '') !== threadId)) {
           return {
             ok: false,
             action: 'rename' as const,
             sheet: null,
-            sheets: listTableSheets(),
+            message: 'sheet not found in this session',
+          };
+        }
+        if (isTableSheetNameTaken(name, sheetId, existing.threadId ?? threadId)) {
+          return {
+            ok: false,
+            action: 'rename' as const,
+            sheet: null,
+            sheets: listTableSheets(threadId),
             message: `Sheet name "${name}" already exists. Sheet names must be unique.`,
           };
         }
@@ -786,7 +838,7 @@ export function buildTableTools() {
           ok: true,
           action: 'rename' as const,
           sheet: { id: sheet.id, name: sheet.name },
-          sheets: listTableSheets(),
+          sheets: listTableSheets(threadId),
           message: `Renamed sheet to ${sheet.name}`,
         };
       }
@@ -797,6 +849,14 @@ export function buildTableTools() {
           ok: false,
           action: 'delete' as const,
           message: 'sheet id is required for delete',
+        };
+      }
+      const target = listTableSheets().find((s) => s.id === sheetId);
+      if (threadId && target && (target.threadId ?? '') !== threadId) {
+        return {
+          ok: false,
+          action: 'delete' as const,
+          message: 'sheet not found in this session',
         };
       }
       const ok = await deleteTableSheet(sheetId);

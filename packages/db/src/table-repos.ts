@@ -2,19 +2,25 @@ import { getDb } from './client';
 import { normalizeId, queryRows, createRecord, upsertById, deleteById } from './query';
 import type { TableColumnRow, TableRowRecord, TableSheetRow } from './types';
 
-export async function listTableSheets(): Promise<TableSheetRow[]> {
+export async function listTableSheets(threadId?: string | null): Promise<TableSheetRow[]> {
   const rows = await queryRows<Record<string, unknown>>(getDb(), 'SELECT * FROM table_sheet');
-  return rows.map((r) => ({
+  const mapped = rows.map((r) => ({
     id: normalizeId(r.id),
     name: String(r.name ?? ''),
     builtin: Boolean(r.builtin),
+    threadId: (r.thread_id as string | null | undefined) ?? null,
   }));
+  if (threadId === undefined) return mapped;
+  if (threadId === null) return mapped.filter((s) => !s.threadId);
+  const key = threadId.trim();
+  return mapped.filter((s) => (s.threadId ?? '') === key);
 }
 
 export async function upsertTableSheet(sheet: TableSheetRow): Promise<void> {
   await upsertById(getDb(), 'table_sheet', sheet.id, {
     name: sheet.name,
     builtin: sheet.builtin,
+    thread_id: sheet.threadId?.trim() || null,
   });
 }
 

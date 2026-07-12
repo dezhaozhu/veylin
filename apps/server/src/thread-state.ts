@@ -289,9 +289,52 @@ export async function activateSkill(
 ): Promise<Record<string, string>> {
   const row = await getThreadStateRow(threadId);
   const prev = (row?.activatedSkills as Record<string, string>) ?? {};
-  if (prev[name]) return prev;
+  if (prev[name] === content) return prev;
   const next = { ...prev, [name]: content };
   if (row) {
+    await updateThreadState(threadId, { activatedSkills: next });
+  }
+  return next;
+}
+
+/**
+ * Re-read activated skill bodies from disk/catalog so customize edits apply on
+ * the next turn without requiring re-activation. Missing skills keep prior text.
+ */
+export function mergeActivatedSkillContents(
+  prev: Record<string, string>,
+  latestByName: Record<string, string | null | undefined>,
+): { next: Record<string, string>; changed: boolean } {
+  let changed = false;
+  const next: Record<string, string> = { ...prev };
+  for (const name of Object.keys(prev)) {
+    const latest = latestByName[name];
+    if (latest != null && latest !== prev[name]) {
+      next[name] = latest;
+      changed = true;
+    }
+  }
+  return { next, changed };
+}
+
+export async function refreshActivatedSkills(
+  threadId: string,
+  resolveContent: (name: string) => Promise<string | null>,
+): Promise<Record<string, string>> {
+  const row = await getThreadStateRow(threadId);
+  const prev = (row?.activatedSkills as Record<string, string>) ?? {};
+  const names = Object.keys(prev);
+  if (names.length === 0) return prev;
+
+  const latestByName: Record<string, string | null> = {};
+  await Promise.all(
+    names.map(async (name) => {
+      latestByName[name] = await resolveContent(name);
+    }),
+  );
+
+  const { next, changed } = mergeActivatedSkillContents(prev, latestByName);
+  if (changed && row) {
     await updateThreadState(threadId, { activatedSkills: next });
   }
   return next;

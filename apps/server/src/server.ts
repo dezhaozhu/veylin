@@ -45,6 +45,10 @@ import { runWorkflowJob } from './workflow-runner';
 import { ensureEmbeddingModelOnStartup } from './embedding-service';
 import { buildWorkflowTools } from './workflow-tools';
 import { applyTenantModelSettings, seedModelSettingsFromEnvIfEmpty } from './model-settings-store';
+import {
+  bindLangfuseRuntime,
+  seedLangfuseSettingsFromEnvIfEmpty,
+} from './langfuse-settings-store';
 import { buildKnowledgeSearchTool, sweepInterruptedRagIngests } from './rag-store';
 import { RAG_UPLOAD_MAX_BYTES } from './rag-limits';
 import { registerPluginProviders } from './plugin-store';
@@ -231,6 +235,8 @@ async function main() {
     libsqlUrl: mastraLibsqlUrl(DATA_DIR),
     agentsDir: AGENTS_DIR,
   });
+  bindLangfuseRuntime(runtime.mastra);
+  await seedLangfuseSettingsFromEnvIfEmpty(DEV_TENANT_ID);
   app.log.info(
     {
       agentsDir: AGENTS_DIR,

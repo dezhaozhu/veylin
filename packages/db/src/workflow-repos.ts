@@ -9,6 +9,7 @@ function mapWorkflow(r: Record<string, unknown>): WorkflowRow {
     id: normalizeId(r.id),
     tenantId: String(r.tenant_id ?? ''),
     userId: String(r.user_id ?? ''),
+    threadId: String(r.thread_id ?? ''),
     name: String(r.name ?? ''),
     kind: (r.kind as WorkflowRow['kind']) ?? 'manual',
     enabled: Boolean(r.enabled ?? true),
@@ -39,13 +40,19 @@ function mapWorkflowRun(r: Record<string, unknown>): WorkflowRunRow {
   };
 }
 
-export async function listWorkflowRows(tenantId: string, userId?: string): Promise<WorkflowRow[]> {
+export async function listWorkflowRows(
+  tenantId: string,
+  options?: { userId?: string; threadId?: string },
+): Promise<WorkflowRow[]> {
+  const userId = options?.userId;
+  const threadId = options?.threadId;
+  if (!threadId) return [];
   const rows = await queryRows<Record<string, unknown>>(
     getDb(),
     userId
-      ? 'SELECT * FROM workflow WHERE tenant_id = $tenantId AND user_id = $userId ORDER BY created_at DESC'
-      : 'SELECT * FROM workflow WHERE tenant_id = $tenantId ORDER BY created_at DESC',
-    { tenantId, userId },
+      ? 'SELECT * FROM workflow WHERE tenant_id = $tenantId AND user_id = $userId AND thread_id = $threadId ORDER BY created_at DESC'
+      : 'SELECT * FROM workflow WHERE tenant_id = $tenantId AND thread_id = $threadId ORDER BY created_at DESC',
+    { tenantId, userId, threadId },
   );
   return rows.map(mapWorkflow);
 }
@@ -87,6 +94,7 @@ export async function insertWorkflow(
     id,
     tenant_id: tenantId,
     user_id: userId,
+    thread_id: input.threadId,
     name: input.name,
     kind: input.kind,
     enabled: input.enabled,

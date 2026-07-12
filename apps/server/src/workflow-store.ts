@@ -22,11 +22,12 @@ export class WorkflowNameConflictError extends Error {
 
 async function assertUniqueWorkflowName(
   tenantId: string,
+  threadId: string,
   name: string,
   excludeId?: string,
 ): Promise<void> {
   const trimmed = name.trim();
-  const rows = await listWorkflowRows(tenantId);
+  const rows = await listWorkflowRows(tenantId, { threadId });
   if (rows.some((r) => r.name.trim() === trimmed && r.id !== excludeId)) {
     throw new WorkflowNameConflictError(trimmed);
   }
@@ -38,6 +39,7 @@ function rowToWorkflow(row: NonNullable<Awaited<ReturnType<typeof getWorkflowRow
     id: row.id,
     tenantId: row.tenantId,
     userId: row.userId,
+    threadId: row.threadId,
     name: row.name,
     kind: row.kind,
     enabled: row.enabled,
@@ -70,8 +72,11 @@ function rowToRun(row: Awaited<ReturnType<typeof insertWorkflowRun>>): WorkflowR
   };
 }
 
-export async function listWorkflows(tenantId: string, userId?: string): Promise<Workflow[]> {
-  const rows = await listWorkflowRows(tenantId, userId);
+export async function listWorkflows(
+  tenantId: string,
+  options: { userId?: string; threadId: string },
+): Promise<Workflow[]> {
+  const rows = await listWorkflowRows(tenantId, options);
   return rows.map(rowToWorkflow);
 }
 
@@ -91,8 +96,10 @@ export async function createWorkflow(
   input: WorkflowInput,
 ): Promise<Workflow> {
   const trimmedName = input.name.trim();
-  await assertUniqueWorkflowName(tenantId, trimmedName);
+  const threadId = input.threadId.trim();
+  await assertUniqueWorkflowName(tenantId, threadId, trimmedName);
   const row = await insertWorkflow(tenantId, userId, {
+    threadId,
     name: trimmedName,
     kind: input.kind ?? 'manual',
     enabled: input.enabled ?? true,
@@ -111,8 +118,11 @@ export async function updateWorkflow(
   id: string,
   patch: Partial<WorkflowInput> & { enabled?: boolean },
 ): Promise<Workflow | null> {
+  const existing = await getWorkflow(tenantId, id);
+  if (!existing) return null;
+  const threadId = patch.threadId?.trim() || existing.threadId;
   if (patch.name != null) {
-    await assertUniqueWorkflowName(tenantId, patch.name, id);
+    await assertUniqueWorkflowName(tenantId, threadId, patch.name, id);
   }
   const row = await updateWorkflowRow(tenantId, id, {
     ...(patch.name != null ? { name: patch.name.trim() } : {}),

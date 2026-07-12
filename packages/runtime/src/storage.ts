@@ -1,6 +1,10 @@
 import { LibSQLStore } from '@mastra/libsql';
 import { LangfuseExporter } from '@mastra/langfuse';
 import { Observability, MastraStorageExporter } from '@mastra/observability';
+import {
+  DEFAULT_LANGFUSE_BASE_URL,
+  type LangfuseSettingsStored,
+} from '@veylin/shared';
 
 export function buildStorage(libsqlUrl: string): LibSQLStore {
   return new LibSQLStore({ id: 'veylin-mastra-store', url: libsqlUrl });
@@ -17,13 +21,21 @@ export type LangfuseResolvedConfig = {
   release?: string;
 };
 
-/**
- * Resolve Langfuse exporter config from env.
- * Returns null when disabled or when keys are missing (with a warn).
- */
-export function resolveLangfuseConfig(
-  env: NodeJS.ProcessEnv = process.env,
-): LangfuseResolvedConfig | null {
+export type RuntimeLangfuseOverrides = LangfuseSettingsStored;
+
+let runtimeLangfuseOverrides: RuntimeLangfuseOverrides | null = null;
+
+export function setRuntimeLangfuseOverrides(
+  overrides: RuntimeLangfuseOverrides | null,
+): void {
+  runtimeLangfuseOverrides = overrides ? { ...overrides } : null;
+}
+
+export function getRuntimeLangfuseOverrides(): RuntimeLangfuseOverrides | null {
+  return runtimeLangfuseOverrides ? { ...runtimeLangfuseOverrides } : null;
+}
+
+function resolveFromEnv(env: NodeJS.ProcessEnv): LangfuseResolvedConfig | null {
   const raw = env.LANGFUSE_ENABLED?.trim().toLowerCase();
   const enabled = raw === 'true' || raw === '1';
   if (!enabled) return null;
@@ -37,11 +49,10 @@ export function resolveLangfuseConfig(
     return null;
   }
 
-  const baseUrl = (
+  const baseUrl =
     env.LANGFUSE_BASE_URL?.trim() ||
     env.LANGFUSE_HOST?.trim() ||
-    'https://cloud.langfuse.com'
-  );
+    DEFAULT_LANGFUSE_BASE_URL;
 
   return {
     publicKey,
@@ -52,14 +63,51 @@ export function resolveLangfuseConfig(
   };
 }
 
-export function buildObservability(
+function resolveFromOverride(
+  override: RuntimeLangfuseOverrides,
+  env: NodeJS.ProcessEnv,
+): LangfuseResolvedConfig | null {
+  if (!override.enabled) return null;
+
+  const publicKey = override.publicKey?.trim() ?? '';
+  const secretKey = override.secretKey?.trim() ?? '';
+  if (!publicKey || !secretKey) {
+    console.warn(
+      '[observability] Langfuse override is enabled but publicKey / secretKey are missing; skipping Langfuse exporter',
+    );
+    return null;
+  }
+
+  return {
+    publicKey,
+    secretKey,
+    baseUrl: override.baseUrl?.trim() || DEFAULT_LANGFUSE_BASE_URL,
+    environment: env.LANGFUSE_ENVIRONMENT?.trim() || env.NODE_ENV?.trim() || undefined,
+    release: env.LANGFUSE_RELEASE?.trim() || undefined,
+  };
+}
+
+/**
+ * Resolve Langfuse exporter config from runtime override ∪ env.
+ * Override wins when set; otherwise falls back to LANGFUSE_* env.
+ * Returns null when disabled or when keys are missing (with a warn).
+ */
+export function resolveLangfuseConfig(
   env: NodeJS.ProcessEnv = process.env,
+): LangfuseResolvedConfig | null {
+  if (runtimeLangfuseOverrides) {
+    return resolveFromOverride(runtimeLangfuseOverrides, env);
+  }
+  return resolveFromEnv(env);
+}
+
+export function buildObservabilityFromConfig(
+  langfuse: LangfuseResolvedConfig | null,
 ): Observability {
   const exporters: Array<MastraStorageExporter | LangfuseExporter> = [
     new MastraStorageExporter(),
   ];
 
-  const langfuse = resolveLangfuseConfig(env);
   if (langfuse) {
     exporters.push(
       new LangfuseExporter({
@@ -87,4 +135,10 @@ export function buildObservability(
       },
     },
   });
+}
+
+export function buildObservability(
+  env: NodeJS.ProcessEnv = process.env,
+): Observability {
+  return buildObservabilityFromConfig(resolveLangfuseConfig(env));
 }

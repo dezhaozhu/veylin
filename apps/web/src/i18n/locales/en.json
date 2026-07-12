@@ -287,6 +287,26 @@
       "hint": "Application UI language",
       "closeMenu": "Close language menu"
     },
+    "langfuse": {
+      "title": "Langfuse",
+      "hint": "Observability tracing; takes effect immediately after save",
+      "enabled": "Enable Langfuse",
+      "publicKey": "Public Key",
+      "publicKeyPlaceholder": "pk-lf-…",
+      "secretKey": "Secret Key",
+      "secretKeyPlaceholder": "sk-lf-…",
+      "secretKeyHint": "Required. The key is never shown again after saving.",
+      "secretKeyHintSaved": "A key is saved. Leave blank to keep it, or enter a new one to replace.",
+      "baseUrl": "Base URL",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "Saved",
+      "clear": "Clear",
+      "clearing": "Clearing…",
+      "loadFailed": "Failed to load Langfuse settings.",
+      "saveFailed": "Failed to save. Please try again.",
+      "clearFailed": "Failed to clear. Please try again."
+    },
     "models": {
       "nav": "Models",
       "title": "Models",

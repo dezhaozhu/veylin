@@ -152,6 +152,13 @@ export type ModelProviderSettings = {
   configured: boolean;
 };
 
+export type LangfuseSettings = {
+  enabled: boolean;
+  publicKey: string;
+  baseUrl: string;
+  hasSecretKey: boolean;
+};
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const hasBody = init?.body != null && init.body !== '';
   const headers = new Headers(init?.headers);
@@ -200,6 +207,29 @@ export const settingsApi = {
         apiKey: '',
       });
     }
+  },
+
+  getLangfuseSettings: async () => {
+    const res = await apiFetch<{ settings: LangfuseSettings }>('/api/langfuse-settings');
+    return { settings: res.settings };
+  },
+  updateLangfuseSettings: async (body: {
+    enabled?: boolean;
+    publicKey?: string;
+    secretKey?: string;
+    baseUrl?: string;
+  }) => {
+    const res = await apiFetch<{ settings: LangfuseSettings }>('/api/langfuse-settings', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    return { settings: res.settings };
+  },
+  clearLangfuseSettings: async () => {
+    const res = await apiFetch<{ settings: LangfuseSettings }>('/api/langfuse-settings', {
+      method: 'DELETE',
+    });
+    return { settings: res.settings };
   },
 
   getSkills: () =>
