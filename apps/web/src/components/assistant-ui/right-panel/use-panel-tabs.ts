@@ -149,7 +149,7 @@ export function usePanelTabsState(): PanelTabsApi {
           const sheet = await createNextThreadSheet(tid);
           const tab = createTab(kind, {
             sheetId: sheet.id,
-            title: sheet.name,
+            // Panel title stays the kind label ("表格"); sheet names live in Excel-style tabs.
           });
           commit({ tabs: [...stateRef.current.tabs, tab], activeId: tab.id });
         } catch {

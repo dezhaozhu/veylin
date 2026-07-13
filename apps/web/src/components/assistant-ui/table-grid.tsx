@@ -534,12 +534,13 @@ export type TableGridProps = {
   /** Current chat session — sheets are isolated per thread. */
   threadId?: string | null;
   /**
-   * Sheet owned by this panel tab. Created when the user opens the tab (+),
+   * Last-active sheet for this panel tab. Created when the user opens the tab (+),
    * then passed in — TableGrid never auto-creates on mount.
-   * When `onBoundSheet` is set (right-panel binding), only this sheet is shown.
+   * When `onBoundSheet` is set (right-panel binding), all thread sheets stay visible
+   * as Excel-style tabs; this id only tracks which sheet is active.
    */
   boundSheetId?: string | null;
-  /** Persist the sheet id onto the panel tab after switch / recreate. */
+  /** Persist the active sheet id onto the panel tab. */
   onBoundSheet?: (sheetId: string) => void;
 };
 
@@ -636,22 +637,10 @@ export function TableGrid({
     lastSerialized.current = '';
   }, []);
 
-  const activeSheetIdRef = useRef(activeSheetId);
-  activeSheetIdRef.current = activeSheetId;
-
   const applyPayload = useCallback(
-    (data: SchedulePayload, initial: boolean, preferSheetId?: string) => {
+    (data: SchedulePayload, initial: boolean, _preferSheetId?: string) => {
       if (data.sheets?.length) {
-        if (bindingEnabled) {
-          const id = preferSheetId?.trim() || activeSheetIdRef.current;
-          const mine = id
-            ? data.sheets.find((s) => s.id === id)
-            : undefined;
-          if (mine) setSheets([mine]);
-          else if (data.sheets.length === 1) setSheets([data.sheets[0]!]);
-        } else {
-          setSheets(data.sheets);
-        }
+        setSheets(data.sheets);
       }
       if (data.columns) setColumnDefs(data.columns);
       const next = data.rows ?? [];
@@ -662,7 +651,7 @@ export function TableGrid({
       lastSerialized.current = serialized;
       setRows(next);
     },
-    [bindingEnabled],
+    [],
   );
 
   const load = useCallback(
@@ -720,38 +709,38 @@ export function TableGrid({
         showToast(data.message ?? t('table.deleteSheetFailed'), 'error');
         return;
       }
-      if (bindingEnabled) {
-        // Bound panel: after deleting the only visible sheet, create a fresh empty one
-        // (user-initiated delete — not mount).
-        if (deleteSheetTarget.id === activeSheetId) {
-          if (!threadId?.trim()) {
-            showToast(t('table.createSheetFailed'), 'error');
-            setDeleteSheetTarget(null);
-            return;
-          }
-          try {
-            const created = await createNextThreadSheet(threadId.trim());
-            resetSheetUiState();
-            setSheets([asTableSheet(created)]);
-            setActiveSheetId(created.id);
-            setLoading(true);
-            onBoundSheetRef.current?.(created.id);
-          } catch (err) {
-            showToast(
-              err instanceof Error ? err.message : t('table.createSheetFailed'),
-              'error',
-            );
-          }
-        }
+      if (data.sheets) setSheets(data.sheets);
+      if (deleteSheetTarget.id !== activeSheetId) {
         setDeleteSheetTarget(null);
         return;
       }
-      if (data.sheets) setSheets(data.sheets);
-      if (deleteSheetTarget.id === activeSheetId && data.nextSheet) {
+      const nextId =
+        (data.nextSheet && data.sheets?.some((s) => s.id === data.nextSheet)
+          ? data.nextSheet
+          : data.sheets?.[0]?.id) ?? null;
+      if (nextId) {
         resetSheetUiState();
-        setActiveSheetId(data.nextSheet);
+        setActiveSheetId(nextId);
         setLoading(true);
-        onBoundSheetRef.current?.(data.nextSheet);
+        onBoundSheetRef.current?.(nextId);
+        setDeleteSheetTarget(null);
+        return;
+      }
+      // Last sheet removed — seed a fresh empty one so the panel is not blank.
+      if (bindingEnabled && threadId?.trim()) {
+        try {
+          const created = await createNextThreadSheet(threadId.trim());
+          resetSheetUiState();
+          setSheets([asTableSheet(created)]);
+          setActiveSheetId(created.id);
+          setLoading(true);
+          onBoundSheetRef.current?.(created.id);
+        } catch (err) {
+          showToast(
+            err instanceof Error ? err.message : t('table.createSheetFailed'),
+            'error',
+          );
+        }
       }
       setDeleteSheetTarget(null);
     } catch (e: unknown) {
@@ -785,12 +774,8 @@ export function TableGrid({
       const sheet = asTableSheet(
         await createThreadSheet(threadId.trim(), name),
       );
-      if (bindingEnabled) {
-        setSheets([sheet]);
-      } else {
-        const list = await fetchSheetList(threadId);
-        setSheets(list);
-      }
+      const list = await fetchSheetList(threadId);
+      setSheets(list.length > 0 ? list : [sheet]);
       resetSheetUiState();
       setActiveSheetId(sheet.id);
       setLoading(true);
@@ -859,9 +844,7 @@ export function TableGrid({
         showToast(data.message ?? t('table.renameSheetFailed'), 'error');
         return;
       }
-      if (bindingEnabled && data.sheet) {
-        setSheets([data.sheet]);
-      } else if (data.sheets) {
+      if (data.sheets) {
         setSheets(data.sheets);
       } else if (data.sheet) {
         setSheets((prev) =>
@@ -880,7 +863,6 @@ export function TableGrid({
       setRenamingSheet(false);
     }
   }, [
-    bindingEnabled,
     cancelRenameSheet,
     renameDraft,
     renamingSheet,
@@ -938,15 +920,6 @@ export function TableGrid({
         // and surface as a spurious load/delete failure).
         void fetchSheetList(threadId)
           .then((nextSheets) => {
-            if (bindingEnabled) {
-              const current = nextSheets.find((s) => s.id === activeSheetId);
-              if (current) {
-                setSheets([current]);
-                return;
-              }
-              // Bound sheet gone — keep UI; next create/load will recover.
-              return;
-            }
             setSheets(nextSheets);
             if (nextSheets.some((s) => s.id === activeSheetId)) return;
             const fallback = nextSheets[0]?.id;
@@ -980,7 +953,7 @@ export function TableGrid({
       }
     };
     return () => es.close();
-  }, [activeSheetId, bindingEnabled, load, resetSheetUiState, threadId]);
+  }, [activeSheetId, load, resetSheetUiState, threadId]);
 
   const filteredRows = useMemo(() => {
     const filtered = applyTextQuery(rows, filters.query);
@@ -1473,9 +1446,7 @@ export function TableGrid({
 
   const hasActiveFilters = filters.query.trim() !== '';
 
-  const visibleSheets = bindingEnabled
-    ? sheets.filter((s) => s.id === activeSheetId).slice(0, 1)
-    : sheets;
+  const visibleSheets = sheets;
 
   if (loadError && rows.length === 0 && columnDefs.length === 0) {
     return (
@@ -1526,9 +1497,7 @@ export function TableGrid({
         <div
           className={cn(
             'flex min-w-0 flex-1 items-center gap-1',
-            bindingEnabled
-              ? 'overflow-hidden'
-              : 'overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+            'overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
           )}
         >
           {visibleSheets.map((sheet) => {
@@ -1589,7 +1558,7 @@ export function TableGrid({
                     {sheet.name}
                   </button>
                 )}
-                {(bindingEnabled || visibleSheets.length > 1) && !renaming ? (
+                {(visibleSheets.length > 1 || bindingEnabled) && !renaming ? (
                   <button
                     type="button"
                     aria-label={t('table.deleteSheet', { name: sheet.name })}

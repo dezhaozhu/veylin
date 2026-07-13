@@ -1,5 +1,5 @@
 import { Plus, X } from 'lucide-react';
-import { useCallback, useLayoutEffect, useRef, useState, type FC } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FC } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -11,7 +11,7 @@ import { RightSidebarTrigger, useRightSidebar, useSidebar } from '@/components/u
 import { readChatWorkspaceWidth, rightPanelWidthMax } from '@/lib/chat-panel-ratio';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 import { subscribeLayoutSync } from '@/lib/overlay-bounds';
-import { isTauri } from '@/lib/tauri-web-view';
+import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import {
   collapsedSidebarTriggerReservePx,
   isRightPanelNearlyMaximized,
@@ -20,6 +20,7 @@ import {
 } from '@/lib/titlebar-layout';
 import { cn } from '@/lib/utils';
 import { startWindowDrag } from '@/lib/window-drag';
+import { PANEL_TAB_MENU_CLOSED_EVENT } from './panel-events';
 import { PANEL_KINDS, getPanelKindDef } from './panel-registry';
 import type { PanelKind, PanelTab } from './panel-types';
 
@@ -56,19 +57,22 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   const [menuOpen, setMenuOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
-  const onOpenRef = useRef(onOpen);
-  onOpenRef.current = onOpen;
-  const openingNativeRef = useRef(false);
-  // Keep the Menu resource alive while the OS popup is visible (popup() returns immediately).
-  const nativeMenuRef = useRef<Awaited<ReturnType<typeof import('@tauri-apps/api/menu').Menu.new>> | null>(
-    null,
-  );
 
   const close = useCallback(() => {
     setMenuOpen(false);
   }, []);
 
   useOverlayDismiss(close);
+
+  // Desktop: hide native webview while the styled menu is open so it is not covered;
+  // restore when the menu closes (same contract as other overlays).
+  useEffect(() => {
+    if (!isTauri() || !menuOpen) return;
+    void hideWebView(undefined, { force: true });
+    return () => {
+      window.dispatchEvent(new CustomEvent(PANEL_TAB_MENU_CLOSED_EVENT));
+    };
+  }, [menuOpen]);
 
   const updateMenuPos = useCallback(() => {
     const el = addBtnRef.current;
@@ -87,8 +91,8 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   }, []);
 
   useLayoutEffect(() => {
-    if (!menuOpen || isTauri()) {
-      if (!menuOpen) setMenuPos(null);
+    if (!menuOpen) {
+      setMenuPos(null);
       return;
     }
     updateMenuPos();
@@ -100,48 +104,8 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
     };
   }, [menuOpen, updateMenuPos]);
 
-  /**
-   * Desktop: OS context menu paints above the docked native webview.
-   * Avoids the fragile always-on-top child window (focus races → instant close).
-   */
-  const openNativePlusMenu = useCallback(async () => {
-    if (openingNativeRef.current) return;
-    openingNativeRef.current = true;
-    try {
-      const el = addBtnRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      // Native menus are content-sized (not MENU_WIDTH). Anchor top-left under
-      // the "+" — subtracting MENU_WIDTH left the narrow OS menu far to the left.
-      const x = Math.max(8, rect.left);
-      const y = rect.bottom;
-
-      const { Menu } = await import('@tauri-apps/api/menu');
-      const { LogicalPosition } = await import('@tauri-apps/api/dpi');
-      const menu = await Menu.new({
-        items: PANEL_KINDS.map((def) => ({
-          id: def.kind,
-          text: t(def.label),
-          action: () => {
-            onOpenRef.current(def.kind as PanelKind);
-          },
-        })),
-      });
-      nativeMenuRef.current = menu;
-      // popup() returns as soon as the menu is shown — do not latch menuOpen,
-      // or the "+" stays visually selected after the OS menu dismisses.
-      await menu.popup(new LogicalPosition(x, y));
-    } catch (err) {
-      console.error('[panel-tab-bar] native Menu.popup failed', err);
-    } finally {
-      openingNativeRef.current = false;
-      setMenuOpen(false);
-    }
-  }, [t]);
-
-  // Browser / non-Tauri fallback: HTML portal is fine (no native webview layer).
   const htmlMenu =
-    !isTauri() && menuOpen && menuPos
+    menuOpen && menuPos
       ? createPortal(
           <>
             <DismissibleBackdrop
@@ -162,7 +126,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
                     label={t(def.label)}
                     title={def.description ? t(def.description) : undefined}
                     onClick={() => {
-                      onOpen(def.kind);
+                      void onOpen(def.kind);
                       close();
                     }}
                   />
@@ -234,13 +198,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
           type="button"
           aria-label={t('panelTab.new')}
           aria-expanded={menuOpen}
-          onClick={() => {
-            if (isTauri()) {
-              void openNativePlusMenu();
-              return;
-            }
-            setMenuOpen((o) => !o);
-          }}
+          onClick={() => setMenuOpen((o) => !o)}
           className={cn(
             'text-muted-foreground hover:bg-muted hover:text-foreground ml-1 flex size-7 shrink-0 items-center justify-center rounded-md border border-transparent transition-colors',
             menuOpen && 'bg-muted text-foreground border-border',
