@@ -1,6 +1,6 @@
 import { Children, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronRight, MoreHorizontal } from 'lucide-react';
+import { ChevronRight, Loader2, MoreHorizontal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
@@ -153,6 +153,21 @@ export function SettingsListIcon({
       {statusDot && (
         <span className="border-card absolute -right-0.5 -bottom-0.5 size-2 rounded-full border bg-emerald-500" />
       )}
+    </div>
+  );
+}
+
+/** Right-side install feedback: spinner only (replaces the ··· menu while busy). */
+export function SettingsListInstallSpinner({ label }: { label?: string }) {
+  return (
+    <div
+      className="flex size-7 shrink-0 items-center justify-center"
+      data-no-window-drag
+      role="status"
+      aria-live="polite"
+      aria-label={label}
+    >
+      <Loader2 className="text-muted-foreground size-3.5 animate-spin" />
     </div>
   );
 }

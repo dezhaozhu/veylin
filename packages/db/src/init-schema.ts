@@ -68,6 +68,7 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS plan_mode ON thread_state TYPE bool DEFAULT false`,
   `DEFINE FIELD IF NOT EXISTS todos ON thread_state FLEXIBLE TYPE array DEFAULT []`,
   `DEFINE FIELD IF NOT EXISTS activated_skills ON thread_state FLEXIBLE TYPE object DEFAULT {}`,
+  `DEFINE FIELD IF NOT EXISTS pinned_skills ON thread_state FLEXIBLE TYPE array DEFAULT []`,
   `DEFINE FIELD IF NOT EXISTS working_memory ON thread_state TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS title ON thread_state TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS goal ON thread_state FLEXIBLE TYPE option<object>`,

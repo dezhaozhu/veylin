@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Puzzle, Zap } from 'lucide-react';
+import { Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { MarketplaceEntry, PluginInstall, SkillListItem } from '@/hooks/settings/api';
+import type { PluginInstall, SkillListItem } from '@/hooks/settings/api';
 import { settingsApi } from '@/hooks/settings/api';
 import {
   PageHeader,
@@ -94,7 +94,6 @@ export function SkillsSettingsScreen() {
   const { t } = useTranslation();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [installedPlugins, setInstalledPlugins] = useState<PluginInstall[]>([]);
-  const [marketplace, setMarketplace] = useState<MarketplaceEntry[]>([]);
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -114,7 +113,6 @@ export function SkillsSettingsScreen() {
       setSkills(skillsData.skills);
       setDisabled(new Set(skillsData.disabledSkills));
       setInstalledPlugins(pluginsData.installed);
-      setMarketplace(pluginsData.marketplace);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : t('customize.skillsPage.loadFailed'));
     }
@@ -135,17 +133,6 @@ export function SkillsSettingsScreen() {
           s.source.toLowerCase().includes(q),
       ),
     [skills, q],
-  );
-
-  const marketplaceFiltered = useMemo(
-    () =>
-      marketplace.filter(
-        (e) =>
-          !q ||
-          e.name.toLowerCase().includes(q) ||
-          e.description.toLowerCase().includes(q),
-      ),
-    [marketplace, q],
   );
 
   const sourceLabel = (skill: SkillListItem) =>
@@ -312,47 +299,6 @@ export function SkillsSettingsScreen() {
           </SettingsConnectedList>
         ) : (
           <p className="text-muted-foreground mb-6 text-sm">{t('customize.skillsPage.installedEmpty')}</p>
-        )}
-      </section>
-
-      <section className="mb-8">
-        <SectionHeading title={t('customize.skillsPage.marketplace')} count={marketplaceFiltered.length} />
-        {marketplaceFiltered.length > 0 ? (
-          <SettingsConnectedList>
-            {marketplaceFiltered.map((entry) => (
-              <SettingsListRow
-                key={entry.name}
-                icon={
-                  <SettingsListIcon>
-                    <Puzzle className="size-4" />
-                  </SettingsListIcon>
-                }
-                title={entry.name}
-                subtitle={entry.description}
-                menuItems={[
-                  {
-                    label: t('customize.skillsPage.installFromMarket'),
-                    onClick: () => {
-                      void settingsApi
-                        .installPlugin({ type: 'marketplace', name: entry.name })
-                        .then((res) => {
-                          if (!res.ok) {
-                            alert(res.message ?? t('customize.pluginsPage.installFailed'));
-                            return;
-                          }
-                          return load();
-                        })
-                        .catch((err) => {
-                          alert(err instanceof Error ? err.message : String(err));
-                        });
-                    },
-                  },
-                ]}
-              />
-            ))}
-          </SettingsConnectedList>
-        ) : (
-          <p className="text-muted-foreground mb-6 text-sm">{t('customize.skillsPage.marketplaceEmpty')}</p>
         )}
       </section>
 

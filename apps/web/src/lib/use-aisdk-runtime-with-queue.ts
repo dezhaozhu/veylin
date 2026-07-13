@@ -60,6 +60,7 @@ import {
   FRONTEND_SUSPEND_TOOL_NAMES,
   getFrontendSuspendToolName,
   isAwaitingFrontendToolAnswer,
+  needsFrontendSuspendContinuation,
   pendingFrontendToolCallId,
   registerFrontendToolStop,
   registerStreamStop,
@@ -328,15 +329,23 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   const awaitingFrontendToolAnswer = isAwaitingFrontendToolAnswer(
     chatHelpers.messages,
   );
+  const needsSuspendContinuation = needsFrontendSuspendContinuation(
+    chatHelpers.messages,
+  );
+  const continuation = frontendContinuationRef.current;
+  const continuationInFlight =
+    continuation.pending || continuation.continuing;
   // Subagents now run synchronously inside the `task` tool call, so the parent
   // chat stream stays open (status streaming/submitted) for the whole subagent
-  // run. `isRunning` therefore follows the native stream status; there is no
-  // client-driven "coordinator partial turn" or synthesis re-POST anymore.
+  // run. Also treat ask/read_open_page continuation gaps as running so Worked-for
+  // does not fold between answer submit and the follow-up stream.
   const isRunning =
     chatHelpers.status === "submitted" ||
     chatHelpers.status === "streaming" ||
     hasExecutingTools ||
-    awaitingFrontendToolAnswer;
+    awaitingFrontendToolAnswer ||
+    needsSuspendContinuation ||
+    continuationInFlight;
 
   // Keep a non-React copy so Cmd+R / unload can stop without reading URL.
   useEffect(() => {

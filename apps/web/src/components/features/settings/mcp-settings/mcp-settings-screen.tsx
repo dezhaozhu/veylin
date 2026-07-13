@@ -38,28 +38,10 @@ const LIBRARY = [
     descriptionKey: 'customize.mcpPage.library.slack',
   },
   {
-    id: 'linear',
-    name: 'Linear',
-    transport: 'HTTP',
-    descriptionKey: 'customize.mcpPage.library.linear',
-  },
-  {
     id: 'notion',
     name: 'Notion',
     transport: 'HTTP',
     descriptionKey: 'customize.mcpPage.library.notion',
-  },
-  {
-    id: 'tavily',
-    name: 'Tavily',
-    transport: 'HTTP',
-    descriptionKey: 'customize.mcpPage.library.tavily',
-  },
-  {
-    id: 'supabase',
-    name: 'Supabase',
-    transport: 'HTTP',
-    descriptionKey: 'customize.mcpPage.library.supabase',
   },
 ] as const;
 
@@ -69,8 +51,17 @@ type InstalledItem = {
   transport: string;
   detail: string;
   enabled: boolean;
-  source: 'bundled' | 'remote';
+  source: 'bundled' | 'remote' | 'plugin';
   remoteId?: string;
+};
+
+type PluginMcpServer = {
+  name: string;
+  pluginId: string;
+  transport: 'stdio';
+  command: string;
+  args: string[];
+  cwd?: string;
 };
 
 function McpIcon({ name, enabled }: { name: string; enabled: boolean }) {
@@ -130,6 +121,7 @@ export function McpSettingsScreen() {
   const { t } = useTranslation();
   const [bundled, setBundled] = useState<string[]>([]);
   const [remote, setRemote] = useState<McpServer[]>([]);
+  const [plugin, setPlugin] = useState<PluginMcpServer[]>([]);
   const [disabledMcp, setDisabledMcp] = useState<Set<string>>(new Set());
   const [health, setHealth] = useState<McpHealthSnapshot | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
@@ -151,6 +143,7 @@ export function McpSettingsScreen() {
       const data = await settingsApi.getMcpServers();
       setBundled(data.bundled);
       setRemote(data.remote);
+      setPlugin(data.plugin ?? []);
       setDisabledMcp(new Set(data.disabledMcp ?? []));
       setHealth(data.health);
     } catch (err) {
@@ -173,8 +166,8 @@ export function McpSettingsScreen() {
   }, [load]);
 
   const installedNames = useMemo(
-    () => new Set([...bundled, ...remote.map((r) => r.name)]),
-    [bundled, remote],
+    () => new Set([...bundled, ...remote.map((r) => r.name), ...plugin.map((p) => p.name)]),
+    [bundled, remote, plugin],
   );
 
   const q = query.trim().toLowerCase();
@@ -186,6 +179,17 @@ export function McpSettingsScreen() {
       detail: `tsx ${name}-server`,
       enabled: !disabledMcp.has(name),
       source: 'bundled' as const,
+    })),
+    ...plugin.map((s) => ({
+      key: `plugin-${s.name}`,
+      name: s.name,
+      transport: 'STDIO',
+      detail: t('customize.mcpPage.pluginDetail', {
+        plugin: s.pluginId,
+        command: [s.command, ...(s.args ?? [])].join(' '),
+      }),
+      enabled: !disabledMcp.has(s.name),
+      source: 'plugin' as const,
     })),
     ...remote.map((s) => ({
       key: s.id,
@@ -204,12 +208,15 @@ export function McpSettingsScreen() {
   );
 
   const toggleInstalled = async (item: InstalledItem, enabled: boolean) => {
-    if (item.source === 'bundled') {
+    if (item.source === 'bundled' || item.source === 'plugin') {
       const next = new Set(disabledMcp);
       if (enabled) next.delete(item.name);
       else next.add(item.name);
       setDisabledMcp(next);
-      await settingsApi.saveDisabledMcp([...next]);
+      const res = await settingsApi.saveDisabledMcp([...next]);
+      if (res && typeof res === 'object' && 'health' in res) {
+        setHealth((res as { health: McpHealthSnapshot | null }).health);
+      }
     } else if (item.remoteId) {
       await settingsApi.updateMcpServer(item.remoteId, { enabled });
       await load();

@@ -442,7 +442,8 @@
       "confirmDelete": "卸载「{{name}}」？将删除安装记录并移除本地副本。",
       "installedEmpty": "还没有已安装的插件。",
       "marketplaceEmpty": "市场暂无条目。",
-      "installFromMarket": "添加"
+      "installFromMarket": "添加",
+      "installing": "正在安装…"
     },
     "rulesPage": {
       "title": "规则",
@@ -481,13 +482,14 @@
       "libraryTitle": "服务库",
       "addTitle": "添加 MCP 服务",
       "editorDescription": "通过 SSE 或 HTTP 连接远程 MCP 服务。",
-      "addServer": "添加服务",
+      "addServer": "添加",
       "namePlaceholder": "例如：github",
       "transport": "传输方式",
       "transportHint": "SSE 用于流式端点；HTTP 用于 streamable HTTP MCP。",
       "headers": "Headers",
       "headersHint": "可选 JSON 对象，例如 {\"Authorization\":\"Bearer ...\"}",
-      "connectedEmpty": "还没有已安装的 MCP 服务。",
+      "connectedEmpty": "还没有已安装的 MCP 服务。可在服务库添加远程服务，或从「插件」市场安装带 MCP 的插件。",
+      "pluginDetail": "插件 {{plugin}} · {{command}}",
       "libraryEmpty": "没有匹配的服务库条目。",
       "toggle": "启用/停用 {{name}}",
       "confirmDelete": "删除 MCP 服务「{{name}}」？",
@@ -506,10 +508,7 @@
       "library": {
         "github": "审查 PR、整理 Issue，并根据仓库事件发布摘要。",
         "slack": "把自动化摘要和告警发送到团队正在使用的频道。",
-        "linear": "同步 Issue 状态，并从 Agent 工作流创建后续任务。",
-        "notion": "将报告和结构化笔记发布到团队共享工作区。",
-        "tavily": "为需要最新外部信息的 Agent 提供网页搜索和研究能力。",
-        "supabase": "查询项目数据，并对数据库执行运维检查。"
+        "notion": "将报告和结构化笔记发布到团队共享工作区。"
       },
       "addMcp": "添加 MCP"
     }

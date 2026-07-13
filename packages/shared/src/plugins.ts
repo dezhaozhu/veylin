@@ -11,6 +11,8 @@ export const pluginManifestSchema = z.object({
     })
     .or(z.string())
     .optional(),
+  /** Relative path to Codex-style `.mcp.json` (default: `./.mcp.json` when present). */
+  mcpServers: z.string().optional(),
 });
 
 export type PluginManifest = z.infer<typeof pluginManifestSchema>;

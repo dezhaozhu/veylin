@@ -42,6 +42,7 @@ import { cancelThreadSubagentTasks } from '../cancel-thread-tasks.js';
 import { buildTableContextBlock } from '../table-store.js';
 import {
   activateSkill,
+  activateAndPinSkill,
   createActiveLoop,
   ensureThreadState,
   ephemeralThreadState,
@@ -371,10 +372,15 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         body.pendingSkill,
       );
       if (content) {
-        const skills = await activateSkill(threadId, body.pendingSkill, content);
+        const { activatedSkills: skills, pinnedSkills } = await activateAndPinSkill(
+          threadId,
+          body.pendingSkill,
+          content,
+        );
         threadRowState = {
           ...(threadRowState ?? (await ensureThreadState(identity))),
           activatedSkills: skills,
+          pinnedSkills,
         };
         await syncWorkingMemory(
           deps.runtime.memory,

@@ -37,6 +37,7 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   --animate-spin: spin 1.75s linear infinite;
+  --animate-indeterminate-bar: indeterminate-bar 1.35s ease-in-out infinite;
 }
 
 :root {
@@ -199,4 +200,13 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
 /* Sticky frozen columns stack; the # column paints over the select column's border-inline-end */
 .table-grid .rdg-row .rdg-cell[aria-colindex="2"] {
   box-shadow: inset 1px 0 0 var(--rdg-border-color);
+}
+
+@keyframes indeterminate-bar {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(280%);
+  }
 }

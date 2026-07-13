@@ -73,6 +73,7 @@ export interface ThreadStateRow {
   planMode: boolean;
   todos: unknown[];
   activatedSkills: Record<string, string>;
+  pinnedSkills: string[];
   workingMemory?: string | null;
   title?: string | null;
   goal?: unknown | null;

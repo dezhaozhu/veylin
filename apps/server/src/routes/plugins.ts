@@ -46,6 +46,7 @@ export function registerPluginsRoutes(app: FastifyInstance, deps: ServerDeps): v
         return { ok: false, message: 'type+path|url|name required' };
       }
       await reloadHooksForTenant(ctx.tenantId);
+      await deps.rebuildMcp(ctx.tenantId);
       const { getHookBus } = await import('../hooks-service.js');
       await getHookBus(ctx.tenantId).emit('ConfigChange', { source: 'plugins' });
       return { ok: true, plugin: installed };
@@ -65,6 +66,7 @@ export function registerPluginsRoutes(app: FastifyInstance, deps: ServerDeps): v
       return { ok: false };
     }
     await reloadHooksForTenant(ctx.tenantId);
+    await deps.rebuildMcp(ctx.tenantId);
     return { ok: true, plugin: row };
   });
 
@@ -77,6 +79,7 @@ export function registerPluginsRoutes(app: FastifyInstance, deps: ServerDeps): v
       return { ok: false };
     }
     await reloadHooksForTenant(ctx.tenantId);
+    await deps.rebuildMcp(ctx.tenantId);
     return { ok: true };
   });
 }

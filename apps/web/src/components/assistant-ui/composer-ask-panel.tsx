@@ -16,6 +16,7 @@ import {
   allStepsAnswered,
   ASK_OTHER_OPTION,
   buildAskUserResult,
+  buildSkippedAskUserResult,
   hasStepAnswer,
 } from '@/lib/composer-ask-panel-utils';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
@@ -109,9 +110,7 @@ export function ComposerAskPanel() {
   const skipAll = useCallback(() => {
     const active = getAskUserSessionForThread(threadId);
     if (!active) return;
-    const answers: Record<string, string> = {};
-    for (const q of active.questions) answers[q.question] = '(skipped)';
-    void deliverResult({ questions: active.questions, answers });
+    void deliverResult(buildSkippedAskUserResult(active.questions));
   }, [deliverResult, threadId]);
 
   const goNext = useCallback(() => {

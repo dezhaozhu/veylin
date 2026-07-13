@@ -26,6 +26,35 @@ user-invocable: true
     assert.equal(fm.disableModelInvocation, true);
     assert.equal(fm.userInvocable, true);
   });
+
+  it('reads folded block scalar description (description: >)', () => {
+    const fm = parseSkillFrontmatter(`---
+name: scheduling-data-ingest
+description: >
+  Map tables/CSV/oral descriptions into the canonical scheduling JSON. ALWAYS speculate
+  which columns/fields are used for calculation, confirm with ask_user_question, then
+  fill gaps. Never solve before mapping confirmation.
+---
+
+# Scheduling data ingest
+`);
+    assert.equal(fm.name, 'scheduling-data-ingest');
+    assert.ok(fm.description);
+    assert.match(fm.description!, /canonical scheduling JSON/);
+    assert.doesNotMatch(fm.description!, /^>$/);
+    assert.match(fm.description!, /Never solve before mapping confirmation/);
+  });
+
+  it('reads literal block scalar description (description: |)', () => {
+    const fm = parseSkillFrontmatter(`---
+name: multi
+description: |
+  Line one.
+  Line two.
+---
+`);
+    assert.equal(fm.description, 'Line one.\nLine two.');
+  });
 });
 
 describe('formatSkillCatalogDescription', () => {

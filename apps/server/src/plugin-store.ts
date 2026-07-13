@@ -18,7 +18,23 @@ import {
 } from '@veylin/shared';
 import { setPluginSkillsProvider } from './skills-store.js';
 import { setPluginHookSourcesProvider } from './hooks-service.js';
+import { ensurePluginRuntime } from './plugin-runtime.js';
 import { veylinHome, veylinPluginsDir, veylinPluginsJsonPath } from './veylin-paths.js';
+
+export type PluginStdioMcpConfig = {
+  command: string;
+  args: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+};
+
+const COPY_SKIP = new Set([
+  '.venv',
+  'node_modules',
+  '.veylin-runtime-ready',
+  '.git',
+  '.pip-tmp',
+]);
 
 function pluginsRoot(): string {
   return veylinPluginsDir();
@@ -146,6 +162,7 @@ async function copyDir(src: string, dest: string): Promise<void> {
   await fs.mkdir(dest, { recursive: true });
   const entries = await fs.readdir(src, { withFileTypes: true });
   for (const entry of entries) {
+    if (COPY_SKIP.has(entry.name)) continue;
     const from = join(src, entry.name);
     const to = join(dest, entry.name);
     if (entry.isDirectory()) await copyDir(from, to);
@@ -205,6 +222,12 @@ export async function installPluginFromPath(
   const dest = join(pluginsRoot(), manifest.name);
   await fs.rm(dest, { recursive: true, force: true });
   await copyDir(abs, dest);
+  try {
+    await ensurePluginRuntime(dest);
+  } catch (err) {
+    await fs.rm(dest, { recursive: true, force: true });
+    throw err;
+  }
   return upsertInstall(tenantId, {
     name: manifest.name,
     version: manifest.version ?? null,
@@ -229,6 +252,12 @@ export async function installPluginFromGit(
   const dest = join(pluginsRoot(), manifest.name);
   await fs.rm(dest, { recursive: true, force: true });
   await fs.rename(tmp, dest);
+  try {
+    await ensurePluginRuntime(dest);
+  } catch (err) {
+    await fs.rm(dest, { recursive: true, force: true });
+    throw err;
+  }
   return upsertInstall(tenantId, {
     name: manifest.name,
     version: manifest.version ?? null,
@@ -307,6 +336,85 @@ export async function loadEnabledPluginHookSources(
   return (await listPluginInstalls(tenantId))
     .filter((p) => p.enabled)
     .map((p) => ({ id: p.name, root: p.installPath }));
+}
+
+type PluginMcpFile = {
+  mcpServers?: Record<
+    string,
+    {
+      command?: string;
+      args?: string[];
+      cwd?: string;
+      env?: Record<string, string>;
+      url?: string;
+      transport?: string;
+    }
+  >;
+};
+
+async function resolvePluginMcpPath(installPath: string): Promise<string | null> {
+  try {
+    const manifest = await readManifest(installPath);
+    const rel = manifest.mcpServers?.trim() || './.mcp.json';
+    const candidate = resolve(installPath, rel);
+    await fs.access(candidate);
+    return candidate;
+  } catch {
+    const fallback = join(installPath, '.mcp.json');
+    try {
+      await fs.access(fallback);
+      return fallback;
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Load stdio MCP configs from enabled plugins (Codex-compatible `.mcp.json`).
+ * Keys are namespaced as `{pluginName}/{serverName}`.
+ */
+export async function loadEnabledPluginMcpConfigs(
+  tenantId: string,
+): Promise<Record<string, PluginStdioMcpConfig>> {
+  const installs = (await listPluginInstalls(tenantId)).filter((p) => p.enabled);
+  const configs: Record<string, PluginStdioMcpConfig> = {};
+  for (const plugin of installs) {
+    const mcpPath = await resolvePluginMcpPath(plugin.installPath);
+    if (!mcpPath) continue;
+    let raw: PluginMcpFile;
+    try {
+      raw = JSON.parse(await fs.readFile(mcpPath, 'utf8')) as PluginMcpFile;
+    } catch (err) {
+      console.warn(`[veylin] plugin ${plugin.name}: invalid .mcp.json:`, err);
+      continue;
+    }
+    for (const [serverName, entry] of Object.entries(raw.mcpServers ?? {})) {
+      if (!entry?.command || !Array.isArray(entry.args)) {
+        // Remote URL entries in plugin MCP are not supported yet.
+        if (entry?.url) {
+          console.warn(
+            `[veylin] plugin ${plugin.name}: skipping remote MCP "${serverName}" (stdio only)`,
+          );
+        }
+        continue;
+      }
+      const cwdRel = entry.cwd?.trim() || '.';
+      const cwd = resolve(plugin.installPath, cwdRel);
+      const namespaced = `${plugin.name}/${serverName}`;
+      configs[namespaced] = {
+        command: entry.command,
+        args: entry.args,
+        cwd,
+        ...(entry.env && Object.keys(entry.env).length > 0 ? { env: entry.env } : {}),
+      };
+    }
+  }
+  return configs;
+}
+
+export async function listEnabledPluginMcpServerNames(tenantId: string): Promise<string[]> {
+  return Object.keys(await loadEnabledPluginMcpConfigs(tenantId));
 }
 
 export function registerPluginProviders(): void {

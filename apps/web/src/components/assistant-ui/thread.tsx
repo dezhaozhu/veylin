@@ -73,10 +73,11 @@ import {
   subscribeAskUserSession,
 } from "@/lib/ask-user-question-session";
 import {
-  findLastSubstantialTextIndex,
+  findFinalProseIndex,
   hasPreFinalWork,
-  isSubstantialTextPart,
+  isFinalProsePart,
 } from "@/lib/assistant-final-output";
+import { isFrontendSuspendPartsSettled } from "@/lib/frontend-suspend-tools";
 import { usePlanModeBridge, useGoalLoopBridge } from "@/lib/use-composer-settings";
 import { dispatchOverlayDismiss } from "@/lib/overlay-dismiss";
 import { hideWebView, isTauri } from "@/lib/tauri-web-view";
@@ -428,14 +429,24 @@ const AssistantMessage: FC = () => {
   } = useContext(ThreadComponentsContext);
 
   const parts = useAuiState((s) => s.message.parts);
-  const isRunning = useAuiState((s) => s.message.status?.type === "running");
-  const elapsedSeconds = useStreamingDuration(isRunning === true);
-  const lastTextIdx = useMemo(
-    () => findLastSubstantialTextIndex(parts),
-    [parts],
+  const messageId = useAuiState((s) => s.message.id);
+  const messageStatusRunning = useAuiState(
+    (s) => s.message.status?.type === "running",
   );
+  const threadIsRunning = useAuiState((s) => s.thread.isRunning);
+  const isLastMessage = useAuiState((s) => {
+    const last = s.thread.messages.at(-1);
+    return last?.id === s.message.id;
+  });
+  // Prefer thread.isRunning for the active turn so ask-await / continuation
+  // gaps (runtime-extended isRunning) do not fold early via message.status.
+  const isRunning =
+    messageStatusRunning || (isLastMessage && threadIsRunning);
+  const elapsedSeconds = useStreamingDuration(isRunning === true);
+  const finalProseIdx = useMemo(() => findFinalProseIndex(parts), [parts]);
+  const suspendSettled = isFrontendSuspendPartsSettled(parts);
   const foldWork =
-    !isRunning && hasPreFinalWork(parts, lastTextIdx);
+    !isRunning && suspendSettled && hasPreFinalWork(parts, finalProseIdx);
   const [workedForOpen, setWorkedForOpen] = useState(false);
   const workedForPrimaryStartRef = useRef<number | null>(null);
   // First group-worked-for in this render pass owns the label.
@@ -449,8 +460,13 @@ const AssistantMessage: FC = () => {
       if (!foldWork) {
         return baseAssistantGroupBy(part, context) as readonly AssistantGroupKey[];
       }
-      // Keep all user-visible prose outside the collapse shell.
-      if (part.type === "text" && isSubstantialTextPart(part)) {
+      // Only the final answer (after last ask, or last text) stays outside.
+      const index = parts.indexOf(part as (typeof parts)[number]);
+      if (
+        part.type === "text" &&
+        index >= 0 &&
+        isFinalProsePart(parts, index, finalProseIdx)
+      ) {
         return ["group-final-prose"];
       }
       const path = baseAssistantGroupBy(part, context);
@@ -460,7 +476,7 @@ const AssistantMessage: FC = () => {
       return ["group-worked-for", ...(path as AssistantGroupKey[])];
     };
     return fold;
-  }, [foldWork]);
+  }, [foldWork, parts, finalProseIdx, messageId]);
 
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
   // keeps hovered action bar from shifting layout (autohide doesn't support absolute positioning well)

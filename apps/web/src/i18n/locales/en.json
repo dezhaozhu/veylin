@@ -442,7 +442,8 @@
       "confirmDelete": "Uninstall “{{name}}”? This removes the install record and local copy.",
       "installedEmpty": "No plugins installed yet.",
       "marketplaceEmpty": "No marketplace entries.",
-      "installFromMarket": "Add"
+      "installFromMarket": "Add",
+      "installing": "Installing…"
     },
     "rulesPage": {
       "title": "Rules",
@@ -481,13 +482,14 @@
       "libraryTitle": "Library",
       "addTitle": "Add MCP server",
       "editorDescription": "Connect a remote MCP server over SSE or HTTP.",
-      "addServer": "Add server",
+      "addServer": "Add",
       "namePlaceholder": "e.g. github",
       "transport": "Transport",
       "transportHint": "SSE for streaming endpoints; HTTP for streamable HTTP MCP.",
       "headers": "Headers",
       "headersHint": "Optional JSON object, e.g. {\"Authorization\":\"Bearer ...\"}",
-      "connectedEmpty": "No MCP servers installed yet.",
+      "connectedEmpty": "No MCP servers installed yet. Add a remote server from the library, or install a plugin that bundles MCP.",
+      "pluginDetail": "Plugin {{plugin}} · {{command}}",
       "libraryEmpty": "No library entries match your search.",
       "toggle": "Toggle {{name}}",
       "confirmDelete": "Delete MCP server \"{{name}}\"?",
@@ -506,10 +508,7 @@
       "library": {
         "github": "Review PRs, triage issues, and post summaries from repository events.",
         "slack": "Send automation digests and alerts to channels your team already uses.",
-        "linear": "Sync issue status and create follow-up tasks from agent workflows.",
-        "notion": "Publish reports and structured notes to shared team workspaces.",
-        "tavily": "Web search and research for agents that need fresh external context.",
-        "supabase": "Query project data and run operational checks against your database."
+        "notion": "Publish reports and structured notes to shared team workspaces."
       },
       "addMcp": "Add MCP"
     }

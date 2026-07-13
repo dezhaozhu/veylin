@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Puzzle, Webhook } from 'lucide-react';
+import { Webhook } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type {
   HookListItem,
   HookLogItem,
-  MarketplaceEntry,
   PluginInstall,
 } from '@/hooks/settings/api';
 import { settingsApi } from '@/hooks/settings/api';
@@ -109,7 +108,6 @@ function formValid(form: HookForm): boolean {
 export function HooksSettingsScreen() {
   const { t } = useTranslation();
   const [hooks, setHooks] = useState<HookListItem[]>([]);
-  const [marketplace, setMarketplace] = useState<MarketplaceEntry[]>([]);
   const [installedPlugins, setInstalledPlugins] = useState<PluginInstall[]>([]);
   const [logs, setLogs] = useState<HookLogItem[]>([]);
   const [query, setQuery] = useState('');
@@ -131,7 +129,6 @@ export function HooksSettingsScreen() {
       ]);
       setHooks(hooksData.hooks);
       setLogs(hooksData.logs);
-      setMarketplace(pluginsData.marketplace);
       setInstalledPlugins(pluginsData.installed);
     } catch (err) {
       if (!opts?.quiet) {
@@ -157,16 +154,6 @@ export function HooksSettingsScreen() {
           h.type.toLowerCase().includes(q),
       ),
     [hooks, q],
-  );
-  const marketplaceFiltered = useMemo(
-    () =>
-      marketplace.filter(
-        (e) =>
-          !q ||
-          e.name.toLowerCase().includes(q) ||
-          e.description.toLowerCase().includes(q),
-      ),
-    [marketplace, q],
   );
 
   const renderHookRow = (h: HookListItem) => {
@@ -270,29 +257,6 @@ export function HooksSettingsScreen() {
       alert(err instanceof Error ? err.message : String(err));
     } finally {
       setDeleting(false);
-    }
-  };
-
-  const installFromMarket = async (name: string) => {
-    try {
-      const existing = installedPlugins.find((p) => p.name === name);
-      if (existing) {
-        if (!existing.enabled) {
-          await settingsApi.setPluginEnabled(existing.id, true);
-        }
-        await load({ quiet: true });
-        alert(t('customize.hooksPage.alreadyInstalled', { name }));
-        return;
-      }
-      const res = await settingsApi.installPlugin({ type: 'marketplace', name });
-      if (!res.ok) {
-        alert(res.message ?? t('customize.pluginsPage.installFailed'));
-        return;
-      }
-      await load({ quiet: true });
-      alert(t('customize.hooksPage.installSuccess', { name }));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -416,36 +380,6 @@ export function HooksSettingsScreen() {
           <SettingsConnectedList>{loaded.map(renderHookRow)}</SettingsConnectedList>
         ) : (
           <p className="text-muted-foreground mb-6 text-sm">{t('customize.hooksPage.loadedEmpty')}</p>
-        )}
-      </section>
-
-      <section className="mb-8">
-        <SectionHeading title={t('customize.hooksPage.marketplace')} count={marketplaceFiltered.length} />
-        {marketplaceFiltered.length > 0 ? (
-          <SettingsConnectedList>
-            {marketplaceFiltered.map((entry) => (
-              <SettingsListRow
-                key={entry.name}
-                icon={
-                  <SettingsListIcon>
-                    <Puzzle className="size-4" />
-                  </SettingsListIcon>
-                }
-                title={entry.name}
-                subtitle={entry.description}
-                menuItems={[
-                  {
-                    label: t('customize.hooksPage.installFromMarket'),
-                    onClick: () => {
-                      void installFromMarket(entry.name);
-                    },
-                  },
-                ]}
-              />
-            ))}
-          </SettingsConnectedList>
-        ) : (
-          <p className="text-muted-foreground mb-6 text-sm">{t('customize.hooksPage.marketplaceEmpty')}</p>
         )}
       </section>
 

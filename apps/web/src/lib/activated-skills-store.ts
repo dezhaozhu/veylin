@@ -1,4 +1,4 @@
-/** Activated skills restored from GET /api/threads/:id/state (read-only UI). */
+/** User-pinned skills restored from GET /api/threads/:id/state (composer chips only). */
 
 type Snapshot = {
   threadId: string | undefined;
@@ -34,6 +34,13 @@ export function clearActivatedSkillsSnapshot(): void {
   emit();
 }
 
+/** Short label for composer chip (plugin-qualified names → last segment). */
+export function skillChipDisplayName(name: string): string {
+  const colon = name.lastIndexOf(':');
+  if (colon >= 0 && colon < name.length - 1) return name.slice(colon + 1);
+  return name;
+}
+
 export async function fetchActivatedSkills(threadId: string): Promise<string[]> {
   const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/state`, {
     credentials: 'include',
@@ -43,9 +50,10 @@ export async function fetchActivatedSkills(threadId: string): Promise<string[]> 
     return [];
   }
   const data = (await res.json()) as {
-    state?: { activatedSkills?: Record<string, string> };
+    state?: { pinnedSkills?: string[]; activatedSkills?: Record<string, string> };
   };
-  const names = Object.keys(data.state?.activatedSkills ?? {});
+  // Composer only shows user-pinned skills (slash), not Skill-tool activations.
+  const names = data.state?.pinnedSkills ?? [];
   setActivatedSkillsSnapshot(threadId, names);
   return names;
 }

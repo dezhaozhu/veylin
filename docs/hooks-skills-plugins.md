@@ -41,10 +41,14 @@ Handler types: `command`, `http`, `mcp_tool`, `prompt`, `agent`.
 
 ```
 my-plugin/
-  .veylin-plugin/plugin.json
+  .veylin-plugin/plugin.json   # optional mcpServers: "./.mcp.json"
   skills/*/SKILL.md
   hooks/hooks.json
-  .mcp.json          # optional
+  .mcp.json                    # optional Codex-style stdio MCP
+  requirements.txt             # optional; install creates .venv + pip install
+  mcp/package.json             # optional; install runs npm in mcp/
 ```
 
 Install via **Customize → Plugins** (path, git, or marketplace). Packages under `~/.veylin/plugins/<name>/`; metadata in `plugins.json`.
+
+Enabled plugins with `.mcp.json` are merged into the agent MCP client as stdio servers (`{plugin}/{server}`). Install runs `ensurePluginRuntime` so users do not need a manual shell for declared deps.

@@ -173,7 +173,16 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(text || res.statusText);
+    let message = text || res.statusText;
+    try {
+      const parsed = JSON.parse(text) as { message?: unknown };
+      if (typeof parsed?.message === 'string' && parsed.message.trim()) {
+        message = parsed.message;
+      }
+    } catch {
+      // not JSON
+    }
+    throw new Error(message);
   }
   return res.json() as Promise<T>;
 }
@@ -333,6 +342,14 @@ export const settingsApi = {
     apiFetch<{
       bundled: string[];
       remote: McpServer[];
+      plugin?: Array<{
+        name: string;
+        pluginId: string;
+        transport: 'stdio';
+        command: string;
+        args: string[];
+        cwd?: string;
+      }>;
       disabledMcp: string[];
       health: McpHealthSnapshot | null;
     }>('/api/mcp-servers'),
@@ -341,10 +358,13 @@ export const settingsApi = {
       method: 'POST',
     }),
   saveDisabledMcp: (disabledMcp: string[]) =>
-    apiFetch('/api/mcp-servers/disabled', {
-      method: 'POST',
-      body: JSON.stringify({ disabledMcp }),
-    }),
+    apiFetch<{ ok: boolean; disabledMcp: string[]; health?: McpHealthSnapshot | null }>(
+      '/api/mcp-servers/disabled',
+      {
+        method: 'POST',
+        body: JSON.stringify({ disabledMcp }),
+      },
+    ),
   createMcpServer: (body: {
     name: string;
     transport: 'sse' | 'http';

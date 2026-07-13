@@ -17,6 +17,7 @@ import {
 import {
   SettingsConnectedList,
   SettingsListIcon,
+  SettingsListInstallSpinner,
   SettingsListRow,
 } from '../settings-list';
 
@@ -29,6 +30,8 @@ export function PluginsSettingsScreen() {
   const [installForm, setInstallForm] = useState({ type: 'path' as 'path' | 'git', value: '' });
   const [deleteTarget, setDeleteTarget] = useState<PluginInstall | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [installingName, setInstallingName] = useState<string | null>(null);
+  const [dialogInstalling, setDialogInstalling] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -46,11 +49,12 @@ export function PluginsSettingsScreen() {
   }, [load]);
 
   const install = async () => {
-    if (!installForm.value.trim()) return;
+    if (!installForm.value.trim() || dialogInstalling) return;
     const body =
       installForm.type === 'path'
         ? { type: 'path' as const, path: installForm.value.trim() }
         : { type: 'git' as const, url: installForm.value.trim() };
+    setDialogInstalling(true);
     try {
       const res = await settingsApi.installPlugin(body);
       if (!res.ok) {
@@ -62,6 +66,25 @@ export function PluginsSettingsScreen() {
       await load();
     } catch (err) {
       alert(err instanceof Error ? err.message : t('customize.pluginsPage.installFailed'));
+    } finally {
+      setDialogInstalling(false);
+    }
+  };
+
+  const installFromMarket = async (name: string) => {
+    if (installingName) return;
+    setInstallingName(name);
+    try {
+      const res = await settingsApi.installPlugin({ type: 'marketplace', name });
+      if (!res.ok) {
+        alert(res.message ?? t('customize.pluginsPage.installFailed'));
+        return;
+      }
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : t('customize.pluginsPage.installFailed'));
+    } finally {
+      setInstallingName(null);
     }
   };
 
@@ -113,16 +136,22 @@ export function PluginsSettingsScreen() {
 
       <SettingsFormDialog
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={(open) => {
+          if (dialogInstalling) return;
+          setDialogOpen(open);
+        }}
         title={t('customize.pluginsPage.installTitle')}
         description={t('customize.pluginsPage.installDescription')}
-        submitLabel={t('customize.pluginsPage.install')}
+        submitLabel={
+          dialogInstalling ? t('customize.pluginsPage.installing') : t('customize.pluginsPage.install')
+        }
         onSubmit={() => void install()}
       >
         <FormField label={t('customize.pluginsPage.sourceType')}>
           <select
             className="border-border bg-background w-full rounded-md border px-3 py-2 text-sm"
             value={installForm.type}
+            disabled={dialogInstalling}
             onChange={(e) =>
               setInstallForm((f) => ({ ...f, type: e.target.value as 'path' | 'git' }))
             }
@@ -134,6 +163,7 @@ export function PluginsSettingsScreen() {
         <FormField label={installForm.type === 'path' ? t('customize.pluginsPage.path') : t('customize.pluginsPage.gitUrl')}>
           <FormInput
             value={installForm.value}
+            disabled={dialogInstalling}
             onChange={(e) => setInstallForm((f) => ({ ...f, value: e.target.value }))}
             placeholder={
               installForm.type === 'path'
@@ -142,6 +172,11 @@ export function PluginsSettingsScreen() {
             }
           />
         </FormField>
+        {dialogInstalling ? (
+          <div className="flex justify-end">
+            <SettingsListInstallSpinner label={t('customize.pluginsPage.installing')} />
+          </div>
+        ) : null}
       </SettingsFormDialog>
 
       <section className="mb-8">
@@ -183,34 +218,39 @@ export function PluginsSettingsScreen() {
         <SectionHeading title={t('customize.pluginsPage.marketplace')} count={marketplace.length} />
         {marketplace.length > 0 ? (
           <SettingsConnectedList>
-            {marketplace.map((entry) => (
-              <SettingsListRow
-                key={entry.name}
-                icon={
-                  <SettingsListIcon>
-                    <Puzzle className="size-4" />
-                  </SettingsListIcon>
-                }
-                title={entry.name}
-                subtitle={entry.description}
-                menuItems={[
-                  {
-                    label: t('customize.pluginsPage.installFromMarket'),
-                    onClick: () => {
-                      void settingsApi
-                        .installPlugin({ type: 'marketplace', name: entry.name })
-                        .then((res) => {
-                          if (!res.ok) alert(res.message ?? t('customize.pluginsPage.installFailed'));
-                          return load();
-                        })
-                        .catch((err) => {
-                          alert(err instanceof Error ? err.message : String(err));
-                        });
-                    },
-                  },
-                ]}
-              />
-            ))}
+            {marketplace.map((entry) => {
+              const isInstalling = installingName === entry.name;
+              return (
+                <SettingsListRow
+                  key={entry.name}
+                  icon={
+                    <SettingsListIcon>
+                      <Puzzle className="size-4" />
+                    </SettingsListIcon>
+                  }
+                  title={entry.name}
+                  subtitle={entry.description}
+                  trailing={
+                    isInstalling ? (
+                      <SettingsListInstallSpinner label={t('customize.pluginsPage.installing')} />
+                    ) : undefined
+                  }
+                  menuItems={
+                    isInstalling
+                      ? undefined
+                      : [
+                          {
+                            label: t('customize.pluginsPage.installFromMarket'),
+                            disabled: installingName != null,
+                            onClick: () => {
+                              void installFromMarket(entry.name);
+                            },
+                          },
+                        ]
+                  }
+                />
+              );
+            })}
           </SettingsConnectedList>
         ) : (
           <p className="text-muted-foreground mb-6 text-sm">{t('customize.pluginsPage.marketplaceEmpty')}</p>

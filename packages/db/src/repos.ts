@@ -43,6 +43,9 @@ function mapThreadState(r: Record<string, unknown>): ThreadStateRow {
     planMode: Boolean(r.plan_mode),
     todos: (r.todos as unknown[]) ?? [],
     activatedSkills: (r.activated_skills as Record<string, string>) ?? {},
+    pinnedSkills: Array.isArray(r.pinned_skills)
+      ? (r.pinned_skills as unknown[]).map(String)
+      : [],
     workingMemory: (r.working_memory as string | null) ?? null,
     title: (r.title as string | null) ?? null,
     goal: (r.goal as unknown) ?? null,
@@ -227,6 +230,7 @@ export async function insertThreadState(row: Omit<ThreadStateRow, 'updatedAt'>):
     plan_mode: row.planMode,
     todos: row.todos,
     activated_skills: row.activatedSkills,
+    pinned_skills: row.pinnedSkills ?? [],
     working_memory: row.workingMemory ?? null,
     title: row.title ?? null,
     goal: row.goal ?? null,
@@ -252,6 +256,10 @@ export async function updateThreadState(
   if (patch.activatedSkills !== undefined) {
     sets.push('activated_skills = $activatedSkills');
     vars.activatedSkills = patch.activatedSkills;
+  }
+  if (patch.pinnedSkills !== undefined) {
+    sets.push('pinned_skills = $pinnedSkills');
+    vars.pinnedSkills = patch.pinnedSkills;
   }
   if (patch.workingMemory !== undefined) {
     sets.push('working_memory = $workingMemory');

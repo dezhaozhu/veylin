@@ -8,10 +8,11 @@ import { useAuiState } from '@assistant-ui/react';
 import { ComposerRefChip } from '@/components/assistant-ui/composer-mention/composer-ref-chip';
 import {
   getActivatedSkillsSnapshot,
+  skillChipDisplayName,
   subscribeActivatedSkills,
 } from '@/lib/activated-skills-store';
 
-/** Read-only chips for skills already activated on this thread (restored from server state). */
+/** Read-only chips for skills the user pinned via /skill (not Skill-tool loads). */
 export const ComposerActivatedSkills: FC = () => {
   const { t } = useTranslation();
   const threadId = useAuiState(
@@ -29,16 +30,19 @@ export const ComposerActivatedSkills: FC = () => {
 
   return (
     <>
-      {snapshot.skillNames.map((name) => (
-        <ComposerRefChip
-          key={name}
-          icon={<SparklesIcon className="size-5 text-emerald-600 dark:text-emerald-500" aria-hidden />}
-          title={`/${name}`}
-          subtitle={t('mention.activatedSkillType')}
-          chipAriaLabel={t('mention.activatedSkillChip', { name })}
-          removable={false}
-        />
-      ))}
+      {snapshot.skillNames.map((name) => {
+        const short = skillChipDisplayName(name);
+        return (
+          <ComposerRefChip
+            key={name}
+            icon={<SparklesIcon className="size-5 text-emerald-600 dark:text-emerald-500" aria-hidden />}
+            title={`/${short}`}
+            subtitle={t('mention.activatedSkillType')}
+            chipAriaLabel={t('mention.activatedSkillChip', { name })}
+            removable={false}
+          />
+        );
+      })}
     </>
   );
 };

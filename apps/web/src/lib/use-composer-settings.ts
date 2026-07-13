@@ -41,14 +41,27 @@ function applyPlanModeForThread(threadId: string | undefined, on: boolean): void
   }
 }
 
+/** In-flight POSTs — GET must not clobber optimistic local plan mode. */
+const planModeSyncPending = new Set<string>();
+
 function postPlanMode(threadId: string | undefined, on: boolean): void {
   applyPlanModeForThread(threadId, on);
   if (!threadId) return;
+  planModeSyncPending.add(threadId);
   void fetch('/api/plan-mode', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ threadId, planMode: on }),
-  }).catch(() => undefined);
+  })
+    .catch(() => undefined)
+    .finally(() => {
+      planModeSyncPending.delete(threadId);
+    });
+}
+
+function applyFetchedPlanMode(threadId: string, on: boolean): void {
+  if (planModeSyncPending.has(threadId)) return;
+  applyPlanModeForThread(threadId, on);
 }
 
 /**
@@ -79,7 +92,10 @@ function clearOtherComposerModes(
 /** Mount once per thread view — keeps composer plan UI in sync with agent tool calls. */
 export function usePlanModeBridge(): void {
   const threadId = useAuiState(
-    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+    (s) =>
+      s.threadListItem.remoteId ??
+      s.threadListItem.externalId ??
+      s.threadListItem.id,
   );
   const messages = useAuiState((s) => s.thread.messages);
   const isRunning = useAuiState((s) => s.thread.isRunning);
@@ -96,7 +112,7 @@ export function usePlanModeBridge(): void {
       applyPlanModeForThread(threadId, cached);
     }
     void fetchThreadPlanMode(threadId).then((on) => {
-      applyPlanModeForThread(threadId, on);
+      applyFetchedPlanMode(threadId, on);
     });
     void fetchThreadTodos(threadId);
     void fetchActivatedSkills(threadId);
@@ -116,7 +132,7 @@ export function usePlanModeBridge(): void {
 
     if (wasRunning && !isRunning) {
       void fetchThreadPlanMode(threadId).then((on) => {
-        applyPlanModeForThread(threadId, on);
+        applyFetchedPlanMode(threadId, on);
       });
       void fetchThreadTodos(threadId);
       void fetchActivatedSkills(threadId);
@@ -125,7 +141,7 @@ export function usePlanModeBridge(): void {
     if (!isRunning) return;
     const timer = window.setInterval(() => {
       void fetchThreadPlanMode(threadId).then((on) => {
-        applyPlanModeForThread(threadId, on);
+        applyFetchedPlanMode(threadId, on);
       });
     }, 1200);
     return () => window.clearInterval(timer);
@@ -140,7 +156,10 @@ export function useChatSettingsState() {
 
 export function usePlanMode() {
   const threadId = useAuiState(
-    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+    (s) =>
+      s.threadListItem.remoteId ??
+      s.threadListItem.externalId ??
+      s.threadListItem.id,
   );
   const planMode = useChatSettingsState().planMode;
 
@@ -159,7 +178,10 @@ export function usePlanMode() {
 
 export function useGoalLoopState() {
   const threadId = useAuiState(
-    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+    (s) =>
+      s.threadListItem.remoteId ??
+      s.threadListItem.externalId ??
+      s.threadListItem.id,
   );
   const [, bump] = useState(0);
   useEffect(() => onGoalLoopChange(() => bump((n) => n + 1)), []);
