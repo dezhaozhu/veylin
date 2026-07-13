@@ -93,6 +93,36 @@ describe('resolveTodosForReplacedTranscript', () => {
     assert.deepEqual(resolveTodosForReplacedTranscript(messages), newerTodos);
   });
 
+  it('uses the last todo_write within a single assistant message', () => {
+    const messages: UiMessage[] = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-todo_write',
+            toolName: 'todo_write',
+            input: {
+              todos: [
+                { id: '1', content: 'first', status: 'in_progress' as const },
+                { id: '2', content: 'second', status: 'pending' as const },
+              ],
+            },
+          },
+          { type: 'text', text: 'working…' },
+          {
+            type: 'tool-todo_write',
+            toolName: 'todo_write',
+            input: { todos: newerTodos },
+            output: { newTodos: newerTodos },
+          },
+        ],
+      },
+    ];
+
+    assert.deepEqual(resolveTodosForReplacedTranscript(messages), newerTodos);
+  });
+
   it('falls back to input.todos when output.newTodos is missing', () => {
     const messages: UiMessage[] = [
       {

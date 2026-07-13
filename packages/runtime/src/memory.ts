@@ -12,10 +12,15 @@ function envInt(key: string, fallback: number): number {
 /**
  * LibSQL file in app-data: thread/message storage + vector semantic recall.
  *
- * `readOnly: true` keeps working-memory context in the prompt but does not
- * register `updateWorkingMemory` on the main agent loop (Claude Code–style:
- * no mid-turn WM tool → no forced follow-up think). Writes go through
- * `scheduleDreamConsolidation` / `syncWorkingMemory` / explicit `saveMessages`.
+ * `readOnly: true` keeps working-memory available for explicit reads but does
+ * not register `updateWorkingMemory` on agents that attach this Memory.
+ * Writes go through `scheduleDreamConsolidation` / `syncWorkingMemory` /
+ * explicit `saveMessages` and client `syncThreadMessagesFromClient`.
+ *
+ * Main chat (`/api/chat`) does **not** pass `memory` into `agent.stream`.
+ * Mastra's SaveQueue / MessageHistory would otherwise append a new assistant
+ * id every step without deleting prior snapshots. Chat injects WM via
+ * `buildReadOnlyWorkingMemoryBlock` and recalls transcript before stream.
  */
 export function buildMemory(libsqlUrl: string): Memory {
   const lastMessages = envInt('VEYLIN_COMPACT_KEEP', 12);

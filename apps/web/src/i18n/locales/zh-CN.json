@@ -84,6 +84,12 @@
     "noResults": "未找到匹配「{{query}}」的工具",
     "noResultsHint": "请检查 MCP 是否已连接并启用，或换关键词再试。"
   },
+  "skill": {
+    "loading": "正在加载技能 {{name}}…",
+    "loadingGeneric": "正在加载技能…",
+    "loaded": "已加载技能：{{name}}",
+    "notFound": "未找到技能：{{name}}"
+  },
   "toolGroup": {
     "readFiles": "读取 {{count}} 个文件",
     "editedFiles": "编辑 {{count}} 个文件",
@@ -162,12 +168,12 @@
     "removeSkill": "移除技能"
   },
   "status": {
-    "allDone": "全部完成",
-    "todosProgress": "{{done}}/{{total}}待办",
-    "agentsRunning": "{{count}}个子智能体",
-    "agentsQueued": "{{count}}个子智能体已排队",
-    "agentsDone": "{{count}}个子智能体已完成",
-    "agentsCount": "{{count}}个子智能体",
+    "allDone": "{{count}} 待办全部完成",
+    "todosProgress": "{{done}}/{{total}} 待办",
+    "agentsRunning": "{{count}} 子智能体",
+    "agentsQueued": "{{count}} 子智能体",
+    "agentsDone": "{{count}} 子智能体全部完成",
+    "agentsCount": "{{count}} 子智能体",
     "agentsHeading": "子智能体 ({{count}})",
     "todosHeading": "待办 ({{done}}/{{total}})",
     "taskQueued": "已排队",
@@ -191,6 +197,7 @@
   },
   "ask": {
     "answered": "已回答",
+    "answerLabel": "答：",
     "selectToContinue": "请选择以继续",
     "lookBelow": "在下方输入框上方选择选项。",
     "invalidFormat": "问题格式无效，请重试或换一条消息说明你的选择。",

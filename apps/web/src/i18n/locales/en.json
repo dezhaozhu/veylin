@@ -84,6 +84,12 @@
     "noResults": "No tools matched \"{{query}}\"",
     "noResultsHint": "Check that MCP servers are connected and enabled, or try different keywords."
   },
+  "skill": {
+    "loading": "Loading skill {{name}}…",
+    "loadingGeneric": "Loading skill…",
+    "loaded": "Loaded skill: {{name}}",
+    "notFound": "Skill not found: {{name}}"
+  },
   "toolGroup": {
     "readFiles": "Read {{count}} file(s)",
     "editedFiles": "Edited {{count}} file(s)",
@@ -162,11 +168,11 @@
     "removeSkill": "Remove skill"
   },
   "status": {
-    "allDone": "All done",
+    "allDone": "{{count}} todos all done",
     "todosProgress": "{{done}}/{{total}} todos",
     "agentsRunning": "{{count}} subagent(s)",
-    "agentsQueued": "{{count}} subagent(s) queued",
-    "agentsDone": "{{count}} subagent(s) finished",
+    "agentsQueued": "{{count}} subagent(s)",
+    "agentsDone": "{{count}} subagent(s) all done",
     "agentsCount": "{{count}} subagent(s)",
     "agentsHeading": "Subagents ({{count}})",
     "todosHeading": "Todos ({{done}}/{{total}})",
@@ -191,6 +197,7 @@
   },
   "ask": {
     "answered": "Answered",
+    "answerLabel": "Answer:",
     "selectToContinue": "Select an option to continue",
     "lookBelow": "Choose an option in the panel above the input box.",
     "invalidFormat": "Invalid question format. Retry or reply with your choice in chat.",

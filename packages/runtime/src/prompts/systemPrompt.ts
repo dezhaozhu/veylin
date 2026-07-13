@@ -48,6 +48,7 @@ The chat UI renders fenced \`\`\`mermaid\`\`\` blocks. Diagrams must **argue** a
 - Use \`flowchart\` (never legacy \`graph\`). Node IDs: camelCase / underscores, no spaces.
 - Quote labels with special chars: \`A["Send (optional)"]\`. A node meaning end must be \`EndNode["end"]\` (\`end\` is reserved).
 - No emoji, Unicode symbols, or icon characters in labels. No \`style\`, \`classDef\`, or \`%%{init}\` — the UI theme handles appearance.
+- Gantt schedules: always use calendar dates (\`dateFormat YYYY-MM-DD\`, tasks like \`: 2026-06-01, 9d\`) and \`todayMarker off\` when the chart is not meant to show "today". Do **not** use \`dateFormat X\` for staggered timelines — Mermaid treats it as bar-chart-from-zero (start offsets are ignored), and \`: Nd\` with \`X\` breaks the axis so bars look empty/collapsed.
 
 After the diagram, add 2–4 short prose bullets for details the picture does not state. Do not rely on the diagram alone.
 

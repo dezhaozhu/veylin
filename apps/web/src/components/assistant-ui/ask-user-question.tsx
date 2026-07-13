@@ -106,19 +106,25 @@ export const AskUserQuestionToolUI = makeAssistantToolUI<Args, AskUserResult>({
         questions;
       const keys = answerKeysForQuestions(displayQuestions);
       return (
-        <div className="text-muted-foreground my-1 text-base font-normal leading-snug">
-          <div className="mb-1 flex items-center gap-1.5 font-medium">
+        <div className="border-border/60 bg-muted/30 my-1 rounded-lg border px-3 py-2 text-base font-normal leading-snug">
+          <div className="text-muted-foreground mb-2.5 flex items-center gap-1.5 font-medium">
             <HelpCircleIcon className="size-4 shrink-0" />
             {t('ask.answered')}
           </div>
-          <ul className="list-inside list-disc">
+          <ul className="flex flex-col gap-3">
             {displayQuestions.map((q, i) => {
-              const label = keys[i] ?? (q.header || q.question);
+              const key = keys[i] ?? (q.header || q.question);
               const answer = lookupAskAnswer(result.answers, q, keys[i]);
               if (answer === undefined) return null;
               return (
-                <li key={`${label}-${i}`}>
-                  <span className="font-medium text-foreground">{label}</span> → {answer}
+                <li key={`${key}-${i}`} className="min-w-0">
+                  <p className="text-muted-foreground leading-relaxed">{q.question}</p>
+                  <p className="text-foreground mt-1.5 border-l-2 border-primary/40 ps-2.5 font-medium leading-relaxed">
+                    <span className="text-muted-foreground me-1.5 font-normal">
+                      {t('ask.answerLabel')}
+                    </span>
+                    {answer}
+                  </p>
                 </li>
               );
             })}

@@ -1,5 +1,5 @@
 import type { UIMessage } from 'ai';
-import { isToolUIPart, lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
+import { isToolUIPart } from 'ai';
 import { assistantDispatchedBackgroundWorkers } from './background-task-continuation';
 
 /** Tools completed on the client; the server must not finish the same run. */
@@ -289,7 +289,10 @@ export function shouldAutoSendChat({
     }
   }
 
-  return lastAssistantMessageIsCompleteWithToolCalls({ messages });
+  // Never fall back to lastAssistantMessageIsCompleteWithToolCalls — that treats
+  // server tools (e.g. updateWorkingMemory output-error) as needing a client
+  // re-POST, which wedges isRunning via continuationInFlight.
+  return false;
 }
 
 export function trimAssistantAfterAwaitingTool<T extends { id: string; role: string; parts?: unknown[] }>(

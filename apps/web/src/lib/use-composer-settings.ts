@@ -91,11 +91,10 @@ function clearOtherComposerModes(
 
 /** Mount once per thread view — keeps composer plan UI in sync with agent tool calls. */
 export function usePlanModeBridge(): void {
+  // Only fetch for persisted threads. Local __LOCALID_* must not hit GET /state
+  // (that would ensureThreadState and create an empty「新对话」on refresh).
   const threadId = useAuiState(
-    (s) =>
-      s.threadListItem.remoteId ??
-      s.threadListItem.externalId ??
-      s.threadListItem.id,
+    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
   );
   const messages = useAuiState((s) => s.thread.messages);
   const isRunning = useAuiState((s) => s.thread.isRunning);

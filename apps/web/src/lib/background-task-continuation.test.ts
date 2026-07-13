@@ -525,6 +525,47 @@ describe('background task continuation', () => {
     assert.equal(merged[0]?.label, '工厂维度分析');
   });
 
+  it('mergePanelBackgroundTasks dedupes repeated task_ids from transcript', () => {
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-task',
+            toolCallId: 'c1',
+            state: 'output-available',
+            output: {
+              background: true,
+              task_id: 'same-task',
+              description: '构建排产JSON实例',
+            },
+          },
+          {
+            type: 'tool-task',
+            toolCallId: 'c2',
+            state: 'output-available',
+            output: {
+              background: true,
+              task_id: 'same-task',
+              description: '构建排产JSON实例',
+            },
+          },
+        ],
+      },
+    ] as UIMessage[];
+    const merged = mergePanelBackgroundTasks(messages, [
+      {
+        id: 'same-task',
+        label: '构建排产JSON实例',
+        status: 'done',
+        agentId: 'subagent',
+      },
+    ]);
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0]?.id, 'same-task');
+  });
+
   it('mergePanelBackgroundTasks overlays API status onto optimistic rows', () => {
     const messages = [
       {

@@ -256,11 +256,14 @@ function backgroundTaskIdFromPart(part: unknown): string | null {
 /** Background worker ids dispatched in the current coordinator turn (since last user message). */
 export function collectCoordinatorDispatchTaskIds(messages: UIMessage[]): string[] {
   const ids: string[] = [];
+  const seen = new Set<string>();
   for (const msg of messagesSinceLastUser(messages)) {
     if (msg.role !== 'assistant') continue;
     for (const part of msg.parts ?? []) {
       const taskId = backgroundTaskIdFromPart(part);
-      if (taskId) ids.push(taskId);
+      if (!taskId || seen.has(taskId)) continue;
+      seen.add(taskId);
+      ids.push(taskId);
     }
   }
   return ids;
@@ -398,10 +401,15 @@ export function mergePanelBackgroundTasks(
   const fromApi = resolvePanelBackgroundTasks(messages, tasks, opts);
   const optimistic = collectOptimisticBackgroundTasksFromMessages(messages);
   const batchIds = collectCoordinatorDispatchTaskIds(messages);
-  const idSource =
-    batchIds.length > 0
-      ? batchIds
-      : (opts?.pinnedTaskIds?.length ? opts.pinnedTaskIds : optimistic.map((t) => t.id));
+  const idSource = Array.from(
+    new Set(
+      batchIds.length > 0
+        ? batchIds
+        : opts?.pinnedTaskIds?.length
+          ? opts.pinnedTaskIds
+          : optimistic.map((t) => t.id),
+    ),
+  );
 
   if (idSource.length === 0) {
     return fromApi.length > 0 ? fromApi : optimistic;

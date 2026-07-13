@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 /** Resolve the app-data directory for embedded SurrealDB / LibSQL files. */
 export function resolveDataDir(): string {
@@ -24,9 +24,22 @@ function toUrlPath(...segments: string[]): string {
   return join(...segments).replace(/\\/g, '/');
 }
 
+/**
+ * SurrealKV URL for the embedded store.
+ * On Windows, `surrealkv://D:/...` is parsed as host `D` and creates a relative
+ * `./D/...` folder under cwd. Prefer a cwd-relative path when possible.
+ */
 export function surrealKvUrl(dataDir?: string): string {
   const dir = dataDir ?? ensureDataDir();
-  return `surrealkv://${toUrlPath(dir, 'veylin')}`;
+  const store = join(dir, 'veylin');
+  const abs = toUrlPath(store);
+  if (/^[A-Za-z]:\//.test(abs)) {
+    const rel = toUrlPath(relative(process.cwd(), store));
+    if (rel && rel !== '.' && !/^[A-Za-z]:\//.test(rel)) {
+      return `surrealkv://${rel}`;
+    }
+  }
+  return `surrealkv://${abs}`;
 }
 
 export function mastraLibsqlUrl(dataDir?: string): string {

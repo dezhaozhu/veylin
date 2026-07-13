@@ -132,4 +132,18 @@ describe('frontend-suspend settle', () => {
     assert.equal(needsFrontendSuspendContinuation(messages), false);
     assert.equal(isFrontendSuspendTurnSettled(messages), true);
   });
+
+  it('hasPreFinalWork is true during multi-step ask turns (enables progressive fold)', () => {
+    const parts = [
+      { type: 'reasoning', text: 'think' },
+      { type: 'text', text: '让我进一步查看关键维度的分布情况。' },
+      { type: 'tool-table_get' },
+      {
+        type: 'tool-ask_user_question',
+        state: 'input-available',
+      },
+    ];
+    assert.equal(hasPreFinalWork(parts, findFinalProseIndex(parts)), true);
+    assert.equal(isFrontendSuspendPartsSettled(parts), false);
+  });
 });

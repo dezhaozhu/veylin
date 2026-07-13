@@ -21,7 +21,7 @@ import {
   type VeylinContextUsage,
 } from '@veylin/runtime';
 import { setThreadPlanMode } from '@veylin/tools';
-import { stripInterruptedAssistantTurnsForAgent, clampLoopWakeupSeconds, isGoalActive, isLoopActive, parseIntervalToSeconds, LOOP_WAKEUP_MIN_SECONDS } from '@veylin/shared';
+import { stripInterruptedAssistantTurnsForAgent, clampLoopWakeupSeconds, isGoalActive, isLoopActive, parseIntervalToSeconds, LOOP_WAKEUP_MIN_SECONDS, buildReadOnlyWorkingMemoryBlock } from '@veylin/shared';
 import {
   createUiStreamRepairState,
   formatAgentStreamError,
@@ -480,6 +480,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       : buildWorkspacePanelHintBlock(body.workspacePanel);
     const localeBlock = buildLocaleBlock(body.locale);
     const attachedBrowserBlock = buildAttachedBrowserBlock(body.attachedBrowser);
+    const workingMemoryBlock = buildReadOnlyWorkingMemoryBlock(
+      threadRowState?.workingMemory ?? null,
+    );
     const agentDefForBlocks = deps.runtime.definitions.get(agentId)?.definition;
     const fullToolset = agentDefForBlocks?.fullToolset === true;
     const coordinatorMode = isCoordinatorMode() && !planMode && fullToolset;
@@ -503,6 +506,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       orchestrationBlock,
       localeBlock,
       attachedBrowserBlock,
+      workingMemoryBlock,
     });
     if (systemBlocks) {
       agentMessages = [{ role: 'system', content: systemBlocks } as never, ...agentMessages];
@@ -573,10 +577,15 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const attachments = collectLangfuseAttachments(messages);
     let stream;
     try {
+      // Do NOT pass `memory` into agent.stream. Mastra's SaveQueue / MessageHistory
+      // append-saves a new assistant id per step (and on background-task flush)
+      // without deleting prior snapshots — ask continuations then pile up and
+      // concat-content shows the turn as duplicated. Thread context is already
+      // recalled above; WM is injected via systemBlocks; persistence is
+      // client-authoritative via syncThreadMessagesFromClient.
       stream = await agent.stream(agentMessages as never, {
         maxSteps: 25,
         abortSignal: runAbort.signal,
-        ...(useThreadMemory ? { memory: { thread: threadId, resource: ctx.userId } } : {}),
         requestContext,
         toolsets: activeToolsets,
         tracingOptions: {

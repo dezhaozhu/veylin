@@ -271,6 +271,8 @@ export function ComposerStatusBar() {
   const terminalTasks = displayTasks.filter((task) =>
     task.status === 'done' || task.status === 'failed' || task.status === 'cancelled',
   );
+  const allAgentsDone =
+    displayTasks.length > 0 && terminalTasks.length === displayTasks.length;
 
   useEffect(() => {
     if (!threadId) return;
@@ -332,14 +334,21 @@ export function ComposerStatusBar() {
               <ListTodoIcon className="size-3.5" />
             )}
             {allTodosDone
-              ? t('status.allDone')
+              ? t('status.allDone', { count: total })
               : t('status.todosProgress', { done: doneCount, total })}
           </span>
         )}
         {displayTasks.length > 0 && (
-          <span className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              'flex items-center gap-1.5',
+              allAgentsDone && 'text-green-600',
+            )}
+          >
             {runningTasks.length > 0 ? (
               <LoaderIcon className="size-3.5 animate-spin" />
+            ) : allAgentsDone ? (
+              <CheckCircle2Icon className="size-3.5" />
             ) : (
               <BotIcon className="size-3.5" />
             )}
@@ -347,7 +356,7 @@ export function ComposerStatusBar() {
               ? t('status.agentsRunning', { count: runningTasks.length })
               : queuedTasks.length > 0
                 ? t('status.agentsQueued', { count: queuedTasks.length })
-                : terminalTasks.length === displayTasks.length
+                : allAgentsDone
                   ? t('status.agentsDone', { count: displayTasks.length })
                   : t('status.agentsCount', { count: displayTasks.length })}
           </span>
@@ -408,7 +417,8 @@ export function ComposerStatusBar() {
                   const row = asTaskRow(task);
                   const title = formatTaskDisplayName(row);
                   const distinctLabel = hasDistinctTaskLabel(row);
-                  const statusLabel = taskStatusLabel(task.status);
+                  const statusLabel =
+                    task.status === 'done' ? null : taskStatusLabel(task.status);
                   return (
                     <li key={task.id} className="flex min-w-0 items-center gap-2">
                       <span className="mt-px w-4 shrink-0 text-center">
@@ -418,7 +428,10 @@ export function ComposerStatusBar() {
                         className={cn(
                           'min-w-0 flex-1 truncate',
                           task.status === 'running' && 'text-foreground font-medium',
-                          task.status === 'done' && 'text-foreground',
+                          task.status === 'done' &&
+                            'text-muted-foreground line-through',
+                          task.status === 'cancelled' &&
+                            'text-muted-foreground line-through opacity-60',
                           task.status === 'failed' && 'text-destructive',
                           task.status === 'queued' && 'text-muted-foreground',
                         )}
@@ -436,7 +449,6 @@ export function ComposerStatusBar() {
                           className={cn(
                             'shrink-0 rounded px-1 py-0.5 text-[10px]',
                             task.status === 'running' && 'bg-primary/10 text-primary',
-                            task.status === 'done' && 'bg-green-500/10 text-green-700 dark:text-green-400',
                             task.status === 'failed' && 'bg-destructive/10 text-destructive',
                             task.status === 'queued' && 'bg-muted text-muted-foreground',
                             task.status === 'cancelled' && 'bg-muted text-muted-foreground',

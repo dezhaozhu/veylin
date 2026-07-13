@@ -74,6 +74,7 @@ import {
 } from "@/lib/ask-user-question-session";
 import {
   findFinalProseIndex,
+  findLastFrontendSuspendToolIndex,
   hasPreFinalWork,
   isFinalProsePart,
 } from "@/lib/assistant-final-output";
@@ -445,8 +446,14 @@ const AssistantMessage: FC = () => {
   const elapsedSeconds = useStreamingDuration(isRunning === true);
   const finalProseIdx = useMemo(() => findFinalProseIndex(parts), [parts]);
   const suspendSettled = isFrontendSuspendPartsSettled(parts);
-  const foldWork =
-    !isRunning && suspendSettled && hasPreFinalWork(parts, finalProseIdx);
+  // Fold middle work whenever there is pre-final work — including while the
+  // turn is still running. Only the final prose (and unsettled ask) stay out.
+  const foldWork = hasPreFinalWork(parts, finalProseIdx);
+  const lastSuspendIdx = useMemo(
+    () => findLastFrontendSuspendToolIndex(parts),
+    [parts],
+  );
+  const showWorkedForDuration = !isRunning && suspendSettled;
   const [workedForOpen, setWorkedForOpen] = useState(false);
   const workedForPrimaryStartRef = useRef<number | null>(null);
   // First group-worked-for in this render pass owns the label.
@@ -469,6 +476,14 @@ const AssistantMessage: FC = () => {
       ) {
         return ["group-final-prose"];
       }
+      // Keep the current (last) frontend-suspend tool visible until the turn
+      // settles — earlier answered asks still fold into Worked-for.
+      // Keep the current (last) frontend-suspend tool visible until the turn
+      // settles — earlier answered asks still fold into Worked-for.
+      // lastSuspendIdx is only ask_user_question / read_open_page.
+      if (!suspendSettled && index >= 0 && index === lastSuspendIdx) {
+        return [];
+      }
       const path = baseAssistantGroupBy(part, context);
       // Include path=[] (step-start / leftover standalone) so islands can share
       // one Worked-for label via WorkedForBlock coordination.
@@ -476,7 +491,7 @@ const AssistantMessage: FC = () => {
       return ["group-worked-for", ...(path as AssistantGroupKey[])];
     };
     return fold;
-  }, [foldWork, parts, finalProseIdx, messageId]);
+  }, [foldWork, parts, finalProseIdx, messageId, suspendSettled, lastSuspendIdx]);
 
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
   // keeps hovered action bar from shifting layout (autohide doesn't support absolute positioning well)
@@ -509,7 +524,9 @@ const AssistantMessage: FC = () => {
                 }
                 return (
                   <WorkedForBlock
-                    elapsedSeconds={elapsedSeconds}
+                    elapsedSeconds={
+                      showWorkedForDuration ? elapsedSeconds : undefined
+                    }
                     isPrimary={isPrimary}
                     open={workedForOpen}
                     onOpenChange={setWorkedForOpen}

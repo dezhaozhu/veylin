@@ -461,8 +461,9 @@ export function todosFromMessageHistory(messages: UiMessage[]): TodoItem[] | nul
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m?.role !== 'assistant' || !m.parts) continue;
-    for (const part of m.parts) {
-      const p = part as {
+    // Walk parts backward so multiple todo_write calls in one turn yield the latest.
+    for (let j = m.parts.length - 1; j >= 0; j--) {
+      const p = m.parts[j] as {
         type?: string;
         toolName?: string;
         input?: { todos?: TodoItem[] };
