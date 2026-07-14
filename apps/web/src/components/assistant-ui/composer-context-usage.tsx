@@ -117,14 +117,15 @@ export const ComposerContextUsage: FC<{ className?: string }> = ({ className }) 
           >
             <span
               aria-hidden
-              className="size-3.5 rounded-full"
+              className="size-4 rounded-full"
               style={
                 {
                   '--context-used': ringPercent,
+                  // Start at 12 o'clock, fill clockwise; hole ~47% = medium stroke.
                   background: `
-                    radial-gradient(circle, var(--color-background) 54%, transparent 56%),
+                    radial-gradient(circle, var(--color-background) 47%, transparent 50%),
                     conic-gradient(
-                      from 180deg,
+                      from 0deg,
                       var(--color-muted-foreground) calc(var(--context-used) * 1%),
                       var(--color-border) 0
                     )
