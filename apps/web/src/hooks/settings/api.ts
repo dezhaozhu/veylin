@@ -159,6 +159,15 @@ export type LangfuseSettings = {
   hasSecretKey: boolean;
 };
 
+export type BusinessSourceSettings = {
+  enabled: boolean;
+  mcpServerName: string;
+  hasCredential: boolean;
+  toolAllowlist: string[];
+  url?: string;
+  transport?: 'http' | 'sse';
+};
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const hasBody = init?.body != null && init.body !== '';
   const headers = new Headers(init?.headers);
@@ -239,6 +248,58 @@ export const settingsApi = {
       method: 'DELETE',
     });
     return { settings: res.settings };
+  },
+
+  getBusinessSource: async () => {
+    const res = await apiFetch<{ source: BusinessSourceSettings }>('/api/business-source');
+    return { source: res.source };
+  },
+  updateBusinessSource: async (body: {
+    enabled?: boolean;
+    mcpServerName?: string;
+    url?: string;
+    transport?: 'http' | 'sse';
+    authorization?: string;
+    toolAllowlist?: string[];
+    clearCredential?: boolean;
+  }) => {
+    const res = await apiFetch<{ source: BusinessSourceSettings }>('/api/business-source', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    return { source: res.source };
+  },
+  testBusinessSource: async () => {
+    return apiFetch<{
+      ok: boolean;
+      error?: string;
+      mcpServerName?: string;
+      toolCount?: number;
+      tools?: string[];
+    }>('/api/business-source/test', { method: 'POST', body: '{}' });
+  },
+  getAuditSettings: async () => {
+    const res = await apiFetch<{ settings: { webhookUrl: string } }>('/api/audit-settings');
+    return res;
+  },
+  updateAuditSettings: async (body: { webhookUrl?: string }) => {
+    const res = await apiFetch<{ settings: { webhookUrl: string } }>('/api/audit-settings', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    return res;
+  },
+  getAuditLogs: async (limit = 50) => {
+    const res = await apiFetch<{
+      logs: Array<{
+        id?: string;
+        action?: string;
+        userId?: string | null;
+        createdAt?: string;
+        detail?: unknown;
+      }>;
+    }>(`/api/audit-logs?limit=${limit}`);
+    return res;
   },
 
   getSkills: () =>

@@ -1,4 +1,16 @@
 {
+  "auth": {
+    "signIn": "登录",
+    "signUp": "注册",
+    "hint": "使用邮箱和密码进入工作区",
+    "email": "邮箱",
+    "password": "密码",
+    "name": "显示名",
+    "working": "请稍候…",
+    "failed": "认证失败，请重试。",
+    "needAccount": "没有账号？注册",
+    "haveAccount": "已有账号？登录"
+  },
   "panels": {
     "empty": "点击上方 + 新建一个面板",
     "table": {
@@ -293,6 +305,35 @@
       "title": "语言",
       "hint": "应用 UI 语言",
       "closeMenu": "关闭语言菜单"
+    },
+    "business": {
+      "nav": "业务连接",
+      "title": "业务连接",
+      "hint": "企业业务系统经 MCP 接入；凭证仅保存在服务端，不会回传前端。",
+      "enabled": "启用业务源",
+      "enabledHint": "开启后 Agent 按白名单调用该 MCP",
+      "url": "MCP URL",
+      "serverName": "MCP 名称",
+      "authorization": "Authorization",
+      "authorizationHint": "可选，如 Bearer token。保存后不回显。",
+      "authorizationHintSaved": "已保存凭证。留空保持不变。",
+      "allowlist": "工具白名单",
+      "allowlistHint": "逗号分隔工具名；留空表示该 MCP 下全部工具。",
+      "save": "保存",
+      "saving": "保存中…",
+      "saved": "已保存",
+      "test": "测试连接",
+      "testing": "测试中…",
+      "testOk": "连接成功：{{count}} 个工具（{{tools}}）",
+      "testFailed": "连接测试失败，请检查 URL、凭证与网络。",
+      "loadFailed": "加载业务连接失败。",
+      "saveFailed": "保存失败，请重试。",
+      "auditHint": "可选。每条审计事件 POST 到此地址；留空则仅本地落库。",
+      "auditWebhook": "审计 Webhook",
+      "auditSave": "保存审计设置",
+      "auditSaving": "保存中…",
+      "auditSaved": "已保存",
+      "auditSaveFailed": "保存审计设置失败，请重试。"
     },
     "langfuse": {
       "title": "Langfuse",

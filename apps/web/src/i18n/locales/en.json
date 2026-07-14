@@ -1,4 +1,16 @@
 {
+  "auth": {
+    "signIn": "Sign in",
+    "signUp": "Sign up",
+    "hint": "Use email and password to enter your workspace",
+    "email": "Email",
+    "password": "Password",
+    "name": "Display name",
+    "working": "Please wait…",
+    "failed": "Authentication failed. Please try again.",
+    "needAccount": "Need an account? Sign up",
+    "haveAccount": "Already have an account? Sign in"
+  },
   "panels": {
     "empty": "Click + above to create a panel",
     "table": {
@@ -293,6 +305,35 @@
       "title": "Language",
       "hint": "Application UI language",
       "closeMenu": "Close language menu"
+    },
+    "business": {
+      "nav": "Business",
+      "title": "Business connection",
+      "hint": "Connect an enterprise system via MCP. Credentials stay on the server and are never echoed back.",
+      "enabled": "Enable business source",
+      "enabledHint": "When on, the agent calls this MCP under the allowlist",
+      "url": "MCP URL",
+      "serverName": "MCP name",
+      "authorization": "Authorization",
+      "authorizationHint": "Optional, e.g. Bearer token. Never shown again after save.",
+      "authorizationHintSaved": "A credential is saved. Leave blank to keep it.",
+      "allowlist": "Tool allowlist",
+      "allowlistHint": "Comma-separated tool names; empty means all tools on this MCP.",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "Saved",
+      "test": "Test connection",
+      "testing": "Testing…",
+      "testOk": "Connected: {{count}} tools ({{tools}})",
+      "testFailed": "Connection test failed. Check URL, credential, and network.",
+      "loadFailed": "Failed to load business connection.",
+      "saveFailed": "Failed to save. Please try again.",
+      "auditHint": "Optional. Each audit event is POSTed here; leave empty for local storage only.",
+      "auditWebhook": "Audit webhook",
+      "auditSave": "Save audit settings",
+      "auditSaving": "Saving…",
+      "auditSaved": "Saved",
+      "auditSaveFailed": "Failed to save audit settings."
     },
     "langfuse": {
       "title": "Langfuse",

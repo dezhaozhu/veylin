@@ -7,8 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MCPClient } from '@mastra/mcp';
 import { createRuntime } from '@veylin/runtime';
-import { toNodeHandler } from 'better-auth/node';
-import { auth, assertHostedAuthConfig, isDesktopAuth } from './auth';
+import { assertHostedAuthConfig, isDesktopAuth } from './auth';
 import {
   createInProcQueue,
   registerWorkers,
@@ -258,22 +257,13 @@ async function main() {
     done(null, body);
   });
 
-  if (!isDesktopAuth) {
-    const { betterAuth } = await import('better-auth');
-    const { memoryAdapter } = await import('better-auth/adapters/memory');
-    const { setAuth } = await import('./auth');
-    setAuth(
-      betterAuth({
-        database: memoryAdapter({}),
-        emailAndPassword: { enabled: true },
-        secret: process.env.AUTH_SECRET,
-        baseURL: process.env.AUTH_BASE_URL,
-      }) as never,
-    );
-  }
+  const identityProvider = (
+    isDesktopAuth ? 'desktop' : process.env.IDENTITY_PROVIDER?.trim() || 'local'
+  ).toLowerCase();
 
-  // better-auth owns /api/auth/* when enabled.
-  if (!isDesktopAuth) {
+  if (!isDesktopAuth && identityProvider === 'local') {
+    const { initLocalPasswordAuth, toNodeHandler: authNodeHandler } = await import('./auth-local.js');
+    const handle = initLocalPasswordAuth();
     await app.register(async (authScope) => {
       authScope.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
         done(null, body);
@@ -283,11 +273,18 @@ async function main() {
         url: '/api/auth/*',
         handler: async (req, reply) => {
           reply.hijack();
-          await toNodeHandler(auth)(req.raw, reply.raw);
+          await authNodeHandler(handle as never)(req.raw, reply.raw);
         },
       });
     });
+  } else if (!isDesktopAuth) {
+    // oidc/webhook: no better-auth routes; IdentityPort handles getSession.
+    console.info(`[auth] IDENTITY_PROVIDER=${identityProvider} (no local /api/auth routes)`);
   }
+
+  // Warm enterprise ports after auth is ready
+  const { getEnterprisePorts } = await import('./ports/index.js');
+  getEnterprisePorts();
 
   const readTaskSnapshot = createReadTaskSnapshot(runtime);
   const deps = {

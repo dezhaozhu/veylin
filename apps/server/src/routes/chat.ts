@@ -107,6 +107,8 @@ import { applyTenantModelSettings } from '../model-settings-store.js';
 import { buildKnowledgeContextBlock } from '../rag-store.js';
 import { getHookBus, reloadHooksForTenant } from '../hooks-service.js';
 import { wrapToolsetsWithHooks } from '../tool-hooks.js';
+import { wrapToolsetsWithAudit } from '../tool-audit.js';
+import { getEnterprisePorts } from '../ports/index.js';
 import type { ServerDeps } from './types.js';
 
 /**
@@ -535,10 +537,18 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
               ...(deps.getTaskToolset().table ? { table: deps.getTaskToolset().table } : {}),
               ...(deps.getTaskToolset().knowledge ? { knowledge: deps.getTaskToolset().knowledge } : {}),
             };
-    const activeToolsets = wrapToolsetsWithHooks(activeToolsetsRaw, hookBus, {
-      threadId,
-      tenantId: ctx.tenantId,
-    });
+    const filteredForBusiness = await getEnterprisePorts().businessSource.filterToolsets(
+      ctx.tenantId,
+      ctx.userId,
+      activeToolsetsRaw,
+    );
+    const activeToolsets = wrapToolsetsWithAudit(
+      wrapToolsetsWithHooks(filteredForBusiness, hookBus, {
+        threadId,
+        tenantId: ctx.tenantId,
+      }),
+      { threadId, tenantId: ctx.tenantId, userId: ctx.userId },
+    );
 
     const promptSubmit = await hookBus.emit(
       'UserPromptSubmit',

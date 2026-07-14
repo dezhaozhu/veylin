@@ -16,11 +16,13 @@ import { registerThreadsRoutes } from './threads.js';
 import { registerChatRoutes } from './chat.js';
 import { registerGoalLoopRoutes } from './goal-loop.js';
 import { registerRagRoutes } from './rag.js';
+import { registerEnterpriseRoutes } from './enterprise.js';
 
 export async function registerApiRoutes(app: FastifyInstance, deps: ServerDeps): Promise<void> {
   registerHealthRoutes(app, deps);
   registerModelSettingsRoutes(app, deps);
   registerLangfuseSettingsRoutes(app, deps);
+  registerEnterpriseRoutes(app, deps);
   registerSkillsRoutes(app, deps);
   registerHooksRoutes(app, deps);
   registerPluginsRoutes(app, deps);

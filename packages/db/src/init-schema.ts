@@ -83,6 +83,8 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS disabled_hooks ON tenant_settings FLEXIBLE TYPE array DEFAULT []`,
   `DEFINE FIELD IF NOT EXISTS model_settings ON tenant_settings FLEXIBLE TYPE option<object>`,
   `DEFINE FIELD IF NOT EXISTS langfuse_settings ON tenant_settings FLEXIBLE TYPE option<object>`,
+  `DEFINE FIELD IF NOT EXISTS business_source ON tenant_settings FLEXIBLE TYPE option<object>`,
+  `DEFINE FIELD IF NOT EXISTS audit_settings ON tenant_settings FLEXIBLE TYPE option<object>`,
   `DEFINE FIELD IF NOT EXISTS workspace_root ON tenant_settings TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS import_claude_hooks ON tenant_settings TYPE bool DEFAULT false`,
   `DEFINE FIELD IF NOT EXISTS updated_at ON tenant_settings TYPE datetime DEFAULT time::now()`,

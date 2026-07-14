@@ -97,6 +97,19 @@ export interface TenantSettingsRow {
     secretKey?: string;
     baseUrl?: string;
   };
+  businessSource?: {
+    enabled?: boolean;
+    mcpServerName?: string;
+    url?: string;
+    transport?: 'http' | 'sse';
+    /** Authorization header value (e.g. Bearer xxx) — never return to clients. */
+    authorization?: string;
+    toolAllowlist?: string[];
+  };
+  /** Optional SIEM / log sink; when set, AuditPort forwards each event. */
+  auditSettings?: {
+    webhookUrl?: string;
+  };
   workspaceRoot?: string | null;
   importClaudeHooks?: boolean;
   updatedAt?: string;

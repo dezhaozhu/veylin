@@ -211,6 +211,15 @@ export async function createMembership(row: {
   return mapMembership((await selectById<Record<string, unknown>>(getDb(), 'membership', id))!);
 }
 
+export async function listMembershipsByTenant(tenantId: string): Promise<MembershipRow[]> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    'SELECT * FROM membership WHERE tenant_id = $tenantId',
+    { tenantId },
+  );
+  return rows.map(mapMembership);
+}
+
 // ---- Thread state ----
 
 export async function getThreadStateRow(threadId: string): Promise<ThreadStateRow | null> {
@@ -333,6 +342,8 @@ export async function getTenantSettingsRow(tenantId: string): Promise<TenantSett
     disabledHooks: (r.disabled_hooks as string[]) ?? [],
     modelSettings: (r.model_settings as TenantSettingsRow['modelSettings']) ?? undefined,
     langfuseSettings: (r.langfuse_settings as TenantSettingsRow['langfuseSettings']) ?? undefined,
+    businessSource: (r.business_source as TenantSettingsRow['businessSource']) ?? undefined,
+    auditSettings: (r.audit_settings as TenantSettingsRow['auditSettings']) ?? undefined,
     workspaceRoot: r.workspace_root != null ? String(r.workspace_root) : null,
     importClaudeHooks: r.import_claude_hooks === true,
     updatedAt: r.updated_at ? String(r.updated_at) : undefined,
@@ -353,6 +364,8 @@ export async function upsertTenantSettings(
       | 'disabledHooks'
       | 'modelSettings'
       | 'langfuseSettings'
+      | 'businessSource'
+      | 'auditSettings'
       | 'workspaceRoot'
       | 'importClaudeHooks'
     >
@@ -368,6 +381,8 @@ export async function upsertTenantSettings(
         disabledHooks: [],
         modelSettings: undefined,
         langfuseSettings: undefined,
+        businessSource: undefined,
+        auditSettings: undefined,
         workspaceRoot: null,
         importClaudeHooks: false,
       };
@@ -378,6 +393,8 @@ export async function upsertTenantSettings(
         disabled_hooks: patch.disabledHooks ?? existing.disabledHooks,
         model_settings: patch.modelSettings ?? existing.modelSettings,
         langfuse_settings: patch.langfuseSettings ?? existing.langfuseSettings,
+        business_source: patch.businessSource ?? existing.businessSource,
+        audit_settings: patch.auditSettings ?? existing.auditSettings,
         workspace_root:
           patch.workspaceRoot !== undefined
             ? patch.workspaceRoot || undefined
@@ -934,6 +951,27 @@ export async function insertAuditLog(row: Omit<AuditLogRow, 'id' | 'createdAt'>)
     action: row.action,
     detail: row.detail ?? null,
   });
+}
+
+export async function listAuditLogs(
+  tenantId: string,
+  opts?: { limit?: number },
+): Promise<AuditLogRow[]> {
+  const limit = Math.min(Math.max(opts?.limit ?? 50, 1), 200);
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    `SELECT * FROM audit_log WHERE tenant_id = $tenantId ORDER BY created_at DESC LIMIT ${limit}`,
+    { tenantId },
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    tenantId: String(r.tenant_id),
+    userId: r.user_id != null ? String(r.user_id) : null,
+    threadId: r.thread_id != null ? String(r.thread_id) : null,
+    action: String(r.action),
+    detail: r.detail,
+    createdAt: r.created_at != null ? String(r.created_at) : undefined,
+  }));
 }
 
 // suppress unused
