@@ -174,7 +174,7 @@
     "agentsQueued": "{{count}} 子智能体",
     "agentsDone": "{{count}} 子智能体全部完成",
     "agentsCount": "{{count}} 子智能体",
-    "agentsHeading": "子智能体 ({{count}})",
+    "agentsHeading": "子智能体 ({{done}}/{{total}})",
     "todosHeading": "待办 ({{done}}/{{total}})",
     "taskQueued": "已排队",
     "taskRunning": "运行中",

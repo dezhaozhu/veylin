@@ -174,7 +174,7 @@
     "agentsQueued": "{{count}} subagent(s)",
     "agentsDone": "{{count}} subagent(s) all done",
     "agentsCount": "{{count}} subagent(s)",
-    "agentsHeading": "Subagents ({{count}})",
+    "agentsHeading": "Subagents ({{done}}/{{total}})",
     "todosHeading": "Todos ({{done}}/{{total}})",
     "taskQueued": "Queued",
     "taskRunning": "Running",

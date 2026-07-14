@@ -401,7 +401,10 @@ export function ComposerStatusBar() {
               <div className="mb-1 flex flex-col gap-0.5">
                 <div className="flex items-center gap-1.5 font-medium text-foreground">
                   <BotIcon className="size-3.5" />
-                  {t('status.agentsHeading', { count: displayTasks.length })}
+                  {t('status.agentsHeading', {
+                    done: terminalTasks.length,
+                    total: displayTasks.length,
+                  })}
                 </div>
                 {queuedTasks.length > 0 ? (
                   <p className="text-muted-foreground ps-5 text-[10px] leading-snug">
