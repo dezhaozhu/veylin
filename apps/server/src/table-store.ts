@@ -636,6 +636,183 @@ export async function updateTableRow(
   };
 }
 
+export type TableRowUpdate = {
+  rowKey: string;
+  patch: TableRowPatch;
+};
+
+export type UpdateTableRowsResult =
+  | {
+      ok: true;
+      sheet: string;
+      rows: TableRowData[];
+      results: Array<{
+        rowKey: string;
+        row: TableRowData;
+        applied: TableRowPatch;
+        previous: TableRowPatch;
+        rejected: RejectedPatchField[];
+      }>;
+    }
+  | {
+      ok: false;
+      sheet: string;
+      rows: TableRowData[];
+      results: [];
+      rejected: RejectedPatchField[];
+      message: string;
+    };
+
+/**
+ * Atomic multi-row cell update: validate all first, then apply + one persist.
+ * Emits one `rowUpsert` per changed row (same SSE shape as single-row writes).
+ */
+export async function updateTableRows(
+  updates: readonly TableRowUpdate[],
+  sheetId: string = DEFAULT_TABLE_SHEET,
+): Promise<UpdateTableRowsResult> {
+  if (updates.length === 0) {
+    return {
+      ok: false,
+      sheet: sheetId,
+      rows: [],
+      results: [],
+      rejected: [],
+      message: 'rows must contain at least one update',
+    };
+  }
+
+  const effectiveSheetId = sheetStore.has(sheetId)
+    ? sheetId
+    : sheetId === DEFAULT_TABLE_SHEET
+      ? tryResolveTableSheetId(undefined)
+      : null;
+
+  if (!effectiveSheetId) {
+    return {
+      ok: false,
+      sheet: sheetId,
+      rows: [],
+      results: [],
+      rejected: [],
+      message: `Sheet "${sheetId}" not found`,
+    };
+  }
+
+  const sheet = getSheet(effectiveSheetId);
+  if (!sheet) {
+    return {
+      ok: false,
+      sheet: effectiveSheetId,
+      rows: [],
+      results: [],
+      rejected: [],
+      message: `Sheet "${effectiveSheetId}" not found`,
+    };
+  }
+
+  type Planned = {
+    idx: number;
+    rowKey: string;
+    applied: TableRowPatch;
+    previous: TableRowPatch;
+    rejected: RejectedPatchField[];
+    current: TableRowData;
+  };
+  const planned: Planned[] = [];
+
+  for (const update of updates) {
+    const rowKey = String(update.rowKey ?? '').trim();
+    if (!rowKey) {
+      return {
+        ok: false,
+        sheet: effectiveSheetId,
+        rows: [],
+        results: [],
+        rejected: [],
+        message: 'row_key is required',
+      };
+    }
+    const idx = sheet.rows.findIndex((r) => tableRowKey(r) === rowKey);
+    if (idx === -1) {
+      return {
+        ok: false,
+        sheet: effectiveSheetId,
+        rows: [],
+        results: [],
+        rejected: [{ field: rowKey, reason: `Row ${rowKey} not found` }],
+        message: `Row ${rowKey} not found`,
+      };
+    }
+    const current = sheet.rows[idx]!;
+    const { applied, rejected } = sanitizePatch(update.patch, sheet.columns);
+    const hasApplied = Object.keys(applied).length > 0;
+    const requested = Object.keys(update.patch).filter((k) => k !== 'row_id');
+    const previous: TableRowPatch = {};
+    for (const key of Object.keys(applied)) {
+      const prev = current[key];
+      previous[key] = prev === undefined ? '' : prev;
+    }
+    if (requested.length > 0 && !hasApplied) {
+      return {
+        ok: false,
+        sheet: effectiveSheetId,
+        rows: [],
+        results: [],
+        rejected:
+          rejected.length > 0
+            ? rejected
+            : [{ field: rowKey, reason: 'No fields applied' }],
+        message: rejected.map((r) => r.reason).join('; ') || 'No fields applied',
+      };
+    }
+    planned.push({ idx, rowKey, applied, previous, rejected, current });
+  }
+
+  const results: Array<{
+    rowKey: string;
+    row: TableRowData;
+    applied: TableRowPatch;
+    previous: TableRowPatch;
+    rejected: RejectedPatchField[];
+  }> = [];
+  let anyApplied = false;
+
+  for (const item of planned) {
+    if (Object.keys(item.applied).length > 0) {
+      sheet.rows[item.idx] = { ...item.current, ...item.applied };
+      anyApplied = true;
+    }
+    results.push({
+      rowKey: item.rowKey,
+      row: { ...sheet.rows[item.idx]! },
+      applied: item.applied,
+      previous: item.previous,
+      rejected: item.rejected,
+    });
+  }
+
+  if (anyApplied) {
+    tablePersist(effectiveSheetId);
+    for (const item of results) {
+      if (Object.keys(item.applied).length > 0) {
+        emitTable({
+          type: 'rowUpsert',
+          sheet: effectiveSheetId,
+          row: { ...item.row },
+        });
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    sheet: effectiveSheetId,
+    rows: results.map((r) => r.row),
+    results,
+  };
+}
+
 function slugifySheetId(name: string): string {
   const base =
     name

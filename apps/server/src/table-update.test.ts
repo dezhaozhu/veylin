@@ -12,6 +12,7 @@ import {
   getTableRow,
   tryResolveTableSheetId,
   updateTableRow,
+  updateTableRows,
 } from './table-store.js';
 import { buildTableTools, MAX_TABLE_CELL_UPDATES } from './table-tools.js';
 
@@ -194,6 +195,66 @@ describe('updateTableRow / table_update_cells false-success', () => {
     assert.equal(out.updated, 2);
     assert.equal(getTableRow(r1.row_id, sheet)?.[col!.key], 'a');
     assert.equal(getTableRow(r2.row_id, sheet)?.[col!.key], 'b');
+  });
+});
+
+describe('updateTableRows batch', () => {
+  it('applies multiple row patches atomically', async () => {
+    const sheet = freshSheet('batch-ok');
+    const col = addTableColumn(sheet, '备注');
+    assert.ok(col);
+    const r1 = addTableRow(sheet)!;
+    const r2 = addTableRow(sheet)!;
+
+    const result = await updateTableRows(
+      [
+        { rowKey: r1.row_id, patch: { [col!.key]: 'a' } },
+        { rowKey: r2.row_id, patch: { [col!.key]: 'b' } },
+      ],
+      sheet,
+    );
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.rows.length, 2);
+    assert.equal(getTableRow(r1.row_id, sheet)?.[col!.key], 'a');
+    assert.equal(getTableRow(r2.row_id, sheet)?.[col!.key], 'b');
+  });
+
+  it('single-row batch works like one update', async () => {
+    const sheet = freshSheet('batch-one');
+    const col = addTableColumn(sheet, '备注');
+    assert.ok(col);
+    const row = addTableRow(sheet)!;
+    const result = await updateTableRows(
+      [{ rowKey: row.row_id, patch: { [col!.key]: 'solo' } }],
+      sheet,
+    );
+    assert.equal(result.ok, true);
+    assert.equal(getTableRow(row.row_id, sheet)?.[col!.key], 'solo');
+  });
+
+  it('rolls back entirely when one row is missing', async () => {
+    const sheet = freshSheet('batch-atom');
+    const col = addTableColumn(sheet, '备注');
+    assert.ok(col);
+    const row = addTableRow(sheet)!;
+
+    const result = await updateTableRows(
+      [
+        { rowKey: row.row_id, patch: { [col!.key]: 'should-not-stick' } },
+        { rowKey: 'missing_row_xyz', patch: { [col!.key]: 'x' } },
+      ],
+      sheet,
+    );
+    assert.equal(result.ok, false);
+    assert.equal(getTableRow(row.row_id, sheet)?.[col!.key], undefined);
+  });
+
+  it('rejects empty updates', async () => {
+    const sheet = freshSheet('batch-empty');
+    const result = await updateTableRows([], sheet);
+    assert.equal(result.ok, false);
+    assert.match(result.message, /at least one/);
   });
 });
 

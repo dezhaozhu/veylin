@@ -25,5 +25,25 @@ test.describe('Table panel API', () => {
     const body = (await res.json()) as { ok?: boolean; columns?: { key: string }[] };
     expect(body.ok).toBe(true);
     expect(body.columns?.some((c) => c.key === 'col_a')).toBe(true);
+
+    const getRes = await request.get(
+      `${API}/api/table?sheet=${encodeURIComponent(sheetId)}&threadId=${encodeURIComponent(threadId)}`,
+    );
+    expect(getRes.ok()).toBeTruthy();
+    const table = (await getRes.json()) as { rows?: Array<{ row_id: string; col_a?: string }> };
+    const rowId = table.rows?.[0]?.row_id;
+    expect(rowId).toBeTruthy();
+
+    const patchRes = await request.patch(`${API}/api/table/rows`, {
+      data: {
+        sheet: sheetId,
+        threadId,
+        rows: [{ row_key: rowId, col_a: 'updated' }],
+      },
+    });
+    expect(patchRes.ok()).toBeTruthy();
+    const patched = (await patchRes.json()) as { ok?: boolean; rows?: Array<{ col_a?: string }> };
+    expect(patched.ok).toBe(true);
+    expect(patched.rows?.[0]?.col_a).toBe('updated');
   });
 });

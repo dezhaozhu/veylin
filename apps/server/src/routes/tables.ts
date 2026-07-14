@@ -15,7 +15,7 @@ import {
   renameTableSheet,
   resolveTableSheetId,
   sheetBelongsToThread,
-  updateTableRow,
+  updateTableRows,
   DEFAULT_TABLE_SHEET,
   onTableEvent,
   type TableRowPatch,
@@ -281,31 +281,47 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     };
   });
 
-  app.patch('/api/table', async (req, reply) => {
+  app.patch('/api/table/rows', async (req, reply) => {
     await deps.resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       threadId?: string;
-      row_key?: string;
-      row_id?: string;
-      order_no?: string;
-    } & TableRowPatch;
-    const { sheet, threadId, row_key, row_id, order_no, ...patch } = body;
-    const key = row_key ?? row_id ?? order_no;
-    if (key == null || key === '') {
+      rows?: Array<
+        {
+          row_key?: string;
+          row_id?: string;
+          order_no?: string;
+        } & TableRowPatch
+      >;
+    };
+    const { sheet, threadId, rows: rawRows } = body;
+    if (!Array.isArray(rawRows) || rawRows.length === 0) {
       reply.code(400);
-      return { ok: false, message: 'row_key is required' };
+      return { ok: false, message: 'rows must contain at least one update' };
     }
     const access = requireThreadSheet(reply, sheet, threadId);
     if (!isSheetAccess(access)) {
       return access.error;
     }
-    const result = await updateTableRow(key, patch, access.sheetId);
+    const updates = rawRows.map((entry) => {
+      const { row_key, row_id, order_no, ...patch } = entry;
+      return {
+        rowKey: String(row_key ?? row_id ?? order_no ?? ''),
+        patch,
+      };
+    });
+    const result = await updateTableRows(updates, access.sheetId);
     if (!result.ok) {
-      reply.code(result.row ? 400 : 404);
+      const notFound = /not found/i.test(result.message);
+      reply.code(notFound ? 404 : 400);
       return { ok: false, message: result.message, rejected: result.rejected };
     }
-    return { ok: true, sheet: result.sheet, row: result.row };
+    return {
+      ok: true,
+      sheet: result.sheet,
+      rows: result.rows,
+      updated: result.results.length,
+    };
   });
 
   app.post('/api/table/import', async (req, reply) => {

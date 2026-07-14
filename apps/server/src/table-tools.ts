@@ -16,7 +16,7 @@ import {
   renameTableSheet,
   sheetBelongsToThread,
   tryResolveTableSheetId,
-  updateTableRow,
+  updateTableRows,
   type DeletedTableRowSnapshot,
   type RejectedPatchField,
   type TableRowData,
@@ -136,52 +136,53 @@ export async function applyTableCellUpdates(
     byRow.set(item.row_key, patch);
   }
 
+  const batch = await updateTableRows(
+    [...byRow.entries()].map(([rowKey, patch]) => ({ rowKey, patch })),
+    sheet,
+  );
+
+  if (!batch.ok) {
+    return {
+      ok: false,
+      sheet: batch.sheet,
+      updated: 0,
+      cells: [],
+      rejected: batch.rejected,
+      message: batch.message || formatRejected(batch.rejected) || 'No cells updated',
+    };
+  }
+
   const cells: TableCellChange[] = [];
   const rejected: RejectedPatchField[] = [];
-  let anyOk = false;
-  let lastMessage = '';
-
-  for (const [rowKey, patch] of byRow) {
-    const result = await updateTableRow(rowKey, patch, sheet);
-    if (!result.ok) {
-      rejected.push(
-        ...result.rejected,
-        ...(result.rejected.length === 0
-          ? [{ field: rowKey, reason: result.message }]
-          : []),
-      );
-      lastMessage = result.message;
-      continue;
-    }
-    anyOk = true;
-    for (const [colKey, value] of Object.entries(result.applied)) {
+  for (const item of batch.results) {
+    for (const [colKey, value] of Object.entries(item.applied)) {
       cells.push({
-        row_key: rowKey,
+        row_key: item.rowKey,
         column: colKey,
         value,
-        previous: result.previous[colKey] ?? '',
+        previous: item.previous[colKey] ?? '',
       });
     }
-    if (result.rejected.length > 0) {
-      rejected.push(...result.rejected);
+    if (item.rejected.length > 0) {
+      rejected.push(...item.rejected);
     }
   }
 
-  if (!anyOk) {
+  if (cells.length === 0) {
     return {
       ok: false,
-      sheet,
+      sheet: batch.sheet,
       updated: 0,
       cells: [],
       rejected,
-      message: lastMessage || formatRejected(rejected) || 'No cells updated',
+      message: formatRejected(rejected) || 'No cells updated',
     };
   }
 
   const rejectMsg = rejected.length ? ` Rejected: ${formatRejected(rejected)}` : '';
   return {
     ok: true,
-    sheet,
+    sheet: batch.sheet,
     updated: cells.length,
     cells,
     rejected,

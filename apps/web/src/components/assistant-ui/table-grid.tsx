@@ -38,7 +38,7 @@ import {
   nextSequentialSheetName,
   type TableSheetMeta,
 } from '@/lib/table-sheets';
-import { DEFAULT_TABLE_STATUS_OPTIONS, applyTextQuery, sortRows } from '@veylin/shared';
+import { DEFAULT_TABLE_STATUS_OPTIONS, applyColumnFilters, applyTextQuery, sortRows } from '@veylin/shared';
 
 type TableColumnType = 'text' | 'number' | 'status';
 
@@ -47,6 +47,10 @@ type TableRow = Record<string, string | number> & { row_id?: string };
 function rowKey(row: TableRow): string {
   return String(row.row_id ?? '');
 }
+
+/** Soft large-sheet thresholds — full data stays in memory; grid render is capped. */
+const SOFT_ROW_WARN = 5000;
+const SOFT_ROW_RENDER_CAP = 2000;
 
 // Live-sync events pushed over SSE from /api/table/stream (mirrors the server's
 // TableEvent union). Applied as row-level deltas so update cost is independent of
@@ -79,8 +83,14 @@ function asTableSheet(meta: TableSheetMeta): TableSheet {
 }
 
 interface TableGridTotals {
-  rowCount: number;
+  /** Rows currently rendered in the grid (after filter + optional CAP). */
+  shownCount: number;
+  /** Rows matching filters (before CAP). */
+  matchedCount: number;
+  /** All rows in the sheet (before filters). */
+  totalCount: number;
   selectedCount: number;
+  capped: boolean;
 }
 
 type FilterState = {
@@ -168,26 +178,33 @@ async function fetchSheetList(threadId?: string | null): Promise<TableSheet[]> {
   return sheets.map(asTableSheet);
 }
 
-async function patchRow(
+async function patchRows(
   sheetId: string,
-  row: TableRow,
+  rows: TableRow[],
   threadId?: string | null,
-): Promise<boolean> {
+): Promise<{ ok: boolean; message?: string }> {
+  if (rows.length === 0) return { ok: true };
   try {
-    const res = await fetch('/api/table', {
+    const res = await fetch('/api/table/rows', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sheet: sheetId,
-        row_key: rowKey(row),
         ...(threadId?.trim() ? { threadId: threadId.trim() } : {}),
-        ...row,
+        rows: rows.map((row) => {
+          const { row_id: _rowId, ...fields } = row;
+          return {
+            row_key: rowKey(row),
+            ...fields,
+          };
+        }),
       }),
     });
-    const data = (await res.json()) as { ok?: boolean };
-    return res.ok && data.ok === true;
-  } catch {
-    return false;
+    const data = (await res.json()) as { ok?: boolean; message?: string };
+    if (res.ok && data.ok === true) return { ok: true };
+    return { ok: false, message: data.message ?? `HTTP ${res.status}` };
+  } catch (e: unknown) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
   }
 }
 
@@ -249,8 +266,18 @@ function TableGridFooter({ totals }: { totals: TableGridTotals }) {
       aria-live="polite"
       aria-atomic="true"
     >
-      <span className="text-foreground font-medium">{t('table.footerTotal', { count: totals.rowCount })}</span>
-      {totals.selectedCount > 0 ? <span>{t('table.footerSelected', { count: totals.selectedCount })}</span> : null}
+      {totals.capped ? (
+        <span className="text-foreground font-medium">
+          {t('table.footerCapped', { shown: totals.shownCount, matched: totals.matchedCount })}
+        </span>
+      ) : (
+        <span className="text-foreground font-medium">
+          {t('table.footerTotal', { count: totals.matchedCount })}
+        </span>
+      )}
+      {totals.selectedCount > 0 ? (
+        <span>{t('table.footerSelected', { count: totals.selectedCount })}</span>
+      ) : null}
     </div>
   );
 }
@@ -596,6 +623,7 @@ export function TableGrid({
   const [renamingSheet, setRenamingSheet] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameCommitLockRef = useRef(false);
+  const largeSheetWarnedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!toast) return;
@@ -606,6 +634,16 @@ export function TableGrid({
   const showToast = useCallback((message: string, variant: 'success' | 'error') => {
     setToast({ message, variant });
   }, []);
+
+  const maybeWarnLargeSheet = useCallback(
+    (sheetId: string, rowCount: number) => {
+      if (rowCount < SOFT_ROW_WARN) return;
+      if (largeSheetWarnedRef.current.has(sheetId)) return;
+      largeSheetWarnedRef.current.add(sheetId);
+      showToast(t('table.largeSheetWarn', { count: rowCount, cap: SOFT_ROW_RENDER_CAP }), 'error');
+    },
+    [showToast, t],
+  );
 
   const resetImportInput = useCallback(() => {
     if (importInputRef.current) importInputRef.current.value = '';
@@ -640,7 +678,7 @@ export function TableGrid({
   activeSheetIdRef.current = activeSheetId;
 
   const applyPayload = useCallback(
-    (data: SchedulePayload, _initial: boolean, _preferSheetId?: string) => {
+    (data: SchedulePayload, _initial: boolean, preferSheetId?: string) => {
       if (data.sheets?.length) {
         setSheets(data.sheets);
       }
@@ -652,8 +690,10 @@ export function TableGrid({
       if (serialized === lastSerialized.current) return;
       lastSerialized.current = serialized;
       setRows(next);
+      const sheetForWarn = preferSheetId ?? data.sheet ?? activeSheetIdRef.current;
+      if (sheetForWarn) maybeWarnLargeSheet(sheetForWarn, next.length);
     },
-    [],
+    [maybeWarnLargeSheet],
   );
 
   const load = useCallback(
@@ -964,17 +1004,34 @@ export function TableGrid({
     return () => es.close();
   }, [activeSheetId, load, resetSheetUiState, threadId]);
 
-  const filteredRows = useMemo(() => {
-    const filtered = applyTextQuery(rows, filters.query);
+  const matchedRows = useMemo(() => {
+    const queryColumns = columnDefs.map((c) => ({ key: c.key, name: c.name, type: c.type }));
+    const q = filters.query.trim();
+    let filtered: TableRow[];
+    if (!q) {
+      filtered = [...rows];
+    } else if (selectedColumnKey) {
+      // Column header selected → scope search to that column (contains).
+      filtered = applyColumnFilters(rows, queryColumns, [
+        { column: selectedColumnKey, op: 'contains', value: q },
+      ]);
+    } else {
+      filtered = applyTextQuery(rows, q);
+    }
     const sort = sortColumns[0];
     if (!sort) return filtered;
     return sortRows(
       filtered,
-      columnDefs.map((c) => ({ key: c.key, name: c.name, type: c.type })),
+      queryColumns,
       sort.columnKey,
       sort.direction === 'DESC' ? 'desc' : 'asc',
     );
-  }, [rows, filters, sortColumns, columnDefs]);
+  }, [rows, filters, selectedColumnKey, sortColumns, columnDefs]);
+
+  const displayRows = useMemo(() => {
+    if (matchedRows.length <= SOFT_ROW_RENDER_CAP) return matchedRows;
+    return matchedRows.slice(0, SOFT_ROW_RENDER_CAP);
+  }, [matchedRows]);
 
   const toggleSort = useCallback((columnKey: string) => {
     setSortColumns((prev) => {
@@ -992,7 +1049,7 @@ export function TableGrid({
       const end = Math.max(fromIdx, toIdx);
       const next = new Set(base);
       for (let i = start; i <= end; i++) {
-        const row = filteredRows[i];
+        const row = displayRows[i];
         if (!row) continue;
         const key = rowKey(row);
         if (checked) next.add(key);
@@ -1000,7 +1057,7 @@ export function TableGrid({
       }
       return next;
     },
-    [filteredRows],
+    [displayRows],
   );
 
   const handleRowSelect = useCallback(
@@ -1027,10 +1084,10 @@ export function TableGrid({
   const handleSelectAll = useCallback(
     (checked: boolean) => {
       clearColumnSelection();
-      setSelectedRows(checked ? new Set(filteredRows.map((r) => rowKey(r))) : new Set());
+      setSelectedRows(checked ? new Set(displayRows.map((r) => rowKey(r))) : new Set());
       selectionAnchorRef.current = null;
     },
-    [filteredRows, clearColumnSelection],
+    [displayRows, clearColumnSelection],
   );
 
   const onCellClick = useCallback(
@@ -1056,22 +1113,32 @@ export function TableGrid({
 
   const totals = useMemo<TableGridTotals>(
     () => ({
-      rowCount: filteredRows.length,
+      shownCount: displayRows.length,
+      matchedCount: matchedRows.length,
+      totalCount: rows.length,
       selectedCount: selectedRows.size,
+      capped: matchedRows.length > SOFT_ROW_RENDER_CAP,
     }),
-    [filteredRows.length, selectedRows.size],
+    [displayRows.length, matchedRows.length, rows.length, selectedRows.size],
   );
 
   const commitRows = useCallback(
-    (merged: TableRow[], touchedKeys: ReadonlySet<string>) => {
+    (merged: TableRow[], touchedKeys: ReadonlySet<string>, previous: TableRow[]) => {
       lastSerialized.current = JSON.stringify(merged);
       editingUntil.current = Date.now() + 3000;
       setRows(merged);
-      for (const row of merged) {
-        if (touchedKeys.has(rowKey(row))) void patchRow(activeSheetId, row, threadId);
-      }
+      const touched = merged.filter((row) => touchedKeys.has(rowKey(row)));
+      if (touched.length === 0) return;
+      void (async () => {
+        const result = await patchRows(activeSheetId, touched, threadId);
+        if (!result.ok) {
+          lastSerialized.current = JSON.stringify(previous);
+          setRows(previous);
+          showToast(result.message ?? t('table.saveFailed'), 'error');
+        }
+      })();
     },
-    [activeSheetId, threadId],
+    [activeSheetId, showToast, t, threadId],
   );
 
   const pushHistory = useCallback((batch: HistoryBatch) => {
@@ -1088,20 +1155,27 @@ export function TableGrid({
     (batch: HistoryBatch, mode: 'undo' | 'redo') => {
       isApplyingHistory.current = true;
       setRows((current) => {
+        const previous = current;
         const merged = applyHistoryBatch(current, batch, mode);
         lastSerialized.current = JSON.stringify(merged);
         editingUntil.current = Date.now() + 3000;
         const touched = new Set(batch.map((e) => e.rowKey));
-        for (const row of merged) {
-          if (touched.has(rowKey(row))) void patchRow(activeSheetId, row, threadId);
-        }
+        const touchedRows = merged.filter((row) => touched.has(rowKey(row)));
+        void (async () => {
+          const result = await patchRows(activeSheetId, touchedRows, threadId);
+          if (!result.ok) {
+            lastSerialized.current = JSON.stringify(previous);
+            setRows(previous);
+            showToast(result.message ?? t('table.saveFailed'), 'error');
+          }
+        })();
         return merged;
       });
       queueMicrotask(() => {
         isApplyingHistory.current = false;
       });
     },
-    [activeSheetId, threadId],
+    [activeSheetId, showToast, t, threadId],
   );
 
   const handleUndo = useCallback(() => {
@@ -1132,9 +1206,10 @@ export function TableGrid({
     (next: TableRow[], data: RowsChangeData<TableRow>) => {
       const edits = isApplyingHistory.current
         ? []
-        : collectEdits(filteredRows, next, data.column.key, data.indexes, editableKeys);
+        : collectEdits(displayRows, next, data.column.key, data.indexes, editableKeys);
       if (edits.length > 0) pushHistory(edits);
 
+      const previous = rows;
       const byKey = new Map(next.map((r) => [rowKey(r), r]));
       const merged = rows.map((r) => byKey.get(rowKey(r)) ?? r);
       const touched = new Set(
@@ -1144,9 +1219,9 @@ export function TableGrid({
               .map((idx) => (next[idx] ? rowKey(next[idx]) : null))
               .filter((k): k is string => k != null),
       );
-      commitRows(merged, touched);
+      commitRows(merged, touched, previous);
     },
-    [commitRows, editableKeys, filteredRows, pushHistory, rows],
+    [commitRows, displayRows, editableKeys, pushHistory, rows],
   );
 
   const onCellKeyDown = useCallback(
@@ -1183,8 +1258,8 @@ export function TableGrid({
   const onCellPaste = useMemo(() => makeOnCellPaste(editableKeys), [editableKeys]);
 
   const visibleRowKeys = useMemo(
-    () => filteredRows.map((r) => rowKey(r)),
-    [filteredRows],
+    () => displayRows.map((r) => rowKey(r)),
+    [displayRows],
   );
 
   const rowSelectionCtx = useMemo<RowSelectionCtx>(
@@ -1203,8 +1278,8 @@ export function TableGrid({
   );
 
   const dataColumns = useMemo(
-    () => columnDefs.map((def) => buildDataColumn(def, filteredRows)),
-    [columnDefs, filteredRows],
+    () => columnDefs.map((def) => buildDataColumn(def, displayRows)),
+    [columnDefs, displayRows],
   );
 
   const columns = useMemo<Column<TableRow>[]>(
@@ -1455,6 +1530,10 @@ export function TableGrid({
 
   const hasActiveFilters = filters.query.trim() !== '';
 
+  const filterPlaceholder = selectedColumn
+    ? t('table.filterColumnPlaceholder', { name: selectedColumn.name })
+    : t('table.filterPlaceholder');
+
   const visibleSheets = sheets;
 
   // Sheet tabs + toolbar stay mounted; loading / errors only replace the grid body.
@@ -1636,7 +1715,7 @@ export function TableGrid({
           <span className="text-muted-foreground mx-1 hidden h-4 w-px bg-border sm:inline-block" />
           <input
             type="search"
-            placeholder={t('table.filterPlaceholder')}
+            placeholder={filterPlaceholder}
             value={filters.query}
             onChange={(e) => setFilters({ query: e.target.value })}
             disabled={loading}
@@ -1699,7 +1778,7 @@ export function TableGrid({
             {t('common.retry')}
           </button>
         </div>
-      ) : filteredRows.length === 0 ? (
+      ) : displayRows.length === 0 ? (
         <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-sm">
           <span>
             {columnDefs.length === 0
@@ -1727,7 +1806,7 @@ export function TableGrid({
                 style={{ blockSize: '100%' }}
                 aria-label={t('table.ariaGrid')}
                 columns={columns}
-                rows={filteredRows}
+                rows={displayRows}
                 onRowsChange={onRowsChange}
                 onCellClick={onCellClick}
                 onCellKeyDown={onCellKeyDown}
