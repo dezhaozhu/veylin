@@ -51,6 +51,7 @@ English · [简体中文](./README.zh-CN.md)
 - **Skills** — bundled / user / plugin; activate from the composer
 - **Rules** — always / keyword injection into the system prompt
 - **MCP** — remote SSE/HTTP servers; toolset refresh on change
+- **Business source** — Settings → Business: connect an enterprise MCP (URL, credential, tool allowlist) and optional audit webhook; Host ports for identity / org / audit are swappable — see [docs/enterprise-ports.md](./docs/enterprise-ports.md)
 - **Hooks** — Claude Code–compatible lifecycle events (user / project / plugin)
 - **Plugins** — path / git / marketplace; ship skills + hooks + MCP together  
   See [docs/hooks-skills-plugins.md](./docs/hooks-skills-plugins.md) and [examples/](./examples/)
@@ -103,9 +104,9 @@ npm run dev                   # server :8787 + web :5174
 npm run -w @veylin/desktop dev
 ```
 
-Data directory: set `VEYLIN_DATA_DIR` (dev defaults to the repo `./data`). Desktop no-login mode uses `VEYLIN_DESKTOP_AUTH=1`.
+Data directory: set `VEYLIN_DATA_DIR` (dev defaults to the repo `./data`). Desktop no-login mode uses `VEYLIN_DESKTOP_AUTH=1`. Hosted / shared deploys should turn that off, set `AUTH_SECRET`, and use local sign-in (or `IDENTITY_PROVIDER=oidc|webhook`).
 
-Optional env knobs (models, context engineering, Langfuse) are documented in [`.env.example`](./.env.example).
+Optional env knobs (models, context engineering, Langfuse, identity / audit) are documented in [`.env.example`](./.env.example) and [docs/enterprise-ports.md](./docs/enterprise-ports.md).
 
 ## Build the desktop app
 
@@ -119,7 +120,7 @@ Desktop builds do **not** ship model credentials — open **Settings → Models*
 
 ## Security
 
-See [SECURITY.md](./SECURITY.md). For shared or production deployments, set `AUTH_SECRET` and disable desktop no-login mode.
+See [SECURITY.md](./SECURITY.md). For shared or production deployments, set `AUTH_SECRET`, disable desktop no-login (`VEYLIN_DESKTOP_AUTH=0`), and prefer enterprise identity / audit sinks when needed ([docs/enterprise-ports.md](./docs/enterprise-ports.md)).
 
 ## Contributing
 
