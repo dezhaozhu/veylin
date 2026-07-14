@@ -534,13 +534,13 @@ export type TableGridProps = {
   /** Current chat session — sheets are isolated per thread. */
   threadId?: string | null;
   /**
-   * Sheet owned by this panel tab. Created when the user opens the tab (+),
-   * then passed in — TableGrid never auto-creates on mount.
-   * When `onBoundSheet` is set (right-panel binding), only this sheet is shown.
+   * Active sheet for this panel tab (created when the user opens the tab via +).
+   * TableGrid never auto-creates on mount. When `onBoundSheet` is set, switching
+   * sheets updates the tab binding; the sheet strip still lists all thread sheets.
    */
   boundSheetId?: string | null;
-  /** Persist the sheet id onto the panel tab after switch / recreate. */
-  onBoundSheet?: (sheetId: string) => void;
+  /** Persist the active sheet id (and title) onto the panel tab after switch / recreate. */
+  onBoundSheet?: (sheetId: string, meta?: { title?: string }) => void;
 };
 
 export function TableGrid({
@@ -640,29 +640,20 @@ export function TableGrid({
   activeSheetIdRef.current = activeSheetId;
 
   const applyPayload = useCallback(
-    (data: SchedulePayload, initial: boolean, preferSheetId?: string) => {
+    (data: SchedulePayload, _initial: boolean, _preferSheetId?: string) => {
       if (data.sheets?.length) {
-        if (bindingEnabled) {
-          const id = preferSheetId?.trim() || activeSheetIdRef.current;
-          const mine = id
-            ? data.sheets.find((s) => s.id === id)
-            : undefined;
-          if (mine) setSheets([mine]);
-          else if (data.sheets.length === 1) setSheets([data.sheets[0]!]);
-        } else {
-          setSheets(data.sheets);
-        }
+        setSheets(data.sheets);
       }
       if (data.columns) setColumnDefs(data.columns);
       const next = data.rows ?? [];
-      if (initial) setLoading(false);
+      if (_initial) setLoading(false);
       if (Date.now() < editingUntil.current) return;
       const serialized = JSON.stringify(next);
       if (serialized === lastSerialized.current) return;
       lastSerialized.current = serialized;
       setRows(next);
     },
-    [bindingEnabled],
+    [],
   );
 
   const load = useCallback(
@@ -695,11 +686,17 @@ export function TableGrid({
     (sheetId: string) => {
       if (sheetId === activeSheetId) return;
       resetSheetUiState();
+      // Clear grid body so we never flash the previous sheet's rows, but keep
+      // sheet tabs + toolbar mounted (loading paints only in the body).
+      setRows([]);
+      setColumnDefs([]);
+      setLoadError(null);
       setActiveSheetId(sheetId);
       setLoading(true);
-      onBoundSheetRef.current?.(sheetId);
+      const title = sheets.find((s) => s.id === sheetId)?.name;
+      onBoundSheetRef.current?.(sheetId, title ? { title } : undefined);
     },
-    [activeSheetId, resetSheetUiState],
+    [activeSheetId, resetSheetUiState, sheets],
   );
 
   const confirmDeleteSheet = async () => {
@@ -720,22 +717,26 @@ export function TableGrid({
         showToast(data.message ?? t('table.deleteSheetFailed'), 'error');
         return;
       }
-      if (bindingEnabled) {
-        // Bound panel: after deleting the only visible sheet, create a fresh empty one
-        // (user-initiated delete — not mount).
-        if (deleteSheetTarget.id === activeSheetId) {
-          if (!threadId?.trim()) {
-            showToast(t('table.createSheetFailed'), 'error');
-            setDeleteSheetTarget(null);
-            return;
-          }
+      if (data.sheets) setSheets(data.sheets);
+      if (deleteSheetTarget.id === activeSheetId) {
+        if (data.nextSheet) {
+          resetSheetUiState();
+          setActiveSheetId(data.nextSheet);
+          setLoading(true);
+          const nextTitle = data.sheets?.find((s) => s.id === data.nextSheet)?.name;
+          onBoundSheetRef.current?.(
+            data.nextSheet,
+            nextTitle ? { title: nextTitle } : undefined,
+          );
+        } else if (bindingEnabled && threadId?.trim()) {
+          // Last sheet deleted — create a fresh empty one for the bound tab.
           try {
             const created = await createNextThreadSheet(threadId.trim());
             resetSheetUiState();
             setSheets([asTableSheet(created)]);
             setActiveSheetId(created.id);
             setLoading(true);
-            onBoundSheetRef.current?.(created.id);
+            onBoundSheetRef.current?.(created.id, { title: created.name });
           } catch (err) {
             showToast(
               err instanceof Error ? err.message : t('table.createSheetFailed'),
@@ -743,15 +744,6 @@ export function TableGrid({
             );
           }
         }
-        setDeleteSheetTarget(null);
-        return;
-      }
-      if (data.sheets) setSheets(data.sheets);
-      if (deleteSheetTarget.id === activeSheetId && data.nextSheet) {
-        resetSheetUiState();
-        setActiveSheetId(data.nextSheet);
-        setLoading(true);
-        onBoundSheetRef.current?.(data.nextSheet);
       }
       setDeleteSheetTarget(null);
     } catch (e: unknown) {
@@ -785,16 +777,15 @@ export function TableGrid({
       const sheet = asTableSheet(
         await createThreadSheet(threadId.trim(), name),
       );
-      if (bindingEnabled) {
-        setSheets([sheet]);
-      } else {
-        const list = await fetchSheetList(threadId);
-        setSheets(list);
-      }
+      const list = await fetchSheetList(threadId);
+      setSheets(list.length > 0 ? list : [sheet]);
       resetSheetUiState();
+      setRows([]);
+      setColumnDefs([]);
+      setLoadError(null);
       setActiveSheetId(sheet.id);
       setLoading(true);
-      onBoundSheetRef.current?.(sheet.id);
+      onBoundSheetRef.current?.(sheet.id, { title: sheet.name });
       setAddSheetOpen(false);
       setNewSheetName('');
     } catch (e: unknown) {
@@ -859,14 +850,15 @@ export function TableGrid({
         showToast(data.message ?? t('table.renameSheetFailed'), 'error');
         return;
       }
-      if (bindingEnabled && data.sheet) {
-        setSheets([data.sheet]);
-      } else if (data.sheets) {
+      if (data.sheets) {
         setSheets(data.sheets);
       } else if (data.sheet) {
         setSheets((prev) =>
           prev.map((s) => (s.id === data.sheet!.id ? { ...s, ...data.sheet! } : s)),
         );
+      }
+      if (data.sheet && data.sheet.id === activeSheetIdRef.current) {
+        onBoundSheetRef.current?.(data.sheet.id, { title: data.sheet.name });
       }
       cancelRenameSheet();
     } catch (e: unknown) {
@@ -880,7 +872,6 @@ export function TableGrid({
       setRenamingSheet(false);
     }
   }, [
-    bindingEnabled,
     cancelRenameSheet,
     renameDraft,
     renamingSheet,
@@ -938,23 +929,14 @@ export function TableGrid({
         // and surface as a spurious load/delete failure).
         void fetchSheetList(threadId)
           .then((nextSheets) => {
-            if (bindingEnabled) {
-              const current = nextSheets.find((s) => s.id === activeSheetId);
-              if (current) {
-                setSheets([current]);
-                return;
-              }
-              // Bound sheet gone — keep UI; next create/load will recover.
-              return;
-            }
             setSheets(nextSheets);
             if (nextSheets.some((s) => s.id === activeSheetId)) return;
-            const fallback = nextSheets[0]?.id;
+            const fallback = nextSheets[0];
             if (!fallback) return;
             resetSheetUiState();
-            setActiveSheetId(fallback);
+            setActiveSheetId(fallback.id);
             setLoading(true);
-            onBoundSheetRef.current?.(fallback);
+            onBoundSheetRef.current?.(fallback.id, { title: fallback.name });
           })
           .catch(() => {
             /* ignore — next user action will resync */
@@ -980,7 +962,7 @@ export function TableGrid({
       }
     };
     return () => es.close();
-  }, [activeSheetId, bindingEnabled, load, resetSheetUiState, threadId]);
+  }, [activeSheetId, load, resetSheetUiState, threadId]);
 
   const filteredRows = useMemo(() => {
     const filtered = applyTextQuery(rows, filters.query);
@@ -1473,38 +1455,9 @@ export function TableGrid({
 
   const hasActiveFilters = filters.query.trim() !== '';
 
-  const visibleSheets = bindingEnabled
-    ? sheets.filter((s) => s.id === activeSheetId).slice(0, 1)
-    : sheets;
+  const visibleSheets = sheets;
 
-  if (loadError && rows.length === 0 && columnDefs.length === 0) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
-        <p className="text-muted-foreground text-sm">
-          {t('table.loadError', { error: loadError })}
-        </p>
-        <button
-          type="button"
-          className="text-foreground border-border hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
-          onClick={() => {
-            setLoadError(null);
-            setLoading(true);
-            void load(activeSheetId, true);
-          }}
-        >
-          {t('common.retry')}
-        </button>
-      </div>
-    );
-  }
-
-  if (loading && rows.length === 0 && columnDefs.length === 0) {
-    return (
-      <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
-        {t('table.loading')}
-      </div>
-    );
-  }
+  // Sheet tabs + toolbar stay mounted; loading / errors only replace the grid body.
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
@@ -1526,9 +1479,7 @@ export function TableGrid({
         <div
           className={cn(
             'flex min-w-0 flex-1 items-center gap-1',
-            bindingEnabled
-              ? 'overflow-hidden'
-              : 'overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+            'overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
           )}
         >
           {visibleSheets.map((sheet) => {
@@ -1629,6 +1580,7 @@ export function TableGrid({
             size="sm"
             className={cn('h-7 gap-1 px-2 text-xs', rowActionDelete && 'text-destructive hover:text-destructive')}
             onClick={handleRowAction}
+            disabled={loading}
           >
             {rowActionDelete ? <Minus className="size-3" /> : <Plus className="size-3" />}
             {rowActionDelete && selectedRows.size > 1
@@ -1641,6 +1593,7 @@ export function TableGrid({
             size="sm"
             className={cn('h-7 gap-1 px-2 text-xs', columnSelected && 'text-destructive hover:text-destructive')}
             onClick={handleColumnAction}
+            disabled={loading}
           >
             {columnSelected ? <Minus className="size-3" /> : <Plus className="size-3" />}
             {t('table.columns')}
@@ -1651,9 +1604,9 @@ export function TableGrid({
             variant="outline"
             size="sm"
             className="h-7 gap-1 px-2 text-xs"
-            disabled={importing}
+            disabled={importing || loading}
           >
-            <label className={cn(importing && 'pointer-events-none opacity-50')}>
+            <label className={cn((importing || loading) && 'pointer-events-none opacity-50')}>
               <Upload className="size-3" />
               {importing ? t('table.importing') : t('table.import')}
               <input
@@ -1661,7 +1614,7 @@ export function TableGrid({
                 type="file"
                 accept=".xlsx,.xls,.csv"
                 className="hidden"
-                disabled={importing}
+                disabled={importing || loading}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) handleImportFileSelected(file);
@@ -1675,6 +1628,7 @@ export function TableGrid({
             size="sm"
             className="h-7 gap-1 px-2 text-xs"
             onClick={handleExportExcel}
+            disabled={loading}
           >
             <Download className="size-3" />
             {t('table.export')}
@@ -1685,7 +1639,8 @@ export function TableGrid({
             placeholder={t('table.filterPlaceholder')}
             value={filters.query}
             onChange={(e) => setFilters({ query: e.target.value })}
-            className="bg-background border-input h-7 min-w-[8rem] flex-1 rounded-md border px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+            disabled={loading}
+            className="bg-background border-input h-7 min-w-[8rem] flex-1 rounded-md border px-2 text-xs outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
           />
           {hasActiveFilters ? (
             <button
@@ -1703,7 +1658,7 @@ export function TableGrid({
               size="icon"
               className="size-7"
               aria-label={t('table.undo')}
-              disabled={undoStack.length === 0}
+              disabled={undoStack.length === 0 || loading}
               onClick={handleUndo}
             >
               <Undo2 className="size-3.5" />
@@ -1714,7 +1669,7 @@ export function TableGrid({
               size="icon"
               className="size-7"
               aria-label={t('table.redo')}
-              disabled={redoStack.length === 0}
+              disabled={redoStack.length === 0 || loading}
               onClick={handleRedo}
             >
               <Redo2 className="size-3.5" />
@@ -1723,7 +1678,28 @@ export function TableGrid({
         </div>
       </div>
 
-      {filteredRows.length === 0 ? (
+      {loading ? (
+        <div className="text-muted-foreground flex flex-1 items-center justify-center text-sm">
+          {t('table.loading')}
+        </div>
+      ) : loadError && rows.length === 0 && columnDefs.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center">
+          <p className="text-muted-foreground text-sm">
+            {t('table.loadError', { error: loadError })}
+          </p>
+          <button
+            type="button"
+            className="text-foreground border-border hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
+            onClick={() => {
+              setLoadError(null);
+              setLoading(true);
+              void load(activeSheetId, true);
+            }}
+          >
+            {t('common.retry')}
+          </button>
+        </div>
+      ) : filteredRows.length === 0 ? (
         <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-sm">
           <span>
             {columnDefs.length === 0

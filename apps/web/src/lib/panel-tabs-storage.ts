@@ -4,9 +4,19 @@ const BY_THREAD_STORAGE_KEY = 'right_panel_tabs_by_thread';
 
 const KNOWN_KINDS = new Set<PanelKind>(['table', 'web', 'rag', 'workflow']);
 
+/** Non-web panel kinds may only keep one tab per thread. */
+const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow']);
+
 export type PanelTabsStoredState = {
   tabs: PanelTab[];
   activeId: string | null;
+};
+
+export type OpenWebTabHint = {
+  tabId: string;
+  url: string;
+  title: string;
+  isActive: boolean;
 };
 
 export function emptyPanelTabsState(): PanelTabsStoredState {
@@ -40,15 +50,47 @@ function isValidTab(value: unknown): value is PanelTab {
   );
 }
 
-function normalizeState(parsed: Partial<PanelTabsStoredState> | null | undefined): PanelTabsStoredState {
-  const tabs = (Array.isArray(parsed?.tabs) ? parsed!.tabs.filter(isValidTab) : []).map((tab) => {
-    if (tab.kind !== 'web') return tab;
-    return {
-      ...tab,
-      // Keep kind label stable; page titles live in tab.state.
-      title: tab.title || 'panels.web.label',
-    };
+function dedupeSingletonTabs(
+  tabs: PanelTab[],
+  preferredActiveId: string | null | undefined,
+): PanelTab[] {
+  const keepIdByKind = new Map<PanelKind, string>();
+  const preferred =
+    typeof preferredActiveId === 'string'
+      ? tabs.find((t) => t.id === preferredActiveId)
+      : undefined;
+  if (preferred && SINGLETON_PANEL_KINDS.has(preferred.kind)) {
+    keepIdByKind.set(preferred.kind, preferred.id);
+  }
+  for (const tab of tabs) {
+    if (!SINGLETON_PANEL_KINDS.has(tab.kind)) continue;
+    if (!keepIdByKind.has(tab.kind)) keepIdByKind.set(tab.kind, tab.id);
+  }
+  return tabs.filter((tab) => {
+    if (!SINGLETON_PANEL_KINDS.has(tab.kind)) return true;
+    return keepIdByKind.get(tab.kind) === tab.id;
   });
+}
+
+function normalizeState(parsed: Partial<PanelTabsStoredState> | null | undefined): PanelTabsStoredState {
+  const rawTabs = (Array.isArray(parsed?.tabs) ? parsed!.tabs.filter(isValidTab) : []).map((tab) => {
+    if (tab.kind === 'web') {
+      return {
+        ...tab,
+        // Keep kind label stable; page titles live in tab.state.
+        title: tab.title || 'panels.web.label',
+      };
+    }
+    if (tab.kind === 'table') {
+      return {
+        ...tab,
+        // Panel tab shows「表格」; sheet names live in the inner sheet strip.
+        title: 'panels.table.label',
+      };
+    }
+    return tab;
+  });
+  const tabs = dedupeSingletonTabs(rawTabs, parsed?.activeId ?? null);
   if (tabs.length === 0) return emptyPanelTabsState();
   const activeId =
     typeof parsed?.activeId === 'string' && tabs.some((t) => t.id === parsed.activeId)
@@ -136,12 +178,32 @@ export function getActiveWebTabId(): string | null {
   return tab?.kind === ('web' as PanelKind) ? tab.id : null;
 }
 
+/** All open web tabs for agent workspace hints. */
+export function listOpenWebTabs(): OpenWebTabHint[] {
+  const state = readPanelTabsState();
+  if (!state) return [];
+  return state.tabs
+    .filter((t) => t.kind === 'web')
+    .map((t) => {
+      const url = typeof t.state?.url === 'string' ? t.state.url.trim() : '';
+      const pageTitle =
+        typeof t.state?.title === 'string' ? t.state.title.trim() : '';
+      return {
+        tabId: t.id,
+        url,
+        title: pageTitle || t.title?.trim() || url || t.id,
+        isActive: t.id === state.activeId,
+      };
+    });
+}
+
 /** Snapshot of the active right-panel tab for chat request body. */
 export function readWorkspacePanelContext():
   | {
       activePanel: PanelKind;
       webUrl?: string;
       webTitle?: string;
+      openWebTabs?: OpenWebTabHint[];
     }
   | undefined {
   const state = readPanelTabsState();
@@ -152,7 +214,12 @@ export function readWorkspacePanelContext():
     activePanel: PanelKind;
     webUrl?: string;
     webTitle?: string;
+    openWebTabs?: OpenWebTabHint[];
   } = { activePanel: tab.kind };
+  const openWebTabs = listOpenWebTabs().filter((t) => t.url);
+  if (openWebTabs.length > 0) {
+    ctx.openWebTabs = openWebTabs;
+  }
   if (tab.kind === 'web') {
     const url = typeof tab.state?.url === 'string' ? tab.state.url.trim() : '';
     if (url) {

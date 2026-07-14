@@ -199,6 +199,9 @@ function taskDispatchRowFromPart(part: unknown, fallbackId: string): BackgroundT
     parsed.payload?.subagent_type ?? parsed.input?.subagent_type ?? null;
   const agentId = parsed.payload?.agent_id ?? parsed.input?.agent_id ?? 'subagent';
 
+  // Prefer server task_id whenever present so transcript rows match store/API ids.
+  const rowId = parsed.payload?.task_id ?? parsed.toolCallId ?? fallbackId;
+
   if (parsed.payload?.background === true && parsed.payload.task_id) {
     return {
       id: parsed.payload.task_id,
@@ -211,7 +214,7 @@ function taskDispatchRowFromPart(part: unknown, fallbackId: string): BackgroundT
 
   if (typeof parsed.payload?.summary === 'string' && parsed.payload.summary.trim()) {
     return {
-      id: parsed.toolCallId ?? fallbackId,
+      id: rowId,
       status: 'done',
       label,
       agentId,
@@ -225,7 +228,7 @@ function taskDispatchRowFromPart(part: unknown, fallbackId: string): BackgroundT
   }
 
   return {
-    id: parsed.toolCallId ?? fallbackId,
+    id: rowId,
     status: 'running',
     label,
     agentId,

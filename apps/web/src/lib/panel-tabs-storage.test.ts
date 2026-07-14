@@ -121,7 +121,85 @@ describe('panel-tabs-storage per-thread', () => {
       activePanel: 'web',
       webUrl: 'https://a.test',
       webTitle: 'A',
+      openWebTabs: [
+        {
+          tabId: 'web1',
+          url: 'https://a.test',
+          title: 'A',
+          isActive: true,
+        },
+      ],
     });
     assert.equal(readPanelTabsState()?.activeId, 'web1');
+  });
+
+  it('dedupes singleton panel kinds while keeping multiple web tabs', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } = await import(
+      './panel-tabs-storage.ts'
+    );
+    saveThreadPanelTabs('t-dup', {
+      tabs: [
+        { id: 'table-old', kind: 'table', title: 'Sheet A' },
+        { id: 'web-1', kind: 'web', title: 'panels.web.label', state: { url: 'https://1.test' } },
+        { id: 'table-new', kind: 'table', title: 'Sheet B' },
+        { id: 'web-2', kind: 'web', title: 'panels.web.label', state: { url: 'https://2.test' } },
+        { id: 'rag-1', kind: 'rag', title: 'panels.rag.label' },
+        { id: 'rag-2', kind: 'rag', title: 'panels.rag.label' },
+      ],
+      activeId: 'table-new',
+    });
+    const loaded = loadThreadPanelTabs('t-dup');
+    assert.deepEqual(
+      loaded.tabs.map((t) => t.id),
+      ['web-1', 'table-new', 'web-2', 'rag-1'],
+    );
+    assert.equal(loaded.activeId, 'table-new');
+  });
+
+  it('lists open web tabs when focused on another panel', async () => {
+    const { setLivePanelThread, readWorkspacePanelContext } = await import(
+      './panel-tabs-storage.ts'
+    );
+    setLivePanelThread('t2', {
+      tabs: [
+        { id: 'table-1', kind: 'table', title: 'Sheet' },
+        {
+          id: 'web-a',
+          kind: 'web',
+          title: 'panels.web.label',
+          state: { url: 'https://a.test', title: 'A' },
+        },
+        {
+          id: 'web-b',
+          kind: 'web',
+          title: 'panels.web.label',
+          state: { url: 'https://b.test', title: 'B' },
+        },
+      ],
+      activeId: 'table-1',
+    });
+    const ctx = readWorkspacePanelContext();
+    assert.equal(ctx?.activePanel, 'table');
+    assert.equal(ctx?.openWebTabs?.length, 2);
+    assert.equal(ctx?.openWebTabs?.[0]?.isActive, false);
+    assert.equal(ctx?.openWebTabs?.[1]?.tabId, 'web-b');
+  });
+
+  it('forces table panel tab title to the kind label', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } = await import(
+      './panel-tabs-storage.ts'
+    );
+    saveThreadPanelTabs('t-table-title', {
+      tabs: [
+        {
+          id: 'table-1',
+          kind: 'table',
+          title: 'Sheet 9',
+          state: { sheetId: 'sheet_9' },
+        },
+      ],
+      activeId: 'table-1',
+    });
+    assert.equal(loadThreadPanelTabs('t-table-title').tabs[0]?.title, 'panels.table.label');
   });
 });

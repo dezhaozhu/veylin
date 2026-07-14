@@ -244,14 +244,15 @@ export function ComposerStatusBar() {
 
   const displayTasks = useMemo(() => {
     const mergeOpts = { pinnedTaskIds, interruptedTaskIds };
-    const base =
-      batchTasks.length > 0
-        ? batchTasks
-        : mergePanelBackgroundTasksFromThread(threadMessages, allStoreTasks, mergeOpts);
-    if (!needsTaskFallbackPoll || fallbackTasks.length === 0) {
-      return mergePanelBackgroundTasksFromThread(threadMessages, base, mergeOpts);
+    // Avoid re-merging already-merged batchTasks (would re-inject optimistic
+    // toolCallId rows alongside store task_id rows).
+    if (needsTaskFallbackPoll && fallbackTasks.length > 0) {
+      return mergePanelBackgroundTasksFromThread(threadMessages, fallbackTasks, mergeOpts);
     }
-    return mergePanelBackgroundTasksFromThread(threadMessages, fallbackTasks, mergeOpts);
+    if (batchTasks.length > 0) {
+      return applyInterruptedTaskIds(batchTasks, interruptedTaskIds);
+    }
+    return mergePanelBackgroundTasksFromThread(threadMessages, allStoreTasks, mergeOpts);
   }, [
     batchTasks,
     allStoreTasks,

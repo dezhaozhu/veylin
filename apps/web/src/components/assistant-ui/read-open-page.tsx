@@ -19,6 +19,7 @@ import {
 import { cn } from '@/lib/utils';
 
 interface ReadOpenPageArgs {
+  tabId?: string;
   mode?: 'text' | 'html';
   maxChars?: number;
 }

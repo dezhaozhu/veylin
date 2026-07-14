@@ -431,9 +431,6 @@ const AssistantMessage: FC = () => {
 
   const parts = useAuiState((s) => s.message.parts);
   const messageId = useAuiState((s) => s.message.id);
-  const messageStatusRunning = useAuiState(
-    (s) => s.message.status?.type === "running",
-  );
   const threadIsRunning = useAuiState((s) => s.thread.isRunning);
   const isLastMessage = useAuiState((s) => {
     const last = s.thread.messages.at(-1);
@@ -441,11 +438,26 @@ const AssistantMessage: FC = () => {
   });
   // Prefer thread.isRunning for the active turn so ask-await / continuation
   // gaps (runtime-extended isRunning) do not fold early via message.status.
-  const isRunning =
-    messageStatusRunning || (isLastMessage && threadIsRunning);
-  const elapsedSeconds = useStreamingDuration(isRunning === true);
+  // Do not inherit thread.isRunning onto a completed prior assistant that is
+  // briefly still last during edit→send (before the new user/assistant land).
+  const anyPartRunning = useAuiState((s) =>
+    s.message.parts.some((p) => p.status?.type === "running"),
+  );
+  const messageIsOptimistic = useAuiState((s) =>
+    Boolean(s.message.metadata?.isOptimistic),
+  );
   const finalProseIdx = useMemo(() => findFinalProseIndex(parts), [parts]);
   const suspendSettled = isFrontendSuspendPartsSettled(parts);
+  const inheritThreadRunning =
+    isLastMessage &&
+    threadIsRunning &&
+    (anyPartRunning ||
+      messageIsOptimistic ||
+      finalProseIdx < 0 ||
+      !suspendSettled);
+  const isRunning =
+    anyPartRunning || messageIsOptimistic || inheritThreadRunning;
+  const elapsedSeconds = useStreamingDuration(isRunning === true);
   // Fold middle work whenever there is pre-final work — including while the
   // turn is still running. Only the final prose (and unsettled ask) stay out.
   const foldWork = hasPreFinalWork(parts, finalProseIdx);
@@ -527,6 +539,7 @@ const AssistantMessage: FC = () => {
                     elapsedSeconds={
                       showWorkedForDuration ? elapsedSeconds : undefined
                     }
+                    showDuration={showWorkedForDuration}
                     isPrimary={isPrimary}
                     open={workedForOpen}
                     onOpenChange={setWorkedForOpen}

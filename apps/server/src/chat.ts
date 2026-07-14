@@ -310,23 +310,51 @@ export function buildAttachedBrowserBlock(
 ): string {
   if (!attached?.url) return '';
   const title = attached.title?.trim() || attached.url;
+  const tabHint = attached.tabId?.trim()
+    ? `\n- tabId: ${attached.tabId.trim()} (pass this to read_open_page)`
+    : '';
   return (
     '## Attached browser context\n' +
-    `The user attached the page currently shown in the desktop docked web view.\n` +
+    `The user attached a page from the desktop docked web view.\n` +
     `- Title: ${title}\n` +
-    `- URL: ${attached.url}\n` +
-    'Use `read_open_page` to read the fully rendered page (including logged-in intranet content). ' +
+    `- URL: ${attached.url}` +
+    tabHint +
+    '\n' +
+    'Use `read_open_page` with that tabId (when provided) to read the fully rendered page ' +
+    '(including logged-in intranet content). ' +
     'Do not use `web_fetch` for this page when session cookies matter.'
   );
 }
 
 export type WorkspacePanelKind = 'table' | 'rag' | 'web' | 'workflow';
 
+export type OpenWebTabContext = {
+  tabId: string;
+  url: string;
+  title: string;
+  isActive?: boolean;
+};
+
 export type WorkspacePanelContext = {
   activePanel?: WorkspacePanelKind;
   webUrl?: string;
   webTitle?: string;
+  openWebTabs?: OpenWebTabContext[];
 };
+
+function formatOpenWebTabsHint(tabs: OpenWebTabContext[]): string {
+  if (tabs.length === 0) return '';
+  const lines = tabs.map((t) => {
+    const label = t.title?.trim() || t.url;
+    const active = t.isActive ? ' (focused)' : '';
+    return `- tabId=${t.tabId}: ${label} — ${t.url}${active}`;
+  });
+  return (
+    '\nOpen web tabs:\n' +
+    lines.join('\n') +
+    '\nPass `tabId` to `read_open_page` to read a non-focused tab.'
+  );
+}
 
 /** Hint when the user is focused on a specific right-panel tab. */
 export function buildWorkspacePanelHintBlock(
@@ -334,20 +362,29 @@ export function buildWorkspacePanelHintBlock(
 ): string {
   if (!ctx?.activePanel) return '';
 
+  const openTabs =
+    Array.isArray(ctx.openWebTabs) && ctx.openWebTabs.length > 0
+      ? formatOpenWebTabsHint(
+          ctx.openWebTabs.filter((t) => typeof t?.tabId === 'string' && t.url?.trim()),
+        )
+      : '';
+
   switch (ctx.activePanel) {
     case 'table':
       return (
         '## User focus (right panel)\n' +
         'The user is viewing the **表格 (spreadsheet)** panel. ' +
         'Spreadsheet rows live in `table_*` tools — not in the knowledge base. ' +
-        'Call `table_sheets` (action list) and `table_get` before claiming there is no data.'
+        'Call `table_sheets` (action list) and `table_get` before claiming there is no data.' +
+        openTabs
       );
     case 'rag':
       return (
         '## User focus (right panel)\n' +
         'The user is viewing the **知识库 (knowledge base)** panel. ' +
         'Use `knowledge_search` for uploaded documents; cite excerpts as [1], [2]. ' +
-        'Table/spreadsheet data is separate — use `table_*` tools when the question is about grid rows.'
+        'Table/spreadsheet data is separate — use `table_*` tools when the question is about grid rows.' +
+        openTabs
       );
     case 'web': {
       const url = ctx.webUrl?.trim();
@@ -357,20 +394,23 @@ export function buildWorkspacePanelHintBlock(
           '## User focus (right panel)\n' +
           `The user is viewing the **网页 (web)** panel: ${title} (${url}).\n` +
           'Prefer `read_open_page` on desktop for the docked browser (session cookies). ' +
-          'Use `web_fetch` only for public URLs when cookies are not required.'
+          'Use `web_fetch` only for public URLs when cookies are not required.' +
+          openTabs
         );
       }
       return (
         '## User focus (right panel)\n' +
         'The user is viewing the **网页 (web)** panel. ' +
-        'Use `read_open_page` after they open a URL in the docked browser.'
+        'Use `read_open_page` after they open a URL in the docked browser.' +
+        openTabs
       );
     }
     case 'workflow':
       return (
         '## User focus (right panel)\n' +
         'The user is viewing the **工作流 (workflow)** panel. ' +
-        'Use workflow tools when they ask to run or edit automations.'
+        'Use workflow tools when they ask to run or edit automations.' +
+        openTabs
       );
     default:
       return '';

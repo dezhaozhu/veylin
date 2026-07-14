@@ -664,4 +664,39 @@ describe('background task continuation', () => {
       ['t2', 't1'],
     );
   });
+
+  it('mergePanelBackgroundTasksFromThread dedupes completed summary+task_id with store', () => {
+    const thread = [
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolName: 'task',
+            toolCallId: 'tool-call-xyz',
+            args: { description: '分析165MN工序结构和时长' },
+            result: {
+              background: false,
+              task_id: 'real-task-id',
+              description: '分析165MN工序结构和时长',
+              summary: 'done',
+            },
+          },
+        ],
+      },
+    ];
+    const optimistic = collectSubagentTasksFromThreadMessages(thread as never);
+    assert.equal(optimistic.length, 1);
+    assert.equal(optimistic[0]?.id, 'real-task-id');
+    assert.equal(optimistic[0]?.status, 'done');
+
+    const merged = mergePanelBackgroundTasksFromThread(
+      thread as never,
+      [{ id: 'real-task-id', status: 'done', label: '分析165MN工序结构和时长' }],
+      { pinnedTaskIds: ['real-task-id'] },
+    );
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0]?.id, 'real-task-id');
+    assert.equal(merged[0]?.status, 'done');
+  });
 });

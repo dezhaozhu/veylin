@@ -358,7 +358,18 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     if (!isRunning) clearActiveChatRun();
   }, [isRunning, chatHelpers.id, getThreadId, chatHelpers.status]);
 
-  const messageTiming = useStreamingTiming(chatHelpers.messages, isRunning);
+  const rawMessageTiming = useStreamingTiming(chatHelpers.messages, isRunning);
+  const prunedTimingIdsRef = useRef<Set<string>>(new Set());
+  const [timingPruneEpoch, setTimingPruneEpoch] = useState(0);
+  const messageTiming = useMemo(() => {
+    const pruned = prunedTimingIdsRef.current;
+    if (pruned.size === 0) return rawMessageTiming;
+    const next: typeof rawMessageTiming = {};
+    for (const [id, timing] of Object.entries(rawMessageTiming)) {
+      if (!pruned.has(id)) next[id] = timing;
+    }
+    return next;
+  }, [rawMessageTiming, timingPruneEpoch]);
 
   // Flag the streaming message optimistic: its id can be swapped for a server
   // id mid-run, and the repository then drops the orphaned pre-swap id (#4037).
@@ -1138,11 +1149,14 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     if (toolName === 'read_open_page' && !isReadOpenPageSubmitted(toolCallId)) {
       const threadId = getThreadId?.() ?? chatHelpers.id;
       const input = pendingPart.input ?? pendingPart.args ?? {};
+      const attachedTabId = getChatSettings().attachedBrowserTab?.tabId;
       void executeReadOpenPageForToolCall({
         threadId,
         toolCallId,
         mode: input.mode,
         maxChars: input.maxChars,
+        tabId: typeof input.tabId === 'string' ? input.tabId : undefined,
+        attachedTabId: attachedTabId ?? undefined,
       });
     }
 
@@ -1355,11 +1369,20 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       setForceReplaceNextChat(true);
       lastRunConfigRef.current = message.runConfig;
       await completePendingToolCalls();
+      const beforeIds = new Set(chatHelpers.messages.map((m) => m.id));
       const sliced = sliceMessagesForLinearEdit(
         chatHelpers.messages,
         message.sourceId,
         message.parentId,
       );
+      for (const id of beforeIds) {
+        if (!sliced.some((m) => m.id === id)) {
+          prunedTimingIdsRef.current.add(id);
+        }
+      }
+      if (prunedTimingIdsRef.current.size > 0) {
+        setTimingPruneEpoch((n) => n + 1);
+      }
       chatHelpers.setMessages(sliced);
       await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage), {
         metadata: message.runConfig,

@@ -31,6 +31,9 @@ function createTab(
   };
 }
 
+/** Only web may have multiple tabs; table/rag/workflow are singletons. */
+const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow']);
+
 function closeWebTabs(tabs: PanelTab[]): void {
   if (!isTauri()) return;
   for (const tab of tabs) {
@@ -140,6 +143,16 @@ export function usePanelTabsState(): PanelTabsApi {
 
   const open = useCallback(
     async (kind: PanelKind) => {
+      // Singleton kinds: activate existing instead of creating another tab.
+      // Must run before table sheet creation to avoid orphan sheets.
+      if (SINGLETON_PANEL_KINDS.has(kind)) {
+        const existing = stateRef.current.tabs.find((t) => t.kind === kind);
+        if (existing) {
+          commit({ tabs: stateRef.current.tabs, activeId: existing.id });
+          return;
+        }
+      }
+
       // Create the sheet at the user action (+), not on TableGrid mount —
       // mount-time create races with React Strict Mode double-invoke.
       if (kind === 'table') {
@@ -149,7 +162,6 @@ export function usePanelTabsState(): PanelTabsApi {
           const sheet = await createNextThreadSheet(tid);
           const tab = createTab(kind, {
             sheetId: sheet.id,
-            title: sheet.name,
           });
           commit({ tabs: [...stateRef.current.tabs, tab], activeId: tab.id });
         } catch {
@@ -202,9 +214,10 @@ export function usePanelTabsState(): PanelTabsApi {
           ...t,
           state: { ...t.state, ...patch },
         };
-        // Web tabs keep the kind label ("Web"); page titles live in tab.state.
+        // Web / table tabs keep the kind label; page/sheet names live in tab.state.
         if (
           t.kind !== 'web' &&
+          t.kind !== 'table' &&
           typeof patch.title === 'string' &&
           patch.title.trim()
         ) {

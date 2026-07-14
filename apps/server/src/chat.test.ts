@@ -86,6 +86,29 @@ describe('workspace context blocks', () => {
     assert.match(block, /intranet\.example/);
   });
 
+  it('lists open web tabs with tabIds for multi-tab read', () => {
+    const block = buildWorkspacePanelHintBlock({
+      activePanel: 'table',
+      openWebTabs: [
+        {
+          tabId: 'web-a',
+          url: 'https://a.example',
+          title: 'A',
+          isActive: false,
+        },
+        {
+          tabId: 'web-b',
+          url: 'https://b.example',
+          title: 'B',
+          isActive: true,
+        },
+      ],
+    });
+    assert.match(block, /tabId=web-a/);
+    assert.match(block, /tabId=web-b/);
+    assert.match(block, /Pass `tabId`/);
+  });
+
   it('hints rag panel', () => {
     const block = buildWorkspacePanelHintBlock({ activePanel: 'rag' });
     assert.match(block, /knowledge_search/);
