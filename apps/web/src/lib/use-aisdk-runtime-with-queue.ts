@@ -1148,7 +1148,11 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     // Drive read_open_page via bridge — does not depend on ToolUI addResult after chat.stop().
     if (toolName === 'read_open_page' && !isReadOpenPageSubmitted(toolCallId)) {
       const threadId = getThreadId?.() ?? chatHelpers.id;
-      const input = pendingPart.input ?? pendingPart.args ?? {};
+      const input = (pendingPart.input ?? pendingPart.args ?? {}) as {
+        mode?: 'text' | 'html';
+        maxChars?: number;
+        tabId?: string;
+      };
       const attachedTabId = getChatSettings().attachedBrowserTab?.tabId;
       void executeReadOpenPageForToolCall({
         threadId,
