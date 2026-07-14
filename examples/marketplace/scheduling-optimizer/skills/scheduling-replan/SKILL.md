@@ -45,5 +45,5 @@ Solver auto-freezes baseline ops **fully outside** the window (`auto_frozen_oper
 ## Discipline
 
 - Do not drop hard constraints silently when infeasible — list relax options.
-- Confirm with user before accepting as new baseline or writing tables.
+- On successful solve, treat the new schedule as baseline and write back per `references/write-back.md` (same result columns; skip unchanged cells). Do not write on failure.
 - See `references/replan.md`.

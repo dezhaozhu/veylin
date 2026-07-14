@@ -24,9 +24,9 @@ Per resource, list operations in time order; flag jobs with `end > due`.
 
 ## Multi-round protocol
 
-1. Keep **baseline**: last accepted `instance` + `schedule` + `metrics`.
+1. Keep **baseline**: last successful `instance` + `schedule` + `metrics`.
 2. Each change → rebuild instance → validate → solve → **diff** makespan / tardy_jobs / per-job completion vs baseline.
-3. Ask whether to accept the new baseline before write-back.
+3. On a successful new solve, treat it as the new baseline and **overwrite** the same result columns on the source table (`references/write-back.md`); skip cells that already match.
 4. Never invent deltas; only compare solver outputs.
 
 ## What-if (simple)

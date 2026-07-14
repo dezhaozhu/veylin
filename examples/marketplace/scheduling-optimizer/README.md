@@ -25,8 +25,9 @@ No manual `pip` or shell setup. On install, Veylin creates a plugin `.venv` and 
 2. 用 `ask_user_question` 确认「以上理解是否正确」
 3. 确认后再补齐缺项、`validate_instance`、`solve_schedule`
 4. 展示 `metrics`（makespan、拖期订单数、利用率等）
+5. 求解成功后按 `references/write-back.md` 反写源表右侧结果列（`计划开始` / `计划结束` / `计划资源`；缺列新建；值相同则跳过）
 
-**确认列映射之前不要求解。**
+**确认列映射之前不要求解。求解失败不写表。**
 
 ## Example: insert + local replan
 

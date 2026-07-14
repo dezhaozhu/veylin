@@ -32,6 +32,6 @@ Do **not**:
 
 ## Interpret result
 
-- `ok: true` → show `metrics` (see `references/metrics.md`) + compact Gantt from `schedule`
-- `ok: false` → report `errors`; suggest concrete relaxations (due, capacity, horizon, unfreeze, widen `replan_window`)
+- `ok: true` → show `metrics` (see `references/metrics.md`) + compact Gantt from `schedule`, then **write back** to the source table if one exists (`references/write-back.md`)
+- `ok: false` → report `errors`; suggest concrete relaxations (due, capacity, horizon, unfreeze, widen `replan_window`); **do not** write the table
 - Prefer `time_limit_sec` 5–30 unless the user asks for longer
