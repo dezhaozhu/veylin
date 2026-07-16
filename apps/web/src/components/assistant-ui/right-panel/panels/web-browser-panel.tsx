@@ -122,6 +122,20 @@ export function WebBrowserPanel({ tab, updateState }: PanelContentProps) {
   const addressSelectAllPendingRef = useRef(true);
   const tabId = tab.id;
   const hasPage = Boolean(storedUrl);
+  const focusAddressAt =
+    typeof tab.state?.focusAddressAt === 'number' ? tab.state.focusAddressAt : 0;
+
+  // "+" → 网页 when already open: focus address bar so recents / URL edit is ready.
+  useEffect(() => {
+    if (!focusAddressAt) return;
+    const id = window.setTimeout(() => {
+      addressInputRef.current?.focus();
+      addressInputRef.current?.select();
+      addressSelectAllPendingRef.current = false;
+      setAddressFocused(true);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [focusAddressAt]);
 
   const measureBounds = useCallback((): WebViewBounds | null => {
     const rect = viewportRef.current?.getBoundingClientRect();

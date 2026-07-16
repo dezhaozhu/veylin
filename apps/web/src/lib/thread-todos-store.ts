@@ -1,5 +1,7 @@
 /** Fetch and cache thread todos for composer status / restore on switch. */
 
+import { isPersistableThreadId } from './sync-thread-messages';
+
 export type ThreadTodoItem = {
   id: string;
   content: string;
@@ -39,6 +41,7 @@ export function clearThreadTodosSnapshot(): void {
 }
 
 export async function fetchThreadTodos(threadId: string): Promise<ThreadTodoItem[]> {
+  if (!isPersistableThreadId(threadId)) return [];
   const res = await fetch(`/api/todos?threadId=${encodeURIComponent(threadId)}`, {
     credentials: 'include',
   });

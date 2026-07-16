@@ -12,6 +12,15 @@ export const langfuseSettingsSchema = z.object({
 
 export type LangfuseSettingsStored = z.infer<typeof langfuseSettingsSchema>;
 
-export const langfuseSettingsPatchSchema = langfuseSettingsSchema.partial();
+/**
+ * Patch schema must NOT reuse `.partial()` on a schema with `.default()` —
+ * Zod 4 applies those defaults for omitted keys and would wipe stored secrets.
+ */
+export const langfuseSettingsPatchSchema = z.object({
+  enabled: z.boolean().optional(),
+  publicKey: z.string().optional(),
+  secretKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+});
 
 export type LangfuseSettingsPatch = z.infer<typeof langfuseSettingsPatchSchema>;

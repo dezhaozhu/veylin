@@ -33,7 +33,10 @@
   "panelTab": {
     "closeMenu": "关闭菜单",
     "close": "关闭 {{title}}",
-    "new": "新建面板"
+    "new": "新建面板",
+    "alreadyOpen": "已打开",
+    "switchTo": "切换到{{label}}",
+    "newWeb": "新建标签"
   },
   "threadList": {
     "running": "进行中",
@@ -239,7 +242,9 @@
     "resizeLeft": "调整左侧栏宽度",
     "resizeRight": "调整右侧栏宽度",
     "customize": "定制",
-    "automate": "自动化"
+    "automate": "自动化",
+    "openSidebar": "打开侧边栏",
+    "closeSidebar": "关闭侧边栏"
   },
   "userMenu": {
     "settings": "设置",

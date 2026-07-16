@@ -32,10 +32,10 @@ describe('titlebar-layout', () => {
     assert.equal(titlebarTrailingInset('web'), 8);
   });
 
-  it('sizes collapsed overlay from leading inset + trigger', () => {
-    assert.equal(titlebarOverlayWidth(false, 256, 'windows'), 8 + 28);
+  it('expanded overlay matches sidebar width; collapsed icon rail needs no floating chrome', () => {
+    assert.equal(titlebarOverlayWidth(false, 256, 'windows'), 0);
     assert.equal(titlebarOverlayWidth(true, 256, 'windows'), 256);
-    assert.equal(collapsedSidebarTriggerReservePx('windows'), 8 + 28 + 4);
-    assert.equal(collapsedSidebarTriggerReservePx('mac'), 86 + 28 + 4);
+    assert.equal(collapsedSidebarTriggerReservePx('windows'), 0);
+    assert.equal(collapsedSidebarTriggerReservePx('mac'), 0);
   });
 });

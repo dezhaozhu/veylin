@@ -7,20 +7,18 @@ import {
   ComposerMenuRow,
 } from '@/components/assistant-ui/composer-menu-flyout';
 import { DismissibleBackdrop } from '@/components/ui/dismissible-backdrop';
-import { RightSidebarTrigger, useRightSidebar, useSidebar } from '@/components/ui/sidebar';
-import { readChatWorkspaceWidth, rightPanelWidthMax } from '@/lib/chat-panel-ratio';
+import { RightSidebarTrigger } from '@/components/ui/sidebar';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 import { subscribeLayoutSync } from '@/lib/overlay-bounds';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
-import {
-  collapsedSidebarTriggerReservePx,
-  isRightPanelNearlyMaximized,
-  panelTabBarPaddingLeft,
-  titlebarTrailingInset,
-} from '@/lib/titlebar-layout';
+import { panelTabBarPaddingLeft, titlebarTrailingInset } from '@/lib/titlebar-layout';
 import { cn } from '@/lib/utils';
 import { startWindowDrag } from '@/lib/window-drag';
 import { PANEL_TAB_MENU_CLOSED_EVENT } from './panel-events';
+import {
+  getPanelTabDisplayLabel,
+  panelKindOpenSet,
+} from './panel-tab-label';
 import { PANEL_KINDS, getPanelKindDef } from './panel-registry';
 import type { PanelKind, PanelTab } from './panel-types';
 
@@ -43,17 +41,9 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   onOpen,
 }) => {
   const { t } = useTranslation();
-  const { open: sidebarOpen } = useSidebar();
-  const { open: rightOpen, width: rightWidth } = useRightSidebar();
-  const workspaceWidth = readChatWorkspaceWidth();
-  const rightMax = rightPanelWidthMax(workspaceWidth);
-  const showCollapsedChrome =
-    !sidebarOpen &&
-    isRightPanelNearlyMaximized(rightOpen, rightWidth, workspaceWidth, rightMax);
-  const tabBarPaddingLeft = showCollapsedChrome
-    ? collapsedSidebarTriggerReservePx()
-    : panelTabBarPaddingLeft();
+  const tabBarPaddingLeft = panelTabBarPaddingLeft();
   const tabBarPaddingRight = titlebarTrailingInset();
+  const openKinds = panelKindOpenSet(tabs);
   const [menuOpen, setMenuOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
@@ -119,18 +109,34 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
               onClick={(e) => e.stopPropagation()}
             >
               <ComposerMenuPanel className="w-[220px] p-1 shadow-lg">
-                {PANEL_KINDS.map((def) => (
-                  <ComposerMenuRow
-                    key={def.kind}
-                    icon={def.icon}
-                    label={t(def.label)}
-                    title={def.description ? t(def.description) : undefined}
-                    onClick={() => {
-                      void onOpen(def.kind);
-                      close();
-                    }}
-                  />
-                ))}
+                {PANEL_KINDS.map((def) => {
+                  // Web can open many tabs; other kinds are singletons.
+                  const alreadyOpen = def.kind !== 'web' && openKinds.has(def.kind);
+                  const webHint =
+                    def.kind === 'web' && openKinds.has('web')
+                      ? t('panelTab.newWeb')
+                      : undefined;
+                  return (
+                    <ComposerMenuRow
+                      key={def.kind}
+                      icon={def.icon}
+                      label={t(def.label)}
+                      pressed={alreadyOpen}
+                      hint={alreadyOpen ? t('panelTab.alreadyOpen') : webHint}
+                      title={
+                        alreadyOpen
+                          ? t('panelTab.switchTo', { label: t(def.label) })
+                          : def.description
+                            ? t(def.description)
+                            : undefined
+                      }
+                      onClick={() => {
+                        void onOpen(def.kind);
+                        close();
+                      }}
+                    />
+                  );
+                })}
               </ComposerMenuPanel>
             </div>
           </>,
@@ -148,6 +154,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
           {tabs.map((tab) => {
             const active = activeId === tab.id;
             const def = getPanelKindDef(tab.kind);
+            const label = getPanelTabDisplayLabel(tab, t);
             return (
               <div
                 key={tab.id}
@@ -162,15 +169,16 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
                   type="button"
                   onClick={() => onActivate(tab.id)}
                   className="panel-tab-label flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-2.5 pr-1"
+                  title={label}
                 >
                   <span className="flex size-3.5 shrink-0 items-center justify-center opacity-70">
                     {def?.icon}
                   </span>
-                  <span className="truncate">{t(tab.title)}</span>
+                  <span className="truncate">{label}</span>
                 </button>
                 <button
                   type="button"
-                  aria-label={t('panelTab.close', { title: t(tab.title) })}
+                  aria-label={t('panelTab.close', { title: label })}
                   onClick={(e) => {
                     e.stopPropagation();
                     onClose(tab.id);

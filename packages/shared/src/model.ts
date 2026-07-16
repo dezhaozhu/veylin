@@ -31,6 +31,29 @@ export const modelProviderSettingsSchema = z.object({
 
 export type ModelProviderSettingsStored = z.infer<typeof modelProviderSettingsSchema>;
 
-export const modelProviderSettingsPatchSchema = modelProviderSettingsSchema.partial();
+/**
+ * Patch schema must NOT reuse `.partial()` on a schema with `.default()` —
+ * Zod 4 applies those defaults for omitted keys, which would wipe stored
+ * requestUrl/apiKey on a modelName-only update.
+ */
+export const modelProviderSettingsPatchSchema = z.object({
+  modelName: z.string().optional(),
+  requestUrl: z.string().optional(),
+  apiKey: z.string().optional(),
+});
 
 export type ModelProviderSettingsPatch = z.infer<typeof modelProviderSettingsPatchSchema>;
+
+/** Merge patch into existing; omit/blank apiKey keeps the previous key. */
+export function mergeModelProviderSettings(
+  existing: ModelProviderSettingsStored,
+  patch: ModelProviderSettingsPatch,
+): ModelProviderSettingsStored {
+  const apiKey =
+    patch.apiKey !== undefined && patch.apiKey.trim().length > 0 ? patch.apiKey : existing.apiKey;
+  return modelProviderSettingsSchema.parse({
+    modelName: patch.modelName !== undefined ? patch.modelName : existing.modelName,
+    requestUrl: patch.requestUrl !== undefined ? patch.requestUrl : existing.requestUrl,
+    apiKey,
+  });
+}

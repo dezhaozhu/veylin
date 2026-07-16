@@ -19,6 +19,7 @@ import {
   subscribeThreadTodos,
   type ThreadTodoItem,
 } from '@/lib/thread-todos-store';
+import { isPersistableThreadId } from '@/lib/sync-thread-messages';
 import { cn } from '@/lib/utils';
 
 /** Default subagent worker concurrency (see server SUBAGENT_CONCURRENCY). */
@@ -123,6 +124,7 @@ export function ComposerStatusBar() {
   const threadId = useAuiState(
     (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId ?? s.threadListItem.id,
   );
+  const persistableThread = isPersistableThreadId(threadId);
   const isRunning = useAuiState((s) => s.thread.isRunning);
   const threadMessages = useAuiState((s) => s.thread.messages);
   const [open, setOpen] = useState(() => readPanelOpen(threadId));
@@ -226,6 +228,7 @@ export function ComposerStatusBar() {
     },
     isRunning ? 1500 : 6000,
     [],
+    persistableThread,
   );
 
   const todos = storeTodos.length > 0 || todosFromStore.threadId === threadId
@@ -238,7 +241,7 @@ export function ComposerStatusBar() {
     (d) => (d as { tasks?: TaskRow[] }).tasks ?? [],
     2000,
     [],
-    needsTaskFallbackPoll,
+    persistableThread && needsTaskFallbackPoll,
     pinnedTaskIds.length > 0 ? { batchIds: pinnedTaskIds.join(',') } : undefined,
   );
 

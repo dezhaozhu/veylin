@@ -1,4 +1,5 @@
 import type { ThreadGoalState, ThreadLoopState } from '@veylin/shared';
+import { isPersistableThreadId } from './sync-thread-messages';
 
 const goalByThread = new Map<string, ThreadGoalState | null>();
 const loopByThread = new Map<string, ThreadLoopState | null>();
@@ -34,6 +35,7 @@ export function writeCachedLoop(threadId: string, loop: ThreadLoopState | null):
 }
 
 export async function fetchThreadGoal(threadId: string): Promise<ThreadGoalState | null> {
+  if (!isPersistableThreadId(threadId)) return null;
   if (goalClearInFlight.has(threadId)) {
     return readCachedGoal(threadId) ?? null;
   }
@@ -49,6 +51,7 @@ export async function fetchThreadGoal(threadId: string): Promise<ThreadGoalState
 }
 
 export async function fetchThreadLoop(threadId: string): Promise<ThreadLoopState | null> {
+  if (!isPersistableThreadId(threadId)) return null;
   const res = await fetch(`/api/loop?threadId=${encodeURIComponent(threadId)}`);
   if (!res.ok) return null;
   const data = (await res.json()) as { loop?: ThreadLoopState | null };

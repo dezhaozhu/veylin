@@ -6,7 +6,11 @@ type SyncThreadMessagesBody = {
 };
 
 export function isPersistableThreadId(threadId: string | undefined): boolean {
-  return Boolean(threadId?.trim());
+  const id = threadId?.trim();
+  if (!id) return false;
+  // assistant-ui placeholder before the remote thread exists — not a server id.
+  if (id.startsWith('__LOCALID_')) return false;
+  return true;
 }
 
 export async function syncThreadMessagesToServer(

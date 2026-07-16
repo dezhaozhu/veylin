@@ -1,5 +1,6 @@
 import { getTenantSettingsRow, upsertTenantSettings } from '@veylin/db';
 import {
+  mergeModelProviderSettings,
   modelProviderSettingsPatchSchema,
   modelProviderSettingsSchema,
   type ModelProviderSettingsStored,
@@ -65,7 +66,7 @@ export async function updateModelSettings(
     throw new Error('Invalid model settings payload');
   }
   const existing = await loadStoredSettings(tenantId);
-  const next = normalize({ ...existing, ...parsedPatch.data });
+  const next = mergeModelProviderSettings(existing, parsedPatch.data);
   await upsertTenantSettings(tenantId, { modelSettings: next });
   applyModelSettingsToRuntime(next);
   return toView(next);

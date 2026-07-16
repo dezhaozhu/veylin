@@ -58,17 +58,21 @@ export function titlebarTrailingInset(
 export function titlebarOverlayWidth(
   sidebarOpen: boolean,
   sidebarWidth: number,
-  platform: TitlebarPlatform = detectTitlebarPlatform(),
+  _platform: TitlebarPlatform = detectTitlebarPlatform(),
 ): number {
+  // Collapsed left rail is an icon column in-layout; no floating titlebar chrome.
   if (sidebarOpen) return sidebarWidth;
-  return titlebarLeadingInset(false, platform) + 28;
+  return 0;
 }
 
-/** Space to reserve under the global sidebar trigger when the left rail is collapsed. */
+/**
+ * @deprecated Icon-collapsed rail no longer needs a floating trigger reserve.
+ * Kept for callers/tests; always returns 0.
+ */
 export function collapsedSidebarTriggerReservePx(
-  platform: TitlebarPlatform = detectTitlebarPlatform(),
+  _platform: TitlebarPlatform = detectTitlebarPlatform(),
 ): number {
-  return titlebarLeadingInset(false, platform) + 28 + 4;
+  return 0;
 }
 
 export function isRightPanelNearlyMaximized(

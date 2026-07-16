@@ -55,7 +55,7 @@ export function SidebarUserMenu() {
   return (
     <div ref={rootRef} className="relative">
       {open && (
-        <div className="bg-popover text-popover-foreground absolute bottom-full left-0 z-50 mb-2 w-full min-w-[220px] overflow-hidden rounded-xl border p-1 shadow-lg">
+        <div className="bg-popover text-popover-foreground absolute bottom-full left-0 z-50 mb-2 w-[220px] overflow-hidden rounded-xl border p-1 shadow-lg group-data-[collapsible=icon]:left-full group-data-[collapsible=icon]:bottom-0 group-data-[collapsible=icon]:mb-0 group-data-[collapsible=icon]:ml-2">
           {(checkError || installError) && (
             <div className="text-destructive px-2.5 py-2 text-xs leading-snug">
               <p className="font-medium">{t('userMenu.updateFailed')}</p>
@@ -99,6 +99,7 @@ export function SidebarUserMenu() {
         <SidebarMenuItem>
           <SidebarMenuButton
             size="lg"
+            tooltip={displayName}
             className={cn('data-[state=open]:bg-accent', open && 'bg-accent')}
             onClick={() => setOpen((o) => !o)}
           >

@@ -1,5 +1,7 @@
 /** Activated skills restored from GET /api/threads/:id/state (read-only UI). */
 
+import { isPersistableThreadId } from './sync-thread-messages';
+
 type Snapshot = {
   threadId: string | undefined;
   skillNames: string[];
@@ -35,6 +37,7 @@ export function clearActivatedSkillsSnapshot(): void {
 }
 
 export async function fetchActivatedSkills(threadId: string): Promise<string[]> {
+  if (!isPersistableThreadId(threadId)) return [];
   const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/state`, {
     credentials: 'include',
   });

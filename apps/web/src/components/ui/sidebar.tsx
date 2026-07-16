@@ -39,6 +39,8 @@ const SIDEBAR_WIDTH_MAX = 560
 const RIGHT_SIDEBAR_WIDTH_MIN = 280
 const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
+/** Pixel width of the left rail when `collapsible="icon"` is collapsed (matches `3rem`). */
+export const SIDEBAR_WIDTH_ICON_PX = 48
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
 type SidebarWidthVar = "--sidebar-width" | "--right-sidebar-width"
@@ -428,7 +430,9 @@ function SidebarPanel({
   const gapStyle =
     collapsible === "offcanvas" && !open
       ? ({ width: 0 } as React.CSSProperties)
-      : ({ width: `var(${widthVar})` } as React.CSSProperties)
+      : collapsible === "icon" && !open
+        ? ({ width: SIDEBAR_WIDTH_ICON } as React.CSSProperties)
+        : ({ width: `var(${widthVar})` } as React.CSSProperties)
   const containerStyle = {
     ...panelStyle,
     ...sidebarContainerSideStyle(side, widthVar, open, collapsible),

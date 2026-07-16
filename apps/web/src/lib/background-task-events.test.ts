@@ -72,5 +72,38 @@ describe('background-task-events', () => {
     assert.deepEqual(seen, [{ tasks: [{ id: 't1', status: 'done' }] }]);
     assert.equal(closed, true);
   });
-});
 
+  it('closes EventSource when the initial connection errors', () => {
+    let closed = false;
+    let instance: { onerror: (() => void) | null } | null = null;
+
+    class CapturingEventSource {
+      onerror: (() => void) | null = null;
+
+      constructor(_url: string, _init?: EventSourceInit) {
+        instance = this;
+      }
+
+      addEventListener() {}
+
+      close() {
+        closed = true;
+      }
+    }
+
+    globalThis.EventSource = CapturingEventSource as unknown as typeof EventSource;
+
+    let errorCalled = false;
+    subscribeBackgroundTaskEvents(
+      'thread-missing',
+      () => undefined,
+      () => {
+        errorCalled = true;
+      },
+    );
+
+    instance?.onerror?.();
+    assert.equal(closed, true);
+    assert.equal(errorCalled, true);
+  });
+});

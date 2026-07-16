@@ -98,6 +98,26 @@ describe('panel-tabs-storage per-thread', () => {
     assert.equal(localStorage.getItem('right_panel_tabs_by_thread'), null);
   });
 
+  it('dedupes singleton kinds but keeps multiple web tabs', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } = await import(
+      './panel-tabs-storage.ts'
+    );
+    saveThreadPanelTabs('dup', {
+      tabs: [
+        { id: 't1', kind: 'table', title: 'panels.table.label', state: { sheetId: 's1' } },
+        { id: 'w1', kind: 'web', title: 'panels.web.label', state: { url: 'https://a.test' } },
+        { id: 't2', kind: 'table', title: 'panels.table.label', state: { sheetId: 's2' } },
+        { id: 'w2', kind: 'web', title: 'panels.web.label', state: { url: 'https://b.test' } },
+      ],
+      activeId: 't2',
+    });
+    const loaded = loadThreadPanelTabs('dup');
+    assert.equal(loaded.tabs.filter((t) => t.kind === 'table').length, 1);
+    assert.equal(loaded.tabs.find((t) => t.kind === 'table')?.id, 't2');
+    assert.equal(loaded.tabs.filter((t) => t.kind === 'web').length, 2);
+    assert.equal(loaded.activeId, 't2');
+  });
+
   it('live pointer drives getActiveWebTabId and workspace context', async () => {
     const {
       setLivePanelThread,

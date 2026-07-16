@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isTauri } from '@/lib/tauri-web-view';
 
 export type SessionUser = {
   name: string;
@@ -12,8 +13,8 @@ export function useSession() {
   useEffect(() => {
     let cancelled = false;
 
-    // Desktop mode has no /api/auth routes — skip the round-trip (404 spam in logs).
-    if (import.meta.env.VITE_VEYLIN_DESKTOP_AUTH === '1') {
+    // Desktop / desktop-auth mode has no /api/auth routes — skip the round-trip.
+    if (import.meta.env.VITE_VEYLIN_DESKTOP_AUTH === '1' || isTauri()) {
       setUser({ name: 'Dev User' });
       setLoading(false);
       return;

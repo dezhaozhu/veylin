@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SidebarMenuButton } from "@/components/ui/sidebar";
 import {
   AuiIf,
   ThreadListItemPrimitive,
@@ -10,7 +11,7 @@ import {
 import {
   LoaderIcon,
   MinusIcon,
-  PlusIcon,
+  SquarePen,
   TrashIcon,
 } from "lucide-react";
 import {
@@ -24,6 +25,7 @@ import {
   useState,
   type FC,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { formatRelativeTimeShort } from "@/lib/format-relative-time";
@@ -39,23 +41,50 @@ import {
 
 const ThreadActivityContext = createContext<Record<string, ThreadActivity>>({});
 
-export const ThreadList: FC = () => {
+/** Provider + Primitive root so header actions (e.g. New Chat) share the thread-list runtime. */
+export const ThreadListShell: FC<{ children: ReactNode; className?: string }> = ({
+  children,
+  className,
+}) => {
   const activity = useThreadActivityMap();
   const [, bumpAck] = useState(0);
   useEffect(() => onThreadActivityAckChange(() => bumpAck((n) => n + 1)), []);
 
   return (
     <ThreadActivityContext.Provider value={activity}>
-      <ThreadListPrimitive.Root className="aui-root aui-thread-list-root flex flex-col gap-0.5">
-        <ThreadListNew />
-        <AuiIf condition={(s) => s.threads.isLoading}>
-          <ThreadListSkeleton />
-        </AuiIf>
-        <AuiIf condition={(s) => !s.threads.isLoading}>
-          <ThreadListItems />
-        </AuiIf>
+      <ThreadListPrimitive.Root
+        className={className ?? "aui-root aui-thread-list-root flex min-h-0 flex-1 flex-col"}
+      >
+        {children}
       </ThreadListPrimitive.Root>
     </ThreadActivityContext.Provider>
+  );
+};
+
+/** New-chat control for the icon rail / sidebar header. */
+export const ThreadListNewChatButton: FC = () => {
+  const { t } = useTranslation();
+  return (
+    <ThreadListPrimitive.New asChild>
+      <SidebarMenuButton tooltip={t("threadList.newChat")}>
+        <SquarePen />
+        <span>{t("threadList.newChat")}</span>
+      </SidebarMenuButton>
+    </ThreadListPrimitive.New>
+  );
+};
+
+/** Thread history list (hidden in the collapsed icon rail). */
+export const ThreadList: FC = () => {
+  return (
+    <div className="aui-thread-list-items flex flex-col gap-0.5">
+      <AuiIf condition={(s) => s.threads.isLoading}>
+        <ThreadListSkeleton />
+      </AuiIf>
+      <AuiIf condition={(s) => !s.threads.isLoading}>
+        <ThreadListItems />
+      </AuiIf>
+    </div>
   );
 };
 
@@ -131,24 +160,6 @@ const ThreadListItems: FC = () => {
       ))}
     </Fragment>
   ));
-};
-
-const ThreadListNew: FC = () => {
-  const { t } = useTranslation();
-  return (
-    <ThreadListPrimitive.New asChild>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="aui-thread-list-new hover:bg-muted data-active:bg-muted h-8 w-full justify-start gap-2 rounded-md p-2 text-sm font-normal"
-      >
-        <span className="flex size-4 shrink-0 items-center justify-center">
-          <PlusIcon className="size-4" />
-        </span>
-        {t('threadList.newChat')}
-      </Button>
-    </ThreadListPrimitive.New>
-  );
 };
 
 const ThreadListSkeleton: FC = () => {

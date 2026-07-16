@@ -1,5 +1,7 @@
 /** Client plan mode cache + API sync; inference lives in @veylin/shared. */
 
+import { isPersistableThreadId } from './sync-thread-messages';
+
 export {
   ENTER_PLAN_MODE_TOOL,
   EXIT_PLAN_MODE_TOOL,
@@ -8,6 +10,7 @@ export {
 } from '@veylin/shared';
 
 export async function fetchThreadPlanMode(threadId: string): Promise<boolean> {
+  if (!isPersistableThreadId(threadId)) return false;
   const res = await fetch(`/api/plan-mode?threadId=${encodeURIComponent(threadId)}`);
   if (!res.ok) return false;
   const data = (await res.json()) as { planMode?: boolean };

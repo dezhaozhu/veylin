@@ -64,6 +64,7 @@ export function ComposerMenuRow({
   label,
   pressed,
   title,
+  hint,
   onClick,
   onMouseEnter,
 }: {
@@ -71,6 +72,8 @@ export function ComposerMenuRow({
   label: string;
   pressed?: boolean;
   title?: string;
+  /** Trailing muted hint (e.g. “已打开”). */
+  hint?: string;
   onClick?: () => void;
   onMouseEnter?: () => void;
 }) {
@@ -89,6 +92,9 @@ export function ComposerMenuRow({
         {icon}
       </span>
       <span className="min-w-0 flex-1">{label}</span>
+      {hint ? (
+        <span className="text-muted-foreground shrink-0 text-xs">{hint}</span>
+      ) : null}
     </button>
   );
 }

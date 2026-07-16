@@ -140,7 +140,26 @@ export function usePanelTabsState(): PanelTabsApi {
 
   const open = useCallback(
     async (kind: PanelKind) => {
-      // Create the sheet at the user action (+), not on TableGrid mount —
+      const current = stateRef.current;
+
+      // Web: browser-style — always open a new tab (label = page title / host).
+      if (kind === 'web') {
+        const tab = createTab('web');
+        tab.state = { ...tab.state, focusAddressAt: Date.now() };
+        commit({ tabs: [...current.tabs, tab], activeId: tab.id });
+        return;
+      }
+
+      // Table / knowledge / workflow: one tab per kind. Extra sheets stay in TableGrid.
+      const existing = current.tabs.find((t) => t.kind === kind);
+      if (existing) {
+        if (existing.id !== current.activeId) {
+          commit({ tabs: current.tabs, activeId: existing.id });
+        }
+        return;
+      }
+
+      // Create the first sheet at the user action (+), not on TableGrid mount —
       // mount-time create races with React Strict Mode double-invoke.
       if (kind === 'table') {
         const tid = threadIdRef.current?.trim();

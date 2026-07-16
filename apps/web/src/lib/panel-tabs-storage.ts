@@ -3,6 +3,8 @@ import type { PanelKind, PanelTab } from '@/components/assistant-ui/right-panel/
 const BY_THREAD_STORAGE_KEY = 'right_panel_tabs_by_thread';
 
 const KNOWN_KINDS = new Set<PanelKind>(['table', 'web', 'rag', 'workflow']);
+/** Keep in sync with PANEL_KINDS order in panel-registry. */
+const KIND_ORDER: PanelKind[] = ['table', 'web', 'rag', 'workflow'];
 
 export type PanelTabsStoredState = {
   tabs: PanelTab[];
@@ -40,8 +42,42 @@ function isValidTab(value: unknown): value is PanelTab {
   );
 }
 
+/** Kinds that allow only one top-bar tab (web may have many, like browser tabs). */
+const SINGLETON_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow']);
+
+/** Dedupe table/rag/workflow; keep every web tab. */
+function dedupeSingletonKinds(tabs: PanelTab[], preferredActiveId: string | null): PanelTab[] {
+  const preferred =
+    preferredActiveId != null
+      ? tabs.find((t) => t.id === preferredActiveId)
+      : undefined;
+  const singletonKeep = new Map<PanelKind, PanelTab>();
+  for (const tab of tabs) {
+    if (!SINGLETON_KINDS.has(tab.kind)) continue;
+    if (!singletonKeep.has(tab.kind)) singletonKeep.set(tab.kind, tab);
+  }
+  if (preferred && SINGLETON_KINDS.has(preferred.kind)) {
+    singletonKeep.set(preferred.kind, preferred);
+  }
+
+  const out: PanelTab[] = [];
+  const usedSingleton = new Set<PanelKind>();
+  for (const tab of tabs) {
+    if (tab.kind === 'web') {
+      out.push(tab);
+      continue;
+    }
+    if (usedSingleton.has(tab.kind)) continue;
+    const keep = singletonKeep.get(tab.kind);
+    if (!keep) continue;
+    out.push(keep);
+    usedSingleton.add(tab.kind);
+  }
+  return out;
+}
+
 function normalizeState(parsed: Partial<PanelTabsStoredState> | null | undefined): PanelTabsStoredState {
-  const tabs = (Array.isArray(parsed?.tabs) ? parsed!.tabs.filter(isValidTab) : []).map((tab) => {
+  const rawTabs = (Array.isArray(parsed?.tabs) ? parsed!.tabs.filter(isValidTab) : []).map((tab) => {
     if (tab.kind !== 'web') return tab;
     return {
       ...tab,
@@ -49,10 +85,15 @@ function normalizeState(parsed: Partial<PanelTabsStoredState> | null | undefined
       title: tab.title || 'panels.web.label',
     };
   });
+  const preferredActiveId =
+    typeof parsed?.activeId === 'string' ? parsed.activeId : null;
+  const tabs = dedupeSingletonKinds(rawTabs, preferredActiveId).sort(
+    (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind),
+  );
   if (tabs.length === 0) return emptyPanelTabsState();
   const activeId =
-    typeof parsed?.activeId === 'string' && tabs.some((t) => t.id === parsed.activeId)
-      ? parsed.activeId
+    preferredActiveId != null && tabs.some((t) => t.id === preferredActiveId)
+      ? preferredActiveId
       : tabs[0]!.id;
   return { tabs, activeId };
 }

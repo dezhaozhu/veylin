@@ -1,5 +1,9 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import { useRightSidebar, useSidebar } from '@/components/ui/sidebar';
+import {
+  SIDEBAR_WIDTH_ICON_PX,
+  useRightSidebar,
+  useSidebar,
+} from '@/components/ui/sidebar';
 import {
   chatRatioToRightWidth,
   readChatPanelRatio,
@@ -13,9 +17,11 @@ import {
 const RIGHT_SIDEBAR_WIDTH_MIN = 280;
 
 function workspaceAvailableWidth(leftOpen: boolean, leftWidth: number): number {
+  // Icon-collapsed left rail still occupies SIDEBAR_WIDTH_ICON_PX.
+  const leftOccupied = leftOpen ? leftWidth : SIDEBAR_WIDTH_ICON_PX;
   const estimated = Math.max(
     320,
-    window.innerWidth - (leftOpen ? leftWidth : 0),
+    window.innerWidth - leftOccupied,
   );
   const measured = readChatWorkspaceWidth();
   // Prefer estimate right after the left rail opens — layout may lag one frame.

@@ -40,7 +40,10 @@ export function subscribeBackgroundTaskEvents(
     withCredentials: true,
   });
 
+  let sawMessage = false;
+
   const handleMessage = (event: MessageEvent<string>) => {
+    sawMessage = true;
     try {
       onEvent(JSON.parse(event.data) as BackgroundTasksApiSnapshot);
     } catch {
@@ -51,7 +54,15 @@ export function subscribeBackgroundTaskEvents(
   source.addEventListener('task.snapshot', handleMessage);
   source.addEventListener('task.updated', handleMessage);
   source.addEventListener('batch.readiness', handleMessage);
-  source.onerror = () => onError?.();
+  source.onerror = () => {
+    // Initial connect failures (e.g. 404 for unknown/local thread ids) would otherwise
+    // auto-reconnect forever and spam the network. After a successful open, keep
+    // EventSource's built-in reconnect for transient drops.
+    if (!sawMessage) {
+      source.close();
+    }
+    onError?.();
+  };
 
   return () => source.close();
 }

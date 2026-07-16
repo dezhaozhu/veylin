@@ -33,7 +33,10 @@
   "panelTab": {
     "closeMenu": "Close menu",
     "close": "Close {{title}}",
-    "new": "New panel"
+    "new": "New panel",
+    "alreadyOpen": "Open",
+    "switchTo": "Switch to {{label}}",
+    "newWeb": "New tab"
   },
   "threadList": {
     "running": "Running",
@@ -239,7 +242,9 @@
     "resizeLeft": "Resize left sidebar",
     "resizeRight": "Resize right sidebar",
     "customize": "Customize",
-    "automate": "Automate"
+    "automate": "Automate",
+    "openSidebar": "Open sidebar",
+    "closeSidebar": "Close sidebar"
   },
   "userMenu": {
     "settings": "Settings",

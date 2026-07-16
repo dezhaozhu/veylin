@@ -32,6 +32,7 @@ import {
 } from '@/lib/goal-loop-sync';
 import { requestSilentChatContinue } from '@/lib/silent-chat-continue';
 import { requestChatStop } from '@/lib/chat-stop';
+import { isPersistableThreadId } from '@/lib/sync-thread-messages';
 import { useState } from 'react';
 
 function applyPlanModeForThread(threadId: string | undefined, on: boolean): void {
@@ -43,7 +44,7 @@ function applyPlanModeForThread(threadId: string | undefined, on: boolean): void
 
 function postPlanMode(threadId: string | undefined, on: boolean): void {
   applyPlanModeForThread(threadId, on);
-  if (!threadId) return;
+  if (!isPersistableThreadId(threadId)) return;
   void fetch('/api/plan-mode', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -86,7 +87,7 @@ export function usePlanModeBridge(): void {
   const wasRunningRef = useRef(false);
 
   useEffect(() => {
-    if (!threadId) {
+    if (!isPersistableThreadId(threadId)) {
       clearThreadTodosSnapshot();
       clearActivatedSkillsSnapshot();
       return;
@@ -110,7 +111,7 @@ export function usePlanModeBridge(): void {
   }, [threadId, messages]);
 
   useEffect(() => {
-    if (!threadId) return;
+    if (!isPersistableThreadId(threadId)) return;
     const wasRunning = wasRunningRef.current;
     wasRunningRef.current = isRunning;
 
@@ -289,7 +290,7 @@ export function useGoalLoopBridge(): void {
   const continuingRef = useRef(false);
 
   useEffect(() => {
-    if (!threadId) return;
+    if (!isPersistableThreadId(threadId)) return;
     void fetchThreadGoal(threadId);
     void fetchThreadLoop(threadId).then((loop) => {
       if (loop?.status === 'active' && getChatSettings().pendingLoop) {
@@ -299,7 +300,7 @@ export function useGoalLoopBridge(): void {
   }, [threadId]);
 
   useEffect(() => {
-    if (!threadId) return;
+    if (!isPersistableThreadId(threadId)) return;
     const wasRunning = wasRunningRef.current;
     wasRunningRef.current = isRunning;
     if (wasRunning && !isRunning) {
@@ -323,7 +324,7 @@ export function useGoalLoopBridge(): void {
   }, [threadId, isRunning]);
 
   useEffect(() => {
-    if (!threadId || isRunning || continuingRef.current) return;
+    if (!isPersistableThreadId(threadId) || isRunning || continuingRef.current) return;
 
     const tick = async () => {
       if (continuingRef.current || isRunning) return;
