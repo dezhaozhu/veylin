@@ -13,11 +13,15 @@ import {
   isCoordinatorMode,
   collectLangfuseAttachments,
   VEYLIN_CONTEXT_COMPACTED_KEY,
+  buildContextSummarizedStreamChunk,
+  buildContextUsageStreamChunk,
+  normalizeContextUsage,
   type ModelKey,
   type VeylinContextCompacted,
+  type VeylinContextUsage,
 } from '@veylin/runtime';
 import { setThreadPlanMode } from '@veylin/tools';
-import { stripInterruptedAssistantTurnsForAgent, clampLoopWakeupSeconds, isGoalActive, isLoopActive, parseIntervalToSeconds, LOOP_WAKEUP_MIN_SECONDS } from '@veylin/shared';
+import { stripInterruptedAssistantTurnsForAgent, clampLoopWakeupSeconds, isGoalActive, isLoopActive, parseIntervalToSeconds, LOOP_WAKEUP_MIN_SECONDS, buildReadOnlyWorkingMemoryBlock } from '@veylin/shared';
 import {
   createUiStreamRepairState,
   formatAgentStreamError,
@@ -41,12 +45,14 @@ import { buildViewer3dContextBlock } from '../viewer3d-store.js';
 import { scheduleEditGuidanceBlock } from '../schedule-edit.js';
 import {
   activateSkill,
+  activateAndPinSkill,
   createActiveLoop,
   ensureThreadState,
   ephemeralThreadState,
   ensureThreadTitleIfMissing,
   getSkillMemoryBlock,
   getThreadState,
+  refreshActivatedSkills,
   type ThreadStateRow,
   setPlanMode as setThreadPlanModeDb,
   setTodos as setThreadTodosDb,
@@ -104,6 +110,8 @@ import { applyTenantModelSettings } from '../model-settings-store.js';
 import { buildKnowledgeContextBlock } from '../rag-store.js';
 import { getHookBus, reloadHooksForTenant } from '../hooks-service.js';
 import { wrapToolsetsWithHooks } from '../tool-hooks.js';
+import { wrapToolsetsWithAudit } from '../tool-audit.js';
+import { getEnterprisePorts } from '../ports/index.js';
 import type { ServerDeps } from './types.js';
 
 /**
@@ -369,10 +377,15 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         body.pendingSkill,
       );
       if (content) {
-        const skills = await activateSkill(threadId, body.pendingSkill, content);
+        const { activatedSkills: skills, pinnedSkills } = await activateAndPinSkill(
+          threadId,
+          body.pendingSkill,
+          content,
+        );
         threadRowState = {
           ...(threadRowState ?? (await ensureThreadState(identity))),
           activatedSkills: skills,
+          pinnedSkills,
         };
         await syncWorkingMemory(
           deps.runtime.memory,
@@ -383,7 +396,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       }
     }
 
-    let skillBlock = getSkillMemoryBlock(threadRowState?.activatedSkills ?? {});
+    const activatedSkills = await refreshActivatedSkills(threadId, (name) =>
+      resolveSkillContent(deps.runtime, ctx.tenantId, agentId, name),
+    );
+    let skillBlock = getSkillMemoryBlock(activatedSkills);
 
     let useThreadMemory = threadStoreOk;
     try {
@@ -460,18 +476,21 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const goalBlock = buildGoalBlock(threadRowState?.goal);
     const loopBlock = buildLoopBlock(threadRowState?.loop);
     // Live workspace awareness (table + knowledge base + right-panel focus).
-    const tableBlockBase = planMode ? '' : buildTableContextBlock();
+    const tableBlockBase = planMode ? '' : buildTableContextBlock(threadId);
     const editGuidance = planMode ? '' : scheduleEditGuidanceBlock(deps.getMcpToolsets);
     const tableBlock = [tableBlockBase, editGuidance].filter(Boolean).join('\n\n');
     const viewer3dBlock = planMode ? '' : buildViewer3dContextBlock();
     const knowledgeBlock = planMode
       ? ''
-      : await withDatastoreFallback(() => buildKnowledgeContextBlock(ctx.tenantId), '');
+      : await withDatastoreFallback(() => buildKnowledgeContextBlock(ctx.tenantId, threadId), '');
     const workspacePanelBlock = planMode
       ? ''
       : buildWorkspacePanelHintBlock(body.workspacePanel);
     const localeBlock = buildLocaleBlock(body.locale);
     const attachedBrowserBlock = buildAttachedBrowserBlock(body.attachedBrowser);
+    const workingMemoryBlock = buildReadOnlyWorkingMemoryBlock(
+      threadRowState?.workingMemory ?? null,
+    );
     const agentDefForBlocks = deps.runtime.definitions.get(agentId)?.definition;
     const fullToolset = agentDefForBlocks?.fullToolset === true;
     const coordinatorMode = isCoordinatorMode() && !planMode && fullToolset;
@@ -496,6 +515,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       orchestrationBlock,
       localeBlock,
       attachedBrowserBlock,
+      workingMemoryBlock,
     });
     if (systemBlocks) {
       agentMessages = [{ role: 'system', content: systemBlocks } as never, ...agentMessages];
@@ -525,10 +545,18 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
               ...(deps.getTaskToolset().viewer3d ? { viewer3d: deps.getTaskToolset().viewer3d } : {}),
               ...(deps.getTaskToolset().knowledge ? { knowledge: deps.getTaskToolset().knowledge } : {}),
             };
-    const activeToolsets = wrapToolsetsWithHooks(activeToolsetsRaw, hookBus, {
-      threadId,
-      tenantId: ctx.tenantId,
-    });
+    const filteredForBusiness = await getEnterprisePorts().businessSource.filterToolsets(
+      ctx.tenantId,
+      ctx.userId,
+      activeToolsetsRaw,
+    );
+    const activeToolsets = wrapToolsetsWithAudit(
+      wrapToolsetsWithHooks(filteredForBusiness, hookBus, {
+        threadId,
+        tenantId: ctx.tenantId,
+      }),
+      { threadId, tenantId: ctx.tenantId, userId: ctx.userId },
+    );
 
     const promptSubmit = await hookBus.emit(
       'UserPromptSubmit',
@@ -560,15 +588,22 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
 
     const streamId = crypto.randomUUID();
     const runAbort = createRunAbortController(streamId);
+    // Thin defense for compact notice; full-answer dupes are fixed by client SSE cursor.
+    let wroteCompactNotice = false;
     requestContext.set('runAbortSignal', runAbort.signal);
 
     const attachments = collectLangfuseAttachments(messages);
     let stream;
     try {
+      // Do NOT pass `memory` into agent.stream. Mastra's SaveQueue / MessageHistory
+      // append-saves a new assistant id per step (and on background-task flush)
+      // without deleting prior snapshots — ask continuations then pile up and
+      // concat-content shows the turn as duplicated. Thread context is already
+      // recalled above; WM is injected via systemBlocks; persistence is
+      // client-authoritative via syncThreadMessagesFromClient.
       stream = await agent.stream(agentMessages as never, {
         maxSteps: 25,
         abortSignal: runAbort.signal,
-        ...(useThreadMemory ? { memory: { thread: threadId, resource: ctx.userId } } : {}),
         requestContext,
         toolsets: activeToolsets,
         tracingOptions: {
@@ -689,9 +724,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       },
       execute: async ({ writer }) => {
         const streamRepair = createUiStreamRepairState();
-        // Also write transient data-keepalive into the UI stream (resumable tee).
-        // Primary liveness for the browser is the raw SSE comment interval below —
-        // that path cannot stall behind consumeSseStream backpressure.
+        // Client liveness watches response.body (45s). data-keepalive must travel on
+        // this UI stream — reply.raw SSE comments never enter the fetch body.
+        // consumeSseStream only tees encoded SSE; execute / toAISdkStream run once.
         const keepAlive = setInterval(() => {
           if (runAbort.signal.aborted) return;
           try {
@@ -705,7 +740,6 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
           }
         }, SSE_KEEPALIVE_INTERVAL_MS);
 
-        let wroteCompactNotice = false;
         const writeCompactNoticeIfNeeded = () => {
           if (wroteCompactNotice) return;
           const payload = requestContext.get(VEYLIN_CONTEXT_COMPACTED_KEY) as
@@ -714,27 +748,62 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
           if (!payload) return;
           wroteCompactNotice = true;
           try {
-            writer.write({
-              type: 'data-veylin-context-summarized',
-              data: payload,
-            } as never);
+            writer.write(buildContextSummarizedStreamChunk(payload) as never);
           } catch {
             /* writer already closed */
           }
         };
 
-        writeCompactNoticeIfNeeded();
+        // Last step only (Claude Code): do not sum multi-step input_tokens.
+        let lastStepUsage: VeylinContextUsage | null = null;
+        const writeContextUsageIfNeeded = (usage: VeylinContextUsage | null) => {
+          if (!usage) return;
+          const chunk = buildContextUsageStreamChunk(usage);
+          if (!chunk) return;
+          try {
+            writer.write(chunk as never);
+          } catch {
+            /* writer already closed */
+          }
+        };
+
         try {
           for await (const part of toAISdkStream(stream as never, {
             from,
             version: 'v6',
             sendReasoning: true,
+            // Mastra strips finish-step.usage from UI chunks; recover via messageMetadata
+            // on finish (+ explicit data part after each step for the composer ring).
+            messageMetadata: ({
+              part: streamPart,
+            }: {
+              part: { type?: string; usage?: unknown; totalUsage?: unknown };
+            }) => {
+              if (streamPart.type === 'finish-step') {
+                const usage = normalizeContextUsage(streamPart.usage);
+                if (usage) lastStepUsage = usage;
+                return undefined;
+              }
+              if (streamPart.type === 'finish') {
+                const usage =
+                  lastStepUsage ?? normalizeContextUsage(streamPart.totalUsage);
+                if (usage) {
+                  lastStepUsage = usage;
+                  return { usage };
+                }
+              }
+              return undefined;
+            },
           } as never)) {
             if (runAbort.signal.aborted) break;
-            // Input processors may finish after stream() returns; emit before first chunk.
+            // Input processors may finish after stream() returns; emit once when payload appears.
             writeCompactNoticeIfNeeded();
             for (const repaired of repairUiStreamChunk(part as never, streamRepair)) {
               writer.write(repaired as never);
+            }
+            const partType = (part as { type?: string }).type;
+            if (partType === 'finish-step' || partType === 'finish') {
+              writeContextUsageIfNeeded(lastStepUsage);
             }
           }
         } catch (err) {
@@ -766,7 +835,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       ),
     );
 
-    // Bypass AI SDK tee backpressure: comment frames always reach the client socket.
+    // Socket-level comments keep proxies/load-balancers awake; they do NOT reset
+    // client wrapStreamWithLiveness (that only sees response.body / data-keepalive).
     const rawKeepAlive = setInterval(() => {
       if (runAbort.signal.aborted || reply.raw.destroyed || reply.raw.writableEnded) {
         clearInterval(rawKeepAlive);

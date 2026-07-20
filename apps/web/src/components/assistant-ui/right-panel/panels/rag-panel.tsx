@@ -172,7 +172,11 @@ function StatCard({
 
 export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
   const { t } = useTranslation();
-  const threadId = useAuiState((s) => s.threadListItem.id);
+  const localId = useAuiState((s) => s.threadListItem.id);
+  const remoteId = useAuiState(
+    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+  );
+  const threadId = remoteId ?? localId ?? null;
   const [tab, setTab] = useState<Tab>('search');
   const [highlightRefIndex, setHighlightRefIndex] = useState<number | null>(null);
   const [query, setQuery] = useState('');
@@ -255,17 +259,22 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
 
   async function refresh(options: { showError?: boolean; attempts?: number } = {}) {
     const { showError = false, attempts = 1 } = options;
+    if (!threadId) {
+      setDocuments([]);
+      setGraph({ nodes: [], links: [] });
+      setAgentCitations({ query: null, references: [], at: null });
+      return;
+    }
     setRefreshing(true);
     try {
-      const refsUrl = threadId
-        ? `/api/rag/references?threadId=${encodeURIComponent(threadId)}`
-        : '/api/rag/references';
+      const threadQ = `threadId=${encodeURIComponent(threadId)}`;
+      const refsUrl = `/api/rag/references?${threadQ}`;
       const [refs, docs, kg, localModels, modelSettings] = await withRetry(
         () =>
           Promise.all([
             fetchJson<{ query?: string | null; references: Reference[]; at?: number | null }>(refsUrl),
-            fetchJson<{ documents: DocumentRow[] }>('/api/rag/documents'),
-            fetchJson<{ entities: GraphNode[]; edges: GraphEdge[] }>('/api/kg'),
+            fetchJson<{ documents: DocumentRow[] }>(`/api/rag/documents?${threadQ}`),
+            fetchJson<{ entities: GraphNode[]; edges: GraphEdge[] }>(`/api/kg?${threadQ}`),
             localModelsRef.current?.refresh() ?? Promise.resolve(null),
             fetchJson<{ settings?: { configured?: boolean } }>('/api/model-settings').catch(
               () => ({ settings: { configured: false } }),
@@ -363,14 +372,14 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
   }, [highlightRefIndex]);
 
   useEffect(() => {
-    if (!selectedNode) {
+    if (!selectedNode || !threadId) {
       setSelectedNodeChunks([]);
       return;
     }
     let cancelled = false;
     setLoadingNodeChunks(true);
     void fetchJson<{ ok: boolean; chunks: Array<Omit<Reference, 'refIndex'>> }>(
-      `/api/kg/entities/${encodeURIComponent(selectedNode.id)}/chunks`,
+      `/api/kg/entities/${encodeURIComponent(selectedNode.id)}/chunks?threadId=${encodeURIComponent(threadId)}`,
     )
       .then((result) => {
         if (cancelled) return;
@@ -387,7 +396,7 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
     return () => {
       cancelled = true;
     };
-  }, [selectedNode?.id]);
+  }, [selectedNode?.id, threadId]);
 
   useEffect(() => {
     if (tab !== 'graph') return;
@@ -418,6 +427,10 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
   async function onUpload(files: FileList | File[]) {
     const list = [...files];
     if (list.length === 0) return;
+    if (!threadId) {
+      setError(t('rag.refreshFailed', { message: 'threadId required' }));
+      return;
+    }
     setUploading(true);
     setError(null);
     let addedGraph = false;
@@ -434,6 +447,7 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
             filename: file.name,
             mimeType,
             text,
+            threadId,
             model: getChatSettings().model || 'default',
           }),
         });
@@ -449,12 +463,15 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
   }
 
   async function confirmDelete() {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !threadId) return;
     const { id } = deleteTarget;
     setDeletingId(id);
     setError(null);
     try {
-      await fetchJson(`/api/rag/documents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      await fetchJson(
+        `/api/rag/documents/${encodeURIComponent(id)}?threadId=${encodeURIComponent(threadId)}`,
+        { method: 'DELETE' },
+      );
       setDeleteTarget(null);
       await refresh({ showError: true });
     } catch (err) {
@@ -470,6 +487,10 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
       setQueryError(t('rag.enterQuery'));
       return;
     }
+    if (!threadId) {
+      setError(t('rag.refreshFailed', { message: 'threadId required' }));
+      return;
+    }
     setSearching(true);
     setQueryError(null);
     setError(null);
@@ -477,7 +498,7 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
       const result = await fetchJson<{ references: Reference[] }>('/api/rag/search', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query: value }),
+        body: JSON.stringify({ query: value, threadId }),
       });
       setSearchResults(result.references ?? []);
       setTab('search');

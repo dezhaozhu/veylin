@@ -1,5 +1,6 @@
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import { recoverDesktopInteraction } from '@/lib/use-desktop-interaction-guard';
+import { stopActiveChatKeepalive } from '@/lib/chat-stop';
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -21,6 +22,8 @@ export function installDesktopReloadShortcut(): void {
     if (isEditableTarget(event.target)) return;
 
     event.preventDefault();
+    // Abort before reload — pagehide/beforeunload alone is flaky in some WebViews.
+    stopActiveChatKeepalive();
     if (isTauri()) void hideWebView(undefined, { force: true });
     window.location.reload();
   });

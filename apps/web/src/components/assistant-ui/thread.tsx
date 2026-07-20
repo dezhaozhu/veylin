@@ -64,6 +64,8 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
+  useState,
   useSyncExternalStore,
   type ComponentType,
   type FC,
@@ -74,9 +76,12 @@ import {
   subscribeAskUserSession,
 } from "@/lib/ask-user-question-session";
 import {
-  findLastSubstantialTextIndex,
+  findFinalProseIndex,
+  findLastFrontendSuspendToolIndex,
   hasPreFinalWork,
+  isFinalProsePart,
 } from "@/lib/assistant-final-output";
+import { isFrontendSuspendPartsSettled } from "@/lib/frontend-suspend-tools";
 import { usePlanModeBridge, useGoalLoopBridge } from "@/lib/use-composer-settings";
 import { dispatchOverlayDismiss } from "@/lib/overlay-dismiss";
 import { hideWebView, isTauri } from "@/lib/tauri-web-view";
@@ -430,14 +435,46 @@ const AssistantMessage: FC = () => {
   } = useContext(ThreadComponentsContext);
 
   const parts = useAuiState((s) => s.message.parts);
-  const isRunning = useAuiState((s) => s.message.status?.type === "running");
+  const messageId = useAuiState((s) => s.message.id);
+  const threadIsRunning = useAuiState((s) => s.thread.isRunning);
+  const isLastMessage = useAuiState((s) => {
+    const last = s.thread.messages.at(-1);
+    return last?.id === s.message.id;
+  });
+  // Prefer thread.isRunning for the active turn so ask-await / continuation
+  // gaps (runtime-extended isRunning) do not fold early via message.status.
+  // Do not inherit thread.isRunning onto a completed prior assistant that is
+  // briefly still last during edit→send (before the new user/assistant land).
+  const anyPartRunning = useAuiState((s) =>
+    s.message.parts.some((p) => p.status?.type === "running"),
+  );
+  const messageIsOptimistic = useAuiState((s) =>
+    Boolean(s.message.metadata?.isOptimistic),
+  );
+  const finalProseIdx = useMemo(() => findFinalProseIndex(parts), [parts]);
+  const suspendSettled = isFrontendSuspendPartsSettled(parts);
+  const inheritThreadRunning =
+    isLastMessage &&
+    threadIsRunning &&
+    (anyPartRunning ||
+      messageIsOptimistic ||
+      finalProseIdx < 0 ||
+      !suspendSettled);
+  const isRunning =
+    anyPartRunning || messageIsOptimistic || inheritThreadRunning;
   const elapsedSeconds = useStreamingDuration(isRunning === true);
-  const lastTextIdx = useMemo(
-    () => findLastSubstantialTextIndex(parts),
+  // Fold middle work whenever there is pre-final work — including while the
+  // turn is still running. Only the final prose (and unsettled ask) stay out.
+  const foldWork = hasPreFinalWork(parts, finalProseIdx);
+  const lastSuspendIdx = useMemo(
+    () => findLastFrontendSuspendToolIndex(parts),
     [parts],
   );
-  const foldWork =
-    !isRunning && hasPreFinalWork(parts, lastTextIdx);
+  const showWorkedForDuration = !isRunning && suspendSettled;
+  const [workedForOpen, setWorkedForOpen] = useState(false);
+  const workedForPrimaryStartRef = useRef<number | null>(null);
+  // First group-worked-for in this render pass owns the label.
+  workedForPrimaryStartRef.current = null;
 
   const groupBy = useMemo(() => {
     const fold: (
@@ -447,19 +484,31 @@ const AssistantMessage: FC = () => {
       if (!foldWork) {
         return baseAssistantGroupBy(part, context) as readonly AssistantGroupKey[];
       }
-      const index = parts.indexOf(part);
-      const path = baseAssistantGroupBy(part, context);
-      if (index === lastTextIdx && part.type === "text") {
+      // Only the final answer (after last ask, or last text) stays outside.
+      const index = parts.indexOf(part as (typeof parts)[number]);
+      if (
+        part.type === "text" &&
+        index >= 0 &&
+        isFinalProsePart(parts, index, finalProseIdx)
+      ) {
         return ["group-final-prose"];
       }
-      if (path.length === 0) return path as readonly AssistantGroupKey[];
-      if (path[0] === "group-chainOfThought") {
-        return ["group-worked-for", ...(path as AssistantGroupKey[])];
+      // Keep the current (last) frontend-suspend tool visible until the turn
+      // settles — earlier answered asks still fold into Worked-for.
+      // Keep the current (last) frontend-suspend tool visible until the turn
+      // settles — earlier answered asks still fold into Worked-for.
+      // lastSuspendIdx is only ask_user_question / read_open_page.
+      if (!suspendSettled && index >= 0 && index === lastSuspendIdx) {
+        return [];
       }
-      return path as readonly AssistantGroupKey[];
+      const path = baseAssistantGroupBy(part, context);
+      // Include path=[] (step-start / leftover standalone) so islands can share
+      // one Worked-for label via WorkedForBlock coordination.
+      if (path.length === 0) return ["group-worked-for"];
+      return ["group-worked-for", ...(path as AssistantGroupKey[])];
     };
     return fold;
-  }, [foldWork, parts, lastTextIdx]);
+  }, [foldWork, parts, finalProseIdx, messageId, suspendSettled, lastSuspendIdx]);
 
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
   // keeps hovered action bar from shifting layout (autohide doesn't support absolute positioning well)
@@ -481,12 +530,29 @@ const AssistantMessage: FC = () => {
         <MessagePrimitive.GroupedParts groupBy={groupBy}>
           {({ part, children }) => {
             switch (part.type) {
-              case "group-worked-for":
+              case "group-worked-for": {
+                const start =
+                  part.indices.length > 0 ? Math.min(...part.indices) : -1;
+                const isPrimary =
+                  workedForPrimaryStartRef.current === null ||
+                  workedForPrimaryStartRef.current === start;
+                if (workedForPrimaryStartRef.current === null) {
+                  workedForPrimaryStartRef.current = start;
+                }
                 return (
-                  <WorkedForBlock elapsedSeconds={elapsedSeconds}>
+                  <WorkedForBlock
+                    elapsedSeconds={
+                      showWorkedForDuration ? elapsedSeconds : undefined
+                    }
+                    showDuration={showWorkedForDuration}
+                    isPrimary={isPrimary}
+                    open={workedForOpen}
+                    onOpenChange={setWorkedForOpen}
+                  >
                     {children}
                   </WorkedForBlock>
                 );
+              }
               case "group-chainOfThought":
                 return (
                   <div

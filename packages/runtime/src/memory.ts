@@ -9,7 +9,19 @@ function envInt(key: string, fallback: number): number {
   return Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
-/** LibSQL file in app-data: thread/message storage + vector semantic recall. */
+/**
+ * LibSQL file in app-data: thread/message storage + vector semantic recall.
+ *
+ * `readOnly: true` keeps working-memory available for explicit reads but does
+ * not register `updateWorkingMemory` on agents that attach this Memory.
+ * Writes go through `scheduleDreamConsolidation` / `syncWorkingMemory` /
+ * explicit `saveMessages` and client `syncThreadMessagesFromClient`.
+ *
+ * Main chat (`/api/chat`) does **not** pass `memory` into `agent.stream`.
+ * Mastra's SaveQueue / MessageHistory would otherwise append a new assistant
+ * id every step without deleting prior snapshots. Chat injects WM via
+ * `buildReadOnlyWorkingMemoryBlock` and recalls transcript before stream.
+ */
 export function buildMemory(libsqlUrl: string): Memory {
   const lastMessages = envInt('VEYLIN_COMPACT_KEEP', 12);
   const recallEnabled = isEmbeddingModelReady();
@@ -18,6 +30,7 @@ export function buildMemory(libsqlUrl: string): Memory {
     vector: new LibSQLVector({ id: 'veylin-vector', url: libsqlUrl }),
     ...(recallEnabled ? { embedder: localFastembed } : {}),
     options: {
+      readOnly: true,
       lastMessages,
       semanticRecall: recallEnabled
         ? {

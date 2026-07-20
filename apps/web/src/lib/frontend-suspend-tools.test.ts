@@ -300,6 +300,30 @@ describe('frontend-suspend-tools', () => {
     assert.equal(shouldAutoSendChat({ messages }), true);
   });
 
+  it('does NOT client-continue after updateWorkingMemory output-error', () => {
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          { type: 'text', text: '首批排产已完成。请告诉我下一步。' },
+          {
+            type: 'tool-updateWorkingMemory',
+            state: 'output-error',
+            errorText: 'ToolNotFoundError',
+          },
+        ],
+      },
+    ] as UIMessage[];
+
+    assert.equal(shouldAutoSendChat({ messages }), false);
+    assert.equal(
+      lastAssistantMessageIsCompleteWithToolCalls({ messages }),
+      true,
+      'SDK would treat this as complete — we must not follow that for auto-send',
+    );
+  });
+
   it('treats empty-page read_open_page output as complete', () => {
     assert.equal(
       hasFrontendToolOutput('read_open_page', {

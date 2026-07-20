@@ -5,20 +5,24 @@ import {
   isAutoCompactDisabled,
   recordCompactFailure,
   recordCompactSuccess,
-} from '../context-window';
+} from '../context-window.js';
 import { formatCompactSummary } from '../summarizer';
 
 export type Summarizer = (text: string) => Promise<string>;
 
 export interface ContextCompressionOptions {
   keepRecent?: number;
+  /** @deprecated Ignored for auto trigger — Claude Code uses window threshold only. */
   triggerAt?: number;
   llmTriggerAt?: number;
+  /** @deprecated Ignored for auto trigger — Claude Code uses window threshold only. */
   tokenTriggerAt?: number;
   tokenLlmTriggerAt?: number;
   perMessageChars?: number;
   summarizer?: Summarizer | undefined;
-  /** When true, always compact (manual /compact). Ignores count/token thresholds. */
+  /** Catalog model id used when requestContext has no `model`. */
+  modelKey?: string;
+  /** When true, always compact (manual /compact). Ignores window threshold. */
   force?: boolean;
 }
 
@@ -96,34 +100,48 @@ export type VeylinContextCompacted = {
   generation: number;
 };
 
+/** AI SDK data-part chunk for the thread compact notice (stable id → upsert, not append). */
+export function buildContextSummarizedStreamChunk(payload: VeylinContextCompacted): {
+  type: 'data-veylin-context-summarized';
+  id: string;
+  data: VeylinContextCompacted;
+} {
+  return {
+    type: 'data-veylin-context-summarized',
+    id: `veylin-context-summarized-${payload.generation ?? 0}`,
+    data: payload,
+  };
+}
+
 type ProcessInputArgs = {
   messages: MastraDBMessage[];
-  requestContext?: { set: (key: string, value: unknown) => void };
+  requestContext?: {
+    set: (key: string, value: unknown) => void;
+    get?: (key: string) => unknown;
+  };
 };
 
 /**
- * Two-tier context compaction: message count, token estimate, or context-window % threshold.
+ * Context compaction when estimated tokens exceed Claude Code–style window threshold.
  */
 export class ContextCompression implements Processor {
   id = 'context-compression';
   private keepRecent: number;
-  private triggerAt: number;
   private llmTriggerAt: number;
-  private tokenTriggerAt: number;
   private tokenLlmTriggerAt: number;
   private perMessageChars: number;
   private summarizer?: Summarizer | undefined;
+  private modelKey?: string;
   private force: boolean;
 
   constructor(opts: ContextCompressionOptions = {}) {
     this.keepRecent = opts.keepRecent ?? envInt('VEYLIN_COMPACT_KEEP', 12);
-    this.triggerAt = opts.triggerAt ?? envInt('VEYLIN_COMPACT_TRIGGER', 24);
     this.llmTriggerAt = opts.llmTriggerAt ?? envInt('VEYLIN_COMPACT_LLM_TRIGGER', 48);
-    this.tokenTriggerAt = opts.tokenTriggerAt ?? envInt('VEYLIN_COMPACT_TOKEN_TRIGGER', 4000);
     this.tokenLlmTriggerAt =
       opts.tokenLlmTriggerAt ?? envInt('VEYLIN_COMPACT_TOKEN_LLM_TRIGGER', 12000);
     this.perMessageChars = opts.perMessageChars ?? envInt('VEYLIN_COMPACT_PER_MSG', 240);
     this.summarizer = opts.summarizer;
+    this.modelKey = opts.modelKey;
     this.force = opts.force === true;
   }
 
@@ -133,13 +151,16 @@ export class ContextCompression implements Processor {
   }: ProcessInputArgs): Promise<MastraDBMessage[]> {
     if (isAutoCompactDisabled() && !this.force) return messages;
 
+    const modelKey =
+      (typeof requestContext?.get === 'function'
+        ? (requestContext.get('model') as string | undefined)
+        : undefined) ?? this.modelKey;
+
     const tokens = estimateTokens(messages);
-    const autoThreshold = getAutoCompactThreshold();
-    const overCount = messages.length > this.triggerAt;
-    const overTokens = tokens > this.tokenTriggerAt;
+    const autoThreshold = getAutoCompactThreshold(modelKey);
     const overAutoWindow = tokens > autoThreshold;
 
-    if (!this.force && !overCount && !overTokens && !overAutoWindow) return messages;
+    if (!this.force && !overAutoWindow) return messages;
 
     const keep = this.force
       ? Math.min(this.keepRecent, Math.max(1, messages.length - 1))
@@ -148,6 +169,7 @@ export class ContextCompression implements Processor {
     const tail = messages.slice(messages.length - keep);
     if (head.length === 0) return messages;
 
+    // Secondary: whether to LLM-summarize (does not start compaction by itself).
     const useLlm =
       this.summarizer &&
       (this.force ||

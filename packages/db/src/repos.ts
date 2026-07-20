@@ -43,6 +43,9 @@ function mapThreadState(r: Record<string, unknown>): ThreadStateRow {
     planMode: Boolean(r.plan_mode),
     todos: (r.todos as unknown[]) ?? [],
     activatedSkills: (r.activated_skills as Record<string, string>) ?? {},
+    pinnedSkills: Array.isArray(r.pinned_skills)
+      ? (r.pinned_skills as unknown[]).map(String)
+      : [],
     workingMemory: (r.working_memory as string | null) ?? null,
     title: (r.title as string | null) ?? null,
     goal: (r.goal as unknown) ?? null,
@@ -208,6 +211,15 @@ export async function createMembership(row: {
   return mapMembership((await selectById<Record<string, unknown>>(getDb(), 'membership', id))!);
 }
 
+export async function listMembershipsByTenant(tenantId: string): Promise<MembershipRow[]> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    'SELECT * FROM membership WHERE tenant_id = $tenantId',
+    { tenantId },
+  );
+  return rows.map(mapMembership);
+}
+
 // ---- Thread state ----
 
 export async function getThreadStateRow(threadId: string): Promise<ThreadStateRow | null> {
@@ -227,6 +239,7 @@ export async function insertThreadState(row: Omit<ThreadStateRow, 'updatedAt'>):
     plan_mode: row.planMode,
     todos: row.todos,
     activated_skills: row.activatedSkills,
+    pinned_skills: row.pinnedSkills ?? [],
     working_memory: row.workingMemory ?? null,
     title: row.title ?? null,
     goal: row.goal ?? null,
@@ -252,6 +265,10 @@ export async function updateThreadState(
   if (patch.activatedSkills !== undefined) {
     sets.push('activated_skills = $activatedSkills');
     vars.activatedSkills = patch.activatedSkills;
+  }
+  if (patch.pinnedSkills !== undefined) {
+    sets.push('pinned_skills = $pinnedSkills');
+    vars.pinnedSkills = patch.pinnedSkills;
   }
   if (patch.workingMemory !== undefined) {
     sets.push('working_memory = $workingMemory');
@@ -324,6 +341,9 @@ export async function getTenantSettingsRow(tenantId: string): Promise<TenantSett
     disabledMcpServers: (r.disabled_mcp_servers as string[]) ?? [],
     disabledHooks: (r.disabled_hooks as string[]) ?? [],
     modelSettings: (r.model_settings as TenantSettingsRow['modelSettings']) ?? undefined,
+    langfuseSettings: (r.langfuse_settings as TenantSettingsRow['langfuseSettings']) ?? undefined,
+    businessSource: (r.business_source as TenantSettingsRow['businessSource']) ?? undefined,
+    auditSettings: (r.audit_settings as TenantSettingsRow['auditSettings']) ?? undefined,
     workspaceRoot: r.workspace_root != null ? String(r.workspace_root) : null,
     importClaudeHooks: r.import_claude_hooks === true,
     updatedAt: r.updated_at ? String(r.updated_at) : undefined,
@@ -343,6 +363,9 @@ export async function upsertTenantSettings(
       | 'disabledMcpServers'
       | 'disabledHooks'
       | 'modelSettings'
+      | 'langfuseSettings'
+      | 'businessSource'
+      | 'auditSettings'
       | 'workspaceRoot'
       | 'importClaudeHooks'
     >
@@ -357,6 +380,9 @@ export async function upsertTenantSettings(
         disabledMcpServers: [],
         disabledHooks: [],
         modelSettings: undefined,
+        langfuseSettings: undefined,
+        businessSource: undefined,
+        auditSettings: undefined,
         workspaceRoot: null,
         importClaudeHooks: false,
       };
@@ -366,6 +392,9 @@ export async function upsertTenantSettings(
         disabled_mcp_servers: patch.disabledMcpServers ?? existing.disabledMcpServers,
         disabled_hooks: patch.disabledHooks ?? existing.disabledHooks,
         model_settings: patch.modelSettings ?? existing.modelSettings,
+        langfuse_settings: patch.langfuseSettings ?? existing.langfuseSettings,
+        business_source: patch.businessSource ?? existing.businessSource,
+        audit_settings: patch.auditSettings ?? existing.auditSettings,
         workspace_root:
           patch.workspaceRoot !== undefined
             ? patch.workspaceRoot || undefined
@@ -922,6 +951,27 @@ export async function insertAuditLog(row: Omit<AuditLogRow, 'id' | 'createdAt'>)
     action: row.action,
     detail: row.detail ?? null,
   });
+}
+
+export async function listAuditLogs(
+  tenantId: string,
+  opts?: { limit?: number },
+): Promise<AuditLogRow[]> {
+  const limit = Math.min(Math.max(opts?.limit ?? 50, 1), 200);
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    `SELECT * FROM audit_log WHERE tenant_id = $tenantId ORDER BY created_at DESC LIMIT ${limit}`,
+    { tenantId },
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    tenantId: String(r.tenant_id),
+    userId: r.user_id != null ? String(r.user_id) : null,
+    threadId: r.thread_id != null ? String(r.thread_id) : null,
+    action: String(r.action),
+    detail: r.detail,
+    createdAt: r.created_at != null ? String(r.created_at) : undefined,
+  }));
 }
 
 // suppress unused

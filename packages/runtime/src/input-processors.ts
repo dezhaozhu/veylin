@@ -9,7 +9,10 @@ import { inputTokenLimit } from './token-limit';
 export function buildInputProcessors(modelKey: ModelKey = 'default') {
   return [
     new ToolResultMicrocompact(),
-    new ContextCompression({ summarizer: buildSummarizer(modelKey) }),
-    new TokenLimiter({ limit: inputTokenLimit() }),
+    new ContextCompression({
+      summarizer: buildSummarizer(modelKey),
+      modelKey,
+    }),
+    new TokenLimiter({ limit: inputTokenLimit(modelKey) }),
   ];
 }

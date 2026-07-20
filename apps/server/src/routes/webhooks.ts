@@ -144,8 +144,12 @@ export function registerWebhooksRoutes(app: FastifyInstance, deps: ServerDeps): 
     }
 
     const workflows = await listEventWorkflows(tenantId, config.source);
-    const matchedWorkflows = workflows.filter((w) =>
-      matchesEventTrigger(
+    const eventThreadId =
+      typeof eventContext.threadId === 'string' ? eventContext.threadId.trim() : '';
+    const matchedWorkflows = workflows.filter((w) => {
+      if (!w.threadId?.trim()) return false;
+      if (eventThreadId && w.threadId !== eventThreadId) return false;
+      return matchesEventTrigger(
         {
           source: w.sourceType,
           on: w.eventOn,
@@ -154,8 +158,8 @@ export function registerWebhooksRoutes(app: FastifyInstance, deps: ServerDeps): 
         config.source,
         eventKey,
         payload,
-      ),
-    );
+      );
+    });
 
     for (const workflow of matchedWorkflows) {
       await dispatchWorkflow(deps.queue, {

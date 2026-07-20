@@ -52,6 +52,29 @@ describe('chat-system-blocks', () => {
     assert.ok(blocks.indexOf('## Skills') < blocks.indexOf('## Active skill'));
   });
 
+  it('injects read-only working memory when provided', async () => {
+    const blocks = await buildChatSystemBlocks({
+      skillsCatalog: '',
+      skillBlock: '',
+      rulesBlock: '',
+      planModeBlock: '',
+      goalBlock: '',
+      loopBlock: '',
+      tableBlock: '',
+      knowledgeBlock: '',
+      workspacePanelBlock: '',
+      reminderBlock: '',
+      orchestrationBlock: '',
+      localeBlock: '',
+      attachedBrowserBlock: '',
+      workingMemoryBlock:
+        'WORKING_MEMORY_SYSTEM_INSTRUCTION (READ-ONLY):\n<working_memory_data>\n- Active focus: scheduling\n</working_memory_data>',
+    });
+
+    assert.match(blocks, /WORKING_MEMORY_SYSTEM_INSTRUCTION \(READ-ONLY\)/);
+    assert.match(blocks, /Active focus: scheduling/);
+  });
+
   it('builds lighter agent-run blocks', async () => {
     const blocks = await buildAgentRunSystemBlocks({
       skillsCatalog: 'catalog',

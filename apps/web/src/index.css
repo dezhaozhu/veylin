@@ -38,6 +38,7 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   --animate-spin: spin 1.75s linear infinite;
+  --animate-indeterminate-bar: indeterminate-bar 1.35s ease-in-out infinite;
 }
 
 :root {
@@ -194,4 +195,13 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
 }
 .ag-row.sched-atrisk {
   box-shadow: inset 3px 0 0 0 rgb(245 158 11 / 0.85);
+}
+
+@keyframes indeterminate-bar {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(280%);
+  }
 }

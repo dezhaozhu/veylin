@@ -1,4 +1,16 @@
 {
+  "auth": {
+    "signIn": "登录",
+    "signUp": "注册",
+    "hint": "使用邮箱和密码进入工作区",
+    "email": "邮箱",
+    "password": "密码",
+    "name": "显示名",
+    "working": "请稍候…",
+    "failed": "认证失败，请重试。",
+    "needAccount": "没有账号？注册",
+    "haveAccount": "已有账号？登录"
+  },
   "panels": {
     "empty": "点击上方 + 新建一个面板",
     "table": {
@@ -30,6 +42,7 @@
     "continuing": "继续任务 {{id}}…",
     "continueQueued": "跟进已排队 {{id}}…",
     "continueResult": "任务 {{id}} 已更新",
+    "complete": "complete",
     "duration": "{{ms}} 毫秒",
     "tokens": "{{count}} tokens"
   },
@@ -74,20 +87,26 @@
     "historyLoadFailed": "无法加载此会话。",
     "historyRetry": "重试",
     "questionRailLabel": "对话问题导航",
-    "selectionAsk": "询问"
+    "selectionAsk": "询问",
+    "contextSummarized": "对话上下文已压缩"
   },
   "reasoning": {
     "thought": "思考",
     "thoughtDuration": "思考，{{seconds}} 秒",
     "workedFor": "工作了 {{seconds}} 秒",
-    "workedForNoDuration": "已完成工作",
-    "contextSummarized": "对话上下文已压缩"
+    "workedForNoDuration": "已完成工作"
   },
   "toolSearch": {
     "searching": "正在搜索工具「{{query}}」…",
     "title": "工具搜索：{{query}}",
     "noResults": "未找到匹配「{{query}}」的工具",
     "noResultsHint": "请检查 MCP 是否已连接并启用，或换关键词再试。"
+  },
+  "skill": {
+    "loading": "正在加载技能 {{name}}…",
+    "loadingGeneric": "正在加载技能…",
+    "loaded": "已加载技能：{{name}}",
+    "notFound": "未找到技能：{{name}}"
   },
   "toolGroup": {
     "readFiles": "读取 {{count}} 个文件",
@@ -167,13 +186,13 @@
     "removeSkill": "移除技能"
   },
   "status": {
-    "allDone": "全部完成",
-    "todosProgress": "{{done}}/{{total}}待办",
-    "agentsRunning": "{{count}} 个智能体运行中",
-    "agentsQueued": "{{count}} 个智能体已排队",
-    "agentsDone": "{{count}} 个智能体已完成",
-    "agentsCount": "{{count}} 个智能体",
-    "agentsHeading": "智能体 ({{count}})",
+    "allDone": "{{count}} 待办全部完成",
+    "todosProgress": "{{done}}/{{total}} 待办",
+    "agentsRunning": "{{count}} 子智能体",
+    "agentsQueued": "{{count}} 子智能体",
+    "agentsDone": "{{count}} 子智能体全部完成",
+    "agentsCount": "{{count}} 子智能体",
+    "agentsHeading": "子智能体 ({{done}}/{{total}})",
     "todosHeading": "待办 ({{done}}/{{total}})",
     "taskQueued": "已排队",
     "taskRunning": "运行中",
@@ -196,6 +215,7 @@
   },
   "ask": {
     "answered": "已回答",
+    "answerLabel": "答：",
     "selectToContinue": "请选择以继续",
     "lookBelow": "在下方输入框上方选择选项。",
     "invalidFormat": "问题格式无效，请重试或换一条消息说明你的选择。",
@@ -291,6 +311,55 @@
       "title": "语言",
       "hint": "应用 UI 语言",
       "closeMenu": "关闭语言菜单"
+    },
+    "business": {
+      "nav": "业务连接",
+      "title": "业务连接",
+      "hint": "企业业务系统经 MCP 接入；凭证仅保存在服务端，不会回传前端。",
+      "enabled": "启用业务源",
+      "enabledHint": "开启后 Agent 按白名单调用该 MCP",
+      "url": "MCP URL",
+      "serverName": "MCP 名称",
+      "authorization": "Authorization",
+      "authorizationHint": "可选，如 Bearer token。保存后不回显。",
+      "authorizationHintSaved": "已保存凭证。留空保持不变。",
+      "allowlist": "工具白名单",
+      "allowlistHint": "逗号分隔工具名；留空表示该 MCP 下全部工具。",
+      "save": "保存",
+      "saving": "保存中…",
+      "saved": "已保存",
+      "test": "测试连接",
+      "testing": "测试中…",
+      "testOk": "连接成功：{{count}} 个工具（{{tools}}）",
+      "testFailed": "连接测试失败，请检查 URL、凭证与网络。",
+      "loadFailed": "加载业务连接失败。",
+      "saveFailed": "保存失败，请重试。",
+      "auditHint": "可选。每条审计事件 POST 到此地址；留空则仅本地落库。",
+      "auditWebhook": "审计 Webhook",
+      "auditSave": "保存审计设置",
+      "auditSaving": "保存中…",
+      "auditSaved": "已保存",
+      "auditSaveFailed": "保存审计设置失败，请重试。"
+    },
+    "langfuse": {
+      "title": "Langfuse",
+      "hint": "观测追踪配置；保存后立即生效",
+      "enabled": "启用 Langfuse",
+      "publicKey": "Public Key",
+      "publicKeyPlaceholder": "pk-lf-…",
+      "secretKey": "Secret Key",
+      "secretKeyPlaceholder": "sk-lf-…",
+      "secretKeyHint": "必填，保存后不会回显密钥。",
+      "secretKeyHintSaved": "已保存密钥。留空则保持不变；填写则覆盖。",
+      "baseUrl": "Base URL",
+      "save": "保存",
+      "saving": "保存中…",
+      "saved": "已保存",
+      "clear": "清除",
+      "clearing": "清除中…",
+      "loadFailed": "加载 Langfuse 设置失败。",
+      "saveFailed": "保存失败，请重试。",
+      "clearFailed": "清除失败，请重试。"
     },
     "models": {
       "nav": "模型",
@@ -428,7 +497,8 @@
       "confirmDelete": "卸载「{{name}}」？将删除安装记录并移除本地副本。",
       "installedEmpty": "还没有已安装的插件。",
       "marketplaceEmpty": "市场暂无条目。",
-      "installFromMarket": "添加"
+      "installFromMarket": "添加",
+      "installing": "正在安装…"
     },
     "rulesPage": {
       "title": "规则",
@@ -461,21 +531,21 @@
       "description": "添加 MCP 服务，扩展 Agent 能做的事情。已安装服务可随时启用或停用，无需卸载。",
       "addCustom": "添加自定义服务",
       "searchPlaceholder": "搜索 MCP 服务…",
-      "filterAll": "全部",
       "connected": "已连接",
-      "installed": "已安装",
       "plugin": "插件",
       "serverLine": "{{transport}} · {{detail}}",
       "libraryTitle": "服务库",
       "addTitle": "添加 MCP 服务",
       "editorDescription": "通过 SSE 或 HTTP 连接远程 MCP 服务。",
-      "addServer": "添加服务",
+      "addServer": "添加",
       "namePlaceholder": "例如：github",
       "transport": "传输方式",
       "transportHint": "SSE 用于流式端点；HTTP 用于 streamable HTTP MCP。",
       "headers": "Headers",
       "headersHint": "可选 JSON 对象，例如 {\"Authorization\":\"Bearer ...\"}",
-      "noInstalledMatch": "没有匹配的已安装服务。",
+      "connectedEmpty": "还没有已安装的 MCP 服务。可在服务库添加远程服务，或从「插件」市场安装带 MCP 的插件。",
+      "pluginDetail": "插件 {{plugin}} · {{command}}",
+      "libraryEmpty": "没有匹配的服务库条目。",
       "toggle": "启用/停用 {{name}}",
       "confirmDelete": "删除 MCP 服务「{{name}}」？",
       "deleteTitle": "删除 MCP 服务",
@@ -493,10 +563,7 @@
       "library": {
         "github": "审查 PR、整理 Issue，并根据仓库事件发布摘要。",
         "slack": "把自动化摘要和告警发送到团队正在使用的频道。",
-        "linear": "同步 Issue 状态，并从 Agent 工作流创建后续任务。",
-        "notion": "将报告和结构化笔记发布到团队共享工作区。",
-        "tavily": "为需要最新外部信息的 Agent 提供网页搜索和研究能力。",
-        "supabase": "查询项目数据，并对数据库执行运维检查。"
+        "notion": "将报告和结构化笔记发布到团队共享工作区。"
       },
       "addMcp": "添加 MCP"
     }
@@ -737,6 +804,10 @@
     "import": "导入",
     "export": "导出",
     "filterPlaceholder": "筛选…",
+    "filterColumnPlaceholder": "筛选「{{name}}」…",
+    "largeSheetWarn": "该表有 {{count}} 行。当前仅显示前 {{cap}} 行，请用筛选缩小范围。",
+    "footerCapped": "显示前 {{shown}} / 共 {{matched}} 行，请用筛选缩小",
+    "saveFailed": "保存失败",
     "clear": "清除",
     "undo": "撤销",
     "redo": "恢复",
@@ -845,8 +916,7 @@
       "rerankerDesc": "从 Hugging Face 官方仓库下载，对检索结果二次排序；不安装不影响基础检索。",
       "enableReranker": "启用精排",
       "enabledHint": "精排已启用，检索与对话中的 knowledge_search 会使用精排结果。",
-      "disabledHint": "精排已关闭，仍保留模型文件，需要时可重新开启。",
-      "hfEndpoint": "下载源：{{endpoint}}"
+      "disabledHint": "精排已关闭，仍保留模型文件，需要时可重新开启。"
     }
   },
   "wf": {

@@ -47,6 +47,9 @@ const WorkingMemoryTools = lazy(() =>
 const ToolSearchToolUI = lazy(() =>
   import('@/components/assistant-ui/tool-search').then((m) => ({ default: m.ToolSearchToolUI })),
 );
+const SkillToolUI = lazy(() =>
+  import('@/components/assistant-ui/skill-tool').then((m) => ({ default: m.SkillToolUI })),
+);
 const TaskTools = lazy(() =>
   import('@/components/assistant-ui/task-tool').then((m) => ({
     default: function TaskToolUIs() {
@@ -76,6 +79,7 @@ export function LazyAssistantToolUIs() {
         <PlanModeTools />
         <WorkingMemoryTools />
         <ToolSearchToolUI />
+        <SkillToolUI />
         <TaskTools />
         <KnowledgeSearchToolUI />
         <ReadOpenPageToolUI />

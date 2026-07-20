@@ -1,15 +1,14 @@
 import { useCallback, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { useRightSidebar } from '@/components/ui/sidebar';
+import { PanelEmptyState } from './panel-empty-state';
 import { PanelTabBar } from './panel-tab-bar';
 import { getPanelKindDef } from './panel-registry';
 import { usePanelTabs } from './panel-tabs-context';
 
 /** Unified right-panel container: tab strip + content area hosting any panel kind. */
 export function RightPanel() {
-  const { t } = useTranslation();
   const { view } = useSettingsPanel();
   const { open: rightOpen } = useRightSidebar();
   const { tabs, activeId, activeTab, open, close, activate, updateState } = usePanelTabs();
@@ -42,11 +41,13 @@ export function RightPanel() {
       />
       <div className="min-h-0 flex-1 overflow-hidden">
         {activeTab && Content ? (
-          <Content tab={activeTab} updateState={handleUpdateState} />
+          <Content
+            key={activeTab.id}
+            tab={activeTab}
+            updateState={handleUpdateState}
+          />
         ) : (
-          <div className="text-muted-foreground flex h-full items-center justify-center p-6 text-center text-sm">
-            {t('panels.empty')}
-          </div>
+          <PanelEmptyState onOpen={open} />
         )}
       </div>
     </div>

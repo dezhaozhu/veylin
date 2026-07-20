@@ -6,6 +6,7 @@ import {
   modelCatalogFileSchema,
   type ModelCatalogEntry,
 } from './model.js';
+import { resolveContextWindowWithProvider } from './provider-context-window.js';
 
 export type { ModelCatalogEntry };
 
@@ -15,13 +16,17 @@ type CatalogFile = {
 
 let cached: { path: string; mtimeMs: number; models: ModelCatalogEntry[] } | null = null;
 
-/** Append `/v1` for bare OpenAI-compatible host URLs (no path). */
+/** Append `/v1` for OpenAI-compatible base URLs that omit the version segment.
+ *  Covers bare hosts (`https://api.example.com`) and common `/api` prefixes
+ *  (`https://zenmux.ai/api` → `…/api/v1`). Leaves paths that already end in `/v1`.
+ */
 export function normalizeOpenAICompatibleUrl(url: string): string {
   const trimmed = url.trim().replace(/\/$/, '');
   if (!trimmed) return trimmed;
   try {
     const parsed = new URL(trimmed);
-    if (!parsed.pathname || parsed.pathname === '/') {
+    const path = parsed.pathname.replace(/\/$/, '') || '/';
+    if (path === '/' || path === '/api') {
       return `${trimmed}/v1`;
     }
   } catch {
@@ -91,10 +96,53 @@ export function clearModelCatalogCache(): void {
   cached = null;
 }
 
-export function listModelCatalogPublic(): Array<{ id: string; label: string; default?: boolean }> {
-  return loadModelCatalog().map(({ id, label, default: isDefault }) => ({
-    id,
-    label,
-    ...(isDefault ? { default: true } : {}),
+export function listModelCatalogPublic(): Array<{
+  id: string;
+  label: string;
+  modelId: string;
+  /** Present when set on the catalog file; otherwise filled by provider fetch. */
+  contextWindow?: number;
+  default?: boolean;
+}> {
+  return loadModelCatalog().map((m) => ({
+    id: m.id,
+    label: m.label,
+    modelId: m.modelId,
+    ...(typeof m.contextWindow === 'number' ? { contextWindow: m.contextWindow } : {}),
+    ...(m.default ? { default: true as const } : {}),
   }));
+}
+
+/** Public catalog with contextWindow from file, provider `/models`, known table, or 272k. */
+export async function listModelCatalogPublicWithContextWindows(): Promise<
+  Array<{
+    id: string;
+    label: string;
+    modelId: string;
+    contextWindow?: number;
+    default?: boolean;
+  }>
+> {
+  const models = loadModelCatalog();
+  return Promise.all(
+    models.map(async (m) => {
+      const contextWindow = await resolveContextWindowWithProvider({
+        baseUrl: m.url,
+        apiKey: m.apiKey,
+        source: {
+          id: m.id,
+          label: m.label,
+          modelId: m.modelId,
+          contextWindow: m.contextWindow,
+        },
+      });
+      return {
+        id: m.id,
+        label: m.label,
+        modelId: m.modelId,
+        contextWindow,
+        ...(m.default ? { default: true as const } : {}),
+      };
+    }),
+  );
 }

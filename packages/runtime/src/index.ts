@@ -13,8 +13,16 @@ export {
   ContextCompression,
   estimateTokens,
   VEYLIN_CONTEXT_COMPACTED_KEY,
+  buildContextSummarizedStreamChunk,
   type VeylinContextCompacted,
 } from './processors/contextCompression';
+export {
+  CONTEXT_USAGE_DATA_PART,
+  CONTEXT_USAGE_DATA_PART_ID,
+  buildContextUsageStreamChunk,
+  normalizeContextUsage,
+  type VeylinContextUsage,
+} from './context-usage-stream';
 export {
   SUBAGENT_PRESETS,
   SUBAGENT_TYPES,
@@ -35,8 +43,12 @@ export {
 export {
   buildStorage,
   buildObservability,
+  buildObservabilityFromConfig,
   resolveLangfuseConfig,
+  setRuntimeLangfuseOverrides,
+  getRuntimeLangfuseOverrides,
   type LangfuseResolvedConfig,
+  type RuntimeLangfuseOverrides,
 } from './storage';
 export {
   collectLangfuseAttachments,
@@ -50,6 +62,7 @@ export {
   isRuntimeModelConfigured,
   setRuntimeModelOverrides,
   listModelCatalogPublic,
+  listModelCatalogPublicWithContextWindows,
   getDefaultCatalogModel,
   loadModelCatalog,
   getCatalogModel,
@@ -64,6 +77,7 @@ export { buildInputProcessors } from './input-processors';
 export {
   getAutoCompactThreshold,
   getContextWindowSize,
+  getEffectiveContextWindowSize,
   resetCompactCircuitBreaker,
   recordCompactSuccess,
   recordCompactFailure,

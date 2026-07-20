@@ -19,8 +19,8 @@
     "@mastra/fastembed": "^1.2.0",
     "@mastra/mcp": "^1.11.0",
     "@napi-rs/canvas": "^0.1.100",
-    "@veylin/db": "*",
     "@veylin/agent-package": "*",
+    "@veylin/db": "*",
     "@veylin/hooks": "*",
     "@veylin/mcp-servers": "*",
     "@veylin/policy": "*",
@@ -29,6 +29,7 @@
     "ai": "^6.0.208",
     "assistant-stream": "^0.3.23",
     "better-auth": "^1.6.20",
+    "better-sqlite3": "^12.11.1",
     "dotenv": "^16.4.7",
     "fastify": "^5.8.5",
     "jmespath": "^0.16.0",
@@ -39,6 +40,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/jmespath": "^0.15.2",
     "@vercel/nft": "^1.10.2",
     "esbuild": "^0.25.12",

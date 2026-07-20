@@ -1,8 +1,17 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { buildObservability, resolveLangfuseConfig } from './storage.js';
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import {
+  buildObservability,
+  getRuntimeLangfuseOverrides,
+  resolveLangfuseConfig,
+  setRuntimeLangfuseOverrides,
+} from './storage.js';
 
 describe('resolveLangfuseConfig', () => {
+  afterEach(() => {
+    setRuntimeLangfuseOverrides(null);
+  });
+
   it('returns null when LANGFUSE_ENABLED is false', () => {
     const cfg = resolveLangfuseConfig({
       LANGFUSE_ENABLED: 'false',
@@ -55,9 +64,72 @@ describe('resolveLangfuseConfig', () => {
     });
     assert.equal(cfg?.baseUrl, 'https://host.example');
   });
+
+  it('prefers runtime override over env', () => {
+    setRuntimeLangfuseOverrides({
+      enabled: true,
+      publicKey: 'pk-override',
+      secretKey: 'sk-override',
+      baseUrl: 'https://override.example',
+    });
+    const cfg = resolveLangfuseConfig({
+      LANGFUSE_ENABLED: 'true',
+      LANGFUSE_PUBLIC_KEY: 'pk-env',
+      LANGFUSE_SECRET_KEY: 'sk-env',
+      LANGFUSE_BASE_URL: 'https://env.example',
+    });
+    assert.deepEqual(cfg, {
+      publicKey: 'pk-override',
+      secretKey: 'sk-override',
+      baseUrl: 'https://override.example',
+      environment: undefined,
+      release: undefined,
+    });
+  });
+
+  it('returns null when override enabled is false even if env is enabled', () => {
+    setRuntimeLangfuseOverrides({
+      enabled: false,
+      publicKey: 'pk',
+      secretKey: 'sk',
+      baseUrl: 'https://cloud.langfuse.com',
+    });
+    const cfg = resolveLangfuseConfig({
+      LANGFUSE_ENABLED: 'true',
+      LANGFUSE_PUBLIC_KEY: 'pk-env',
+      LANGFUSE_SECRET_KEY: 'sk-env',
+    });
+    assert.equal(cfg, null);
+  });
+
+  it('falls back to env when override is cleared', () => {
+    setRuntimeLangfuseOverrides({
+      enabled: true,
+      publicKey: 'pk-override',
+      secretKey: 'sk-override',
+      baseUrl: 'https://override.example',
+    });
+    setRuntimeLangfuseOverrides(null);
+    assert.equal(getRuntimeLangfuseOverrides(), null);
+    const cfg = resolveLangfuseConfig({
+      LANGFUSE_ENABLED: 'true',
+      LANGFUSE_PUBLIC_KEY: 'pk-env',
+      LANGFUSE_SECRET_KEY: 'sk-env',
+      LANGFUSE_BASE_URL: 'https://env.example',
+    });
+    assert.equal(cfg?.publicKey, 'pk-env');
+    assert.equal(cfg?.baseUrl, 'https://env.example');
+  });
 });
 
 describe('buildObservability', () => {
+  beforeEach(() => {
+    setRuntimeLangfuseOverrides(null);
+  });
+  afterEach(() => {
+    setRuntimeLangfuseOverrides(null);
+  });
+
   it('does not throw when Langfuse is disabled', () => {
     const obs = buildObservability({ LANGFUSE_ENABLED: 'false' });
     assert.ok(obs);

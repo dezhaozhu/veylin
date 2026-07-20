@@ -1,4 +1,16 @@
 {
+  "auth": {
+    "signIn": "Sign in",
+    "signUp": "Sign up",
+    "hint": "Use email and password to enter your workspace",
+    "email": "Email",
+    "password": "Password",
+    "name": "Display name",
+    "working": "Please wait…",
+    "failed": "Authentication failed. Please try again.",
+    "needAccount": "Need an account? Sign up",
+    "haveAccount": "Already have an account? Sign in"
+  },
   "panels": {
     "empty": "Click + above to create a panel",
     "table": {
@@ -30,6 +42,7 @@
     "continuing": "Continuing task {{id}}…",
     "continueQueued": "Follow-up queued for {{id}}…",
     "continueResult": "Task {{id}} updated",
+    "complete": "complete",
     "duration": "{{ms}} ms",
     "tokens": "{{count}} tokens"
   },
@@ -74,20 +87,26 @@
     "historyLoadFailed": "Could not load this conversation.",
     "historyRetry": "Retry",
     "questionRailLabel": "Conversation questions",
-    "selectionAsk": "Ask"
+    "selectionAsk": "Ask",
+    "contextSummarized": "Chat context summarized"
   },
   "reasoning": {
     "thought": "Thought",
     "thoughtDuration": "Thought, {{seconds}} seconds",
     "workedFor": "Worked for {{seconds}}s",
-    "workedForNoDuration": "Worked for",
-    "contextSummarized": "Chat context summarized"
+    "workedForNoDuration": "Worked for"
   },
   "toolSearch": {
     "searching": "Searching tools for \"{{query}}\"…",
     "title": "Tool search: {{query}}",
     "noResults": "No tools matched \"{{query}}\"",
     "noResultsHint": "Check that MCP servers are connected and enabled, or try different keywords."
+  },
+  "skill": {
+    "loading": "Loading skill {{name}}…",
+    "loadingGeneric": "Loading skill…",
+    "loaded": "Loaded skill: {{name}}",
+    "notFound": "Skill not found: {{name}}"
   },
   "toolGroup": {
     "readFiles": "Read {{count}} file(s)",
@@ -167,13 +186,13 @@
     "removeSkill": "Remove skill"
   },
   "status": {
-    "allDone": "All done",
+    "allDone": "{{count}} todos all done",
     "todosProgress": "{{done}}/{{total}} todos",
-    "agentsRunning": "{{count}} agents running",
-    "agentsQueued": "{{count}} agents queued",
-    "agentsDone": "{{count}} agents finished",
-    "agentsCount": "{{count}} agents",
-    "agentsHeading": "Agents ({{count}})",
+    "agentsRunning": "{{count}} subagent(s)",
+    "agentsQueued": "{{count}} subagent(s)",
+    "agentsDone": "{{count}} subagent(s) all done",
+    "agentsCount": "{{count}} subagent(s)",
+    "agentsHeading": "Subagents ({{done}}/{{total}})",
     "todosHeading": "Todos ({{done}}/{{total}})",
     "taskQueued": "Queued",
     "taskRunning": "Running",
@@ -196,6 +215,7 @@
   },
   "ask": {
     "answered": "Answered",
+    "answerLabel": "Answer:",
     "selectToContinue": "Select an option to continue",
     "lookBelow": "Choose an option in the panel above the input box.",
     "invalidFormat": "Invalid question format. Retry or reply with your choice in chat.",
@@ -291,6 +311,55 @@
       "title": "Language",
       "hint": "Application UI language",
       "closeMenu": "Close language menu"
+    },
+    "business": {
+      "nav": "Business",
+      "title": "Business connection",
+      "hint": "Connect an enterprise system via MCP. Credentials stay on the server and are never echoed back.",
+      "enabled": "Enable business source",
+      "enabledHint": "When on, the agent calls this MCP under the allowlist",
+      "url": "MCP URL",
+      "serverName": "MCP name",
+      "authorization": "Authorization",
+      "authorizationHint": "Optional, e.g. Bearer token. Never shown again after save.",
+      "authorizationHintSaved": "A credential is saved. Leave blank to keep it.",
+      "allowlist": "Tool allowlist",
+      "allowlistHint": "Comma-separated tool names; empty means all tools on this MCP.",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "Saved",
+      "test": "Test connection",
+      "testing": "Testing…",
+      "testOk": "Connected: {{count}} tools ({{tools}})",
+      "testFailed": "Connection test failed. Check URL, credential, and network.",
+      "loadFailed": "Failed to load business connection.",
+      "saveFailed": "Failed to save. Please try again.",
+      "auditHint": "Optional. Each audit event is POSTed here; leave empty for local storage only.",
+      "auditWebhook": "Audit webhook",
+      "auditSave": "Save audit settings",
+      "auditSaving": "Saving…",
+      "auditSaved": "Saved",
+      "auditSaveFailed": "Failed to save audit settings."
+    },
+    "langfuse": {
+      "title": "Langfuse",
+      "hint": "Observability tracing; takes effect immediately after save",
+      "enabled": "Enable Langfuse",
+      "publicKey": "Public Key",
+      "publicKeyPlaceholder": "pk-lf-…",
+      "secretKey": "Secret Key",
+      "secretKeyPlaceholder": "sk-lf-…",
+      "secretKeyHint": "Required. The key is never shown again after saving.",
+      "secretKeyHintSaved": "A key is saved. Leave blank to keep it, or enter a new one to replace.",
+      "baseUrl": "Base URL",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "Saved",
+      "clear": "Clear",
+      "clearing": "Clearing…",
+      "loadFailed": "Failed to load Langfuse settings.",
+      "saveFailed": "Failed to save. Please try again.",
+      "clearFailed": "Failed to clear. Please try again."
     },
     "models": {
       "nav": "Models",
@@ -428,7 +497,8 @@
       "confirmDelete": "Uninstall “{{name}}”? This removes the install record and local copy.",
       "installedEmpty": "No plugins installed yet.",
       "marketplaceEmpty": "No marketplace entries.",
-      "installFromMarket": "Add"
+      "installFromMarket": "Add",
+      "installing": "Installing…"
     },
     "rulesPage": {
       "title": "Rules",
@@ -461,21 +531,21 @@
       "description": "Add Model Context Protocol servers to expand what your agent can do. Toggle installed servers on or off without uninstalling.",
       "addCustom": "Add custom server",
       "searchPlaceholder": "Search MCP servers…",
-      "filterAll": "All",
       "connected": "Connected",
-      "installed": "Installed",
       "plugin": "Plugin",
       "serverLine": "{{transport}} · {{detail}}",
       "libraryTitle": "Library",
       "addTitle": "Add MCP server",
       "editorDescription": "Connect a remote MCP server over SSE or HTTP.",
-      "addServer": "Add server",
+      "addServer": "Add",
       "namePlaceholder": "e.g. github",
       "transport": "Transport",
       "transportHint": "SSE for streaming endpoints; HTTP for streamable HTTP MCP.",
       "headers": "Headers",
       "headersHint": "Optional JSON object, e.g. {\"Authorization\":\"Bearer ...\"}",
-      "noInstalledMatch": "No installed servers match your search.",
+      "connectedEmpty": "No MCP servers installed yet. Add a remote server from the library, or install a plugin that bundles MCP.",
+      "pluginDetail": "Plugin {{plugin}} · {{command}}",
+      "libraryEmpty": "No library entries match your search.",
       "toggle": "Toggle {{name}}",
       "confirmDelete": "Delete MCP server \"{{name}}\"?",
       "deleteTitle": "Delete MCP server",
@@ -493,10 +563,7 @@
       "library": {
         "github": "Review PRs, triage issues, and post summaries from repository events.",
         "slack": "Send automation digests and alerts to channels your team already uses.",
-        "linear": "Sync issue status and create follow-up tasks from agent workflows.",
-        "notion": "Publish reports and structured notes to shared team workspaces.",
-        "tavily": "Web search and research for agents that need fresh external context.",
-        "supabase": "Query project data and run operational checks against your database."
+        "notion": "Publish reports and structured notes to shared team workspaces."
       },
       "addMcp": "Add MCP"
     }
@@ -737,6 +804,10 @@
     "import": "Import",
     "export": "Export",
     "filterPlaceholder": "Filter…",
+    "filterColumnPlaceholder": "Filter “{{name}}”…",
+    "largeSheetWarn": "This sheet has {{count}} rows. Showing the first {{cap}} — use filters to narrow.",
+    "footerCapped": "Showing first {{shown}} of {{matched}} — filter to narrow",
+    "saveFailed": "Failed to save changes",
     "clear": "Clear",
     "undo": "Undo",
     "redo": "Redo",
@@ -845,8 +916,7 @@
       "rerankerDesc": "Downloaded from the official Hugging Face repo to re-rank hits; basic search works without it.",
       "enableReranker": "Enable reranking",
       "enabledHint": "Reranking is on — search and knowledge_search in chat will use the reranker.",
-      "disabledHint": "Reranking is off — the model stays on disk and can be re-enabled anytime.",
-      "hfEndpoint": "Download source: {{endpoint}}"
+      "disabledHint": "Reranking is off — the model stays on disk and can be re-enabled anytime."
     }
   },
   "wf": {

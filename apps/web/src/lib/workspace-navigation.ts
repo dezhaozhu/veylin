@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next';
 
 export type WorkspaceView = 'chat' | 'customize' | 'automate' | 'settings';
 export type CustomizeTab = 'skills' | 'rules' | 'mcp' | 'hooks' | 'plugins';
-export type SettingsTab = 'general' | 'models';
+export type SettingsTab = 'general' | 'models' | 'business';
 
 export type WorkspaceLocation =
   | { view: 'chat'; threadId: string; threadTitle?: string }

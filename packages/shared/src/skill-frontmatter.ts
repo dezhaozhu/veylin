@@ -22,9 +22,50 @@ function parseBool(value: string | undefined): boolean | undefined {
   return undefined;
 }
 
+const BLOCK_SCALAR = /^([>|])([-+])?$/;
+
+/**
+ * Read a YAML scalar that may be inline or a block (`>` / `|`).
+ * Folded (`>`) lines are joined with spaces; literal (`|`) keeps newlines.
+ */
 function readScalar(yaml: string, key: string): string | undefined {
-  const match = yaml.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
-  return match ? unquoteYamlScalar(match[1]!) : undefined;
+  const lines = yaml.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i]!.match(new RegExp(`^${key}:\\s*(.*)$`));
+    if (!match) continue;
+    const rest = match[1]!.trim();
+    const block = rest.match(BLOCK_SCALAR);
+    if (block) {
+      const style = block[1]!; // '>' | '|'
+      const body: string[] = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const next = lines[j]!;
+        if (next.trim() === '') {
+          // Blank line ends the block unless the following line is still indented.
+          if (j + 1 < lines.length && /^\s+\S/.test(lines[j + 1]!)) {
+            body.push('');
+            continue;
+          }
+          break;
+        }
+        if (!/^\s/.test(next)) break;
+        body.push(next.replace(/^\s+/, ''));
+      }
+      if (body.length === 0) return undefined;
+      if (style === '|') {
+        return body.join('\n').trim() || undefined;
+      }
+      return (
+        body
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim() || undefined
+      );
+    }
+    if (!rest) return undefined;
+    return unquoteYamlScalar(rest);
+  }
+  return undefined;
 }
 
 /** Parse supported YAML frontmatter keys from SKILL.md. */

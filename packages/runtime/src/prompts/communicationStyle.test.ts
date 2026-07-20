@@ -39,6 +39,7 @@ describe('communicationStyle', () => {
 describe('BASE_SYSTEM_PROMPT', () => {
   it('bans emojis unless the user asks and hardens tool failure rules', () => {
     assert.match(BASE_SYSTEM_PROMPT, /do \*\*not\*\* use emojis/i);
+    assert.match(BASE_SYSTEM_PROMPT, /🔴🟡🟢/);
     assert.match(BASE_SYSTEM_PROMPT, /do not blindly repeat/i);
     assert.match(BASE_SYSTEM_PROMPT, /do not retry the same call unchanged/i);
     assert.match(BASE_SYSTEM_PROMPT, /one or two direct read-only/i);

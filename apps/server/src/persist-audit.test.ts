@@ -38,7 +38,9 @@ describe('persist audit sweeps', () => {
   });
 
   it('marks indexing documents as failed', async () => {
-    const doc = await insertDocument(TENANT, { filename: `sweep-${Date.now()}.txt` });
+    const doc = await insertDocument(TENANT, `thread-sweep-${Date.now()}`, {
+      filename: `sweep-${Date.now()}.txt`,
+    });
     await updateDocumentStatus(doc.id, 'indexing');
 
     const n = await sweepInterruptedRagIngests();

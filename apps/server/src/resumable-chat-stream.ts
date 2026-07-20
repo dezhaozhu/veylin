@@ -18,8 +18,11 @@ let context: ResumableStreamContext | null = null;
 /** In-process abort handles for runs started on this server instance. */
 const localRunAborts = new Map<string, AbortController>();
 
-/** threadId -> { streamId, expiresAt } */
-const activeStreams = new Map<string, { streamId: string; expiresAt: number }>();
+/** threadId -> { streamId, startedAt, expiresAt } */
+const activeStreams = new Map<
+  string,
+  { streamId: string; startedAt: number; expiresAt: number }
+>();
 
 /** streamId -> expiresAt (cancelled flag) */
 const cancelledStreams = new Map<string, number>();
@@ -37,7 +40,12 @@ function pruneExpired(map: Map<string, unknown>): void {
 
 function touchActive(threadId: string, streamId: string): void {
   pruneExpired(activeStreams);
-  activeStreams.set(threadId, { streamId, expiresAt: Date.now() + STREAM_TTL_MS });
+  const now = Date.now();
+  activeStreams.set(threadId, {
+    streamId,
+    startedAt: now,
+    expiresAt: now + STREAM_TTL_MS,
+  });
 }
 
 function touchCancelled(streamId: string): void {
@@ -97,6 +105,31 @@ export async function getActiveStreamId(
 ): Promise<string | null> {
   pruneExpired(activeStreams);
   return activeStreams.get(threadId)?.streamId ?? null;
+}
+
+/**
+ * Like getActiveStreamId, but drops mappings whose resumable buffer is no longer
+ * actively streaming (done / error / missing). Used by the sidebar activity poll
+ * so a refresh mid-run does not leave "running" for the full STREAM_TTL.
+ */
+export async function getLiveActiveStream(
+  threadId: string,
+): Promise<{ streamId: string; startedAt: number } | null> {
+  pruneExpired(activeStreams);
+  const entry = activeStreams.get(threadId);
+  if (!entry) return null;
+  try {
+    const { context: ctx } = requireContext();
+    const status = await ctx.status(entry.streamId);
+    if (status === 'streaming') {
+      return { streamId: entry.streamId, startedAt: entry.startedAt };
+    }
+    activeStreams.delete(threadId);
+    return null;
+  } catch {
+    // Context not ready — keep the mapping rather than falsely clearing.
+    return { streamId: entry.streamId, startedAt: entry.startedAt };
+  }
 }
 
 export async function markStreamCancelled(streamId: string): Promise<void> {

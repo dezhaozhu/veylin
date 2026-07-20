@@ -419,7 +419,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
     }),
     execute: async (input) => {
       const sheet = resolveTableSheetId(input.sheet);
-      const removed = deleteTableRows(sheet, input.row_keys);
+      const { removed } = deleteTableRows(sheet, input.row_keys);
       return { ok: removed > 0, sheet, removed, message: `Deleted ${removed} row(s)` };
     },
   });

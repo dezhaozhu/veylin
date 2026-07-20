@@ -1,0 +1,30 @@
+{
+  "jobs": [
+    {
+      "id": "J1",
+      "operations": [
+        { "id": "J1-O1", "duration": 3, "resources": ["M1"], "predecessors": [] },
+        { "id": "J1-O2", "duration": 2, "resources": ["M2"], "predecessors": ["J1-O1"] }
+      ],
+      "release": 0,
+      "due": 10,
+      "weight": 1
+    },
+    {
+      "id": "J2",
+      "operations": [
+        { "id": "J2-O1", "duration": 2, "resources": ["M1"], "predecessors": [] },
+        { "id": "J2-O2", "duration": 4, "resources": ["M2"], "predecessors": ["J2-O1"] }
+      ],
+      "release": 0,
+      "due": 12,
+      "weight": 2
+    }
+  ],
+  "resources": [
+    { "id": "M1", "capacity": 1 },
+    { "id": "M2", "capacity": 1 }
+  ],
+  "objective": "makespan",
+  "time_limit_sec": 5
+}

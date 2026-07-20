@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ServerDeps } from './types.js';
 import { registerHealthRoutes } from './health.js';
 import { registerModelSettingsRoutes } from './model-settings.js';
+import { registerLangfuseSettingsRoutes } from './langfuse-settings.js';
 import { registerSkillsRoutes } from './skills.js';
 import { registerHooksRoutes } from './hooks.js';
 import { registerPluginsRoutes } from './plugins.js';
@@ -17,10 +18,13 @@ import { registerGoalLoopRoutes } from './goal-loop.js';
 import { registerRagRoutes } from './rag.js';
 import { registerViewer3dRoutes } from './viewer3d.js';
 import { registerMcpAppsRoutes } from './mcp-apps.js';
+import { registerEnterpriseRoutes } from './enterprise.js';
 
 export async function registerApiRoutes(app: FastifyInstance, deps: ServerDeps): Promise<void> {
   registerHealthRoutes(app, deps);
   registerModelSettingsRoutes(app, deps);
+  registerLangfuseSettingsRoutes(app, deps);
+  registerEnterpriseRoutes(app, deps);
   registerSkillsRoutes(app, deps);
   registerHooksRoutes(app, deps);
   registerPluginsRoutes(app, deps);

@@ -41,8 +41,58 @@ function applyPlanModeForThread(threadId: string | undefined, on: boolean): void
   }
 }
 
+/** In-flight POSTs — GET must not clobber optimistic local plan mode. */
+const planModeSyncPending = new Set<string>();
+
+function postPlanMode(threadId: string | undefined, on: boolean): void {
+  applyPlanModeForThread(threadId, on);
+  if (!threadId) return;
+  planModeSyncPending.add(threadId);
+  void fetch('/api/plan-mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ threadId, planMode: on }),
+  })
+    .catch(() => undefined)
+    .finally(() => {
+      planModeSyncPending.delete(threadId);
+    });
+}
+
+function applyFetchedPlanMode(threadId: string, on: boolean): void {
+  if (planModeSyncPending.has(threadId)) return;
+  applyPlanModeForThread(threadId, on);
+}
+
+/**
+ * Plan / Goal / Loop are mutually exclusive — enabling one clears the other two.
+ */
+function clearOtherComposerModes(
+  keep: 'plan' | 'goal' | 'loop',
+  threadId: string | undefined,
+): void {
+  if (keep !== 'plan') {
+    postPlanMode(threadId, false);
+  }
+  if (keep !== 'goal') {
+    setChatSettings({ pendingGoal: false });
+    if (threadId) {
+      void requestChatStop(threadId).catch(() => undefined);
+      void clearThreadGoalApi(threadId);
+    }
+  }
+  if (keep !== 'loop') {
+    setChatSettings({ pendingLoop: false });
+    if (threadId) {
+      void stopThreadLoopApi(threadId);
+    }
+  }
+}
+
 /** Mount once per thread view — keeps composer plan UI in sync with agent tool calls. */
 export function usePlanModeBridge(): void {
+  // Only fetch for persisted threads. Local __LOCALID_* must not hit GET /state
+  // (that would ensureThreadState and create an empty「新对话」on refresh).
   const threadId = useAuiState(
     (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
   );
@@ -61,7 +111,7 @@ export function usePlanModeBridge(): void {
       applyPlanModeForThread(threadId, cached);
     }
     void fetchThreadPlanMode(threadId).then((on) => {
-      applyPlanModeForThread(threadId, on);
+      applyFetchedPlanMode(threadId, on);
     });
     void fetchThreadTodos(threadId);
     void fetchActivatedSkills(threadId);
@@ -81,7 +131,7 @@ export function usePlanModeBridge(): void {
 
     if (wasRunning && !isRunning) {
       void fetchThreadPlanMode(threadId).then((on) => {
-        applyPlanModeForThread(threadId, on);
+        applyFetchedPlanMode(threadId, on);
       });
       void fetchThreadTodos(threadId);
       void fetchActivatedSkills(threadId);
@@ -90,7 +140,7 @@ export function usePlanModeBridge(): void {
     if (!isRunning) return;
     const timer = window.setInterval(() => {
       void fetchThreadPlanMode(threadId).then((on) => {
-        applyPlanModeForThread(threadId, on);
+        applyFetchedPlanMode(threadId, on);
       });
     }, 1200);
     return () => window.clearInterval(timer);
@@ -105,20 +155,17 @@ export function useChatSettingsState() {
 
 export function usePlanMode() {
   const threadId = useAuiState(
-    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+    (s) =>
+      s.threadListItem.remoteId ??
+      s.threadListItem.externalId ??
+      s.threadListItem.id,
   );
   const planMode = useChatSettingsState().planMode;
 
   const setPlanMode = useCallback(
     (on: boolean) => {
-      applyPlanModeForThread(threadId, on);
-      if (threadId) {
-        void fetch('/api/plan-mode', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ threadId, planMode: on }),
-        }).catch(() => undefined);
-      }
+      if (on) clearOtherComposerModes('plan', threadId);
+      postPlanMode(threadId, on);
     },
     [threadId],
   );
@@ -130,7 +177,10 @@ export function usePlanMode() {
 
 export function useGoalLoopState() {
   const threadId = useAuiState(
-    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+    (s) =>
+      s.threadListItem.remoteId ??
+      s.threadListItem.externalId ??
+      s.threadListItem.id,
   );
   const [, bump] = useState(0);
   useEffect(() => onGoalLoopChange(() => bump((n) => n + 1)), []);
@@ -143,21 +193,29 @@ export function useGoalLoopState() {
   const loop =
     threadId != null ? (readCachedLoop(threadId) ?? null) : null;
 
-  const setPendingGoal = useCallback((on: boolean) => {
-    setChatSettings(
-      on
-        ? { pendingGoal: true, pendingLoop: false }
-        : { pendingGoal: false },
-    );
-  }, []);
+  const setPendingGoal = useCallback(
+    (on: boolean) => {
+      if (on) {
+        clearOtherComposerModes('goal', threadId);
+        setChatSettings({ pendingGoal: true, pendingLoop: false });
+        return;
+      }
+      setChatSettings({ pendingGoal: false });
+    },
+    [threadId],
+  );
 
-  const setPendingLoop = useCallback((on: boolean) => {
-    setChatSettings(
-      on
-        ? { pendingLoop: true, pendingGoal: false }
-        : { pendingLoop: false },
-    );
-  }, []);
+  const setPendingLoop = useCallback(
+    (on: boolean) => {
+      if (on) {
+        clearOtherComposerModes('loop', threadId);
+        setChatSettings({ pendingLoop: true, pendingGoal: false });
+        return;
+      }
+      setChatSettings({ pendingLoop: false });
+    },
+    [threadId],
+  );
 
   const clearGoal = useCallback(async () => {
     setChatSettings({ pendingGoal: false });
@@ -176,6 +234,7 @@ export function useGoalLoopState() {
   const setGoal = useCallback(
     async (condition: string) => {
       if (!threadId) return { ok: false as const, error: 'no_thread' };
+      clearOtherComposerModes('goal', threadId);
       return setThreadGoalApi(threadId, condition);
     },
     [threadId],
@@ -187,6 +246,7 @@ export function useGoalLoopState() {
       opts?: { intervalSeconds?: number; interval?: string; mode?: 'fixed' | 'dynamic' },
     ) => {
       if (!threadId) return { ok: false as const, error: 'no_thread' };
+      clearOtherComposerModes('loop', threadId);
       return setThreadLoopApi(threadId, prompt, opts);
     },
     [threadId],
@@ -197,38 +257,16 @@ export function useGoalLoopState() {
       void clearGoal();
       return;
     }
-    if (loop?.status === 'active' || pendingLoop) {
-      void stopLoop();
-    }
     setPendingGoal(true);
-  }, [
-    goal?.status,
-    pendingGoal,
-    loop?.status,
-    pendingLoop,
-    clearGoal,
-    stopLoop,
-    setPendingGoal,
-  ]);
+  }, [goal?.status, pendingGoal, clearGoal, setPendingGoal]);
 
   const toggleLoop = useCallback(() => {
     if (loop?.status === 'active' || pendingLoop) {
       void stopLoop();
       return;
     }
-    if (goal?.status === 'active' || pendingGoal) {
-      void clearGoal();
-    }
     setPendingLoop(true);
-  }, [
-    loop?.status,
-    pendingLoop,
-    goal?.status,
-    pendingGoal,
-    stopLoop,
-    clearGoal,
-    setPendingLoop,
-  ]);
+  }, [loop?.status, pendingLoop, stopLoop, setPendingLoop]);
 
   return {
     threadId,

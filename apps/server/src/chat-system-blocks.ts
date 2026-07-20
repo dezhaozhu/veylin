@@ -20,6 +20,7 @@ export type ChatSystemBlockInput = {
   orchestrationBlock: string;
   localeBlock: string;
   attachedBrowserBlock: string;
+  workingMemoryBlock?: string;
 };
 
 function blockOrNull(value: string): string | null {
@@ -31,6 +32,7 @@ function blockOrNull(value: string): string | null {
 export async function buildChatSystemBlocks(input: ChatSystemBlockInput): Promise<string> {
   const sections = [
     systemPromptSection('summarize_tool_results', () => getSummarizeToolResultsSection()),
+    uncachedSystemPromptSection('working_memory', () => blockOrNull(input.workingMemoryBlock ?? '')),
     uncachedSystemPromptSection('skills_catalog', () => blockOrNull(input.skillsCatalog)),
     uncachedSystemPromptSection('activated_skills', () => blockOrNull(input.skillBlock)),
     uncachedSystemPromptSection('rules', () => blockOrNull(input.rulesBlock)),

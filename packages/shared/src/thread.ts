@@ -26,6 +26,7 @@ export interface ThreadSnapshot {
   }>;
   planMode: boolean;
   activatedSkills: Record<string, string>;
+  pinnedSkills?: string[];
   workingMemory: string | null;
   goal?: ThreadGoalState | null;
   loop?: ThreadLoopState | null;

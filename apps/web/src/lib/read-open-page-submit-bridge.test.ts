@@ -50,4 +50,24 @@ describe('read-open-page-submit-bridge', () => {
     });
     assert.equal(result, null);
   });
+
+  it('errors when no tabId / active web tab is available', async () => {
+    const { setLivePanelThread, emptyPanelTabsState } = await import(
+      './panel-tabs-storage.ts'
+    );
+    setLivePanelThread(null, emptyPanelTabsState());
+
+    const seen: Array<{ error?: string }> = [];
+    registerReadOpenPageResultSubmitter('thread-1', (_id, result) => {
+      seen.push({ error: result.error });
+    });
+
+    const result = await executeReadOpenPageForToolCall({
+      threadId: 'thread-1',
+      toolCallId: 'call-no-tab',
+    });
+    assert.match(result?.error ?? '', /No web tab/);
+    assert.equal(seen.length, 1);
+    assert.match(seen[0]?.error ?? '', /No web tab/);
+  });
 });

@@ -16,6 +16,7 @@ import {
   Position,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { useAuiState } from '@assistant-ui/react';
 import { DEFAULT_AGENT_ID } from '@veylin/shared';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
@@ -287,6 +288,11 @@ function uniqueWorkflowName(workflows: WorkflowSummary[], preferred: string): st
 
 export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   const workflowId = tab.state?.workflowId as string | undefined;
+  const localId = useAuiState((s) => s.threadListItem.id);
+  const remoteId = useAuiState(
+    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+  );
+  const threadId = remoteId ?? localId ?? null;
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
   const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -301,7 +307,7 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { t } = useTranslation();
-  const [name, setName] = useState(() => i18n.t('wf.newFlow'));
+  const [name, setName] = useState('');
   const [isNewDraft, setIsNewDraft] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [workflowMenuOpen, setWorkflowMenuOpen] = useState(false);
@@ -318,18 +324,13 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
 
   const startNewWorkflow = useCallback((existing?: WorkflowSummary[]) => {
     const list = existing ?? workflows;
+    if (existing) setWorkflows(list);
     setIsNewDraft(true);
     setWorkflow(null);
-    setNodes([
-      {
-        id: 'n1',
-        type: 'wf',
-        position: { x: 80, y: 120 },
-        data: { kind: 'start', label: i18n.t(NODE_META.start.label), ...defaultData('start') },
-      },
-    ]);
+    // Empty unsaved draft — no name, no nodes until the user builds & saves.
+    setNodes([]);
     setEdges([]);
-    setName(uniqueWorkflowName(list, `${i18n.t('wf.newFlow')} ${list.length + 1}`));
+    setName('');
     setSelectedId(null);
     setShowLogs(true);
     setRuns([]);
@@ -343,8 +344,15 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   const selKind = selectedNode ? ((selectedNode.data as { kind: NodeKind }).kind) : null;
 
   async function loadWorkflowList(attempts = 1): Promise<WorkflowSummary[]> {
+    if (!threadId) {
+      setWorkflows([]);
+      return [];
+    }
     const data = await withRetry(
-      () => fetchJson<{ workflows: WorkflowSummary[] }>('/api/workflows'),
+      () =>
+        fetchJson<{ workflows: WorkflowSummary[] }>(
+          `/api/workflows?threadId=${encodeURIComponent(threadId)}`,
+        ),
       attempts,
     );
     const list = data.workflows ?? [];
@@ -353,8 +361,12 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   }
 
   async function loadWorkflow(id: string, attempts = 1) {
+    if (!threadId) return;
     const data = await withRetry(
-      () => fetchJson<{ workflow: WorkflowDetail }>(`/api/workflows/${id}`),
+      () =>
+        fetchJson<{ workflow: WorkflowDetail }>(
+          `/api/workflows/${id}?threadId=${encodeURIComponent(threadId)}`,
+        ),
       attempts,
     );
     const wf = data.workflow;
@@ -368,7 +380,10 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   }
 
   async function loadRuns(id: string, pickLatest = false) {
-    const data = await fetchJson<{ runs: WorkflowRunView[] }>(`/api/workflows/${id}/runs`);
+    if (!threadId) return [];
+    const data = await fetchJson<{ runs: WorkflowRunView[] }>(
+      `/api/workflows/${id}/runs?threadId=${encodeURIComponent(threadId)}`,
+    );
     const list = data.runs ?? [];
     setRuns(list);
     if (list.length === 0) {
@@ -416,24 +431,29 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   }, [nodes]);
 
   useEffect(() => {
-    void loadWorkflowList(6).catch((err) => {
-      setError(err instanceof Error ? err.message : String(err));
-    });
-  }, []);
-
-  useEffect(() => {
-    if (workflowId) return;
-    if (nodes.length > 0) return;
-    if (error) return;
-    startNewWorkflow();
-  }, [workflowId, nodes.length, startNewWorkflow, error]);
-
-  useEffect(() => {
-    if (!workflowId) return;
-    void loadWorkflow(workflowId, 6).catch((err) => {
-      setError(err instanceof Error ? err.message : String(err));
-    });
-  }, [workflowId]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await loadWorkflowList(6);
+        if (cancelled) return;
+        if (workflowId) {
+          await loadWorkflow(workflowId, 6);
+          return;
+        }
+        // Wait for the list so the switcher is populated; draft stays empty & unsaved.
+        startNewWorkflow(list);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Re-run when the bound workflow id or chat thread changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [workflowId, threadId]);
 
   useEffect(() => {
     if (!workflowId) return;
@@ -475,29 +495,41 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   }
 
   async function saveWorkflow(): Promise<string | undefined> {
-    const trimmedName = name.trim() || i18n.t('wf.untitledFlow');
-    if (workflowNameTaken(trimmedName, workflows, editingWorkflowId)) {
-      setError(t('wf.nameExists', { name: trimmedName }));
+    // Empty draft name → assign a unique untitled on first save; typed names still conflict-check.
+    const typed = name.trim();
+    const trimmedName = typed
+      ? typed
+      : uniqueWorkflowName(workflows, i18n.t('wf.untitledFlow'));
+    if (typed && workflowNameTaken(typed, workflows, editingWorkflowId)) {
+      setError(t('wf.nameExists', { name: typed }));
       return undefined;
     }
     setSaving(true);
     try {
+      if (!threadId) {
+        setError('threadId required');
+        return undefined;
+      }
       const definition = fromFlowState(nodes, edges);
       const body = {
         name: trimmedName,
+        threadId,
         definition,
-        kind: workflow?.kind ?? 'manual',
+        kind: 'manual' as const,
         enabled: workflow?.enabled ?? true,
-        cron: workflow?.cron ?? undefined,
         timezone: workflow?.timezone ?? 'UTC',
       };
       if (editingWorkflowId) {
-        const data = await fetchJson<{ workflow: WorkflowDetail }>(`/api/workflows/${editingWorkflowId}`, {
-          method: 'PUT',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        });
+        const data = await fetchJson<{ workflow: WorkflowDetail }>(
+          `/api/workflows/${editingWorkflowId}?threadId=${encodeURIComponent(threadId)}`,
+          {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+        );
         setWorkflow(data.workflow);
+        setName(data.workflow.name);
         setIsNewDraft(false);
         await loadWorkflowList();
         setError(null);
@@ -509,6 +541,7 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
         body: JSON.stringify(body),
       });
       setWorkflow(data.workflow);
+      setName(data.workflow.name);
       setIsNewDraft(false);
       updateState({ workflowId: data.workflow.id });
       await loadWorkflowList();
@@ -525,10 +558,14 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
   async function runWorkflow() {
     let id = editingWorkflowId;
     if (!id) id = await saveWorkflow();
-    if (!id) return;
+    if (!id || !threadId) return;
     setRunning(true);
     try {
-      await fetchJson(`/api/workflows/${id}/run`, { method: 'POST' });
+      await fetchJson(`/api/workflows/${id}/run?threadId=${encodeURIComponent(threadId)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ threadId }),
+      });
       setShowLogs(true);
       setPollFast(true);
       await loadRuns(id, true);
@@ -560,6 +597,7 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
 
   async function confirmWorkflowDelete() {
     if (!deletePrompt) return;
+    if (deletePrompt.type === 'workflow' && !threadId) return;
     setDeleteBusy(true);
     try {
       if (deletePrompt.type === 'draft') {
@@ -569,7 +607,10 @@ export function WorkflowPanel({ tab, updateState }: PanelContentProps) {
           startNewWorkflow([]);
         }
       } else {
-        await fetchJson(`/api/workflows/${deletePrompt.id}`, { method: 'DELETE' });
+        await fetchJson(
+          `/api/workflows/${deletePrompt.id}?threadId=${encodeURIComponent(threadId!)}`,
+          { method: 'DELETE' },
+        );
         const list = await loadWorkflowList();
         if (editingWorkflowId === deletePrompt.id) {
           if (list.length > 0) {

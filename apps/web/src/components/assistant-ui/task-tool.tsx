@@ -121,10 +121,14 @@ function TaskRow({
 export const TaskToolUI = makeAssistantToolUI<TaskToolArgs, TaskToolResult>({
   toolName: 'task',
   render: ({ args, result, status }) => {
+    const { t } = useTranslation();
     const label = taskLabel(args, result);
     const running = status.type === 'running';
     const progressRow = useTaskProgressRow(result?.task_id, label);
-    const detail = progressDetail(progressRow);
+    const liveDetail = progressDetail(progressRow);
+    const detail = running
+      ? liveDetail
+      : (liveDetail ?? (result ? t('subagent.complete') : null));
 
     if (running) {
       return <TaskRow label={label} detail={detail} running />;
@@ -155,7 +159,10 @@ export const TaskContinueToolUI = makeAssistantToolUI<
     const { t } = useTranslation();
     const running = status.type === 'running';
     const progressRow = useTaskProgressRow(args?.task_id ?? result?.task_id);
-    const detail = progressDetail(progressRow);
+    const liveDetail = progressDetail(progressRow);
+    const detail = running
+      ? liveDetail
+      : (liveDetail ?? (result ? t('subagent.complete') : null));
     const shortId = args?.task_id?.slice(0, 8) ?? '…';
 
     if (running) {

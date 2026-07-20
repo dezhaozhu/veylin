@@ -1,5 +1,5 @@
 import type { UIMessage } from 'ai';
-import { isToolUIPart, lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
+import { isToolUIPart } from 'ai';
 import { assistantDispatchedBackgroundWorkers } from './background-task-continuation';
 
 /** Tools completed on the client; the server must not finish the same run. */
@@ -228,6 +228,24 @@ export function needsFrontendSuspendContinuation(messages: UIMessage[]): boolean
 }
 
 /**
+ * Whether a frontend-suspend turn is finished enough to fold into Worked-for.
+ * Unsettled while awaiting an answer or waiting for auto-continuation reply.
+ */
+export function isFrontendSuspendPartsSettled(parts: readonly unknown[] | undefined): boolean {
+  if (!parts?.length) return true;
+  if (findFirstAwaitingFrontendToolIndex(parts as unknown[]) >= 0) return false;
+  if (messageNeedsFrontendSuspendContinuation(parts as unknown[])) return false;
+  return true;
+}
+
+/** Last assistant message is settled for Worked-for folding (or not a suspend turn). */
+export function isFrontendSuspendTurnSettled(messages: UIMessage[]): boolean {
+  const last = messages.at(-1);
+  if (last?.role !== 'assistant') return true;
+  return isFrontendSuspendPartsSettled(last.parts);
+}
+
+/**
  * Whether the chat runtime may auto-send the next model turn.
  *
  * The ONLY client-driven continuation is a frontend-suspend tool whose result the
@@ -278,7 +296,10 @@ export function shouldAutoSendChat({
     }
   }
 
-  return lastAssistantMessageIsCompleteWithToolCalls({ messages });
+  // Never fall back to lastAssistantMessageIsCompleteWithToolCalls — that treats
+  // server tools (e.g. updateWorkingMemory output-error) as needing a client
+  // re-POST, which wedges isRunning via continuationInFlight.
+  return false;
 }
 
 export function trimAssistantAfterAwaitingTool<T extends { id: string; role: string; parts?: unknown[] }>(

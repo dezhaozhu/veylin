@@ -103,12 +103,17 @@ export async function submitReadOpenPageResult(
 /**
  * Perform the desktop WebView read and submit via the registered bridge.
  * Safe to call from runtime even after chat.stop() killed ToolUI addResult.
+ *
+ * Tab resolution: explicit `tabId` → attached browser tab → active web tab.
+ * Never silently falls back to a stale ActiveWebTab when none of these resolve.
  */
 export async function executeReadOpenPageForToolCall(options: {
   threadId: string;
   toolCallId: string;
   mode?: 'text' | 'html';
   maxChars?: number;
+  tabId?: string;
+  attachedTabId?: string;
 }): Promise<ReadOpenPageResult | null> {
   const { threadId, toolCallId } = options;
   if (submittedToolCallIds.has(toolCallId)) return null;
@@ -126,7 +131,23 @@ export async function executeReadOpenPageForToolCall(options: {
       return interrupted;
     }
 
-    const page = await readWebView(mode, getActiveWebTabId() ?? undefined);
+    const resolvedTabId =
+      options.tabId?.trim() ||
+      options.attachedTabId?.trim() ||
+      getActiveWebTabId() ||
+      null;
+    if (!resolvedTabId) {
+      const result: ReadOpenPageResult = {
+        mode,
+        error:
+          'No web tab to read. Open a page in the docked browser, focus a web tab, ' +
+          'or pass tabId / @-attach a specific tab.',
+      };
+      await submitReadOpenPageResult(threadId, toolCallId, result, { isError: true });
+      return result;
+    }
+
+    const page = await readWebView(mode, resolvedTabId);
     if (ac.signal.aborted) {
       const interrupted: ReadOpenPageResult = { mode, error: 'Interrupted by user.' };
       await submitReadOpenPageResult(threadId, toolCallId, interrupted, { isError: true });

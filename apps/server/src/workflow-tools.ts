@@ -33,7 +33,9 @@ export function buildWorkflowTools(queue: QueuePort) {
     execute: async (_input, ctx?: WorkflowCtx) => {
       const tenantId = ctxValue(ctx, 'tenantId') ?? '00000000-0000-0000-0000-000000000000';
       const userId = ctxValue(ctx, 'userId') ?? 'dev-user';
-      const rows = await listWorkflows(tenantId, userId);
+      const threadId = ctxValue(ctx, 'threadId');
+      if (!threadId) return { workflows: [] };
+      const rows = await listWorkflows(tenantId, { userId, threadId });
       return {
         workflows: rows.map((w) => ({
           id: w.id,
@@ -53,8 +55,10 @@ export function buildWorkflowTools(queue: QueuePort) {
     outputSchema: z.object({ ok: z.boolean(), jobId: z.string().nullable() }),
     execute: async (input, ctx?: WorkflowCtx) => {
       const tenantId = ctxValue(ctx, 'tenantId') ?? '00000000-0000-0000-0000-000000000000';
+      const threadId = ctxValue(ctx, 'threadId');
+      if (!threadId) return { ok: false, jobId: null };
       const row = await getWorkflow(tenantId, input.id);
-      if (!row) return { ok: false, jobId: null };
+      if (!row || row.threadId !== threadId) return { ok: false, jobId: null };
       const jobId = await dispatchWorkflow(queue, {
         tenantId,
         workflowId: row.id,

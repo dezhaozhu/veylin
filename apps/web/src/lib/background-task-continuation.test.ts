@@ -525,6 +525,47 @@ describe('background task continuation', () => {
     assert.equal(merged[0]?.label, '工厂维度分析');
   });
 
+  it('mergePanelBackgroundTasks dedupes repeated task_ids from transcript', () => {
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-task',
+            toolCallId: 'c1',
+            state: 'output-available',
+            output: {
+              background: true,
+              task_id: 'same-task',
+              description: '构建排产JSON实例',
+            },
+          },
+          {
+            type: 'tool-task',
+            toolCallId: 'c2',
+            state: 'output-available',
+            output: {
+              background: true,
+              task_id: 'same-task',
+              description: '构建排产JSON实例',
+            },
+          },
+        ],
+      },
+    ] as UIMessage[];
+    const merged = mergePanelBackgroundTasks(messages, [
+      {
+        id: 'same-task',
+        label: '构建排产JSON实例',
+        status: 'done',
+        agentId: 'subagent',
+      },
+    ]);
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0]?.id, 'same-task');
+  });
+
   it('mergePanelBackgroundTasks overlays API status onto optimistic rows', () => {
     const messages = [
       {
@@ -622,5 +663,40 @@ describe('background task continuation', () => {
       merged.map((row) => row.id),
       ['t2', 't1'],
     );
+  });
+
+  it('mergePanelBackgroundTasksFromThread dedupes completed summary+task_id with store', () => {
+    const thread = [
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolName: 'task',
+            toolCallId: 'tool-call-xyz',
+            args: { description: '分析165MN工序结构和时长' },
+            result: {
+              background: false,
+              task_id: 'real-task-id',
+              description: '分析165MN工序结构和时长',
+              summary: 'done',
+            },
+          },
+        ],
+      },
+    ];
+    const optimistic = collectSubagentTasksFromThreadMessages(thread as never);
+    assert.equal(optimistic.length, 1);
+    assert.equal(optimistic[0]?.id, 'real-task-id');
+    assert.equal(optimistic[0]?.status, 'done');
+
+    const merged = mergePanelBackgroundTasksFromThread(
+      thread as never,
+      [{ id: 'real-task-id', status: 'done', label: '分析165MN工序结构和时长' }],
+      { pinnedTaskIds: ['real-task-id'] },
+    );
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0]?.id, 'real-task-id');
+    assert.equal(merged[0]?.status, 'done');
   });
 });

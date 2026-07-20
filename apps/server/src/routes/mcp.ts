@@ -6,6 +6,7 @@ import {
   listRemoteMcpServers,
   updateRemoteMcpServer,
 } from '../mcp-store.js';
+import { loadEnabledPluginMcpConfigs } from '../plugin-store.js';
 import { getDisabledMcpServers, setDisabledMcpServers } from '../skills-store.js';
 import type { ServerDeps } from './types.js';
 
@@ -16,8 +17,19 @@ export function registerMcpRoutes(app: FastifyInstance, deps: ServerDeps): void 
     const remote = await listRemoteMcpServers(ctx.tenantId);
     const disabledMcp = await getDisabledMcpServers(ctx.tenantId);
     const health = deps.mcpHealthByTenant.get(ctx.tenantId);
-    // Installed MCP is user-managed (remote); bundled stdio servers are opt-in via agent config only.
-    return { bundled: [], remote, disabledMcp, health: health ?? null };
+    const pluginConfigs = await loadEnabledPluginMcpConfigs(ctx.tenantId);
+    const plugin = Object.entries(pluginConfigs).map(([name, config]) => {
+      const pluginId = name.includes('/') ? name.slice(0, name.indexOf('/')) : name;
+      return {
+        name,
+        pluginId,
+        transport: 'stdio' as const,
+        command: config.command,
+        args: config.args,
+        cwd: config.cwd,
+      };
+    });
+    return { bundled: [] as string[], remote, plugin, disabledMcp, health: health ?? null };
   });
 
   app.post('/api/mcp-servers/reconnect', async (req) => {
@@ -30,7 +42,12 @@ export function registerMcpRoutes(app: FastifyInstance, deps: ServerDeps): void 
     const ctx = await deps.resolveContext(req.headers);
     const { disabledMcp } = (req.body ?? {}) as { disabledMcp?: string[] };
     await setDisabledMcpServers(ctx.tenantId, disabledMcp ?? []);
-    return { ok: true, disabledMcp: disabledMcp ?? [] };
+    await deps.rebuildMcp(ctx.tenantId);
+    return {
+      ok: true,
+      disabledMcp: disabledMcp ?? [],
+      health: deps.mcpHealthByTenant.get(ctx.tenantId) ?? null,
+    };
   });
 
   app.post('/api/mcp-servers', async (req, reply) => {

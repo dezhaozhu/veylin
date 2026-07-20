@@ -4,6 +4,10 @@ import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { normalizeAskQuestions } from '@/lib/ask-user-question-normalize';
 import {
+  answerKeysForQuestions,
+  lookupAskAnswer,
+} from '@/lib/composer-ask-panel-utils';
+import {
   hasAskUserAnswers,
   clearAskUserSession,
   getAskUserSessionForThread,
@@ -64,8 +68,8 @@ export const AskUserQuestionToolUI = makeAssistantToolUI<Args, AskUserResult>({
     if (!answered && questions.length === 0) {
       const stillStreaming = status.type === 'running';
       return (
-        <div className="text-muted-foreground my-1 flex items-center gap-1.5 text-xs">
-          <HelpCircleIcon className="size-3.5 shrink-0" />
+        <div className="text-muted-foreground my-1 flex items-center gap-1.5 text-base font-normal leading-snug">
+          <HelpCircleIcon className="size-4 shrink-0" />
           {stillStreaming ? t('ask.loading') : t('ask.invalidFormat')}
         </div>
       );
@@ -73,8 +77,8 @@ export const AskUserQuestionToolUI = makeAssistantToolUI<Args, AskUserResult>({
 
     if (awaiting) {
       return (
-        <div className="border-border/60 bg-muted/30 my-1 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
-          <HelpCircleIcon className="text-primary size-3.5 shrink-0" />
+        <div className="border-border/60 bg-muted/30 my-1 flex items-center gap-2 rounded-lg border px-3 py-2 text-base font-normal leading-snug">
+          <HelpCircleIcon className="text-primary size-4 shrink-0" />
           <div className="min-w-0">
             <p className="text-foreground font-medium">{t('ask.selectToContinue')}</p>
             {questions[0] && (
@@ -89,26 +93,41 @@ export const AskUserQuestionToolUI = makeAssistantToolUI<Args, AskUserResult>({
       const restored =
         getAskUserSessionForThread(threadId)?.toolCallId === toolCallId;
       return (
-        <div className="text-muted-foreground my-1 flex items-center gap-1.5 text-xs">
-          <HelpCircleIcon className="size-3.5 shrink-0" />
+        <div className="text-muted-foreground my-1 flex items-center gap-1.5 text-base font-normal leading-snug">
+          <HelpCircleIcon className="size-4 shrink-0" />
           {restored ? t('ask.selectToContinue') : t('ask.stopped')}
         </div>
       );
     }
 
     if (answered && result?.answers) {
+      const displayQuestions =
+        (result.questions?.length ? normalizeAskQuestions(result.questions) : null) ??
+        questions;
+      const keys = answerKeysForQuestions(displayQuestions);
       return (
-        <div className="text-muted-foreground my-1 text-xs">
-          <div className="mb-1 flex items-center gap-1.5 font-medium">
-            <HelpCircleIcon className="size-3.5" />
+        <div className="border-border/60 bg-muted/30 my-1 rounded-lg border px-3 py-2 text-base font-normal leading-snug">
+          <div className="text-muted-foreground mb-2.5 flex items-center gap-1.5 font-medium">
+            <HelpCircleIcon className="size-4 shrink-0" />
             {t('ask.answered')}
           </div>
-          <ul className="list-inside list-disc">
-            {Object.entries(result.answers).map(([q, a]) => (
-              <li key={q}>
-                <span className="font-medium text-foreground">{q}</span> → {a}
-              </li>
-            ))}
+          <ul className="flex flex-col gap-3">
+            {displayQuestions.map((q, i) => {
+              const key = keys[i] ?? (q.header || q.question);
+              const answer = lookupAskAnswer(result.answers, q, keys[i]);
+              if (answer === undefined) return null;
+              return (
+                <li key={`${key}-${i}`} className="min-w-0">
+                  <p className="text-muted-foreground leading-relaxed">{q.question}</p>
+                  <p className="text-foreground mt-1.5 border-l-2 border-primary/40 ps-2.5 font-medium leading-relaxed">
+                    <span className="text-muted-foreground me-1.5 font-normal">
+                      {t('ask.answerLabel')}
+                    </span>
+                    {answer}
+                  </p>
+                </li>
+              );
+            })}
           </ul>
         </div>
       );

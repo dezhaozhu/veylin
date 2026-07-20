@@ -20,6 +20,8 @@ import { WorkflowPanel } from '@/components/assistant-ui/right-panel/panels/work
 import { Viewer3dPanel } from '@/components/assistant-ui/right-panel/panels/viewer3d-panel';
 import type { PanelContentProps, PanelKind, PanelKindDef } from './panel-types';
 
+// Fork seam: our AG-Grid TableGrid manages its own sheet tabs (workspace-wide,
+// including Compass-imported global sheets), so it takes no per-session props.
 function TablePanel(_props: PanelContentProps) {
   return <TableGrid />;
 }
@@ -48,6 +50,8 @@ export const PANEL_KINDS: PanelKindDef[] = [
     description: 'panels.table.desc',
     icon: <Table className="size-4" />,
     defaultTitle: 'panels.table.label',
+    // Sheet is created when the user opens a table tab (+), then bound here.
+    createState: () => ({ sheetId: null as string | null }),
     Component: TablePanel,
   },
   {

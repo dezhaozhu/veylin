@@ -7,7 +7,12 @@ import {
 } from '@veylin/db';
 import { mcpServerConfigs } from '@veylin/mcp-servers';
 import { mcpServerInputSchema, type McpServer, type McpServerInput } from '@veylin/shared';
-import { getDisabledMcpServers } from './skills-store';
+import {
+  listEnabledPluginMcpServerNames,
+  loadEnabledPluginMcpConfigs,
+} from './plugin-store.js';
+import { getDisabledMcpServers } from './veylin-settings-file.js';
+import { veylinHome, veylinMcpLocalPath, veylinMcpPath } from './veylin-paths.js';
 
 export type McpServerConfig = Record<string, unknown>;
 
@@ -120,6 +125,17 @@ export async function buildMcpServerConfigs(tenantId: string): Promise<McpServer
       ...(Object.keys(server.headers).length > 0 ? { requestInit: { headers: server.headers } } : {}),
     };
   }
+
+  const pluginConfigs = await loadEnabledPluginMcpConfigs(tenantId);
+  for (const [name, config] of Object.entries(pluginConfigs)) {
+    if (!active.has(name)) continue;
+    configs[name] = {
+      command: config.command,
+      args: config.args,
+      ...(config.cwd ? { cwd: config.cwd } : {}),
+      ...(config.env ? { env: config.env } : {}),
+    };
+  }
   return configs;
 }
 
@@ -145,9 +161,12 @@ export async function listActiveMcpServerNames(
   const disabledBundled = new Set(await getDisabledMcpServers(tenantId));
   const remote = await listRemoteMcpServers(tenantId);
   const disabledRemote = new Set(remote.filter((s) => !s.enabled).map((s) => s.name));
-  const candidates =
-    declaredMcp.length > 0 ? declaredMcp : remote.map((s) => s.name);
-  return [...new Set(candidates.filter((s) => !disabledBundled.has(s) && !disabledRemote.has(s)))];
+  const pluginNames = await listEnabledPluginMcpServerNames(tenantId);
+  const base = declaredMcp.length > 0 ? declaredMcp : remote.map((s) => s.name);
+  const candidates = [...new Set([...base, ...pluginNames])];
+  return [
+    ...new Set(candidates.filter((s) => !disabledBundled.has(s) && !disabledRemote.has(s))),
+  ];
 }
 
 /** Keywords whose value is JSON *data*, not a nested schema — must not be walked as one. */

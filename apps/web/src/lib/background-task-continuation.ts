@@ -199,6 +199,9 @@ function taskDispatchRowFromPart(part: unknown, fallbackId: string): BackgroundT
     parsed.payload?.subagent_type ?? parsed.input?.subagent_type ?? null;
   const agentId = parsed.payload?.agent_id ?? parsed.input?.agent_id ?? 'subagent';
 
+  // Prefer server task_id whenever present so transcript rows match store/API ids.
+  const rowId = parsed.payload?.task_id ?? parsed.toolCallId ?? fallbackId;
+
   if (parsed.payload?.background === true && parsed.payload.task_id) {
     return {
       id: parsed.payload.task_id,
@@ -211,7 +214,7 @@ function taskDispatchRowFromPart(part: unknown, fallbackId: string): BackgroundT
 
   if (typeof parsed.payload?.summary === 'string' && parsed.payload.summary.trim()) {
     return {
-      id: parsed.toolCallId ?? fallbackId,
+      id: rowId,
       status: 'done',
       label,
       agentId,
@@ -225,7 +228,7 @@ function taskDispatchRowFromPart(part: unknown, fallbackId: string): BackgroundT
   }
 
   return {
-    id: parsed.toolCallId ?? fallbackId,
+    id: rowId,
     status: 'running',
     label,
     agentId,
@@ -256,11 +259,14 @@ function backgroundTaskIdFromPart(part: unknown): string | null {
 /** Background worker ids dispatched in the current coordinator turn (since last user message). */
 export function collectCoordinatorDispatchTaskIds(messages: UIMessage[]): string[] {
   const ids: string[] = [];
+  const seen = new Set<string>();
   for (const msg of messagesSinceLastUser(messages)) {
     if (msg.role !== 'assistant') continue;
     for (const part of msg.parts ?? []) {
       const taskId = backgroundTaskIdFromPart(part);
-      if (taskId) ids.push(taskId);
+      if (!taskId || seen.has(taskId)) continue;
+      seen.add(taskId);
+      ids.push(taskId);
     }
   }
   return ids;
@@ -398,10 +404,15 @@ export function mergePanelBackgroundTasks(
   const fromApi = resolvePanelBackgroundTasks(messages, tasks, opts);
   const optimistic = collectOptimisticBackgroundTasksFromMessages(messages);
   const batchIds = collectCoordinatorDispatchTaskIds(messages);
-  const idSource =
-    batchIds.length > 0
-      ? batchIds
-      : (opts?.pinnedTaskIds?.length ? opts.pinnedTaskIds : optimistic.map((t) => t.id));
+  const idSource = Array.from(
+    new Set(
+      batchIds.length > 0
+        ? batchIds
+        : opts?.pinnedTaskIds?.length
+          ? opts.pinnedTaskIds
+          : optimistic.map((t) => t.id),
+    ),
+  );
 
   if (idSource.length === 0) {
     return fromApi.length > 0 ? fromApi : optimistic;

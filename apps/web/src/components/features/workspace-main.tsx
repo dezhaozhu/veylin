@@ -32,7 +32,7 @@ export function WorkspaceMain({
         className="absolute inset-x-0 top-0 z-0 h-14"
         onMouseDown={startWindowDrag}
       />
-      <div className="pointer-events-none relative z-10 px-8 py-6 [&>*]:pointer-events-auto">
+      <div className="pointer-events-none relative z-10 px-8 pt-10 pb-8 [&>*]:pointer-events-auto">
         {children}
       </div>
     </main>

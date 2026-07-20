@@ -139,6 +139,19 @@ describe('normalizeAssistantMessageParts', () => {
     assert.equal(twice, once);
   });
 
+  it('drops an identical text part repeated across step-start (answer body not duplicated)', () => {
+    const body = '这是完整分析结论，不应显示两遍。';
+    const parts = normalizeAssistantMessageParts([
+      { type: 'text', text: body },
+      { type: 'step-start' },
+      { type: 'text', text: body },
+    ]);
+    const texts = parts
+      .filter((p) => (p as { type?: string }).type === 'text')
+      .map((p) => (p as { text?: string }).text);
+    assert.deepEqual(texts, [body]);
+  });
+
   it('starts a new logical step after a completed suspend tool without step-start', () => {
     const intro = '第一段说明';
     const parts = dedupeAssistantMessageParts([

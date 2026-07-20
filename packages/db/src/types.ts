@@ -73,6 +73,7 @@ export interface ThreadStateRow {
   planMode: boolean;
   todos: unknown[];
   activatedSkills: Record<string, string>;
+  pinnedSkills: string[];
   workingMemory?: string | null;
   title?: string | null;
   goal?: unknown | null;
@@ -89,6 +90,25 @@ export interface TenantSettingsRow {
     modelName?: string;
     requestUrl?: string;
     apiKey?: string;
+  };
+  langfuseSettings?: {
+    enabled?: boolean;
+    publicKey?: string;
+    secretKey?: string;
+    baseUrl?: string;
+  };
+  businessSource?: {
+    enabled?: boolean;
+    mcpServerName?: string;
+    url?: string;
+    transport?: 'http' | 'sse';
+    /** Authorization header value (e.g. Bearer xxx) — never return to clients. */
+    authorization?: string;
+    toolAllowlist?: string[];
+  };
+  /** Optional SIEM / log sink; when set, AuditPort forwards each event. */
+  auditSettings?: {
+    webhookUrl?: string;
   };
   workspaceRoot?: string | null;
   importClaudeHooks?: boolean;
@@ -175,6 +195,8 @@ export interface TableSheetRow {
   id: string;
   name: string;
   builtin: boolean;
+  /** Chat session isolation key; null/absent = global (e.g. builtin main). */
+  threadId?: string | null;
 }
 
 export interface TableColumnRow {
@@ -203,6 +225,7 @@ export interface TableRowRecord {
 export interface DocumentRow {
   id: string;
   tenantId: string;
+  threadId: string;
   filename: string;
   mimeType?: string | null;
   sizeBytes?: number | null;
@@ -215,6 +238,7 @@ export interface ChunkRow {
   id: string;
   documentId: string;
   tenantId: string;
+  threadId: string;
   text: string;
   source: string;
   offset: number;
@@ -224,6 +248,7 @@ export interface ChunkRow {
 export interface EntityRow {
   id: string;
   tenantId: string;
+  threadId?: string | null;
   name: string;
   nameKey: string;
   type: string;
@@ -263,6 +288,7 @@ export interface WorkflowRow {
   id: string;
   tenantId: string;
   userId: string;
+  threadId: string;
   name: string;
   kind: WorkflowKind;
   enabled: boolean;

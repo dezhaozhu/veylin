@@ -1,11 +1,22 @@
-import { ListTodoIcon, Minimize2Icon, SparklesIcon } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState, type FC, Fragment } from 'react';
+import {
+  CrosshairIcon,
+  ListTodoIcon,
+  Minimize2Icon,
+  RefreshCwIcon,
+  SparklesIcon,
+} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type FC, type ReactNode, Fragment } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAui, useAuiState } from '@assistant-ui/store';
 import { applyCompactToThread } from '@/lib/compact-context';
 import { getChatSettings } from '@/lib/chat-settings';
 import { commitPendingSkillSelection } from '@/lib/composer-pending-skill';
-import { useAgentContext, usePendingSkill, usePlanMode } from '@/lib/use-composer-settings';
+import {
+  useAgentContext,
+  useGoalLoopState,
+  usePendingSkill,
+  usePlanMode,
+} from '@/lib/use-composer-settings';
 import {
   ComposerMenuOption,
   ComposerMenuSection,
@@ -20,6 +31,8 @@ const PREVIEW_COUNT = 5;
 type SlashRow =
   | { kind: 'skill'; name: string; description: string }
   | { kind: 'plan'; exit: boolean }
+  | { kind: 'goal'; exit: boolean }
+  | { kind: 'loop'; exit: boolean }
   | { kind: 'compact' };
 
 export const ComposerSlashMenu: FC<{
@@ -31,11 +44,24 @@ export const ComposerSlashMenu: FC<{
   const { t } = useTranslation();
   const aui = useAui();
   const threadId = useAuiState(
-    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId,
+    (s) =>
+      s.threadListItem.remoteId ??
+      s.threadListItem.externalId ??
+      s.threadListItem.id,
   );
   const { context } = useAgentContext(open);
   const { setPendingSkill } = usePendingSkill();
   const { planMode, setPlanMode } = usePlanMode();
+  const {
+    goalActive,
+    pendingGoal,
+    loopActive,
+    pendingLoop,
+    toggleGoal,
+    toggleLoop,
+  } = useGoalLoopState();
+  const goalMode = pendingGoal || goalActive;
+  const loopMode = pendingLoop || loopActive;
   const [skillsExpanded, setSkillsExpanded] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [compacting, setCompacting] = useState(false);
@@ -60,17 +86,34 @@ export const ComposerSlashMenu: FC<{
     for (const skill of visibleSkills) {
       items.push({ kind: 'skill', name: skill.name, description: skill.description });
     }
-    const planLabel = t('slash.plan').toLowerCase();
-    const exitPlanLabel = t('slash.exitPlan').toLowerCase();
-    const compactLabel = t('slash.compact').toLowerCase();
-    if (!query || planLabel.includes(query) || exitPlanLabel.includes(query)) {
+    const matches = (...labels: string[]) =>
+      !query || labels.some((label) => label.toLowerCase().includes(query));
+
+    if (matches(t('slash.plan'), t('slash.exitPlan'), t('slash.planDesc'))) {
       items.push({ kind: 'plan', exit: planMode });
     }
-    if (threadId && (!query || compactLabel.includes(query) || t('slash.compactDesc').toLowerCase().includes(query))) {
+    if (matches(t('slash.goal'), t('slash.exitGoal'), t('slash.goalDesc'))) {
+      items.push({ kind: 'goal', exit: goalMode });
+    }
+    if (matches(t('slash.loop'), t('slash.stopLoop'), t('slash.loopDesc'))) {
+      items.push({ kind: 'loop', exit: loopMode });
+    }
+    if (
+      threadId &&
+      matches(t('slash.compact'), t('slash.compactDesc'))
+    ) {
       items.push({ kind: 'compact' });
     }
     return items;
-  }, [visibleSkills, query, t, planMode, threadId]);
+  }, [
+    visibleSkills,
+    query,
+    t,
+    planMode,
+    goalMode,
+    loopMode,
+    threadId,
+  ]);
 
   useEffect(() => {
     if (!open) {
@@ -81,7 +124,7 @@ export const ComposerSlashMenu: FC<{
 
   useEffect(() => {
     setActiveIndex(0);
-  }, [query, skillsExpanded, planMode]);
+  }, [query, skillsExpanded]);
 
   const clearSlashFromInput = useCallback(() => {
     const composer = aui.composer();
@@ -89,6 +132,18 @@ export const ComposerSlashMenu: FC<{
     composer.setText(text.slice(0, trigger.start) + text.slice(trigger.end));
     onClose();
   }, [aui, trigger, onClose]);
+
+  /**
+   * Close the slash menu before mutating mode state so the open menu does not
+   * flash "退出计划" / etc. while planMode flips.
+   */
+  const closeThen = useCallback(
+    (action: () => void) => {
+      clearSlashFromInput();
+      queueMicrotask(action);
+    },
+    [clearSlashFromInput],
+  );
 
   const replaceSlashWithSkill = useCallback(
     (name: string) => {
@@ -116,11 +171,18 @@ export const ComposerSlashMenu: FC<{
 
   const pickPlan = useCallback(
     (exit: boolean) => {
-      setPlanMode(!exit);
-      clearSlashFromInput();
+      closeThen(() => setPlanMode(!exit));
     },
-    [setPlanMode, clearSlashFromInput],
+    [closeThen, setPlanMode],
   );
+
+  const pickGoal = useCallback(() => {
+    closeThen(() => toggleGoal());
+  }, [closeThen, toggleGoal]);
+
+  const pickLoop = useCallback(() => {
+    closeThen(() => toggleLoop());
+  }, [closeThen, toggleLoop]);
 
   const runCompact = useCallback(async () => {
     if (!threadId || compacting) return;
@@ -140,9 +202,11 @@ export const ComposerSlashMenu: FC<{
       if (!row) return;
       if (row.kind === 'skill') pickSkill(row.name);
       else if (row.kind === 'plan') pickPlan(row.exit);
+      else if (row.kind === 'goal') pickGoal();
+      else if (row.kind === 'loop') pickLoop();
       else if (row.kind === 'compact') void runCompact();
     },
-    [rows, pickSkill, pickPlan, runCompact],
+    [rows, pickSkill, pickPlan, pickGoal, pickLoop, runCompact],
   );
 
   useComposerMenuKeyboard({
@@ -179,8 +243,9 @@ export const ComposerSlashMenu: FC<{
         const prevSection = index > 0 ? sectionForRow(rows[index - 1]!) : null;
         const showHeader = section != null && section !== prevSection;
 
-        const option =
-          row.kind === 'skill' ? (
+        let option: ReactNode;
+        if (row.kind === 'skill') {
+          option = (
             <ComposerMenuOption
               active={activeIndex === index}
               icon={<SparklesIcon className="size-4" />}
@@ -189,7 +254,9 @@ export const ComposerSlashMenu: FC<{
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => activateRow(index)}
             />
-          ) : row.kind === 'plan' ? (
+          );
+        } else if (row.kind === 'plan') {
+          option = (
             <ComposerMenuOption
               active={activeIndex === index}
               icon={<ListTodoIcon className="size-4" />}
@@ -198,7 +265,31 @@ export const ComposerSlashMenu: FC<{
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => activateRow(index)}
             />
-          ) : (
+          );
+        } else if (row.kind === 'goal') {
+          option = (
+            <ComposerMenuOption
+              active={activeIndex === index}
+              icon={<CrosshairIcon className="size-4" />}
+              label={row.exit ? t('slash.exitGoal') : t('slash.goal')}
+              description={t('slash.goalDesc')}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => activateRow(index)}
+            />
+          );
+        } else if (row.kind === 'loop') {
+          option = (
+            <ComposerMenuOption
+              active={activeIndex === index}
+              icon={<RefreshCwIcon className="size-4" />}
+              label={row.exit ? t('slash.stopLoop') : t('slash.loop')}
+              description={t('slash.loopDesc')}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => activateRow(index)}
+            />
+          );
+        } else {
+          option = (
             <ComposerMenuOption
               active={activeIndex === index}
               icon={<Minimize2Icon className="size-4" />}
@@ -208,9 +299,16 @@ export const ComposerSlashMenu: FC<{
               onClick={() => activateRow(index)}
             />
           );
+        }
 
         return (
-          <Fragment key={`${row.kind}-${row.kind === 'skill' ? row.name : index}`}>
+          <Fragment
+            key={
+              row.kind === 'skill'
+                ? `skill-${row.name}`
+                : `${row.kind}-${row.kind === 'plan' || row.kind === 'goal' || row.kind === 'loop' ? String(row.exit) : 'x'}`
+            }
+          >
             {showHeader && <ComposerMenuSection>{section}</ComposerMenuSection>}
             {option}
             {index === lastSkillIndex &&

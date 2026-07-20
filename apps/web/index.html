@@ -49,8 +49,6 @@
         object-fit: contain;
         /* white asset → dark mark on light app background */
         filter: invert(1);
-        animation: splash-breathe 1.8s ease-in-out infinite;
-        will-change: transform, opacity;
       }
       #splash .splash-hint {
         font-size: 11px;
@@ -64,10 +62,6 @@
       }
       @keyframes splash-spin {
         to { transform: rotate(360deg); }
-      }
-      @keyframes splash-breathe {
-        0%, 100% { transform: scale(1); opacity: 0.72; }
-        50% { transform: scale(1.06); opacity: 1; }
       }
       /* App theme is class-based (.dark); keep splash in sync when that class appears */
       html.dark, html.dark body {

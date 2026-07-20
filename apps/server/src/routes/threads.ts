@@ -332,10 +332,13 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
   app.get('/api/threads/:threadId/state', async (req) => {
     const { threadId } = req.params as { threadId: string };
     const ctx = await deps.resolveContext(req.headers);
-    const state =
-      (await getThreadState(threadId)) ??
-      (await ensureThreadState({ threadId, tenantId: ctx.tenantId, resourceId: ctx.userId }));
-    return { state };
+    // Read-only: do not ensureThreadState here — that would create empty
+    // 「新对话」rows when the client probes a local __LOCALID_* before first send.
+    const row = await resolveThreadForRead(threadId, ctx);
+    if (!row) {
+      return { state: null };
+    }
+    return { state: row };
   });
 
   app.get('/api/threads/:threadId/messages', async (req, reply) => {

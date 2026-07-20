@@ -1,12 +1,12 @@
 {
   "plugins": [
     {
-      "name": "hello-veylin",
-      "description": "Example plugin with a sample skill and a Stop hook.",
+      "name": "scheduling-optimizer",
+      "description": "排产优化：5 个 Skills + 求解 MCP（validate/solve，OR-Tools）；无 Hooks。安装时自动准备 Python 依赖。",
       "version": "0.1.0",
       "source": {
         "type": "path",
-        "url": "examples/marketplace/hello-veylin"
+        "url": "examples/marketplace/scheduling-optimizer"
       }
     }
   ]

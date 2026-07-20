@@ -19,18 +19,44 @@ import { applyTenantModelSettings } from '../model-settings-store.js';
 import { generateWorkflowFromPrompt } from '../workflow-generate.js';
 import type { ServerDeps } from './types.js';
 
+function requireThreadId(
+  source: { threadId?: string } | undefined,
+  reply: { code: (n: number) => unknown },
+): string | null {
+  const threadId = source?.threadId?.trim();
+  if (!threadId) {
+    reply.code(400);
+    return null;
+  }
+  return threadId;
+}
+
+async function getThreadScopedWorkflow(
+  tenantId: string,
+  id: string,
+  threadId: string,
+): Promise<Awaited<ReturnType<typeof getWorkflow>>> {
+  const workflow = await getWorkflow(tenantId, id);
+  if (!workflow || workflow.threadId !== threadId) return null;
+  return workflow;
+}
+
 export function registerWorkflowsRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // --- Workflow: DAG orchestration ---
-  app.get('/api/workflows', async (req) => {
+  app.get('/api/workflows', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const workflows = await listWorkflows(ctx.tenantId, ctx.userId);
+    const threadId = requireThreadId(req.query as { threadId?: string }, reply);
+    if (!threadId) return { ok: false, message: 'threadId is required' };
+    const workflows = await listWorkflows(ctx.tenantId, { userId: ctx.userId, threadId });
     return { workflows };
   });
 
   app.get('/api/workflows/:id', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
     const { id } = req.params as { id: string };
-    const workflow = await getWorkflow(ctx.tenantId, id);
+    const threadId = requireThreadId(req.query as { threadId?: string }, reply);
+    if (!threadId) return { ok: false, message: 'threadId is required' };
+    const workflow = await getThreadScopedWorkflow(ctx.tenantId, id, threadId);
     if (!workflow) {
       reply.code(404);
       return { ok: false };
@@ -67,13 +93,27 @@ export function registerWorkflowsRoutes(app: FastifyInstance, deps: ServerDeps):
   app.put('/api/workflows/:id', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
     const { id } = req.params as { id: string };
+    const threadId = requireThreadId(
+      {
+        threadId:
+          (req.query as { threadId?: string }).threadId ??
+          (req.body as { threadId?: string } | undefined)?.threadId,
+      },
+      reply,
+    );
+    if (!threadId) return { ok: false, message: 'threadId is required' };
+    const existing = await getThreadScopedWorkflow(ctx.tenantId, id, threadId);
+    if (!existing) {
+      reply.code(404);
+      return { ok: false };
+    }
     const parsed = workflowInputSchema.partial().extend({ enabled: z.boolean().optional() }).safeParse(req.body);
     if (!parsed.success) {
       reply.code(400);
       return { ok: false, message: parsed.error.message };
     }
     try {
-      const workflow = await updateWorkflow(ctx.tenantId, id, parsed.data);
+      const workflow = await updateWorkflow(ctx.tenantId, id, { ...parsed.data, threadId });
       if (!workflow) {
         reply.code(404);
         return { ok: false };
@@ -102,7 +142,9 @@ export function registerWorkflowsRoutes(app: FastifyInstance, deps: ServerDeps):
   app.delete('/api/workflows/:id', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
     const { id } = req.params as { id: string };
-    const existing = await getWorkflow(ctx.tenantId, id);
+    const threadId = requireThreadId(req.query as { threadId?: string }, reply);
+    if (!threadId) return { ok: false, message: 'threadId is required' };
+    const existing = await getThreadScopedWorkflow(ctx.tenantId, id, threadId);
     if (!existing) {
       reply.code(404);
       return { ok: false };
@@ -117,7 +159,16 @@ export function registerWorkflowsRoutes(app: FastifyInstance, deps: ServerDeps):
   app.post('/api/workflows/:id/run', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
     const { id } = req.params as { id: string };
-    const workflow = await getWorkflow(ctx.tenantId, id);
+    const threadId = requireThreadId(
+      {
+        threadId:
+          (req.query as { threadId?: string }).threadId ??
+          (req.body as { threadId?: string } | undefined)?.threadId,
+      },
+      reply,
+    );
+    if (!threadId) return { ok: false, message: 'threadId is required' };
+    const workflow = await getThreadScopedWorkflow(ctx.tenantId, id, threadId);
     if (!workflow) {
       reply.code(404);
       return { ok: false };
@@ -133,7 +184,9 @@ export function registerWorkflowsRoutes(app: FastifyInstance, deps: ServerDeps):
   app.get('/api/workflows/:id/runs', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
     const { id } = req.params as { id: string };
-    const workflow = await getWorkflow(ctx.tenantId, id);
+    const threadId = requireThreadId(req.query as { threadId?: string }, reply);
+    if (!threadId) return { ok: false, message: 'threadId is required' };
+    const workflow = await getThreadScopedWorkflow(ctx.tenantId, id, threadId);
     if (!workflow) {
       reply.code(404);
       return { ok: false };
@@ -166,6 +219,4 @@ export function registerWorkflowsRoutes(app: FastifyInstance, deps: ServerDeps):
       return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
   });
-
-
 }

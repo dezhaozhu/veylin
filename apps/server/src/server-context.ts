@@ -1,5 +1,6 @@
-import { auth, isDesktopAuth } from './auth.js';
-import { resolveTenantForUser, DEV_TENANT_ID } from './tenant.js';
+import { isDesktopAuth } from './auth.js';
+import { DEV_TENANT_ID } from './tenant.js';
+import { getEnterprisePorts } from './ports/index.js';
 
 export class UnauthorizedError extends Error {
   constructor() {
@@ -13,19 +14,33 @@ export function isForbiddenError(err: unknown): boolean {
 }
 
 export async function resolveContext(headers: Record<string, string | string[] | undefined>) {
-  if (isDesktopAuth) {
-    return { userId: 'dev-user', tenantId: DEV_TENANT_ID, authed: false };
+  const ports = getEnterprisePorts();
+
+  if (isDesktopAuth || ports.identity.id === 'desktop') {
+    const session = await ports.identity.getSession(headers);
+    const membership = await ports.org.resolveTenant(
+      session?.userId ?? 'dev-user',
+      session?.displayName,
+    );
+    return {
+      userId: session?.userId ?? 'dev-user',
+      tenantId: membership.tenantId || DEV_TENANT_ID,
+      role: membership.role,
+      authed: false as boolean,
+    };
   }
-  try {
-    const session = await auth.api.getSession({ headers: headers as never });
-    if (session?.user) {
-      const tenantId = await resolveTenantForUser(session.user.id, session.user.name ?? undefined);
-      return { userId: session.user.id, tenantId, authed: true };
-    }
-  } catch {
+
+  const session = await ports.identity.getSession(headers);
+  if (!session?.userId) {
     throw new UnauthorizedError();
   }
-  throw new UnauthorizedError();
+  const membership = await ports.org.resolveTenant(session.userId, session.displayName);
+  return {
+    userId: session.userId,
+    tenantId: membership.tenantId,
+    role: membership.role,
+    authed: true as boolean,
+  };
 }
 
 export type RequestContext = Awaited<ReturnType<typeof resolveContext>>;

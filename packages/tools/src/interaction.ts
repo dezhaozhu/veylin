@@ -141,13 +141,21 @@ export const request3dSelection = createTool({
 export const readOpenPage = createTool({
   id: 'read_open_page',
   description:
-    'Read the full rendered content of the page currently open in the desktop web view ' +
+    'Read the full rendered content of a page open in the desktop web view ' +
     '(right-side docked browser). Use this for intranet pages the user has already opened ' +
     'and logged into — it captures JS-rendered DOM with session cookies. ' +
     'Do NOT use web_fetch for that case (web_fetch has no login session). ' +
-    'Requires the desktop app and an open web-view window. ' +
+    'Requires the desktop app and an open web-view tab. ' +
+    'When multiple web tabs are open, pass `tabId` from the workspace openWebTabs list ' +
+    '(or the user @-attached tab). Omit tabId to read the currently focused web tab. ' +
     'If a recent read_open_page result for the same page is already in context, analyze it directly — do not re-read without a reason (e.g. the user navigated or refreshed).',
   inputSchema: z.object({
+    tabId: z
+      .string()
+      .optional()
+      .describe(
+        'Optional right-panel web tab id. Prefer this when multiple pages are open or the user @-attached a specific tab.',
+      ),
     mode: z
       .enum(['text', 'html'])
       .optional()

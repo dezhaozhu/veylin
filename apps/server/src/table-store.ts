@@ -36,6 +36,8 @@ export interface TableSheetMeta {
   id: string;
   name: string;
   builtin: boolean;
+  /** Chat session isolation; null = global (builtin main). */
+  threadId?: string | null;
 }
 
 export type TableRowData = Record<string, string | number> & { row_id: string };
@@ -93,7 +95,7 @@ const LEGACY_COLUMN_KEYS = [
 ] as const;
 
 const BUILTIN_SHEETS: TableSheetMeta[] = [
-  { id: 'main', name: 'Sheet 1', builtin: true },
+  { id: 'main', name: 'Sheet 1', builtin: true, threadId: null },
 ];
 
 interface SheetState {
@@ -294,33 +296,82 @@ function isAllowedStatusValue(value: string, col: TableColumnDef): boolean {
   return col.statusOptions.includes(value);
 }
 
-function sanitizePatch(
+function findColumn(
+  columns: TableColumnDef[],
+  field: string,
+): TableColumnDef | undefined {
+  return columns.find((c) => c.key === field) ?? columns.find((c) => c.name === field);
+}
+
+export type RejectedPatchField = {
+  /** Original key from the patch (may be display name). */
+  field: string;
+  columnKey?: string;
+  reason: string;
+};
+
+export type SanitizePatchResult = {
+  applied: TableRowPatch;
+  rejected: RejectedPatchField[];
+};
+
+/**
+ * Map a patch onto column keys (accepts key or display name).
+ * Invalid number/status values are rejected with reasons — never silently dropped.
+ */
+export function sanitizePatch(
   patch: TableRowPatch,
   columns: TableColumnDef[],
-): TableRowPatch {
-  const out: TableRowPatch = {};
-  for (const col of columns) {
-    const raw = patch[col.key];
-    if (raw === undefined) continue;
+): SanitizePatchResult {
+  const applied: TableRowPatch = {};
+  const rejected: RejectedPatchField[] = [];
+
+  for (const [field, raw] of Object.entries(patch)) {
+    if (field === 'row_id') continue;
+    const col = findColumn(columns, field);
+    if (!col) {
+      rejected.push({ field, reason: `Unknown column "${field}"` });
+      continue;
+    }
     if (col.type === 'number') {
       if (raw === '' || raw === undefined) {
-        out[col.key] = '';
+        applied[col.key] = '';
         continue;
       }
       const n = Number(raw);
-      if (Number.isFinite(n)) out[col.key] = n;
+      if (!Number.isFinite(n)) {
+        rejected.push({
+          field,
+          columnKey: col.key,
+          reason: `Invalid number value "${String(raw)}" for column "${col.name || col.key}"`,
+        });
+        continue;
+      }
+      applied[col.key] = n;
     } else if (col.type === 'status') {
       if (raw === '' || raw === undefined) {
-        out[col.key] = '';
+        applied[col.key] = '';
         continue;
       }
       const value = String(raw).trim();
-      if (isAllowedStatusValue(value, col)) out[col.key] = value;
+      if (!isAllowedStatusValue(value, col)) {
+        const allowed = col.statusOptions?.length
+          ? col.statusOptions.join(', ')
+          : '(any non-empty string)';
+        rejected.push({
+          field,
+          columnKey: col.key,
+          reason: `Invalid status value "${value}" for column "${col.name || col.key}"; allowed: ${allowed}`,
+        });
+        continue;
+      }
+      applied[col.key] = value;
     } else {
-      out[col.key] = String(raw);
+      applied[col.key] = String(raw);
     }
   }
-  return out;
+
+  return { applied, rejected };
 }
 
 export function resolveTableSheetId(value: string | undefined): string {
@@ -328,8 +379,49 @@ export function resolveTableSheetId(value: string | undefined): string {
   return DEFAULT_TABLE_SHEET;
 }
 
-export function listTableSheets(): TableSheetMeta[] {
-  return [...sheetStore.values()].map((s) => ({ ...s.meta }));
+/**
+ * Resolve sheet for writes. `undefined`/`''` → main when it exists;
+ * an explicit unknown id returns null (do not silently write main).
+ */
+export function tryResolveTableSheetId(value: string | undefined): string | null {
+  if (value === undefined || value === '') {
+    return sheetStore.has(DEFAULT_TABLE_SHEET) ? DEFAULT_TABLE_SHEET : null;
+  }
+  return sheetStore.has(value) ? value : null;
+}
+
+export function listTableSheets(threadId?: string | null): TableSheetMeta[] {
+  const all = [...sheetStore.values()].map((s) => ({ ...s.meta }));
+  if (threadId === undefined) return all;
+  if (threadId == null) return all.filter((s) => !s.threadId);
+  const key = String(threadId).trim();
+  // Fork seam: global sheets (no threadId — e.g. Compass schedule/resources
+  // imports) are workspace-shared and visible in every session, alongside the
+  // session's own thread-scoped sheets.
+  return all.filter((s) => !s.threadId || (s.threadId ?? '') === key);
+}
+
+export function getTableSheetMeta(sheetId: string): TableSheetMeta | undefined {
+  const id = tryResolveTableSheetId(sheetId);
+  if (!id) return undefined;
+  const sheet = getSheet(id);
+  return sheet ? { ...sheet.meta } : undefined;
+}
+
+/**
+ * Session-scoped access: a thread-scoped sheet is visible only when its
+ * threadId matches. Fork seam: sheets with no threadId (Compass imports and
+ * other workspace-global sheets) are shared — accessible from every session.
+ */
+export function sheetBelongsToThread(
+  sheetId: string,
+  threadId: string | null | undefined,
+): boolean {
+  const meta = getTableSheetMeta(sheetId);
+  if (!meta) return false;
+  if (!meta.threadId) return true; // workspace-global sheet
+  const scoped = threadId?.trim() || '';
+  return meta.threadId === scoped;
 }
 
 export function listTableColumns(sheetId: string): TableColumnDef[] {
@@ -417,8 +509,8 @@ export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string
 }
 
 /** Inject current table state so the model does not miss right-panel spreadsheet data. */
-export function buildTableContextBlock(): string {
-  const snapshots = listTableSheets().map((meta) => {
+export function buildTableContextBlock(threadId?: string | null): string {
+  const snapshots = listTableSheets(threadId).map((meta) => {
     const columns = listTableColumns(meta.id);
     const rows = listTableRows(meta.id);
     return {
@@ -447,11 +539,188 @@ export async function updateTableRow(
   if (!sheet) return null;
   const idx = sheet.rows.findIndex((r) => tableRowKey(r) === rowKey);
   if (idx === -1) return null;
-  const clean = sanitizePatch(patch, sheet.columns);
+  const clean = sanitizePatch(patch, sheet.columns).applied;
   sheet.rows[idx] = { ...sheet.rows[idx]!, ...clean };
   await persistSheet(resolveTableSheetId(sheetId));
   emitTable({ type: 'rowUpsert', sheet: resolveTableSheetId(sheetId), row: { ...sheet.rows[idx]! } });
   return { ...sheet.rows[idx]! };
+}
+
+export type TableRowUpdate = {
+  rowKey: string;
+  patch: TableRowPatch;
+};
+
+export type UpdateTableRowsResult =
+  | {
+      ok: true;
+      sheet: string;
+      rows: TableRowData[];
+      results: Array<{
+        rowKey: string;
+        row: TableRowData;
+        applied: TableRowPatch;
+        previous: TableRowPatch;
+        rejected: RejectedPatchField[];
+      }>;
+    }
+  | {
+      ok: false;
+      sheet: string;
+      rows: TableRowData[];
+      results: [];
+      rejected: RejectedPatchField[];
+      message: string;
+    };
+
+/**
+ * Atomic multi-row cell update: validate all first, then apply + one persist.
+ * Emits one `rowUpsert` per changed row (same SSE shape as single-row writes).
+ */
+export async function updateTableRows(
+  updates: readonly TableRowUpdate[],
+  sheetId: string = DEFAULT_TABLE_SHEET,
+): Promise<UpdateTableRowsResult> {
+  if (updates.length === 0) {
+    return {
+      ok: false,
+      sheet: sheetId,
+      rows: [],
+      results: [],
+      rejected: [],
+      message: 'rows must contain at least one update',
+    };
+  }
+
+  const effectiveSheetId = sheetStore.has(sheetId)
+    ? sheetId
+    : sheetId === DEFAULT_TABLE_SHEET
+      ? tryResolveTableSheetId(undefined)
+      : null;
+
+  if (!effectiveSheetId) {
+    return {
+      ok: false,
+      sheet: sheetId,
+      rows: [],
+      results: [],
+      rejected: [],
+      message: `Sheet "${sheetId}" not found`,
+    };
+  }
+
+  const sheet = getSheet(effectiveSheetId);
+  if (!sheet) {
+    return {
+      ok: false,
+      sheet: effectiveSheetId,
+      rows: [],
+      results: [],
+      rejected: [],
+      message: `Sheet "${effectiveSheetId}" not found`,
+    };
+  }
+
+  type Planned = {
+    idx: number;
+    rowKey: string;
+    applied: TableRowPatch;
+    previous: TableRowPatch;
+    rejected: RejectedPatchField[];
+    current: TableRowData;
+  };
+  const planned: Planned[] = [];
+
+  for (const update of updates) {
+    const rowKey = String(update.rowKey ?? '').trim();
+    if (!rowKey) {
+      return {
+        ok: false,
+        sheet: effectiveSheetId,
+        rows: [],
+        results: [],
+        rejected: [],
+        message: 'row_key is required',
+      };
+    }
+    const idx = sheet.rows.findIndex((r) => tableRowKey(r) === rowKey);
+    if (idx === -1) {
+      return {
+        ok: false,
+        sheet: effectiveSheetId,
+        rows: [],
+        results: [],
+        rejected: [{ field: rowKey, reason: `Row ${rowKey} not found` }],
+        message: `Row ${rowKey} not found`,
+      };
+    }
+    const current = sheet.rows[idx]!;
+    const { applied, rejected } = sanitizePatch(update.patch, sheet.columns);
+    const hasApplied = Object.keys(applied).length > 0;
+    const requested = Object.keys(update.patch).filter((k) => k !== 'row_id');
+    const previous: TableRowPatch = {};
+    for (const key of Object.keys(applied)) {
+      const prev = current[key];
+      previous[key] = prev === undefined ? '' : prev;
+    }
+    if (requested.length > 0 && !hasApplied) {
+      return {
+        ok: false,
+        sheet: effectiveSheetId,
+        rows: [],
+        results: [],
+        rejected:
+          rejected.length > 0
+            ? rejected
+            : [{ field: rowKey, reason: 'No fields applied' }],
+        message: rejected.map((r) => r.reason).join('; ') || 'No fields applied',
+      };
+    }
+    planned.push({ idx, rowKey, applied, previous, rejected, current });
+  }
+
+  const results: Array<{
+    rowKey: string;
+    row: TableRowData;
+    applied: TableRowPatch;
+    previous: TableRowPatch;
+    rejected: RejectedPatchField[];
+  }> = [];
+  let anyApplied = false;
+
+  for (const item of planned) {
+    if (Object.keys(item.applied).length > 0) {
+      sheet.rows[item.idx] = { ...item.current, ...item.applied };
+      anyApplied = true;
+    }
+    results.push({
+      rowKey: item.rowKey,
+      row: { ...sheet.rows[item.idx]! },
+      applied: item.applied,
+      previous: item.previous,
+      rejected: item.rejected,
+    });
+  }
+
+  if (anyApplied) {
+    tablePersist(effectiveSheetId);
+    for (const item of results) {
+      if (Object.keys(item.applied).length > 0) {
+        emitTable({
+          type: 'rowUpsert',
+          sheet: effectiveSheetId,
+          row: { ...item.row },
+        });
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    sheet: effectiveSheetId,
+    rows: results.map((r) => r.row),
+    results,
+  };
 }
 
 function slugifySheetId(name: string): string {
@@ -469,11 +738,43 @@ function slugifySheetId(name: string): string {
   return id;
 }
 
-export function createTableSheet(name: string): TableSheetMeta | null {
+/** Display-name key for uniqueness (trim + case-insensitive). */
+function sheetNameKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/** True if another sheet in the same thread already uses this display name (case-insensitive). */
+export function isTableSheetNameTaken(
+  name: string,
+  excludeSheetId?: string,
+  threadId?: string | null,
+): boolean {
+  const key = sheetNameKey(name);
+  if (!key) return false;
+  const scope = (threadId ?? '').trim();
+  for (const other of sheetStore.values()) {
+    if (excludeSheetId && other.meta.id === excludeSheetId) continue;
+    if ((other.meta.threadId ?? '') !== scope) continue;
+    if (sheetNameKey(other.meta.name) === key) return true;
+  }
+  return false;
+}
+
+export function createTableSheet(
+  name: string,
+  threadId?: string | null,
+): TableSheetMeta | null {
   const trimmed = name.trim();
   if (!trimmed) return null;
+  const scope = threadId?.trim() || null;
+  if (isTableSheetNameTaken(trimmed, undefined, scope)) return null;
   const id = slugifySheetId(trimmed);
-  const meta: TableSheetMeta = { id, name: trimmed, builtin: false };
+  const meta: TableSheetMeta = {
+    id,
+    name: trimmed,
+    builtin: false,
+    threadId: scope,
+  };
   sheetStore.set(id, {
     meta,
     columns: cloneColumns(),
@@ -482,6 +783,20 @@ export function createTableSheet(name: string): TableSheetMeta | null {
   tablePersist(id);
   emitTable({ type: 'sheetsChange' });
   return { ...meta };
+}
+
+/** Rename a sheet's display name. Sheet id stays stable so tool/API references keep working. */
+export function renameTableSheet(sheetId: string, name: string): TableSheetMeta | null {
+  const sheet = sheetStore.get(sheetId);
+  if (!sheet) return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  if (sheet.meta.name === trimmed) return { ...sheet.meta };
+  if (isTableSheetNameTaken(trimmed, sheetId, sheet.meta.threadId)) return null;
+  sheet.meta = { ...sheet.meta, name: trimmed };
+  tablePersist(sheetId);
+  emitTable({ type: 'sheetsChange' });
+  return { ...sheet.meta };
 }
 
 export async function deleteTableSheet(sheetId: string): Promise<boolean> {
@@ -531,15 +846,41 @@ export function addTableRow(sheetId: string): TableRowData | null {
   return { ...row };
 }
 
-export function deleteTableRows(sheetId: string, rowKeys: string[]): number {
+/** Snapshot of a row removed by deleteTableRows, for transcript rewind restore. */
+export type DeletedTableRowSnapshot = {
+  index: number;
+  row: TableRowData;
+};
+
+export type DeleteTableRowsResult = {
+  removed: number;
+  rows: DeletedTableRowSnapshot[];
+};
+
+export function deleteTableRows(
+  sheetId: string,
+  rowKeys: string[],
+): DeleteTableRowsResult {
   const sheet = getSheet(resolveTableSheetId(sheetId));
-  if (!sheet || rowKeys.length === 0) return 0;
+  if (!sheet || rowKeys.length === 0) return { removed: 0, rows: [] };
   const drop = new Set(rowKeys);
-  const before = sheet.rows.length;
+  const removedRows: DeletedTableRowSnapshot[] = [];
+  for (let i = 0; i < sheet.rows.length; i++) {
+    const row = sheet.rows[i]!;
+    if (drop.has(tableRowKey(row))) {
+      removedRows.push({ index: i, row: { ...row } });
+    }
+  }
+  if (removedRows.length === 0) return { removed: 0, rows: [] };
   sheet.rows = sheet.rows.filter((r) => !drop.has(tableRowKey(r)));
-  tablePersist(resolveTableSheetId(sheetId));
-  emitTable({ type: 'rowsDelete', sheet: resolveTableSheetId(sheetId), keys: rowKeys });
-  return before - sheet.rows.length;
+  const effectiveId = resolveTableSheetId(sheetId);
+  tablePersist(effectiveId);
+  emitTable({
+    type: 'rowsDelete',
+    sheet: effectiveId,
+    keys: removedRows.map((s) => tableRowKey(s.row)),
+  });
+  return { removed: removedRows.length, rows: removedRows };
 }
 
 export function addTableColumn(sheetId: string, name: string): TableColumnDef | null {
@@ -677,7 +1018,7 @@ export function importTableSheet(
   fresh.rows = importedRows.map((raw) => {
     const base = emptyRow();
     const mapped = normalizeImportedRow(raw, fresh.columns);
-    const clean = sanitizePatch(mapped, fresh.columns);
+    const clean = sanitizePatch(mapped, fresh.columns).applied;
     return { ...base, ...clean };
   });
 

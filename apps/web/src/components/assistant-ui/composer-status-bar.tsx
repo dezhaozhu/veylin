@@ -244,14 +244,15 @@ export function ComposerStatusBar() {
 
   const displayTasks = useMemo(() => {
     const mergeOpts = { pinnedTaskIds, interruptedTaskIds };
-    const base =
-      batchTasks.length > 0
-        ? batchTasks
-        : mergePanelBackgroundTasksFromThread(threadMessages, allStoreTasks, mergeOpts);
-    if (!needsTaskFallbackPoll || fallbackTasks.length === 0) {
-      return mergePanelBackgroundTasksFromThread(threadMessages, base, mergeOpts);
+    // Avoid re-merging already-merged batchTasks (would re-inject optimistic
+    // toolCallId rows alongside store task_id rows).
+    if (needsTaskFallbackPoll && fallbackTasks.length > 0) {
+      return mergePanelBackgroundTasksFromThread(threadMessages, fallbackTasks, mergeOpts);
     }
-    return mergePanelBackgroundTasksFromThread(threadMessages, fallbackTasks, mergeOpts);
+    if (batchTasks.length > 0) {
+      return applyInterruptedTaskIds(batchTasks, interruptedTaskIds);
+    }
+    return mergePanelBackgroundTasksFromThread(threadMessages, allStoreTasks, mergeOpts);
   }, [
     batchTasks,
     allStoreTasks,
@@ -271,6 +272,8 @@ export function ComposerStatusBar() {
   const terminalTasks = displayTasks.filter((task) =>
     task.status === 'done' || task.status === 'failed' || task.status === 'cancelled',
   );
+  const allAgentsDone =
+    displayTasks.length > 0 && terminalTasks.length === displayTasks.length;
 
   useEffect(() => {
     if (!threadId) return;
@@ -332,14 +335,21 @@ export function ComposerStatusBar() {
               <ListTodoIcon className="size-3.5" />
             )}
             {allTodosDone
-              ? t('status.allDone')
+              ? t('status.allDone', { count: total })
               : t('status.todosProgress', { done: doneCount, total })}
           </span>
         )}
         {displayTasks.length > 0 && (
-          <span className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              'flex items-center gap-1.5',
+              allAgentsDone && 'text-green-600',
+            )}
+          >
             {runningTasks.length > 0 ? (
               <LoaderIcon className="size-3.5 animate-spin" />
+            ) : allAgentsDone ? (
+              <CheckCircle2Icon className="size-3.5" />
             ) : (
               <BotIcon className="size-3.5" />
             )}
@@ -347,7 +357,7 @@ export function ComposerStatusBar() {
               ? t('status.agentsRunning', { count: runningTasks.length })
               : queuedTasks.length > 0
                 ? t('status.agentsQueued', { count: queuedTasks.length })
-                : terminalTasks.length === displayTasks.length
+                : allAgentsDone
                   ? t('status.agentsDone', { count: displayTasks.length })
                   : t('status.agentsCount', { count: displayTasks.length })}
           </span>
@@ -392,7 +402,10 @@ export function ComposerStatusBar() {
               <div className="mb-1 flex flex-col gap-0.5">
                 <div className="flex items-center gap-1.5 font-medium text-foreground">
                   <BotIcon className="size-3.5" />
-                  {t('status.agentsHeading', { count: displayTasks.length })}
+                  {t('status.agentsHeading', {
+                    done: terminalTasks.length,
+                    total: displayTasks.length,
+                  })}
                 </div>
                 {queuedTasks.length > 0 ? (
                   <p className="text-muted-foreground ps-5 text-[10px] leading-snug">
@@ -408,7 +421,8 @@ export function ComposerStatusBar() {
                   const row = asTaskRow(task);
                   const title = formatTaskDisplayName(row);
                   const distinctLabel = hasDistinctTaskLabel(row);
-                  const statusLabel = taskStatusLabel(task.status);
+                  const statusLabel =
+                    task.status === 'done' ? null : taskStatusLabel(task.status);
                   return (
                     <li key={task.id} className="flex min-w-0 items-center gap-2">
                       <span className="mt-px w-4 shrink-0 text-center">
@@ -418,7 +432,10 @@ export function ComposerStatusBar() {
                         className={cn(
                           'min-w-0 flex-1 truncate',
                           task.status === 'running' && 'text-foreground font-medium',
-                          task.status === 'done' && 'text-foreground',
+                          task.status === 'done' &&
+                            'text-muted-foreground line-through',
+                          task.status === 'cancelled' &&
+                            'text-muted-foreground line-through opacity-60',
                           task.status === 'failed' && 'text-destructive',
                           task.status === 'queued' && 'text-muted-foreground',
                         )}
@@ -436,7 +453,6 @@ export function ComposerStatusBar() {
                           className={cn(
                             'shrink-0 rounded px-1 py-0.5 text-[10px]',
                             task.status === 'running' && 'bg-primary/10 text-primary',
-                            task.status === 'done' && 'bg-green-500/10 text-green-700 dark:text-green-400',
                             task.status === 'failed' && 'bg-destructive/10 text-destructive',
                             task.status === 'queued' && 'bg-muted text-muted-foreground',
                             task.status === 'cancelled' && 'bg-muted text-muted-foreground',

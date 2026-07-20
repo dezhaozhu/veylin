@@ -40,6 +40,7 @@ export interface ThreadStateRow {
   planMode: boolean;
   todos: TodoItem[];
   activatedSkills: Record<string, string>;
+  pinnedSkills: string[];
   workingMemory: string | null;
   title: string | null;
   goal: ThreadGoalState | null;
@@ -65,6 +66,7 @@ export function ephemeralThreadState(identity: ThreadIdentity): ThreadStateRow {
     planMode: false,
     todos: [],
     activatedSkills: {},
+    pinnedSkills: [],
     workingMemory: null,
     title: null,
     goal: null,
@@ -81,6 +83,7 @@ function toRow(r: Awaited<ReturnType<typeof getThreadStateRow>>): ThreadStateRow
     planMode: r.planMode,
     todos: (r.todos as TodoItem[]) ?? [],
     activatedSkills: r.activatedSkills ?? {},
+    pinnedSkills: r.pinnedSkills ?? [],
     workingMemory: r.workingMemory ?? null,
     title: r.title ?? null,
     goal: asGoal(r.goal),
@@ -114,6 +117,7 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
     planMode: false,
     todos: [],
     activatedSkills: {},
+    pinnedSkills: [],
     workingMemory: null,
     title: null,
     goal: null,
@@ -126,6 +130,7 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
     planMode: false,
     todos: [],
     activatedSkills: {},
+    pinnedSkills: [],
     workingMemory: null,
     title: null,
     goal: null,
@@ -289,9 +294,78 @@ export async function activateSkill(
 ): Promise<Record<string, string>> {
   const row = await getThreadStateRow(threadId);
   const prev = (row?.activatedSkills as Record<string, string>) ?? {};
-  if (prev[name]) return prev;
+  if (prev[name] === content) return prev;
   const next = { ...prev, [name]: content };
   if (row) {
+    await updateThreadState(threadId, { activatedSkills: next });
+  }
+  return next;
+}
+
+/** Mark a skill as user-pinned in the composer (slash /skill). Does not activate content. */
+export async function pinSkill(threadId: string, name: string): Promise<string[]> {
+  const row = await getThreadStateRow(threadId);
+  const prev = row?.pinnedSkills ?? [];
+  if (prev.includes(name)) return prev;
+  const next = [...prev, name];
+  if (row) {
+    await updateThreadState(threadId, { pinnedSkills: next });
+  }
+  return next;
+}
+
+/**
+ * Activate skill content for memory and pin it in the composer.
+ * Only for user-initiated pendingSkill (slash), not Skill tool.
+ */
+export async function activateAndPinSkill(
+  threadId: string,
+  name: string,
+  content: string,
+): Promise<{ activatedSkills: Record<string, string>; pinnedSkills: string[] }> {
+  const activatedSkills = await activateSkill(threadId, name, content);
+  const pinnedSkills = await pinSkill(threadId, name);
+  return { activatedSkills, pinnedSkills };
+}
+
+/**
+ * Re-read activated skill bodies from disk/catalog so customize edits apply on
+ * the next turn without requiring re-activation. Missing skills keep prior text.
+ */
+export function mergeActivatedSkillContents(
+  prev: Record<string, string>,
+  latestByName: Record<string, string | null | undefined>,
+): { next: Record<string, string>; changed: boolean } {
+  let changed = false;
+  const next: Record<string, string> = { ...prev };
+  for (const name of Object.keys(prev)) {
+    const latest = latestByName[name];
+    if (latest != null && latest !== prev[name]) {
+      next[name] = latest;
+      changed = true;
+    }
+  }
+  return { next, changed };
+}
+
+export async function refreshActivatedSkills(
+  threadId: string,
+  resolveContent: (name: string) => Promise<string | null>,
+): Promise<Record<string, string>> {
+  const row = await getThreadStateRow(threadId);
+  const prev = (row?.activatedSkills as Record<string, string>) ?? {};
+  const names = Object.keys(prev);
+  if (names.length === 0) return prev;
+
+  const latestByName: Record<string, string | null> = {};
+  await Promise.all(
+    names.map(async (name) => {
+      latestByName[name] = await resolveContent(name);
+    }),
+  );
+
+  const { next, changed } = mergeActivatedSkillContents(prev, latestByName);
+  if (changed && row) {
     await updateThreadState(threadId, { activatedSkills: next });
   }
   return next;
@@ -347,6 +421,7 @@ export async function captureThreadSnapshot(
     todos: state.todos,
     planMode: state.planMode,
     activatedSkills: state.activatedSkills,
+    pinnedSkills: state.pinnedSkills,
     workingMemory,
     goal: state.goal,
     loop: state.loop,
@@ -363,6 +438,7 @@ export async function applyThreadSnapshot(
     planMode: snapshot.planMode,
     todos: snapshot.todos,
     activatedSkills: snapshot.activatedSkills,
+    pinnedSkills: snapshot.pinnedSkills ?? [],
     workingMemory: snapshot.workingMemory,
     goal: snapshot.goal ?? null,
     loop: snapshot.loop ?? null,
@@ -385,8 +461,9 @@ export function todosFromMessageHistory(messages: UiMessage[]): TodoItem[] | nul
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m?.role !== 'assistant' || !m.parts) continue;
-    for (const part of m.parts) {
-      const p = part as {
+    // Walk parts backward so multiple todo_write calls in one turn yield the latest.
+    for (let j = m.parts.length - 1; j >= 0; j--) {
+      const p = m.parts[j] as {
         type?: string;
         toolName?: string;
         input?: { todos?: TodoItem[] };

@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import {
   addTableColumn,
   addTableRow,
@@ -6,12 +6,16 @@ import {
   deleteTableColumn,
   deleteTableRows,
   deleteTableSheet,
+  getTableSheetMeta,
   importTableSheet,
+  isTableSheetNameTaken,
   listTableColumns,
   listTableRows,
   listTableSheets,
+  renameTableSheet,
   resolveTableSheetId,
-  updateTableRow,
+  sheetBelongsToThread,
+  updateTableRows,
   DEFAULT_TABLE_SHEET,
   onTableEvent,
   type TableRowPatch,
@@ -27,18 +31,60 @@ import {
   type ProposeEditBody,
 } from '../schedule-edit.js';
 
+function requireThreadId(
+  reply: FastifyReply,
+  threadId: string | undefined | null,
+): string | null {
+  const scoped = threadId?.trim();
+  if (!scoped) {
+    reply.code(400);
+    return null;
+  }
+  return scoped;
+}
+
+type SheetAccess = { sheetId: string; threadId: string };
+
+/** Resolve sheet and enforce thread ownership. Returns null after writing an error reply. */
+function requireThreadSheet(
+  reply: FastifyReply,
+  sheetParam: string | undefined,
+  threadId: string | undefined | null,
+): SheetAccess | { error: { ok: false; message: string } } {
+  const scoped = threadId?.trim();
+  if (!scoped) {
+    reply.code(400);
+    return { error: { ok: false, message: 'threadId is required' } };
+  }
+  const sheetId = resolveTableSheetId(sheetParam);
+  if (!sheetBelongsToThread(sheetId, scoped)) {
+    reply.code(404);
+    return { error: { ok: false, message: 'sheet not found' } };
+  }
+  return { sheetId, threadId: scoped };
+}
+
+function isSheetAccess(
+  value: SheetAccess | { error: { ok: false; message: string } },
+): value is SheetAccess {
+  return 'sheetId' in value;
+}
+
 export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // Editable multi-sheet table dataset for the right-panel data grid.
-  app.get('/api/table', async (req) => {
+  app.get('/api/table', async (req, reply) => {
     await deps.resolveContext(req.headers);
-    const { sheet } = req.query as { sheet?: string };
-    const sheetId = resolveTableSheetId(sheet);
+    const { sheet, threadId } = req.query as { sheet?: string; threadId?: string };
+    const access = requireThreadSheet(reply, sheet, threadId);
+    if (!isSheetAccess(access)) {
+      return access.error;
+    }
     return {
-      sheet: sheetId,
-      sheets: listTableSheets(),
+      sheet: access.sheetId,
+      sheets: listTableSheets(access.threadId),
       defaultSheet: DEFAULT_TABLE_SHEET,
-      columns: listTableColumns(sheetId),
-      rows: listTableRows(sheetId),
+      columns: listTableColumns(access.sheetId),
+      rows: listTableRows(access.sheetId),
     };
   });
 
@@ -174,129 +220,239 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     return result;
   });
 
+  // Lightweight sheet-tab list (no row payload) — used after sheetsChange SSE.
+  app.get('/api/table/sheets', async (req, reply) => {
+    await deps.resolveContext(req.headers);
+    const { threadId } = req.query as { threadId?: string };
+    const scoped = requireThreadId(reply, threadId);
+    if (!scoped) {
+      return { ok: false, message: 'threadId is required' };
+    }
+    return { ok: true, sheets: listTableSheets(scoped) };
+  });
+
   app.post('/api/table/sheets', async (req, reply) => {
     await deps.resolveContext(req.headers);
-    const { name } = (req.body ?? {}) as { name?: string };
-    if (!name?.trim()) {
+    const { name, threadId } = (req.body ?? {}) as { name?: string; threadId?: string };
+    const trimmed = name?.trim();
+    const scoped = requireThreadId(reply, threadId);
+    if (!trimmed) {
       reply.code(400);
       return { ok: false, message: 'name is required' };
     }
-    const sheet = createTableSheet(name);
+    if (!scoped) {
+      return { ok: false, message: 'threadId is required' };
+    }
+    if (isTableSheetNameTaken(trimmed, undefined, scoped)) {
+      reply.code(409);
+      return {
+        ok: false,
+        message: `Sheet name "${trimmed}" already exists. Sheet names must be unique.`,
+      };
+    }
+    const sheet = createTableSheet(trimmed, scoped);
     if (!sheet) {
       reply.code(400);
       return { ok: false, message: 'Failed to create sheet' };
     }
-    return { ok: true, sheet, sheets: listTableSheets() };
+    return { ok: true, sheet, sheets: listTableSheets(scoped) };
   });
 
   app.delete('/api/table/sheets/:sheetId', async (req, reply) => {
     await deps.resolveContext(req.headers);
     const { sheetId } = req.params as { sheetId: string };
+    const { threadId } = req.query as { threadId?: string };
+    const scoped = requireThreadId(reply, threadId);
+    if (!scoped) {
+      return { ok: false, message: 'threadId is required' };
+    }
+    const existing = getTableSheetMeta(sheetId);
+    if (!existing || (existing.threadId ?? '') !== scoped) {
+      reply.code(404);
+      return { ok: false, message: 'sheet not found' };
+    }
     const ok = await deleteTableSheet(sheetId);
     if (!ok) {
       reply.code(400);
       return { ok: false, message: 'Failed to delete sheet' };
     }
-    const sheets = listTableSheets();
+    const sheets = listTableSheets(scoped);
     const nextSheet = sheets[0]?.id ?? DEFAULT_TABLE_SHEET;
     return { ok: true, sheets, nextSheet };
   });
 
+  app.patch('/api/table/sheets/:sheetId', async (req, reply) => {
+    await deps.resolveContext(req.headers);
+    const { sheetId } = req.params as { sheetId: string };
+    const { name, threadId } = (req.body ?? {}) as { name?: string; threadId?: string };
+    const trimmed = name?.trim();
+    if (!trimmed) {
+      reply.code(400);
+      return { ok: false, message: 'name is required' };
+    }
+    const scoped = requireThreadId(reply, threadId);
+    if (!scoped) {
+      return { ok: false, message: 'threadId is required' };
+    }
+    const existing = getTableSheetMeta(sheetId);
+    if (!existing || (existing.threadId ?? '') !== scoped) {
+      reply.code(404);
+      return { ok: false, message: 'sheet not found' };
+    }
+    if (isTableSheetNameTaken(trimmed, sheetId, scoped)) {
+      reply.code(409);
+      return {
+        ok: false,
+        message: `Sheet name "${trimmed}" already exists. Sheet names must be unique.`,
+      };
+    }
+    const sheet = renameTableSheet(sheetId, trimmed);
+    if (!sheet) {
+      reply.code(400);
+      return { ok: false, message: 'Failed to rename sheet' };
+    }
+    return { ok: true, sheet, sheets: listTableSheets(scoped) };
+  });
+
   app.post('/api/table/rows', async (req, reply) => {
     await deps.resolveContext(req.headers);
-    const { sheet } = (req.body ?? {}) as { sheet?: string };
-    const sheetId = resolveTableSheetId(sheet);
-    const row = addTableRow(sheetId);
+    const { sheet, threadId } = (req.body ?? {}) as { sheet?: string; threadId?: string };
+    const access = requireThreadSheet(reply, sheet, threadId);
+    if (!isSheetAccess(access)) {
+      return access.error;
+    }
+    const row = addTableRow(access.sheetId);
     if (!row) {
       reply.code(400);
       return { ok: false, message: 'Failed to add row' };
     }
-    return { ok: true, sheet: sheetId, row, rows: listTableRows(sheetId) };
+    return { ok: true, sheet: access.sheetId, row, rows: listTableRows(access.sheetId) };
   });
 
   app.delete('/api/table/rows', async (req, reply) => {
     await deps.resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
+      threadId?: string;
       row_keys?: string[];
       order_nos?: string[];
     };
-    const sheetId = resolveTableSheetId(body.sheet);
+    const access = requireThreadSheet(reply, body.sheet, body.threadId);
+    if (!isSheetAccess(access)) {
+      return access.error;
+    }
     const rowKeys = body.row_keys ?? body.order_nos ?? [];
-    const removed = deleteTableRows(sheetId, rowKeys);
-    return { ok: true, sheet: sheetId, removed, rows: listTableRows(sheetId) };
+    const { removed } = deleteTableRows(access.sheetId, rowKeys);
+    return { ok: true, sheet: access.sheetId, removed, rows: listTableRows(access.sheetId) };
   });
 
   app.post('/api/table/columns', async (req, reply) => {
     await deps.resolveContext(req.headers);
-    const { sheet, name } = (req.body ?? {}) as { sheet?: string; name?: string };
-    const sheetId = resolveTableSheetId(sheet);
+    const { sheet, name, threadId } = (req.body ?? {}) as {
+      sheet?: string;
+      name?: string;
+      threadId?: string;
+    };
+    const access = requireThreadSheet(reply, sheet, threadId);
+    if (!isSheetAccess(access)) {
+      return access.error;
+    }
     if (!name?.trim()) {
       reply.code(400);
       return { ok: false, message: 'name is required' };
     }
-    const column = addTableColumn(sheetId, name);
+    const column = addTableColumn(access.sheetId, name);
     if (!column) {
       reply.code(400);
       return { ok: false, message: 'Failed to add column' };
     }
     return {
       ok: true,
-      sheet: sheetId,
+      sheet: access.sheetId,
       column,
-      columns: listTableColumns(sheetId),
-      rows: listTableRows(sheetId),
+      columns: listTableColumns(access.sheetId),
     };
   });
 
   app.delete('/api/table/columns', async (req, reply) => {
     await deps.resolveContext(req.headers);
-    const { sheet, key } = (req.body ?? {}) as { sheet?: string; key?: string };
-    const sheetId = resolveTableSheetId(sheet);
-    if (!key || !deleteTableColumn(sheetId, key)) {
+    const { sheet, key, threadId } = (req.body ?? {}) as {
+      sheet?: string;
+      key?: string;
+      threadId?: string;
+    };
+    const access = requireThreadSheet(reply, sheet, threadId);
+    if (!isSheetAccess(access)) {
+      return access.error;
+    }
+    if (!key || !deleteTableColumn(access.sheetId, key)) {
       reply.code(400);
       return { ok: false, message: 'Failed to delete column' };
     }
     return {
       ok: true,
-      sheet: sheetId,
-      columns: listTableColumns(sheetId),
-      rows: listTableRows(sheetId),
+      sheet: access.sheetId,
+      columns: listTableColumns(access.sheetId),
+      rows: listTableRows(access.sheetId),
     };
   });
 
-  app.patch('/api/table', async (req, reply) => {
+  app.patch('/api/table/rows', async (req, reply) => {
     await deps.resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
-      row_key?: string;
-      row_id?: string;
-      order_no?: string;
-    } & TableRowPatch;
-    const { sheet, row_key, row_id, order_no, ...patch } = body;
-    const key = row_key ?? row_id ?? order_no;
-    if (key == null || key === '') {
+      threadId?: string;
+      rows?: Array<
+        {
+          row_key?: string;
+          row_id?: string;
+          order_no?: string;
+        } & TableRowPatch
+      >;
+    };
+    const { sheet, threadId, rows: rawRows } = body;
+    if (!Array.isArray(rawRows) || rawRows.length === 0) {
       reply.code(400);
-      return { ok: false, message: 'row_key is required' };
+      return { ok: false, message: 'rows must contain at least one update' };
     }
-    const sheetId = resolveTableSheetId(sheet);
-    const row = await updateTableRow(key, patch, sheetId);
-    if (!row) {
-      reply.code(404);
-      return { ok: false, message: 'Row not found' };
+    const access = requireThreadSheet(reply, sheet, threadId);
+    if (!isSheetAccess(access)) {
+      return access.error;
     }
-    return { ok: true, sheet: sheetId, row };
+    const updates = rawRows.map((entry) => {
+      const { row_key, row_id, order_no, ...patch } = entry;
+      return {
+        rowKey: String(row_key ?? row_id ?? order_no ?? ''),
+        patch,
+      };
+    });
+    const result = await updateTableRows(updates, access.sheetId);
+    if (!result.ok) {
+      const notFound = /not found/i.test(result.message);
+      reply.code(notFound ? 404 : 400);
+      return { ok: false, message: result.message, rejected: result.rejected };
+    }
+    return {
+      ok: true,
+      sheet: result.sheet,
+      rows: result.rows,
+      updated: result.results.length,
+    };
   });
 
   app.post('/api/table/import', async (req, reply) => {
     await deps.resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
+      threadId?: string;
       rows?: TableRowPatch[];
       column_names?: string[];
       new_column_names?: string[];
     };
-    const sheetId = resolveTableSheetId(body.sheet);
+    const access = requireThreadSheet(reply, body.sheet, body.threadId);
+    if (!isSheetAccess(access)) {
+      return access.error;
+    }
     if (!Array.isArray(body.rows)) {
       reply.code(400);
       return { ok: false, message: 'rows is required' };
@@ -305,18 +461,16 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       body.column_names ??
       body.new_column_names ??
       [];
-    const result = importTableSheet(sheetId, columnNames, body.rows);
+    const result = importTableSheet(access.sheetId, columnNames, body.rows);
     if (!result) {
       reply.code(400);
       return { ok: false, message: 'Import failed' };
     }
     return {
       ok: true,
-      sheet: sheetId,
+      sheet: access.sheetId,
       columns: result.columns,
       rows: result.rows,
     };
   });
-
-
 }

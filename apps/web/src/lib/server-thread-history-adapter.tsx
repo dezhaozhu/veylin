@@ -141,7 +141,8 @@ class ServerThreadHistoryAdapter implements ThreadHistoryAdapter {
         };
       },
 
-      // Mastra persists messages during /api/chat; no duplicate writes needed.
+      // Client sync (onFinish / pagehide) is authoritative for chat transcripts.
+      // Mastra stream memory is readOnly — it must not append mid-turn messages.
       async append(_item: MessageFormatItem<TMessage>): Promise<void> {},
 
       async delete(_items: MessageFormatItem<TMessage>[]): Promise<void> {},

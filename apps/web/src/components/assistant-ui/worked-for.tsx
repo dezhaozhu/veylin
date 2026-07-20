@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FC, type PropsWithChildren } from "react";
+import { type FC, type PropsWithChildren } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { useMessageTiming } from "@assistant-ui/react";
 import { useTranslation } from "react-i18next";
@@ -18,23 +18,40 @@ function secondsFromTimingMs(ms: number | undefined): number | undefined {
 }
 
 /**
- * Cursor-style "Worked for Xs" shell: collapses all pre-final assistant work
- * after the turn completes. Hover reveals the chevron; click expands.
- *
- * `elapsedSeconds` should be tracked by the parent while the message is
- * streaming — this block only mounts after completion, so it cannot start
- * the wall clock itself.
+ * Cursor-style "Worked for Xs" shell. When the turn folds into multiple
+ * group-worked-for islands (split by visible prose), the parent coordinates
+ * `isPrimary` / `open` so only one label is shown and secondaries follow.
  */
 export const WorkedForBlock: FC<
-  PropsWithChildren<{ elapsedSeconds?: number }>
-> = ({ children, elapsedSeconds }) => {
+  PropsWithChildren<{
+    elapsedSeconds?: number;
+    /** When false, never show seconds (even if message timing metadata exists). */
+    showDuration?: boolean;
+    /** First island renders the trigger; later islands only show when open. */
+    isPrimary?: boolean;
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+  }>
+> = ({
+  children,
+  elapsedSeconds,
+  showDuration = true,
+  isPrimary = true,
+  open = false,
+  onOpenChange,
+}) => {
   const { t } = useTranslation();
   const timing = useMessageTiming();
-  const [open, setOpen] = useState(false);
 
-  const seconds =
-    secondsFromTimingMs(timing?.totalStreamTime) ??
-    (elapsedSeconds != null && elapsedSeconds > 0 ? elapsedSeconds : undefined);
+  if (!isPrimary) {
+    if (!open) return null;
+    return <div className="flex flex-col gap-2">{children}</div>;
+  }
+
+  const seconds = showDuration
+    ? (secondsFromTimingMs(timing?.totalStreamTime) ??
+      (elapsedSeconds != null && elapsedSeconds > 0 ? elapsedSeconds : undefined))
+    : undefined;
 
   const label =
     seconds != null
@@ -45,10 +62,12 @@ export const WorkedForBlock: FC<
     <Collapsible
       data-slot="aui_worked-for"
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={onOpenChange}
       className="aui-worked-for-root w-full"
     >
-      <CollapsiblePanelContext.Provider value={{ isOpen: open, isStreaming: false }}>
+      <CollapsiblePanelContext.Provider
+        value={{ isOpen: open, isStreaming: false }}
+      >
         <CollapsibleTrigger
           data-slot="aui_worked-for-trigger"
           aria-label={label}

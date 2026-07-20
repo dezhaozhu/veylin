@@ -51,6 +51,7 @@
 - **Skills** — bundled / user / plugin；Composer 中激活
 - **Rules** — always / keyword 注入 system prompt
 - **MCP** — 远程 SSE/HTTP；变更后刷新工具集
+- **业务连接** — 设置 → 业务连接：接入企业 MCP（URL、凭证、工具白名单）与可选审计 Webhook；身份 / 组织 / 审计为可替换 Port，详见 [docs/enterprise-ports.md](./docs/enterprise-ports.md)
 - **Hooks** — 兼容 Claude Code 生命周期事件（user / project / plugin）
 - **Plugins** — path / git / marketplace；可捆绑 skills + hooks + MCP  
   详见 [docs/hooks-skills-plugins.md](./docs/hooks-skills-plugins.md) 与 [examples/](./examples/)
@@ -103,7 +104,9 @@ npm run dev                   # server :8787 + web :5174
 npm run -w @veylin/desktop dev
 ```
 
-数据目录由 `VEYLIN_DATA_DIR` 指定（开发默认仓库内 `./data`）。桌面免登录：`VEYLIN_DESKTOP_AUTH=1`。
+数据目录由 `VEYLIN_DATA_DIR` 指定（开发默认仓库内 `./data`）。桌面免登录：`VEYLIN_DESKTOP_AUTH=1`。托管 / 共享部署请关闭免登录，设置 `AUTH_SECRET`，使用本地注册登录（或 `IDENTITY_PROVIDER=oidc|webhook`）。
+
+环境变量见 [`.env.example`](./.env.example)（含 Context engineering、可选 Langfuse、身份 / 审计等）与 [docs/enterprise-ports.md](./docs/enterprise-ports.md)。
 
 ## 打包桌面应用
 
@@ -121,11 +124,11 @@ npm run -w @veylin/desktop build
 - **微压缩**：旧的大工具结果可替换为占位，保留近轮完整输出
 - **Compaction**：历史超阈值时摘要较早消息（可按 context window 比例自动触发）
 
-环境变量见 `.env.example`（含 Context engineering、可选 Langfuse 等）。
+详见上方「本地启动」中的 `.env.example` 说明。
 
 ## 安全
 
-见 [SECURITY.md](./SECURITY.md)。共享或生产部署请设置 `AUTH_SECRET`，并关闭桌面免登录。
+见 [SECURITY.md](./SECURITY.md)。共享或生产部署请设置 `AUTH_SECRET`，关闭桌面免登录（`VEYLIN_DESKTOP_AUTH=0`），需要时接入企业身份 / 审计外接（[docs/enterprise-ports.md](./docs/enterprise-ports.md)）。
 
 ## 贡献
 

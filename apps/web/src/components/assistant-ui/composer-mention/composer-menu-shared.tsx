@@ -49,6 +49,7 @@ export function ComposerTriggerMenuShell({
         }}
         role="listbox"
         aria-label={ariaLabel}
+        onClick={(e) => e.stopPropagation()}
       >
         {children}
       </div>

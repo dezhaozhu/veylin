@@ -19,6 +19,7 @@ function mapDocument(r: Record<string, unknown>): DocumentRow {
   return {
     id: normalizeId(r.id),
     tenantId: String(r.tenant_id ?? ''),
+    threadId: String(r.thread_id ?? ''),
     filename: String(r.filename ?? ''),
     mimeType: (r.mime_type as string | null) ?? null,
     sizeBytes: r.size_bytes != null ? Number(r.size_bytes) : null,
@@ -33,6 +34,7 @@ function mapChunk(r: Record<string, unknown>): ChunkRow {
     id: normalizeId(r.id),
     documentId: String(r.document_id ?? ''),
     tenantId: String(r.tenant_id ?? ''),
+    threadId: String(r.thread_id ?? ''),
     text: String(r.text ?? ''),
     source: String(r.source ?? ''),
     offset: Number(r.offset ?? 0),
@@ -48,6 +50,7 @@ function mapEntity(r: Record<string, unknown>): EntityRow {
   return {
     id: normalizeId(r.id),
     tenantId: String(r.tenant_id ?? ''),
+    threadId: (r.thread_id as string | null) ?? null,
     name: String(r.name ?? ''),
     nameKey: String(r.name_key ?? normalizeEntityKey(String(r.name ?? ''))),
     type: String(r.type ?? 'concept'),
@@ -114,11 +117,11 @@ function withRefIndexes(refs: Omit<KnowledgeReference, 'refIndex'>[]): Knowledge
   return refs.map((ref, index) => ({ ...ref, refIndex: index + 1 }));
 }
 
-export async function listDocuments(tenantId: string): Promise<DocumentRow[]> {
+export async function listDocuments(tenantId: string, threadId: string): Promise<DocumentRow[]> {
   const rows = await queryRows<Record<string, unknown>>(
     getDb(),
-    'SELECT * FROM document WHERE tenant_id = $tenantId ORDER BY created_at DESC',
-    { tenantId },
+    'SELECT * FROM document WHERE tenant_id = $tenantId AND thread_id = $threadId ORDER BY created_at DESC',
+    { tenantId, threadId },
   );
   return rows.map(mapDocument);
 }
@@ -130,12 +133,14 @@ export async function getDocument(id: string): Promise<DocumentRow | null> {
 
 export async function insertDocument(
   tenantId: string,
+  threadId: string,
   input: { filename: string; mimeType?: string; sizeBytes?: number },
 ): Promise<DocumentRow> {
   const id = newId();
   await createRecord(getDb(), 'document', {
     id,
     tenant_id: tenantId,
+    thread_id: threadId,
     filename: input.filename,
     mime_type: input.mimeType ?? null,
     size_bytes: input.sizeBytes ?? null,
@@ -174,9 +179,14 @@ export async function listIndexingDocuments(): Promise<DocumentRow[]> {
   return rows.map(mapDocument);
 }
 
-export async function deleteDocument(tenantId: string, documentId: string): Promise<boolean> {
+export async function deleteDocument(
+  tenantId: string,
+  documentId: string,
+  threadId: string,
+): Promise<boolean> {
   const doc = await getDocument(documentId);
   if (!doc || doc.tenantId !== tenantId) return false;
+  if (doc.threadId !== threadId) return false;
 
   const db = getDb();
   await db.query('DELETE chunk_entity WHERE document_id = $documentId AND tenant_id = $tenantId', {
@@ -209,6 +219,7 @@ export async function insertChunk(row: Omit<ChunkRow, 'id'> & { id?: string }): 
     id,
     document_id: row.documentId,
     tenant_id: row.tenantId,
+    thread_id: row.threadId,
     text: row.text,
     source: row.source,
     offset: row.offset,
@@ -219,19 +230,21 @@ export async function insertChunk(row: Omit<ChunkRow, 'id'> & { id?: string }): 
 
 export async function searchChunksByText(
   tenantId: string,
+  threadId: string,
   query: string,
   limit = 8,
 ): Promise<ChunkRow[]> {
   const rows = await queryRows<Record<string, unknown>>(
     getDb(),
-    'SELECT * FROM chunk WHERE tenant_id = $tenantId AND string::contains(string::lowercase(text), string::lowercase($query)) LIMIT $limit',
-    { tenantId, query, limit },
+    'SELECT * FROM chunk WHERE tenant_id = $tenantId AND thread_id = $threadId AND string::contains(string::lowercase(text), string::lowercase($query)) LIMIT $limit',
+    { tenantId, threadId, query, limit },
   );
   return rows.map(mapChunk);
 }
 
 export async function searchChunksByVector(
   tenantId: string,
+  threadId: string,
   embedding: number[],
   limit = 8,
 ): Promise<Array<{ chunk: ChunkRow; sim: number }>> {
@@ -239,19 +252,19 @@ export async function searchChunksByVector(
     console.warn(
       `[rag] query embedding dim ${embedding.length} != ${CHUNK_EMBEDDING_DIMENSION}, using brute-force`,
     );
-    return searchChunksByVectorBruteForce(tenantId, embedding, limit);
+    return searchChunksByVectorBruteForce(tenantId, threadId, embedding, limit);
   }
   if (!isHnswVectorIndexReady()) {
-    return searchChunksByVectorBruteForce(tenantId, embedding, limit);
+    return searchChunksByVectorBruteForce(tenantId, threadId, embedding, limit);
   }
   try {
     const k = Math.max(1, Math.min(100, Math.floor(limit)));
     const rows = await queryRows<Record<string, unknown>>(
       getDb(),
       `SELECT *, vector::distance::knn() AS dist FROM chunk
-       WHERE tenant_id = $tenantId AND embedding <|${k}, 40|> $embedding
+       WHERE tenant_id = $tenantId AND thread_id = $threadId AND embedding <|${k}, 40|> $embedding
        ORDER BY dist`,
-      { tenantId, embedding },
+      { tenantId, threadId, embedding },
     );
     return rows.map((r) => ({
       chunk: mapChunk(r),
@@ -259,19 +272,20 @@ export async function searchChunksByVector(
     }));
   } catch (err) {
     console.warn('[rag] HNSW vector search failed, falling back to brute-force:', err);
-    return searchChunksByVectorBruteForce(tenantId, embedding, limit);
+    return searchChunksByVectorBruteForce(tenantId, threadId, embedding, limit);
   }
 }
 
 async function searchChunksByVectorBruteForce(
   tenantId: string,
+  threadId: string,
   embedding: number[],
   limit = 8,
 ): Promise<Array<{ chunk: ChunkRow; sim: number }>> {
   const rows = await queryRows<Record<string, unknown>>(
     getDb(),
-    'SELECT * FROM chunk WHERE tenant_id = $tenantId AND embedding != NONE',
-    { tenantId },
+    'SELECT * FROM chunk WHERE tenant_id = $tenantId AND thread_id = $threadId AND embedding != NONE',
+    { tenantId, threadId },
   );
   return rows
     .map((r) => {
@@ -295,6 +309,7 @@ async function searchChunksByVectorBruteForce(
 
 export async function upsertEntity(row: {
   tenantId: string;
+  threadId: string;
   name: string;
   type: string;
   description?: string | null;
@@ -303,8 +318,8 @@ export async function upsertEntity(row: {
   const nameKey = normalizeEntityKey(row.name);
   const existing = await queryRows<Record<string, unknown>>(
     getDb(),
-    'SELECT * FROM entity WHERE tenant_id = $tenantId AND document_id = $documentId AND name_key = $nameKey LIMIT 1',
-    { tenantId: row.tenantId, documentId: row.documentId, nameKey },
+    'SELECT * FROM entity WHERE tenant_id = $tenantId AND thread_id = $threadId AND document_id = $documentId AND name_key = $nameKey LIMIT 1',
+    { tenantId: row.tenantId, threadId: row.threadId, documentId: row.documentId, nameKey },
   );
   if (existing[0]) {
     const current = mapEntity(existing[0]);
@@ -335,6 +350,7 @@ export async function upsertEntity(row: {
   await createRecord(getDb(), 'entity', {
     id,
     tenant_id: row.tenantId,
+    thread_id: row.threadId,
     name: row.name.trim(),
     name_key: nameKey,
     type: row.type,
@@ -347,6 +363,7 @@ export async function upsertEntity(row: {
 export async function insertEntity(row: Omit<EntityRow, 'id' | 'nameKey'> & { id?: string }): Promise<EntityRow> {
   return upsertEntity({
     tenantId: row.tenantId,
+    threadId: row.threadId ?? '',
     name: row.name,
     type: row.type,
     description: row.description,
@@ -396,6 +413,7 @@ export async function insertRelates(row: {
 
 export async function searchEntitiesByQuery(
   tenantId: string,
+  threadId: string,
   query: string,
   limit = 6,
 ): Promise<EntityRow[]> {
@@ -407,8 +425,8 @@ export async function searchEntitiesByQuery(
   if (tokens.length === 0) return [];
   const rows = await queryRows<Record<string, unknown>>(
     getDb(),
-    'SELECT * FROM entity WHERE tenant_id = $tenantId LIMIT 200',
-    { tenantId },
+    'SELECT * FROM entity WHERE tenant_id = $tenantId AND thread_id = $threadId LIMIT 200',
+    { tenantId, threadId },
   );
   const scored = rows
     .map((r) => {
@@ -463,6 +481,7 @@ export async function getNeighborEntities(
 
 export async function getChunksForEntities(
   tenantId: string,
+  threadId: string,
   entityIds: string[],
   limit = 8,
 ): Promise<ChunkRow[]> {
@@ -476,7 +495,7 @@ export async function getChunksForEntities(
   const chunks: ChunkRow[] = [];
   for (const chunkId of chunkIds) {
     const row = await selectById<Record<string, unknown>>(getDb(), 'chunk', chunkId);
-    if (row) chunks.push(mapChunk(row));
+    if (row && String(row.thread_id ?? '') === threadId) chunks.push(mapChunk(row));
   }
   return chunks;
 }
@@ -485,25 +504,41 @@ export async function getChunksForEntity(
   tenantId: string,
   entityId: string,
   limit = 6,
+  threadId: string,
 ): Promise<ChunkRow[]> {
-  return getChunksForEntities(tenantId, [entityId], limit);
+  return getChunksForEntities(tenantId, threadId, [entityId], limit);
 }
 
 export async function listGraphForTenant(
   tenantId: string,
-  options?: { documentId?: string; limit?: number },
+  options: { threadId: string; documentId?: string; limit?: number },
 ): Promise<{ entities: EntityRow[]; edges: RelatesRow[] }> {
-  const limit = options?.limit ?? 200;
-  const documentId = options?.documentId;
-  const entityQuery = documentId
-    ? 'SELECT * FROM entity WHERE tenant_id = $tenantId AND document_id = $documentId LIMIT $limit'
-    : 'SELECT * FROM entity WHERE tenant_id = $tenantId LIMIT $limit';
-  const edgeQuery = documentId
-    ? 'SELECT * FROM relates WHERE tenant_id = $tenantId AND document_id = $documentId LIMIT $limit'
-    : 'SELECT * FROM relates WHERE tenant_id = $tenantId LIMIT $limit';
-  const params = documentId ? { tenantId, documentId, limit } : { tenantId, limit };
+  const limit = options.limit ?? 200;
+  const documentId = options.documentId;
+  const threadId = options.threadId;
+  if (!threadId.trim()) {
+    return { entities: [], edges: [] };
+  }
+  let entityQuery: string;
+  let edgeQuery: string;
+  let params: Record<string, unknown>;
+  if (documentId) {
+    entityQuery =
+      'SELECT * FROM entity WHERE tenant_id = $tenantId AND thread_id = $threadId AND document_id = $documentId LIMIT $limit';
+    edgeQuery =
+      'SELECT * FROM relates WHERE tenant_id = $tenantId AND document_id = $documentId LIMIT $limit';
+    params = { tenantId, threadId, documentId, limit };
+  } else {
+    entityQuery =
+      'SELECT * FROM entity WHERE tenant_id = $tenantId AND thread_id = $threadId LIMIT $limit';
+    edgeQuery = 'SELECT * FROM relates WHERE tenant_id = $tenantId LIMIT $limit';
+    params = { tenantId, threadId, limit };
+  }
   const entities = (await queryRows<Record<string, unknown>>(getDb(), entityQuery, params)).map(mapEntity);
-  const edges = (await queryRows<Record<string, unknown>>(getDb(), edgeQuery, params)).map(mapRelates);
+  const entityIds = new Set(entities.map((e) => e.id));
+  const edges = (await queryRows<Record<string, unknown>>(getDb(), edgeQuery, params))
+    .map(mapRelates)
+    .filter((e) => entityIds.has(e.fromEntityId) && entityIds.has(e.toEntityId));
   return { entities, edges };
 }
 
@@ -511,15 +546,17 @@ export type { KnowledgeReference };
 
 export async function hybridSearchChunks(
   tenantId: string,
+  threadId: string,
   query: string,
   embedding: number[] | null,
   limit = 8,
 ): Promise<KnowledgeReference[]> {
+  if (!threadId.trim()) return [];
   const candidateLimit = Math.max(limit * RRF_CANDIDATE_MULTIPLIER, 24);
   const [textHits, vecHits, seedEntities] = await Promise.all([
-    searchChunksByText(tenantId, query, candidateLimit),
-    embedding ? searchChunksByVector(tenantId, embedding, candidateLimit) : Promise.resolve([]),
-    searchEntitiesByQuery(tenantId, query, 6),
+    searchChunksByText(tenantId, threadId, query, candidateLimit),
+    embedding ? searchChunksByVector(tenantId, threadId, embedding, candidateLimit) : Promise.resolve([]),
+    searchEntitiesByQuery(tenantId, threadId, query, 6),
   ]);
 
   const neighborEntities = await getNeighborEntities(
@@ -527,8 +564,10 @@ export async function hybridSearchChunks(
     seedEntities.map((e) => e.id),
     8,
   );
-  const graphEntityIds = [...seedEntities, ...neighborEntities].map((e) => e.id);
-  const graphChunks = await getChunksForEntities(tenantId, graphEntityIds, candidateLimit);
+  const graphEntityIds = [...seedEntities, ...neighborEntities]
+    .filter((e) => e.threadId === threadId)
+    .map((e) => e.id);
+  const graphChunks = await getChunksForEntities(tenantId, threadId, graphEntityIds, candidateLimit);
 
   const textRefs = textHits.map((c, i) => chunkToReference(c, 1 - i * 0.05));
   const vecRefs = vecHits.map((hit, i) => chunkToReference(hit.chunk, hit.sim - i * 0.001));
