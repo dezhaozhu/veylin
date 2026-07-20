@@ -31,31 +31,26 @@ import {
   type ProposeEditBody,
 } from '../schedule-edit.js';
 
+// Fork seam: threadId is OPTIONAL on these routes. Sessions (dezhao's per-thread
+// sheet tabs) pass it and see global + their own sheets; our workspace AG-Grid
+// omits it and operates on the workspace scope (global sheets only). Session
+// sheets remain inaccessible without their matching threadId.
 function requireThreadId(
-  reply: FastifyReply,
+  _reply: FastifyReply,
   threadId: string | undefined | null,
 ): string | null {
-  const scoped = threadId?.trim();
-  if (!scoped) {
-    reply.code(400);
-    return null;
-  }
-  return scoped;
+  return threadId?.trim() || null;
 }
 
-type SheetAccess = { sheetId: string; threadId: string };
+type SheetAccess = { sheetId: string; threadId: string | null };
 
-/** Resolve sheet and enforce thread ownership. Returns null after writing an error reply. */
+/** Resolve sheet and enforce thread ownership (global sheets pass any scope). */
 function requireThreadSheet(
   reply: FastifyReply,
   sheetParam: string | undefined,
   threadId: string | undefined | null,
 ): SheetAccess | { error: { ok: false; message: string } } {
-  const scoped = threadId?.trim();
-  if (!scoped) {
-    reply.code(400);
-    return { error: { ok: false, message: 'threadId is required' } };
-  }
+  const scoped = threadId?.trim() || null;
   const sheetId = resolveTableSheetId(sheetParam);
   if (!sheetBelongsToThread(sheetId, scoped)) {
     reply.code(404);
@@ -225,9 +220,6 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     await deps.resolveContext(req.headers);
     const { threadId } = req.query as { threadId?: string };
     const scoped = requireThreadId(reply, threadId);
-    if (!scoped) {
-      return { ok: false, message: 'threadId is required' };
-    }
     return { ok: true, sheets: listTableSheets(scoped) };
   });
 
@@ -239,9 +231,6 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     if (!trimmed) {
       reply.code(400);
       return { ok: false, message: 'name is required' };
-    }
-    if (!scoped) {
-      return { ok: false, message: 'threadId is required' };
     }
     if (isTableSheetNameTaken(trimmed, undefined, scoped)) {
       reply.code(409);
@@ -263,11 +252,8 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     const { sheetId } = req.params as { sheetId: string };
     const { threadId } = req.query as { threadId?: string };
     const scoped = requireThreadId(reply, threadId);
-    if (!scoped) {
-      return { ok: false, message: 'threadId is required' };
-    }
     const existing = getTableSheetMeta(sheetId);
-    if (!existing || (existing.threadId ?? '') !== scoped) {
+    if (!existing || (existing.threadId ?? '') !== (scoped ?? '')) {
       reply.code(404);
       return { ok: false, message: 'sheet not found' };
     }
@@ -291,11 +277,8 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       return { ok: false, message: 'name is required' };
     }
     const scoped = requireThreadId(reply, threadId);
-    if (!scoped) {
-      return { ok: false, message: 'threadId is required' };
-    }
     const existing = getTableSheetMeta(sheetId);
-    if (!existing || (existing.threadId ?? '') !== scoped) {
+    if (!existing || (existing.threadId ?? '') !== (scoped ?? '')) {
       reply.code(404);
       return { ok: false, message: 'sheet not found' };
     }
