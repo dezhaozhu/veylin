@@ -8,6 +8,15 @@
         "type": "path",
         "url": "examples/marketplace/scheduling-optimizer"
       }
+    },
+    {
+      "name": "compass-scheduler",
+      "description": "Compass 智能排产：真实多厂数据、治理编辑（propose→preview→commit）、增量重排、鼓点/负荷分析；远程 MCP（需 project token）。",
+      "version": "1.0.0",
+      "source": {
+        "type": "path",
+        "url": "examples/marketplace/compass-scheduler"
+      }
     }
   ]
 }
