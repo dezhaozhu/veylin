@@ -798,8 +798,6 @@
     "export": "导出",
     "filterPlaceholder": "筛选…",
     "filterColumnPlaceholder": "筛选「{{name}}」…",
-    "largeSheetWarn": "该表有 {{count}} 行。当前仅显示前 {{cap}} 行，请用筛选缩小范围。",
-    "footerCapped": "显示前 {{shown}} / 共 {{matched}} 行，请用筛选缩小",
     "saveFailed": "保存失败",
     "clear": "清除",
     "undo": "撤销",

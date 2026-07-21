@@ -798,8 +798,6 @@
     "export": "Export",
     "filterPlaceholder": "Filter…",
     "filterColumnPlaceholder": "Filter “{{name}}”…",
-    "largeSheetWarn": "This sheet has {{count}} rows. Showing the first {{cap}} — use filters to narrow.",
-    "footerCapped": "Showing first {{shown}} of {{matched}} — filter to narrow",
     "saveFailed": "Failed to save changes",
     "clear": "Clear",
     "undo": "Undo",

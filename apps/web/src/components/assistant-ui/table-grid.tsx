@@ -48,10 +48,6 @@ function rowKey(row: TableRow): string {
   return String(row.row_id ?? '');
 }
 
-/** Soft large-sheet thresholds — full data stays in memory; grid render is capped. */
-const SOFT_ROW_WARN = 5000;
-const SOFT_ROW_RENDER_CAP = 2000;
-
 // Live-sync events pushed over SSE from /api/table/stream (mirrors the server's
 // TableEvent union). Applied as row-level deltas so update cost is independent of
 // sheet size — the whole reason the 4s full-sheet poll is gone.
@@ -83,14 +79,8 @@ function asTableSheet(meta: TableSheetMeta): TableSheet {
 }
 
 interface TableGridTotals {
-  /** Rows currently rendered in the grid (after filter + optional CAP). */
-  shownCount: number;
-  /** Rows matching filters (before CAP). */
-  matchedCount: number;
-  /** All rows in the sheet (before filters). */
-  totalCount: number;
+  rowCount: number;
   selectedCount: number;
-  capped: boolean;
 }
 
 type FilterState = {
@@ -266,15 +256,7 @@ function TableGridFooter({ totals }: { totals: TableGridTotals }) {
       aria-live="polite"
       aria-atomic="true"
     >
-      {totals.capped ? (
-        <span className="text-foreground font-medium">
-          {t('table.footerCapped', { shown: totals.shownCount, matched: totals.matchedCount })}
-        </span>
-      ) : (
-        <span className="text-foreground font-medium">
-          {t('table.footerTotal', { count: totals.matchedCount })}
-        </span>
-      )}
+      <span className="text-foreground font-medium">{t('table.footerTotal', { count: totals.rowCount })}</span>
       {totals.selectedCount > 0 ? (
         <span>{t('table.footerSelected', { count: totals.selectedCount })}</span>
       ) : null}
@@ -623,7 +605,6 @@ export function TableGrid({
   const [renamingSheet, setRenamingSheet] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameCommitLockRef = useRef(false);
-  const largeSheetWarnedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!toast) return;
@@ -634,16 +615,6 @@ export function TableGrid({
   const showToast = useCallback((message: string, variant: 'success' | 'error') => {
     setToast({ message, variant });
   }, []);
-
-  const maybeWarnLargeSheet = useCallback(
-    (sheetId: string, rowCount: number) => {
-      if (rowCount < SOFT_ROW_WARN) return;
-      if (largeSheetWarnedRef.current.has(sheetId)) return;
-      largeSheetWarnedRef.current.add(sheetId);
-      showToast(t('table.largeSheetWarn', { count: rowCount, cap: SOFT_ROW_RENDER_CAP }), 'error');
-    },
-    [showToast, t],
-  );
 
   const resetImportInput = useCallback(() => {
     if (importInputRef.current) importInputRef.current.value = '';
@@ -678,7 +649,7 @@ export function TableGrid({
   activeSheetIdRef.current = activeSheetId;
 
   const applyPayload = useCallback(
-    (data: SchedulePayload, _initial: boolean, preferSheetId?: string) => {
+    (data: SchedulePayload, _initial: boolean, _preferSheetId?: string) => {
       if (data.sheets?.length) {
         setSheets(data.sheets);
       }
@@ -690,10 +661,8 @@ export function TableGrid({
       if (serialized === lastSerialized.current) return;
       lastSerialized.current = serialized;
       setRows(next);
-      const sheetForWarn = preferSheetId ?? data.sheet ?? activeSheetIdRef.current;
-      if (sheetForWarn) maybeWarnLargeSheet(sheetForWarn, next.length);
     },
-    [maybeWarnLargeSheet],
+    [],
   );
 
   const load = useCallback(
@@ -1028,11 +997,6 @@ export function TableGrid({
     );
   }, [rows, filters, selectedColumnKey, sortColumns, columnDefs]);
 
-  const displayRows = useMemo(() => {
-    if (matchedRows.length <= SOFT_ROW_RENDER_CAP) return matchedRows;
-    return matchedRows.slice(0, SOFT_ROW_RENDER_CAP);
-  }, [matchedRows]);
-
   const toggleSort = useCallback((columnKey: string) => {
     setSortColumns((prev) => {
       const idx = prev.findIndex((s) => s.columnKey === columnKey);
@@ -1049,7 +1013,7 @@ export function TableGrid({
       const end = Math.max(fromIdx, toIdx);
       const next = new Set(base);
       for (let i = start; i <= end; i++) {
-        const row = displayRows[i];
+        const row = matchedRows[i];
         if (!row) continue;
         const key = rowKey(row);
         if (checked) next.add(key);
@@ -1057,7 +1021,7 @@ export function TableGrid({
       }
       return next;
     },
-    [displayRows],
+    [matchedRows],
   );
 
   const handleRowSelect = useCallback(
@@ -1084,10 +1048,10 @@ export function TableGrid({
   const handleSelectAll = useCallback(
     (checked: boolean) => {
       clearColumnSelection();
-      setSelectedRows(checked ? new Set(displayRows.map((r) => rowKey(r))) : new Set());
+      setSelectedRows(checked ? new Set(matchedRows.map((r) => rowKey(r))) : new Set());
       selectionAnchorRef.current = null;
     },
-    [displayRows, clearColumnSelection],
+    [matchedRows, clearColumnSelection],
   );
 
   const onCellClick = useCallback(
@@ -1113,13 +1077,10 @@ export function TableGrid({
 
   const totals = useMemo<TableGridTotals>(
     () => ({
-      shownCount: displayRows.length,
-      matchedCount: matchedRows.length,
-      totalCount: rows.length,
+      rowCount: matchedRows.length,
       selectedCount: selectedRows.size,
-      capped: matchedRows.length > SOFT_ROW_RENDER_CAP,
     }),
-    [displayRows.length, matchedRows.length, rows.length, selectedRows.size],
+    [matchedRows.length, selectedRows.size],
   );
 
   const commitRows = useCallback(
@@ -1206,7 +1167,7 @@ export function TableGrid({
     (next: TableRow[], data: RowsChangeData<TableRow>) => {
       const edits = isApplyingHistory.current
         ? []
-        : collectEdits(displayRows, next, data.column.key, data.indexes, editableKeys);
+        : collectEdits(matchedRows, next, data.column.key, data.indexes, editableKeys);
       if (edits.length > 0) pushHistory(edits);
 
       const previous = rows;
@@ -1221,7 +1182,7 @@ export function TableGrid({
       );
       commitRows(merged, touched, previous);
     },
-    [commitRows, displayRows, editableKeys, pushHistory, rows],
+    [commitRows, matchedRows, editableKeys, pushHistory, rows],
   );
 
   const onCellKeyDown = useCallback(
@@ -1258,8 +1219,8 @@ export function TableGrid({
   const onCellPaste = useMemo(() => makeOnCellPaste(editableKeys), [editableKeys]);
 
   const visibleRowKeys = useMemo(
-    () => displayRows.map((r) => rowKey(r)),
-    [displayRows],
+    () => matchedRows.map((r) => rowKey(r)),
+    [matchedRows],
   );
 
   const rowSelectionCtx = useMemo<RowSelectionCtx>(
@@ -1278,8 +1239,8 @@ export function TableGrid({
   );
 
   const dataColumns = useMemo(
-    () => columnDefs.map((def) => buildDataColumn(def, displayRows)),
-    [columnDefs, displayRows],
+    () => columnDefs.map((def) => buildDataColumn(def, matchedRows)),
+    [columnDefs, matchedRows],
   );
 
   const columns = useMemo<Column<TableRow>[]>(
@@ -1778,7 +1739,7 @@ export function TableGrid({
             {t('common.retry')}
           </button>
         </div>
-      ) : displayRows.length === 0 ? (
+      ) : matchedRows.length === 0 ? (
         <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-sm">
           <span>
             {columnDefs.length === 0
@@ -1806,7 +1767,7 @@ export function TableGrid({
                 style={{ blockSize: '100%' }}
                 aria-label={t('table.ariaGrid')}
                 columns={columns}
-                rows={displayRows}
+                rows={matchedRows}
                 onRowsChange={onRowsChange}
                 onCellClick={onCellClick}
                 onCellKeyDown={onCellKeyDown}
