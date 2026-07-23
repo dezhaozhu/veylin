@@ -35,6 +35,7 @@ import {
   type UiMessage,
 } from '../message-sync.js';
 import { applyTenantModelSettings } from '../model-settings-store.js';
+import { listMcpServerGroups } from '../mcp-store.js';
 import { stopChatStream } from '../resumable-chat-stream.js';
 import { cancelSubagentTask } from '../cancel-thread-tasks.js';
 import type { TaskEvent } from '../task-events.js';
@@ -110,6 +111,27 @@ export function createReadTaskSnapshot(runtime: Runtime) {
   };
 }
 
+
+/**
+ * True when `project` is `null` (clearing the pin) or names a currently
+ * configured GROUPED server for the tenant — the same well-formedness a
+ * thread's project pin must satisfy to ever narrow MCP scoping (see
+ * `resolveScopedServerNames` in routes/mcp-apps.ts). A pin naming an
+ * ungrouped or nonexistent server would either do nothing (ungrouped
+ * servers pass every scoping check regardless of pin) or, worse, read as
+ * garbage forever — so POST /api/project rejects it up front instead of
+ * silently persisting it. Exported for testing at this seam: there is no
+ * HTTP harness in this repo (see mcp-apps-scoping.test.ts for the sibling
+ * convention).
+ */
+export async function isValidProjectPin(
+  tenantId: string,
+  project: string | null,
+): Promise<boolean> {
+  if (project == null) return true;
+  const groups = await listMcpServerGroups(tenantId);
+  return groups[project] != null;
+}
 
 export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // Tasks: list/get for the UI task panel.
@@ -431,10 +453,15 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
     return { project: row?.project ?? null };
   });
 
-  app.post('/api/project', async (req) => {
+  app.post('/api/project', async (req, reply) => {
     const body = req.body as { threadId?: string; project?: string | null };
     const ctx = await deps.resolveContext(req.headers);
     if (body.threadId != null && body.project !== undefined) {
+      if (!(await isValidProjectPin(ctx.tenantId, body.project))) {
+        return reply
+          .status(400)
+          .send({ ok: false, error: 'project is not a configured group member' });
+      }
       await ensureThreadState({
         threadId: body.threadId,
         tenantId: ctx.tenantId,

@@ -3,7 +3,7 @@ import { MCPClient } from '@mastra/mcp';
 import type { ServerDeps } from './types.js';
 import { buildMcpServerConfigs, listActiveMcpServerNames, listMcpServerGroups } from '../mcp-store.js';
 import { resolveScopedMcp } from '../mcp-scoping.js';
-import { getThreadState } from '../thread-state.js';
+import { getThreadState, resolveThreadForRead } from '../thread-state.js';
 
 let hostSeq = 0;
 // A per-request MCP client with a UNIQUE id. createMcpClient() uses a fixed id
@@ -13,7 +13,10 @@ let hostSeq = 0;
 //
 // `allow`, when given, restricts the client to that server subset — used to
 // enforce a thread's project-pin scope (see resolveScopedServerNames below).
-// Undefined (no threadId on the request) keeps today's tenant-wide behavior.
+// Undefined means "no filtering" — only returned when the tenant has no
+// grouped server at all (today's tenant-wide behavior, unchanged for those
+// tenants). Once any server is grouped, a missing/unowned threadId scopes
+// down instead of widening — see resolveScopedServerNames' doc comment.
 async function freshClient(tenantId: string, allow?: Set<string>): Promise<MCPClient> {
   const servers = await buildMcpServerConfigs(tenantId);
   const scopedServers = allow
@@ -27,23 +30,51 @@ async function freshClient(tenantId: string, allow?: Set<string>): Promise<MCPCl
 }
 
 /**
- * When `threadId` is given, resolve its project pin and return the scoped
- * active server-name set (pinned group member + every ungrouped server) —
- * the same enforcement chat.ts applies to the agent's toolset, extended here
- * to the mcp-apps host so a widget/tool-call proxy can't reach a non-pinned
- * group member. `undefined` (no threadId) means "no filtering" — today's
- * tenant-wide behavior, unchanged.
+ * When `threadId` is given AND owned by the caller's tenant/user, resolve its
+ * project pin and return the scoped active server-name set (pinned group
+ * member + every ungrouped server) — the same enforcement chat.ts applies to
+ * the agent's toolset, extended here to the mcp-apps host so a widget/
+ * tool-call proxy can't reach a non-pinned group member.
+ *
+ * `threadId` is never trusted at face value: it's resolved through
+ * `resolveThreadForRead`, the same ownership check the other query-param-
+ * threadId routes (GET /api/tasks, /api/todos, /api/plan-mode, …) use. A
+ * threadId that doesn't exist or belongs to another tenant/user is treated
+ * exactly like a missing threadId — never a 500, and never a license to
+ * borrow that thread's pin.
+ *
+ * A missing/unowned threadId does NOT widen to "no filtering" when the
+ * tenant has any grouped server — that would let omitting threadId bypass
+ * every project pin and reach the whole tenant. Instead it scopes to
+ * UNGROUPED servers only (deny-by-default for grouped servers; ungrouped
+ * servers are legitimately thread-independent). Only when the tenant has NO
+ * grouped server at all does a missing/unowned threadId return `undefined`
+ * ("no filtering") — byte-identical to today's behavior for tenants that
+ * never configured grouping.
  */
 export async function resolveScopedServerNames(
   tenantId: string,
+  userId: string,
   threadId: string | undefined,
 ): Promise<Set<string> | undefined> {
-  if (!threadId) return undefined;
-  const [activeNames, groups, threadState] = await Promise.all([
+  const [activeNames, groups] = await Promise.all([
     listActiveMcpServerNames(tenantId),
     listMcpServerGroups(tenantId),
-    getThreadState(threadId),
   ]);
+
+  let ownedThreadId: string | undefined;
+  if (threadId) {
+    const row = await resolveThreadForRead(threadId, { tenantId, userId });
+    ownedThreadId = row ? threadId : undefined;
+  }
+
+  if (!ownedThreadId) {
+    const hasGroupedServer = Object.values(groups).some((group) => group != null);
+    if (!hasGroupedServer) return undefined;
+    return new Set(activeNames.filter((name) => groups[name] == null));
+  }
+
+  const threadState = await getThreadState(ownedThreadId);
   const pin = threadState?.project ?? null;
   const scoped = resolveScopedMcp(activeNames, groups, pin);
   return new Set(scoped.active);
@@ -81,7 +112,7 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
   app.get('/api/mcp-apps/tools', async (req) => {
     const ctx = await deps.resolveContext(req.headers);
     const { threadId } = (req.query ?? {}) as { threadId?: string };
-    const allow = await resolveScopedServerNames(ctx.tenantId, threadId);
+    const allow = await resolveScopedServerNames(ctx.tenantId, ctx.userId, threadId);
     const client = await freshClient(ctx.tenantId, allow);
     try {
       const toolsets = (await client.listToolsets()) as Record<
@@ -116,7 +147,7 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
     // callers extend, so the client appends `?threadId=` to the configured
     // `url` instead — mirrors GET /api/mcp-apps/tools below.
     const { threadId } = (req.query ?? {}) as { threadId?: string };
-    const allow = await resolveScopedServerNames(ctx.tenantId, threadId);
+    const allow = await resolveScopedServerNames(ctx.tenantId, ctx.userId, threadId);
     const client = await freshClient(ctx.tenantId, allow);
     try {
       switch (method) {
