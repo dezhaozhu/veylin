@@ -442,11 +442,11 @@ export function useMcpEnabled() {
 /**
  * Grouped ("project") MCP servers + the current thread's project pin.
  *
- * `selectProject` is the radio-select belt: it POSTs the new pin for the
- * current thread, flips `setServerEnabled` for the picked server and every
- * sibling in its group (client-side belt only — the server enforces the pin
- * regardless of what mcpEnabled claims), and remembers the pick as
- * `lastProject` for the next brand-new thread to preselect from.
+ * Read-only: switching a thread's project pin now happens exclusively from
+ * the sidebar's Projects section (project-list.tsx new-chat-in-project,
+ * thread-list-item.tsx move-to-project menu), which POST /api/thread-project
+ * directly and set `lastProject` themselves. This hook only surfaces the
+ * current pin plus the brand-new-thread preselect below.
  */
 export function useProjectScope() {
   const threadId = useAuiState(
@@ -455,7 +455,6 @@ export function useProjectScope() {
       s.threadListItem.externalId ??
       s.threadListItem.id,
   );
-  const { setServerEnabled } = useMcpEnabled();
   const [groupedServers, setGroupedServers] = useState<McpGroupMember[]>(
     () => readCachedGroupedMcpServers() ?? [],
   );
@@ -503,29 +502,7 @@ export function useProjectScope() {
     });
   }, [threadId, currentProject, groupedServers]);
 
-  const selectProject = useCallback(
-    (name: string) => {
-      if (!threadId) return;
-      const clicked = groupedServers.find((s) => s.name === name);
-      const siblings = clicked
-        ? groupedServers.filter((s) => s.group === clicked.group && s.name !== name)
-        : [];
-      setServerEnabled(name, true);
-      for (const sibling of siblings) setServerEnabled(sibling.name, false);
-      setCurrentProject(name);
-      writeCachedThreadProject(threadId, name);
-      setChatSettings({ lastProject: name });
-      void postThreadProject(threadId, name).then((confirmed) => {
-        if (confirmed == null) return;
-        writeCachedThreadProject(threadId, confirmed);
-        setCurrentProject(confirmed);
-        invalidateThreadProjects();
-      });
-    },
-    [threadId, groupedServers, setServerEnabled],
-  );
-
-  return { threadId, groupedServers, currentProject, selectProject };
+  return { threadId, groupedServers, currentProject };
 }
 
 export function useAgentContext(enabled: boolean) {
