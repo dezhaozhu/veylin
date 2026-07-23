@@ -33,6 +33,17 @@ import {
 import { requestSilentChatContinue } from '@/lib/silent-chat-continue';
 import { requestChatStop } from '@/lib/chat-stop';
 import { useState } from 'react';
+import {
+  fetchGroupedMcpServers,
+  readCachedGroupedMcpServers,
+  type McpGroupMember,
+} from '@/lib/mcp-groups-sync';
+import {
+  fetchThreadProject,
+  postThreadProject,
+  readCachedThreadProject,
+  writeCachedThreadProject,
+} from '@/lib/project-sync';
 
 function applyPlanModeForThread(threadId: string | undefined, on: boolean): void {
   if (threadId) writeCachedThreadPlanMode(threadId, on);
@@ -425,6 +436,93 @@ export function useMcpEnabled() {
     [mcpEnabled],
   );
   return { mcpEnabled, setServerEnabled, isServerEnabled };
+}
+
+/**
+ * Grouped ("project") MCP servers + the current thread's project pin.
+ *
+ * `selectProject` is the radio-select belt: it POSTs the new pin for the
+ * current thread, flips `setServerEnabled` for the picked server and every
+ * sibling in its group (client-side belt only — the server enforces the pin
+ * regardless of what mcpEnabled claims), and remembers the pick as
+ * `lastProject` for the next brand-new thread to preselect from.
+ */
+export function useProjectScope() {
+  const threadId = useAuiState(
+    (s) =>
+      s.threadListItem.remoteId ??
+      s.threadListItem.externalId ??
+      s.threadListItem.id,
+  );
+  const { setServerEnabled } = useMcpEnabled();
+  const [groupedServers, setGroupedServers] = useState<McpGroupMember[]>(
+    () => readCachedGroupedMcpServers() ?? [],
+  );
+  const [currentProject, setCurrentProject] = useState<string | null>(
+    () => readCachedThreadProject(threadId) ?? null,
+  );
+  const preselectedThreadRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    void fetchGroupedMcpServers().then(setGroupedServers);
+  }, []);
+
+  useEffect(() => {
+    if (!threadId) {
+      setCurrentProject(null);
+      return;
+    }
+    const cached = readCachedThreadProject(threadId);
+    if (cached !== undefined) setCurrentProject(cached);
+    let cancelled = false;
+    void fetchThreadProject(threadId).then((project) => {
+      if (cancelled) return;
+      writeCachedThreadProject(threadId, project);
+      setCurrentProject(project);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId]);
+
+  // Brand-new thread, no pin yet, but the user has picked a project before on
+  // some other thread: adopt it immediately instead of waiting for the
+  // server's alphabetical auto-pin on first chat send.
+  useEffect(() => {
+    if (!threadId || currentProject != null || groupedServers.length === 0) return;
+    if (readCachedThreadProject(threadId) === undefined) return; // GET not resolved yet
+    if (preselectedThreadRef.current === threadId) return;
+    const { lastProject } = getChatSettings();
+    if (!lastProject || !groupedServers.some((s) => s.name === lastProject)) return;
+    preselectedThreadRef.current = threadId;
+    void postThreadProject(threadId, lastProject).then((confirmed) => {
+      writeCachedThreadProject(threadId, confirmed);
+      setCurrentProject(confirmed);
+    });
+  }, [threadId, currentProject, groupedServers]);
+
+  const selectProject = useCallback(
+    (name: string) => {
+      if (!threadId) return;
+      const clicked = groupedServers.find((s) => s.name === name);
+      const siblings = clicked
+        ? groupedServers.filter((s) => s.group === clicked.group && s.name !== name)
+        : [];
+      setServerEnabled(name, true);
+      for (const sibling of siblings) setServerEnabled(sibling.name, false);
+      setCurrentProject(name);
+      writeCachedThreadProject(threadId, name);
+      setChatSettings({ lastProject: name });
+      void postThreadProject(threadId, name).then((confirmed) => {
+        if (confirmed == null) return;
+        writeCachedThreadProject(threadId, confirmed);
+        setCurrentProject(confirmed);
+      });
+    },
+    [threadId, groupedServers, setServerEnabled],
+  );
+
+  return { threadId, groupedServers, currentProject, selectProject };
 }
 
 export function useAgentContext(enabled: boolean) {

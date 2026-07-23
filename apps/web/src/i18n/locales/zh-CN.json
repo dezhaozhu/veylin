@@ -137,6 +137,8 @@
     "mcp": "MCP",
     "mcpDesc": "为本轮对话启用或关闭工具服务",
     "mcpToggle": "切换 {{name}}",
+    "project": "项目",
+    "selectProject": "选择项目 {{name}}",
     "panels": "面板",
     "panelsDesc": "聚焦右侧工作面板作为上下文",
     "sectionAttach": "附加",

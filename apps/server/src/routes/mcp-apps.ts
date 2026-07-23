@@ -1,17 +1,52 @@
 import type { FastifyInstance } from 'fastify';
 import { MCPClient } from '@mastra/mcp';
 import type { ServerDeps } from './types.js';
-import { buildMcpServerConfigs } from '../mcp-store.js';
+import { buildMcpServerConfigs, listActiveMcpServerNames, listMcpServerGroups } from '../mcp-store.js';
+import { resolveScopedMcp } from '../mcp-scoping.js';
+import { getThreadState } from '../thread-state.js';
 
 let hostSeq = 0;
 // A per-request MCP client with a UNIQUE id. createMcpClient() uses a fixed id
 // per tenant, and concurrent MCP-App requests (widget loadResource + callTool)
 // would collide on it ("MCPClient initialized multiple times") → 500s. A unique
 // id per request avoids the collision.
-async function freshClient(tenantId: string): Promise<MCPClient> {
+//
+// `allow`, when given, restricts the client to that server subset — used to
+// enforce a thread's project-pin scope (see resolveScopedServerNames below).
+// Undefined (no threadId on the request) keeps today's tenant-wide behavior.
+async function freshClient(tenantId: string, allow?: Set<string>): Promise<MCPClient> {
   const servers = await buildMcpServerConfigs(tenantId);
+  const scopedServers = allow
+    ? Object.fromEntries(Object.entries(servers).filter(([name]) => allow.has(name)))
+    : servers;
   hostSeq += 1;
-  return new MCPClient({ id: `veylin-mcpapp-${tenantId}-${hostSeq}`, servers: servers as never });
+  return new MCPClient({
+    id: `veylin-mcpapp-${tenantId}-${hostSeq}`,
+    servers: scopedServers as never,
+  });
+}
+
+/**
+ * When `threadId` is given, resolve its project pin and return the scoped
+ * active server-name set (pinned group member + every ungrouped server) —
+ * the same enforcement chat.ts applies to the agent's toolset, extended here
+ * to the mcp-apps host so a widget/tool-call proxy can't reach a non-pinned
+ * group member. `undefined` (no threadId) means "no filtering" — today's
+ * tenant-wide behavior, unchanged.
+ */
+export async function resolveScopedServerNames(
+  tenantId: string,
+  threadId: string | undefined,
+): Promise<Set<string> | undefined> {
+  if (!threadId) return undefined;
+  const [activeNames, groups, threadState] = await Promise.all([
+    listActiveMcpServerNames(tenantId),
+    listMcpServerGroups(tenantId),
+    getThreadState(threadId),
+  ]);
+  const pin = threadState?.project ?? null;
+  const scoped = resolveScopedMcp(activeNames, groups, pin);
+  return new Set(scoped.active);
 }
 
 // MCP Apps host data-plane. `McpAppsRemoteHost({ url })` in the web app POSTs
@@ -45,7 +80,9 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
   // to render inline — no per-tool hardcoding.
   app.get('/api/mcp-apps/tools', async (req) => {
     const ctx = await deps.resolveContext(req.headers);
-    const client = await freshClient(ctx.tenantId);
+    const { threadId } = (req.query ?? {}) as { threadId?: string };
+    const allow = await resolveScopedServerNames(ctx.tenantId, threadId);
+    const client = await freshClient(ctx.tenantId, allow);
     try {
       const toolsets = (await client.listToolsets()) as Record<
         string,
@@ -74,7 +111,13 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
       method?: string;
       params?: { uri?: string; name?: string; arguments?: Record<string, unknown> };
     };
-    const client = await freshClient(ctx.tenantId);
+    // threadId travels as a query param, not the body: `McpAppsRemoteHost`
+    // (the web client) POSTs a fixed `{ method, params }` shape it doesn't let
+    // callers extend, so the client appends `?threadId=` to the configured
+    // `url` instead — mirrors GET /api/mcp-apps/tools below.
+    const { threadId } = (req.query ?? {}) as { threadId?: string };
+    const allow = await resolveScopedServerNames(ctx.tenantId, threadId);
+    const client = await freshClient(ctx.tenantId, allow);
     try {
       switch (method) {
         case 'mcp-apps/read-resource':
@@ -105,7 +148,12 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
             string,
             Record<string, { execute: (a: { context: unknown }) => Promise<unknown> }>
           >;
-          for (const server of Object.keys(toolsets)) {
+          // Deterministic server precedence when >1 server exposes the same tool
+          // name — alphabetical, not object-iteration order. When threadId
+          // scoped this request, `client`/`toolsets` already only contains the
+          // pinned group member + ungrouped servers, so this also means the
+          // pinned server wins over any non-pinned group member by construction.
+          for (const server of Object.keys(toolsets).sort((a, b) => a.localeCompare(b))) {
             const tool = toolsets[server]?.[name];
             if (tool) return await tool.execute({ context: params?.arguments ?? {} });
           }

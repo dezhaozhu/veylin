@@ -1,14 +1,29 @@
 import type { ToolsetsGetter } from './table-tools.js';
+import { resolveCompassServer } from './mcp-scoping.js';
 
 type CompassTool = { execute: (args: unknown) => Promise<unknown> };
 
+/** Server-name → project-group map, e.g. `{ compass: undefined, 'compass-guolu': 'compass' }'. */
+export type McpServerGroups = Record<string, string | undefined>;
+
+/**
+ * Look up a Compass MCP tool by name, resolved through `resolveCompassServer`
+ * (never a hardcoded `toolsets['compass']`) so a grouped deployment can't leak
+ * a call across the thread's project pin. `groups`/`pin` default to `{}`/`null`
+ * for callers with no thread context — see the call-site notes on each exported
+ * function below and mcp-scoping.ts's module docstring.
+ */
 function compassTool(
   getToolsets: ToolsetsGetter | undefined,
   name: string,
+  groups: McpServerGroups = {},
+  pin: string | null = null,
 ): CompassTool | null {
   const toolsets = getToolsets?.() ?? {};
-  const compass = toolsets['compass'] as Record<string, CompassTool> | undefined;
-  return compass?.[name] ?? null;
+  const serverName = resolveCompassServer(toolsets, groups, pin);
+  if (!serverName) return null;
+  const server = toolsets[serverName] as Record<string, CompassTool> | undefined;
+  return server?.[name] ?? null;
 }
 
 /**
@@ -47,11 +62,13 @@ export type ProposeEditBody = {
 export async function proposeScheduleEdit(
   getToolsets: ToolsetsGetter | undefined,
   body: ProposeEditBody,
+  groups: McpServerGroups = {},
+  pin: string | null = null,
 ): Promise<
   | { ok: true; ops: number; note?: unknown }
   | { ok: false; refused?: string; error?: string }
 > {
-  const tool = compassTool(getToolsets, 'propose_schedule_edit');
+  const tool = compassTool(getToolsets, 'propose_schedule_edit', groups, pin);
   if (!tool) {
     return { ok: false, error: 'compass MCP not connected (no propose_schedule_edit)' };
   }
@@ -68,11 +85,13 @@ export async function proposeScheduleEdit(
 
 export async function previewScheduleEdit(
   getToolsets: ToolsetsGetter | undefined,
+  groups: McpServerGroups = {},
+  pin: string | null = null,
 ): Promise<
   | { ok: true; rows: unknown[]; diagnosis: Record<string, unknown> }
   | { ok: false; error: string }
 > {
-  const tool = compassTool(getToolsets, 'preview_schedule_edit');
+  const tool = compassTool(getToolsets, 'preview_schedule_edit', groups, pin);
   if (!tool) {
     return { ok: false, error: 'compass MCP not connected (no preview_schedule_edit)' };
   }
@@ -91,6 +110,8 @@ export async function previewScheduleEdit(
 
 export async function commitScheduleEdit(
   getToolsets: ToolsetsGetter | undefined,
+  groups: McpServerGroups = {},
+  pin: string | null = null,
 ): Promise<
   | {
       ok: true;
@@ -104,7 +125,7 @@ export async function commitScheduleEdit(
     }
   | { ok: false; conflict?: true; timeout?: true; error?: string; message?: string }
 > {
-  const tool = compassTool(getToolsets, 'commit_schedule_edit');
+  const tool = compassTool(getToolsets, 'commit_schedule_edit', groups, pin);
   if (!tool) {
     return { ok: false, error: 'compass MCP not connected (no commit_schedule_edit)' };
   }
@@ -141,8 +162,10 @@ export async function commitScheduleEdit(
 
 export async function discardScheduleEdits(
   getToolsets: ToolsetsGetter | undefined,
+  groups: McpServerGroups = {},
+  pin: string | null = null,
 ): Promise<{ ok: boolean; error?: string }> {
-  const tool = compassTool(getToolsets, 'discard_schedule_edits');
+  const tool = compassTool(getToolsets, 'discard_schedule_edits', groups, pin);
   if (!tool) {
     return { ok: false, error: 'compass MCP not connected (no discard_schedule_edits)' };
   }
@@ -159,9 +182,19 @@ export async function discardScheduleEdits(
  * System-prompt governance block for the chat agent — only when the Compass
  * edit tools are actually connected. Encodes spec §5: never commit without
  * explicit user confirmation.
+ *
+ * Called from routes/chat.ts's `/api/chat` handler, which HAS a real thread
+ * pin and the tenant's real server groups at that point in the request — pass
+ * them through so the guidance text (and its "is Compass connected" check)
+ * agrees with the pinned server, not whatever `'compass'` happens to resolve
+ * to unpinned.
  */
-export function scheduleEditGuidanceBlock(getToolsets: ToolsetsGetter | undefined): string {
-  if (!compassTool(getToolsets, 'propose_schedule_edit')) return '';
+export function scheduleEditGuidanceBlock(
+  getToolsets: ToolsetsGetter | undefined,
+  groups: McpServerGroups = {},
+  pin: string | null = null,
+): string {
+  if (!compassTool(getToolsets, 'propose_schedule_edit', groups, pin)) return '';
   return [
     '## 排产编辑治理（Compass）',
     '修改排产数据（资源 resource / 工期 std_duration_days / 瓶颈 is_bottleneck / 交期 due_at）必须走治理流程，绝不允许静默改动生产排程：',

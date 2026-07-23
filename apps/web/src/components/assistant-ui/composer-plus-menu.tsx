@@ -35,6 +35,7 @@ import {
   useMcpEnabled,
   usePendingSkill,
   usePlanMode,
+  useProjectScope,
 } from '@/lib/use-composer-settings';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 import type { MenuAnchor } from '@/components/assistant-ui/composer-mention/composer-menu-shared';
@@ -100,6 +101,7 @@ export const ComposerPlusMenu: FC = () => {
   } = useGoalLoopState();
   const { setPendingSkill } = usePendingSkill();
   const { isServerEnabled, setServerEnabled } = useMcpEnabled();
+  const { groupedServers, currentProject, selectProject } = useProjectScope();
   const { context } = useAgentContext(open);
 
   const close = useCallback(() => {
@@ -165,6 +167,10 @@ export const ComposerPlusMenu: FC = () => {
 
   const skills = context?.skills ?? [];
   const mcpServers = context?.mcpServers ?? [];
+  const groupOf = useCallback(
+    (name: string) => groupedServers.find((s) => s.name === name)?.group,
+    [groupedServers],
+  );
   const goalMode = pendingGoal || goalActive;
   const loopMode = pendingLoop || loopActive;
 
@@ -292,6 +298,9 @@ export const ComposerPlusMenu: FC = () => {
                     onQueryChange={setMcpSearch}
                     isEnabled={isServerEnabled}
                     onToggle={setServerEnabled}
+                    groupOf={groupOf}
+                    currentProject={currentProject}
+                    onSelectProject={selectProject}
                   />
                 </ComposerMenuFlyoutItem>
 

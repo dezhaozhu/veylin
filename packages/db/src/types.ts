@@ -78,6 +78,7 @@ export interface ThreadStateRow {
   title?: string | null;
   goal?: unknown | null;
   loop?: unknown | null;
+  project?: string | null;
   updatedAt?: string;
 }
 
@@ -146,6 +147,7 @@ export interface McpServerRow {
   url: string;
   headers: Record<string, string>;
   enabled: boolean;
+  group?: string | null;
   createdAt?: string;
 }
 

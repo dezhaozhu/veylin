@@ -17,6 +17,15 @@ export interface SubagentJob {
   subagentType?: string;
   fork?: boolean;
   directive?: string;
+  /**
+   * The dispatching request's scoped/active MCP server allowlist (chat.ts's
+   * `activeMcp` after project-pin scoping), captured at enqueue time so a
+   * subagent dispatched from a pinned thread inherits the pin instead of
+   * getting an unscoped toolset. `undefined` when the dispatching request
+   * had no scoping context (e.g. Automate/Workflow) — today's unscoped
+   * behavior.
+   */
+  scopedMcpServers?: string[];
   /** Set by the in-proc queue when the job is cancelled mid-run. */
   abortSignal?: AbortSignal;
 }

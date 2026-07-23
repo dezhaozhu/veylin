@@ -25,6 +25,7 @@ function rowToMcp(row: Awaited<ReturnType<typeof listMcpServerRows>>[number]): M
     url: row.url,
     headers: row.headers ?? {},
     enabled: row.enabled,
+    group: row.group ?? undefined,
     createdAt: row.createdAt,
   };
 }
@@ -41,6 +42,7 @@ export async function createRemoteMcpServer(tenantId: string, input: McpServerIn
     url: input.url,
     headers: input.headers ?? {},
     enabled: input.enabled ?? true,
+    group: input.group,
   });
   return rowToMcp(row);
 }
@@ -48,7 +50,7 @@ export async function createRemoteMcpServer(tenantId: string, input: McpServerIn
 export async function updateRemoteMcpServer(
   tenantId: string,
   id: string,
-  patch: Partial<McpServerInput>,
+  patch: Partial<Omit<McpServerInput, 'group'>> & { group?: string | null },
 ) {
   const row = await updateMcpServerRow(tenantId, id, {
     ...(patch.name != null ? { name: patch.name.trim() } : {}),
@@ -56,6 +58,9 @@ export async function updateRemoteMcpServer(
     ...(patch.url != null ? { url: patch.url } : {}),
     ...(patch.headers != null ? { headers: patch.headers } : {}),
     ...(patch.enabled != null ? { enabled: patch.enabled } : {}),
+    // Unlike the other fields, `group` is explicitly clearable: pass `null` to
+    // remove an existing group (mirrors ThreadStateRow.title's clear-via-null).
+    ...(patch.group !== undefined ? { group: patch.group } : {}),
   });
   return row ? rowToMcp(row) : null;
 }
@@ -152,6 +157,18 @@ export async function createMcpClient(
 
 export function listBundledMcpServerNames(): string[] {
   return Object.keys(mcpServerConfigs);
+}
+
+/** Name -> group for every remote MCP server row (undefined = ungrouped). */
+export async function listMcpServerGroups(
+  tenantId: string,
+): Promise<Record<string, string | undefined>> {
+  const remote = await listRemoteMcpServers(tenantId);
+  const groups: Record<string, string | undefined> = {};
+  for (const server of remote) {
+    groups[server.name] = server.group;
+  }
+  return groups;
 }
 
 export async function listActiveMcpServerNames(

@@ -21,6 +21,7 @@ export type ChatSystemBlockInput = {
   localeBlock: string;
   attachedBrowserBlock: string;
   workingMemoryBlock?: string;
+  projectPinBlock?: string;
 };
 
 function blockOrNull(value: string): string | null {
@@ -47,6 +48,7 @@ export async function buildChatSystemBlocks(input: ChatSystemBlockInput): Promis
     uncachedSystemPromptSection('orchestration', () => blockOrNull(input.orchestrationBlock)),
     uncachedSystemPromptSection('locale', () => blockOrNull(input.localeBlock)),
     uncachedSystemPromptSection('attached_browser', () => blockOrNull(input.attachedBrowserBlock)),
+    uncachedSystemPromptSection('project_pin', () => blockOrNull(input.projectPinBlock ?? '')),
   ];
 
   const values = await resolveSystemPromptSections(sections);

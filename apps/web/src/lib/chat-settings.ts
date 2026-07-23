@@ -30,6 +30,10 @@ export interface ChatSettings {
   attachedBrowserTab: AttachedBrowserTab | null;
   /** MCP server on/off; omitted or true means enabled. */
   mcpEnabled: Record<string, boolean>;
+  /** Name of the last grouped MCP server (project) selected, any thread. Used to
+   * client-side preselect a brand-new thread's project pin before the server's
+   * alphabetical auto-pin would otherwise kick in on first chat send. */
+  lastProject: string | null;
 }
 const KEY = 'veylin-chat-settings';
 const EVENT = 'veylin-chat-settings';
@@ -44,6 +48,7 @@ const DEFAULTS: ChatSettings = {
   pendingSkillInsertAt: 0,
   attachedBrowserTab: null,
   mcpEnabled: {},
+  lastProject: null,
 };
 
 export function getChatSettings(): ChatSettings {
