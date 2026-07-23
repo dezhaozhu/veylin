@@ -62,7 +62,14 @@
     "loading": "加载对话中",
     "moreOptions": "更多选项",
     "archive": "归档",
-    "delete": "删除"
+    "delete": "删除",
+    "projects": "项目",
+    "recent": "最近",
+    "newChatInProject": "在「{{name}}」中新建对话",
+    "emptyProject": "暂无对话",
+    "moveToProject": "移动到项目…",
+    "moveToProjectHint": "历史消息保留原项目,新消息起使用目标项目",
+    "back": "返回"
   },
   "header": {
     "back": "后退",

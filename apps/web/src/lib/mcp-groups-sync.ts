@@ -1,4 +1,5 @@
 /** Client cache of grouped ("project") remote MCP servers, fetched from GET /api/mcp-servers. */
+import { useEffect, useState } from 'react';
 
 export type McpGroupMember = { name: string; group: string };
 
@@ -26,4 +27,14 @@ export async function fetchGroupedMcpServers(force = false): Promise<McpGroupMem
 
 export function readCachedGroupedMcpServers(): McpGroupMember[] | null {
   return cached;
+}
+
+/** Reactive grouped-servers list — used by the Projects sidebar to decide
+ * whether to render a Projects section at all. */
+export function useGroupedMcpServers(): McpGroupMember[] {
+  const [servers, setServers] = useState<McpGroupMember[]>(() => cached ?? []);
+  useEffect(() => {
+    void fetchGroupedMcpServers().then(setServers);
+  }, []);
+  return servers;
 }
