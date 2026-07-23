@@ -101,7 +101,7 @@ export const ComposerPlusMenu: FC = () => {
   } = useGoalLoopState();
   const { setPendingSkill } = usePendingSkill();
   const { isServerEnabled, setServerEnabled } = useMcpEnabled();
-  const { groupedServers, currentProject, selectProject } = useProjectScope();
+  const { groupedServers } = useProjectScope();
   const { context } = useAgentContext(open);
 
   const close = useCallback(() => {
@@ -299,8 +299,6 @@ export const ComposerPlusMenu: FC = () => {
                     isEnabled={isServerEnabled}
                     onToggle={setServerEnabled}
                     groupOf={groupOf}
-                    currentProject={currentProject}
-                    onSelectProject={selectProject}
                   />
                 </ComposerMenuFlyoutItem>
 

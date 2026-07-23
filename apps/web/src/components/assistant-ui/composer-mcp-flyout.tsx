@@ -37,79 +37,12 @@ function McpToggle({
   );
 }
 
-/** A single grouped ("project") server row — radio behavior, exactly one per group active. */
-function ProjectOption({
-  server,
-  selected,
-  onSelect,
-}: {
-  server: string;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const { t } = useTranslation();
-  const icon = mcpServerIcon(server);
-  return (
-    <div className="hover:bg-accent flex items-center gap-2 rounded-md px-2 py-1.5">
-      <div className="relative shrink-0">
-        <div
-          className={cn(
-            'flex size-6 items-center justify-center rounded text-[10px] font-semibold text-white',
-            icon.bg,
-          )}
-        >
-          {icon.label}
-        </div>
-        <span
-          className={cn(
-            'absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-2 ring-popover',
-            icon.dot,
-          )}
-        />
-      </div>
-      <span className="min-w-0 flex-1 truncate text-sm">{server}</span>
-      <button
-        type="button"
-        role="radio"
-        aria-checked={selected}
-        aria-label={t('mention.selectProject', { name: server })}
-        className={cn(
-          'flex size-4 shrink-0 items-center justify-center rounded-full border',
-          selected ? 'border-emerald-500' : 'border-muted-foreground/40',
-        )}
-        onClick={onSelect}
-      >
-        {selected && <span className="size-2 rounded-full bg-emerald-500" />}
-      </button>
-    </div>
-  );
-}
-
-/** Single-select radio list of grouped MCP servers — shared by the plus-menu MCP
- * flyout and the composer project chip's popover. */
-export function ProjectRadioGroup({
-  members,
-  currentProject,
-  onSelect,
-}: {
-  members: string[];
-  currentProject: string | null;
-  onSelect: (name: string) => void;
-}) {
-  return (
-    <div role="radiogroup">
-      {members.map((server) => (
-        <ProjectOption
-          key={server}
-          server={server}
-          selected={currentProject === server}
-          onSelect={() => onSelect(server)}
-        />
-      ))}
-    </div>
-  );
-}
-
+/** Plus-menu MCP flyout — toggles ungrouped MCP servers for this chat.
+ * Grouped ("project") servers are managed exclusively from the sidebar's
+ * Projects section (see project-list.tsx) and are excluded here; client-side
+ * toggles never affected them server-side anyway (the pin is server-enforced
+ * per thread). If every server is grouped, show a hint pointing at the
+ * sidebar instead of an empty panel. */
 export const ComposerMcpFlyout: FC<{
   servers: string[];
   query: string;
@@ -117,23 +50,11 @@ export const ComposerMcpFlyout: FC<{
   isEnabled: (id: string) => boolean;
   onToggle: (id: string, enabled: boolean) => void;
   groupOf?: (id: string) => string | undefined;
-  currentProject?: string | null;
-  onSelectProject?: (id: string) => void;
-}> = ({
-  servers,
-  query,
-  onQueryChange,
-  isEnabled,
-  onToggle,
-  groupOf,
-  currentProject = null,
-  onSelectProject,
-}) => {
+}> = ({ servers, query, onQueryChange, isEnabled, onToggle, groupOf }) => {
   const { t } = useTranslation();
   const { openCustomize } = useSettingsPanel();
   const q = query.trim().toLowerCase();
   const filtered = q ? servers.filter((s) => s.toLowerCase().includes(q)) : servers;
-  const grouped = groupOf ? filtered.filter((s) => groupOf(s) != null) : [];
   const ungrouped = groupOf ? filtered.filter((s) => groupOf(s) == null) : filtered;
 
   return (
@@ -152,18 +73,10 @@ export const ComposerMcpFlyout: FC<{
         {filtered.length === 0 && (
           <div className="text-muted-foreground px-2.5 py-2 text-xs">{t('mention.noMcpServers')}</div>
         )}
-        {grouped.length > 0 && (
-          <>
-            <div className="text-muted-foreground px-2.5 pt-1 pb-0.5 text-[11px] font-medium tracking-wide uppercase">
-              {t('mention.project')}
-            </div>
-            <ProjectRadioGroup
-              members={grouped}
-              currentProject={currentProject}
-              onSelect={(name) => onSelectProject?.(name)}
-            />
-            {ungrouped.length > 0 && <div className="bg-border my-1 h-px" />}
-          </>
+        {filtered.length > 0 && ungrouped.length === 0 && (
+          <div className="text-muted-foreground px-2.5 py-2 text-xs">
+            {t('mention.projectsInSidebar')}
+          </div>
         )}
         {ungrouped.map((server) => {
           const icon = mcpServerIcon(server);
