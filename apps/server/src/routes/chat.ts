@@ -303,7 +303,14 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       'mcpToolNames',
       filterMcpToolIndexToScopedServers(deps.getMcpToolIndex(), activeMcp),
     );
-    requestContext.set('scopedMcpServers', activeMcp);
+    // Subagent dispatch must see the project-pin-scoped list computed on
+    // server-truth `tenantActiveMcp` (`scopedMcp.active`), never `activeMcp`
+    // (which is additionally narrowed by the client's untrusted mcpEnabled
+    // toggles). Baseline behavior handed a dispatched subagent its preset's
+    // full declared MCP list regardless of client toggles — only the pin
+    // should narrow what a subagent can reach; a client hiding a tool from
+    // its own toolbar must not silently strip it from a subagent too.
+    requestContext.set('scopedMcpServers', scopedMcp.active);
     requestContext.set('projectPin', projectPin);
     requestContext.set('persistTodos', async (todos: import('@veylin/tools').TodoItem[]) => {
       await ensureThreadState(identity);

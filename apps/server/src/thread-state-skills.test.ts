@@ -196,6 +196,81 @@ describe('thread project pin', () => {
     assert.equal(hydrated?.project, pinned);
   });
 
+  // Regression for the subagent-allowlist/client-toggle conflation: baseline
+  // handed a dispatched subagent its preset's full declared MCP list
+  // regardless of client mcpEnabled toggles. chat.ts's `scopedMcpServers`
+  // (read by scopedMcpServersFromCtx for subagent dispatch, see
+  // agent-task-runner.ts) must reflect only the project pin — computed from
+  // `resolveScopedMcp` on server-truth active servers — never the additional
+  // client-mcpEnabled narrowing applied to `activeMcp` (which still governs
+  // the parent agent's own toolsets/tool-search index, see chat.ts).
+  it('scopedMcpServers (subagent allowlist) ignores client mcpEnabled toggles on ungrouped servers, but still excludes a non-pinned grouped server', async () => {
+    const suffix = Date.now() + 3;
+    const ungrouped = `solo-${suffix}`;
+    const group = `compass-proj-${suffix}`;
+    const pinned = `guolu-${suffix}`;
+    const other = `shangzhong-${suffix}`;
+
+    await createRemoteMcpServer(DEV_TENANT_ID, {
+      name: ungrouped,
+      transport: 'http',
+      url: 'https://example.com/mcp',
+      headers: {},
+      enabled: true,
+      group: undefined,
+    });
+    await createRemoteMcpServer(DEV_TENANT_ID, {
+      name: pinned,
+      transport: 'http',
+      url: 'https://example.com/mcp',
+      headers: {},
+      enabled: true,
+      group,
+    });
+    await createRemoteMcpServer(DEV_TENANT_ID, {
+      name: other,
+      transport: 'http',
+      url: 'https://example.com/mcp',
+      headers: {},
+      enabled: true,
+      group,
+    });
+
+    const threadId = `thread-scoped-subagent-allowlist-${suffix}`;
+    await ensureThreadState({ threadId, tenantId: DEV_TENANT_ID, resourceId: 'dev-user' });
+    await setProject(threadId, pinned);
+
+    // Client toggles the ungrouped server off; no group toggle is meaningful
+    // client-side (grouped servers ignore mcpEnabled per chat.ts).
+    const declaredMcp = [ungrouped, pinned, other];
+    const mcpEnabled: Record<string, boolean> = { [ungrouped]: false, [pinned]: true, [other]: true };
+
+    const tenantActiveMcp = await listActiveMcpServerNames(DEV_TENANT_ID, declaredMcp);
+    const groups = await listMcpServerGroups(DEV_TENANT_ID);
+    const threadState = await getThreadState(threadId);
+    const pin = threadState?.project ?? null;
+
+    const scoped = resolveScopedMcp(tenantActiveMcp, groups, pin);
+
+    // Pre-fix bug: `activeMcp` (client-toggle-filtered) would have dropped
+    // `ungrouped`. Post-fix `scopedMcpServers` is `scoped.active` — untouched
+    // by mcpEnabled — so the ungrouped server survives for subagent dispatch.
+    assert.ok(scoped.active.includes(ungrouped), 'ungrouped server survives despite client toggle-off');
+
+    // The client-filtered list, still used for the parent agent's own
+    // toolsets/tool-search index, does drop it — proving the two lists
+    // diverge exactly as intended.
+    const activeMcp = scoped.active.filter(
+      (server) => groups[server] != null || mcpEnabled == null || mcpEnabled[server] !== false,
+    );
+    assert.ok(!activeMcp.includes(ungrouped), 'client-filtered activeMcp still drops the toggled-off server');
+
+    // A grouped, non-pinned server is excluded from the subagent allowlist
+    // regardless — project scoping, not client toggles, governs groups.
+    assert.ok(!scoped.active.includes(other), 'non-pinned grouped server excluded from subagent allowlist');
+    assert.ok(scoped.active.includes(pinned), 'pinned grouped server included in subagent allowlist');
+  });
+
   it('an unpinned thread auto-pins and persists the choice via setProject', async () => {
     const suffix = Date.now() + 1;
     const group = `compass-proj-${suffix}`;

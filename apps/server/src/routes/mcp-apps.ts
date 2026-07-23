@@ -107,11 +107,15 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
 
   app.post('/api/mcp-apps/host', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const { method, params, threadId } = (req.body ?? {}) as {
+    const { method, params } = (req.body ?? {}) as {
       method?: string;
       params?: { uri?: string; name?: string; arguments?: Record<string, unknown> };
-      threadId?: string;
     };
+    // threadId travels as a query param, not the body: `McpAppsRemoteHost`
+    // (the web client) POSTs a fixed `{ method, params }` shape it doesn't let
+    // callers extend, so the client appends `?threadId=` to the configured
+    // `url` instead — mirrors GET /api/mcp-apps/tools below.
+    const { threadId } = (req.query ?? {}) as { threadId?: string };
     const allow = await resolveScopedServerNames(ctx.tenantId, threadId);
     const client = await freshClient(ctx.tenantId, allow);
     try {
