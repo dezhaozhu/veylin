@@ -1,5 +1,5 @@
 import { ThreadListItemPrimitive, useAui, useAuiState } from "@assistant-ui/react";
-import { LoaderIcon, MinusIcon } from "lucide-react";
+import { LoaderIcon, MinusIcon, TrashIcon } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -9,8 +9,10 @@ import {
   useRef,
   useState,
   type FC,
+  type MouseEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { Button } from "@/components/ui/button";
 import { formatRelativeTimeShort } from "@/lib/format-relative-time";
 import {
   ackThreadActivity,
@@ -107,8 +109,68 @@ const ThreadListItemActivityBadge: FC<{
   );
 };
 
-/** "…" row menu: move-to-project drill-down (only when the tenant has grouped
- * MCP servers) + delete. Extends what used to be a lone delete icon. */
+/** Original one-click delete icon — rendered as-is (no … menu) for tenants
+ * with no grouped MCP servers, so ungrouped rows stay byte-identical to
+ * pre-projects-sidebar behavior. */
+const ThreadListItemDelete: FC = () => {
+  const { t } = useTranslation();
+  const aui = useAui();
+  const threadId = useAuiState((s) => s.threadListItem.id);
+  const [deleting, setDeleting] = useState(false);
+  const deletingRef = useRef(false);
+
+  const handleDelete = useCallback(
+    async (event: MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (deletingRef.current) return;
+
+      deletingRef.current = true;
+      setDeleting(true);
+      try {
+        const runtime = aui
+          .threads()
+          .item({ id: threadId })
+          .__internal_getRuntime?.();
+        if (!runtime) {
+          throw new Error("thread list item runtime unavailable");
+        }
+        await runtime.delete();
+      } catch (err) {
+        console.error("[thread-list] delete failed:", err);
+      } finally {
+        deletingRef.current = false;
+        setDeleting(false);
+      }
+    },
+    [aui, threadId],
+  );
+
+  return (
+    <div className="relative z-10 flex w-6 shrink-0 justify-center opacity-0 pointer-events-none transition-opacity group-hover/thread-item:opacity-100 group-hover/thread-item:pointer-events-auto">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        disabled={deleting}
+        className="aui-thread-list-item-delete text-muted-foreground hover:bg-destructive/10 hover:text-destructive size-6 shrink-0 p-0"
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={handleDelete}
+      >
+        {deleting ? (
+          <LoaderIcon className="size-3.5 animate-spin" aria-hidden />
+        ) : (
+          <TrashIcon className="size-3.5" aria-hidden />
+        )}
+        <span className="sr-only">{t("threadList.delete")}</span>
+      </Button>
+    </div>
+  );
+};
+
+/** "…" row menu: move-to-project drill-down + delete. Rendered only when the
+ * tenant has grouped MCP servers to move threads into; otherwise
+ * ThreadListItemDelete keeps the original lone delete icon. */
 const ThreadListItemMenu: FC = () => {
   const { t } = useTranslation();
   const aui = useAui();
@@ -220,6 +282,7 @@ const ThreadListItemMenu: FC = () => {
 
 export const ThreadListItem: FC = () => {
   const { t } = useTranslation();
+  const groupedServers = useGroupedMcpServers();
   const activityMap = useContext(ThreadActivityContext);
   const threadId = useAuiState(
     (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId ?? s.threadListItem.id,
@@ -267,7 +330,7 @@ export const ThreadListItem: FC = () => {
         </span>
       </ThreadListItemPrimitive.Trigger>
       <div className="aui-thread-list-item-meta flex shrink-0 items-center gap-1 pe-1.5">
-        <ThreadListItemMenu />
+        {groupedServers.length > 0 ? <ThreadListItemMenu /> : <ThreadListItemDelete />}
         <ThreadListItemTime />
       </div>
     </ThreadListItemPrimitive.Root>

@@ -10,6 +10,8 @@ import { useSyncExternalStore } from 'react';
 
 export type ThreadProjectMap = Record<string, string>;
 
+const EMPTY: ThreadProjectMap = {};
+
 let cached: ThreadProjectMap | null = null;
 let inflight: Promise<ThreadProjectMap> | null = null;
 const listeners = new Set<() => void>();
@@ -24,11 +26,15 @@ export async function fetchThreadProjects(force = false): Promise<ThreadProjectM
   inflight = fetch('/api/projects/threads')
     .then((r) => r.json())
     .then((d: ThreadProjectMap) => {
-      cached = d ?? {};
+      cached = d ?? EMPTY;
       notify();
       return cached;
     })
-    .catch(() => cached ?? {})
+    .catch(() => {
+      cached = cached ?? EMPTY;
+      notify();
+      return cached;
+    })
     .finally(() => {
       inflight = null;
     });
@@ -36,7 +42,7 @@ export async function fetchThreadProjects(force = false): Promise<ThreadProjectM
 }
 
 export function readCachedThreadProjects(): ThreadProjectMap {
-  return cached ?? {};
+  return cached ?? EMPTY;
 }
 
 export function subscribeThreadProjects(listener: () => void): () => void {
@@ -56,5 +62,5 @@ export function invalidateThreadProjects(): void {
 /** Reactive thread→project map for the sidebar; subscribes once per mounted
  * consumer and shares the underlying fetch/cache. */
 export function useThreadProjects(): ThreadProjectMap {
-  return useSyncExternalStore(subscribeThreadProjects, readCachedThreadProjects, () => ({}));
+  return useSyncExternalStore(subscribeThreadProjects, readCachedThreadProjects, () => EMPTY);
 }
