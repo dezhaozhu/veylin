@@ -44,6 +44,7 @@ import {
   readCachedThreadProject,
   writeCachedThreadProject,
 } from '@/lib/project-sync';
+import { invalidateThreadProjects } from '@/lib/thread-projects-sync';
 
 function applyPlanModeForThread(threadId: string | undefined, on: boolean): void {
   if (threadId) writeCachedThreadPlanMode(threadId, on);
@@ -498,6 +499,7 @@ export function useProjectScope() {
     void postThreadProject(threadId, lastProject).then((confirmed) => {
       writeCachedThreadProject(threadId, confirmed);
       setCurrentProject(confirmed);
+      if (confirmed != null) invalidateThreadProjects();
     });
   }, [threadId, currentProject, groupedServers]);
 
@@ -517,6 +519,7 @@ export function useProjectScope() {
         if (confirmed == null) return;
         writeCachedThreadProject(threadId, confirmed);
         setCurrentProject(confirmed);
+        invalidateThreadProjects();
       });
     },
     [threadId, groupedServers, setServerEnabled],

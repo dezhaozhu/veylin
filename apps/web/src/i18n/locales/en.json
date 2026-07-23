@@ -62,7 +62,14 @@
     "loading": "Loading chats",
     "moreOptions": "More options",
     "archive": "Archive",
-    "delete": "Delete"
+    "delete": "Delete",
+    "projects": "Projects",
+    "recent": "Recent",
+    "newChatInProject": "New chat in {{name}}",
+    "emptyProject": "No chats yet",
+    "moveToProject": "Move to project…",
+    "moveToProjectHint": "History stays with its original project; new messages use the target project",
+    "back": "Back"
   },
   "header": {
     "back": "Back",

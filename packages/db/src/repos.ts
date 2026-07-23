@@ -332,6 +332,16 @@ export async function listThreadStatesForTenant(tenantId: string): Promise<Threa
   return rows.map(mapThreadState);
 }
 
+/** Bulk read of only the pinned (non-null project) thread_state rows for a tenant — backs the Projects sidebar's bulk thread→project map. */
+export async function listThreadStatesWithProject(tenantId: string): Promise<ThreadStateRow[]> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    'SELECT * FROM thread_state WHERE tenant_id = $tenantId AND project != NONE',
+    { tenantId },
+  );
+  return rows.map(mapThreadState);
+}
+
 export async function deleteThreadStateRow(threadId: string): Promise<void> {
   await getDb().query('DELETE thread_state WHERE thread_id = $threadId', { threadId });
 }

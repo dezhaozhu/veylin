@@ -7,7 +7,13 @@ import {
   listActiveMcpServerNames,
   listMcpServerGroups,
 } from './mcp-store.js';
-import { ensureThreadState, getThreadState, mergeActivatedSkillContents, setProject } from './thread-state.js';
+import {
+  ensureThreadState,
+  getThreadState,
+  listThreadProjects,
+  mergeActivatedSkillContents,
+  setProject,
+} from './thread-state.js';
 import { DEV_TENANT_ID, ensureDevTenant } from './tenant.js';
 import { proposeScheduleEdit } from './schedule-edit.js';
 
@@ -386,5 +392,59 @@ describe('thread project pin', () => {
     if (out.ok) assert.equal(out.ops, 1);
     assert.equal(calledOn, pinned);
     assert.notEqual(calledOn, other);
+  });
+});
+
+// listThreadProjects — bulk thread→project map backing GET /api/projects/threads
+// (Projects sidebar). Composes the real embedded store the same way the other
+// describe block above does (ensureThreadState + setProject), then asserts the
+// map is scoped to non-null pins for the caller's tenant only.
+describe('listThreadProjects', () => {
+  before(async () => {
+    await connectDb();
+    await ensureDevTenant();
+  });
+
+  after(async () => {
+    await closeDb();
+  });
+
+  it('returns only non-null pins, scoped to the caller tenant', async () => {
+    const suffix = Date.now();
+    const otherTenant = `list-thread-projects-other-tenant-${suffix}`;
+
+    const pinnedA = `thread-list-projects-pinned-a-${suffix}`;
+    const pinnedB = `thread-list-projects-pinned-b-${suffix}`;
+    const unpinned = `thread-list-projects-unpinned-${suffix}`;
+    const otherTenantThread = `thread-list-projects-other-tenant-${suffix}`;
+
+    await ensureThreadState({ threadId: pinnedA, tenantId: DEV_TENANT_ID, resourceId: 'dev-user' });
+    await setProject(pinnedA, `compass-guolu-${suffix}`);
+
+    await ensureThreadState({ threadId: pinnedB, tenantId: DEV_TENANT_ID, resourceId: 'dev-user' });
+    await setProject(pinnedB, `compass-shangzhong-${suffix}`);
+
+    await ensureThreadState({ threadId: unpinned, tenantId: DEV_TENANT_ID, resourceId: 'dev-user' });
+    // left unpinned — project stays null
+
+    await ensureThreadState({ threadId: otherTenantThread, tenantId: otherTenant, resourceId: 'dev-user' });
+    await setProject(otherTenantThread, `compass-other-${suffix}`);
+
+    const map = await listThreadProjects(DEV_TENANT_ID);
+
+    assert.equal(map[pinnedA], `compass-guolu-${suffix}`);
+    assert.equal(map[pinnedB], `compass-shangzhong-${suffix}`);
+    assert.equal(map[unpinned], undefined);
+    assert.equal(map[otherTenantThread], undefined);
+
+    const otherMap = await listThreadProjects(otherTenant);
+    assert.equal(otherMap[otherTenantThread], `compass-other-${suffix}`);
+    assert.equal(otherMap[pinnedA], undefined);
+  });
+
+  it('returns an empty object when the tenant has no pinned threads', async () => {
+    const emptyTenant = `list-thread-projects-empty-tenant-${Date.now()}`;
+    const map = await listThreadProjects(emptyTenant);
+    assert.deepEqual(map, {});
   });
 });
