@@ -12,6 +12,7 @@ import {
   deleteThreadState,
   ensureThreadState,
   getThreadState,
+  listThreadProjects,
   listThreadsForResource,
   requireThreadOwnership,
   resolveThreadForRead,
@@ -451,6 +452,12 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
     const ctx = await deps.resolveContext(req.headers);
     const row = await resolveThreadForRead(threadId, ctx);
     return { project: row?.project ?? null };
+  });
+
+  /** Bulk thread→project map for the Projects sidebar (grouping threads by pin). */
+  app.get('/api/projects/threads', async (req) => {
+    const ctx = await deps.resolveContext(req.headers);
+    return listThreadProjects(ctx.tenantId);
   });
 
   app.post('/api/project', async (req, reply) => {

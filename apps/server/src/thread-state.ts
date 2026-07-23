@@ -13,6 +13,7 @@ import {
   insertThreadState,
   listThreadStatesForResource,
   listThreadStatesForTenant,
+  listThreadStatesWithProject,
   updateThreadState,
 } from '@veylin/db';
 import { isDesktopAuth } from './auth';
@@ -592,6 +593,20 @@ export async function listThreadsForResource(
       };
     }),
   );
+}
+
+/**
+ * Bulk thread→project map for a tenant (non-null pins only) — backs
+ * GET /api/projects/threads (Projects sidebar grouping). Mirrors
+ * listThreadsForResource: a thin db-row → shape transform over the repo call.
+ */
+export async function listThreadProjects(tenantId: string): Promise<Record<string, string>> {
+  const rows = await listThreadStatesWithProject(tenantId);
+  const map: Record<string, string> = {};
+  for (const row of rows) {
+    if (row.project) map[row.threadId] = row.project;
+  }
+  return map;
 }
 
 export async function deleteThreadState(
