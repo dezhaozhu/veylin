@@ -189,17 +189,29 @@ export function resolveDispatchTarget(
   };
 }
 
+/**
+ * Intersect a subagent's declared/preset MCP server list with the dispatching
+ * request's scoped allowlist. `undefined` allowlist (no scoping context at
+ * dispatch time, e.g. Automate/Workflow) is a no-op — today's behavior.
+ */
+export function scopeServersToAllowlist(servers: string[], allowlist?: string[]): string[] {
+  if (!allowlist) return servers;
+  const allowed = new Set(allowlist);
+  return servers.filter((server) => allowed.has(server));
+}
+
 function toolsetsForPreset(
   preset: SubagentPreset | undefined,
   agentId: string,
   runtime: Runtime,
   deps: AgentTaskRunnerDeps,
   fork?: boolean,
+  scopedMcpServers?: string[],
 ): Record<string, unknown> {
   const declared = runtime.definitions.get(agentId)?.definition.mcpServers ?? [];
   const toolsets: Record<string, unknown> = {};
   const servers = fork ? declared : preset?.includeMcp?.length ? preset.includeMcp : declared;
-  for (const server of servers) {
+  for (const server of scopeServersToAllowlist(servers, scopedMcpServers)) {
     if (deps.mcpToolsets[server]) toolsets[server] = deps.mcpToolsets[server];
   }
   return toolsets;
@@ -305,6 +317,8 @@ export async function runSubagentGenerate(options: {
   /** Parent chat thread — used to publish live progress for TaskToolUI. */
   parentThreadId?: string | null;
   taskId?: string | null;
+  /** Dispatching request's scoped/active MCP servers — see `scopeServersToAllowlist`. */
+  scopedMcpServers?: string[];
 }): Promise<SubagentRunResult> {
   const agent = options.runtime.getAgent(options.agentId);
   if (!agent) throw new Error(`Agent not registered: ${options.agentId}`);
@@ -357,7 +371,14 @@ export async function runSubagentGenerate(options: {
   const result = (await agent.generate(options.prompt, {
     memory: { thread: options.threadId, resource: options.resourceId },
     requestContext: subCtx,
-    toolsets: toolsetsForPreset(options.preset, options.agentId, options.runtime, options.deps, options.fork),
+    toolsets: toolsetsForPreset(
+      options.preset,
+      options.agentId,
+      options.runtime,
+      options.deps,
+      options.fork,
+      options.scopedMcpServers,
+    ),
     abortSignal: options.abortSignal,
     tracingOptions: {
       tags: ['subagent', options.agentId],
@@ -550,6 +571,7 @@ export async function executeSubagentJob(
       parentThreadId: job.parentThreadId,
       taskId: job.taskId,
       abortSignal: job.abortSignal,
+      scopedMcpServers: job.scopedMcpServers,
     });
 
     if (job.abortSignal?.aborted) {
@@ -626,6 +648,19 @@ export function ctxValue(
   return ctx?.requestContext?.get(key) as string | undefined;
 }
 
+/**
+ * Read chat.ts's `scopedMcpServers` (the dispatching request's project-pin-
+ * scoped active MCP server list) off a tool's requestContext — mirrors how
+ * `ctxValue` reads `parentAgentId`/`threadId`, but for the array-typed value.
+ * `undefined` when the dispatching request set none (no scoping context).
+ */
+export function scopedMcpServersFromCtx(
+  ctx: { requestContext?: { get(key: string): unknown } } | undefined,
+): string[] | undefined {
+  const value = ctx?.requestContext?.get('scopedMcpServers');
+  return Array.isArray(value) ? (value as string[]) : undefined;
+}
+
 export function devTenantFallback(): string {
   return DEV_TENANT_FALLBACK;
 }
@@ -636,6 +671,7 @@ export async function continueTaskThread(
   runtime: Runtime,
   deps: AgentTaskRunnerDeps,
   resourceId: string,
+  scopedMcpServers?: string[],
 ): Promise<SubagentRunResult> {
   const threadId = task.workerThreadId ?? `task-${task.id}`;
   const isFork = task.subagentType === FORK_SUBAGENT_TYPE;
@@ -670,6 +706,7 @@ export async function continueTaskThread(
       resourceId,
       tenantId: task.tenantId,
       fork: true,
+      scopedMcpServers,
     });
   }
 
@@ -686,5 +723,6 @@ export async function continueTaskThread(
     threadId,
     resourceId,
     tenantId: task.tenantId,
+    scopedMcpServers,
   });
 }

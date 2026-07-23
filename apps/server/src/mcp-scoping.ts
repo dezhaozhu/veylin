@@ -1,8 +1,40 @@
-/** Pure per-thread project-scoping resolution for grouped MCP servers. */
+/**
+ * Pure per-thread project-scoping resolution for grouped MCP servers.
+ *
+ * SCOPE NOTE (consciously deferred — not covered by this module or its callers):
+ * - `agent-run.ts` (the Automate/Workflow `run_agent` node entry) invokes the agent
+ *   directly and never applies a thread pin — Automate/Workflow runs are unscoped.
+ * - `schedule-edit.ts` and `table-tools.ts` read the tool-call toolsets via a
+ *   hardcoded `toolsets['compass']` key rather than resolving the pinned/scoped
+ *   server name, so a grouped deployment with a non-`compass`-named pinned member
+ *   would not be found by those call sites.
+ * Both are debt for the next engineer picking up project-scoping, not addressed here.
+ */
 
 export interface ScopedMcpResult {
   active: string[];
   autoPin: string | null;
+}
+
+export interface McpToolIndexEntry {
+  id: string;
+  description: string;
+}
+
+/**
+ * Filter a tenant-wide MCP tool-search index (as built by `indexMcpTools`,
+ * entries shaped `{ id: "mcp__<server>__<tool>", description }`) down to the
+ * entries whose server is in `scopedServers` — mirrors `filterExternalToolsets`'s
+ * `mcp__${server}__${name}` id convention. Used to keep tool-search from leaking
+ * non-pinned/non-scoped server tool names into a request's discoverable index.
+ */
+export function filterMcpToolIndexToScopedServers<T extends McpToolIndexEntry>(
+  index: T[],
+  scopedServers: string[],
+): T[] {
+  if (scopedServers.length === 0) return [];
+  const prefixes = scopedServers.map((server) => `mcp__${server}__`);
+  return index.filter((entry) => prefixes.some((prefix) => entry.id.startsWith(prefix)));
 }
 
 /**

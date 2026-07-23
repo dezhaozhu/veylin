@@ -16,6 +16,7 @@ import {
   devTenantFallback,
   resolveDispatchTarget,
   runSubagentGenerate,
+  scopedMcpServersFromCtx,
   subagentTaskEnvelope,
   continueTaskThread,
 } from './agent-task-runner';
@@ -128,6 +129,10 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
       const userId = ctxValue(ctx, 'userId') ?? tenantId;
       const parentThreadId = ctxValue(ctx, 'threadId');
       const parentAgentId = ctxValue(ctx, 'parentAgentId') ?? DEFAULT_AGENT_ID;
+      // Captured at enqueue/dispatch time so a subagent dispatched from a
+      // pinned thread inherits its project scope instead of an unscoped
+      // toolset — see toolsetsForPreset's intersection with this allowlist.
+      const scopedMcpServers = scopedMcpServersFromCtx(ctx);
 
       const target = resolveDispatchTarget(runtime, parentAgentId, {
         subagent_type: input.subagent_type,
@@ -198,6 +203,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           subagentType: target.subagentType,
           fork: isFork,
           directive: isFork ? input.prompt : undefined,
+          scopedMcpServers,
         };
         const jobId = await deps.queue.send(SUBAGENT_QUEUE, job);
         await updateTaskRow(taskId, { jobId: jobId ?? null, workerThreadId: workerThread });
@@ -237,6 +243,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           fork: isFork,
           parentThreadId,
           taskId,
+          scopedMcpServers,
         });
         await updateTaskRow(taskId, {
           status: 'done',
@@ -297,6 +304,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
       const tenantId = ctxValue(ctx, 'tenantId') ?? devTenantFallback();
       const userId = ctxValue(ctx, 'userId') ?? tenantId;
       const parentThreadId = ctxValue(ctx, 'threadId');
+      const scopedMcpServers = scopedMcpServersFromCtx(ctx);
 
       if (input.run_in_background === true) {
         const enveloped = `${row.prompt}\n\n---\nFollow-up:\n${input.message}`;
@@ -319,6 +327,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           label: row.label ?? row.agentId,
           taskId: row.id,
           subagentType: row.subagentType ?? undefined,
+          scopedMcpServers,
         };
         const jobId = await deps.queue.send(SUBAGENT_QUEUE, job);
         await updateTaskRow(row.id, { jobId: jobId ?? null, workerThreadId: workerThread });
@@ -348,7 +357,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
         };
       }
 
-      const result = await continueTaskThread(row, input.message, runtime, deps, userId);
+      const result = await continueTaskThread(row, input.message, runtime, deps, userId, scopedMcpServers);
       await updateTaskRow(row.id, {
         status: 'done',
         result: result.text,

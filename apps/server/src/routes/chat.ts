@@ -108,7 +108,7 @@ import {
   buildRulesMemoryBlock,
 } from '../rules-store.js';
 import { listActiveMcpServerNames, listMcpServerGroups } from '../mcp-store.js';
-import { resolveScopedMcp } from '../mcp-scoping.js';
+import { resolveScopedMcp, filterMcpToolIndexToScopedServers } from '../mcp-scoping.js';
 import { applyTenantModelSettings } from '../model-settings-store.js';
 import { buildKnowledgeContextBlock } from '../rag-store.js';
 import { getHookBus, reloadHooksForTenant } from '../hooks-service.js';
@@ -233,30 +233,44 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const mcpAgentId = agentId;
     const declaredMcp = deps.runtime.definitions.get(mcpAgentId)?.definition.mcpServers ?? [];
     const mcpEnabled = body.mcpEnabled as Record<string, boolean> | undefined;
+    // Server truth: enabled-in-store ∩ declared-by-agent. mcpEnabled (below) is
+    // client-declared and untrusted — project scoping must run against this list,
+    // never the client-filtered one, or a client could evict the pinned server
+    // from scoping by claiming it's disabled and force an (auto-pinned, formerly
+    // persisted) re-pin. See attack test in mcp-scoping.test.ts.
     const tenantActiveMcp = await withDatastoreFallback(
       () => listActiveMcpServerNames(ctx.tenantId, declaredMcp),
       [] as string[],
     );
-    const activeMcp = tenantActiveMcp.filter(
-      (server) => mcpEnabled == null || mcpEnabled[server] !== false,
-    );
 
     // Server-side project scoping: narrow each grouped MCP server down to the
-    // thread's pinned project, auto-pinning (and persisting) when the pin is
-    // missing or stale. mcpEnabled above is client-declared and untrusted for
-    // this — the scoping below is what actually gates tool exposure.
+    // thread's pinned project, auto-pinning when the pin is missing or stale.
+    // A group's pin winner survives regardless of mcpEnabled; every other member
+    // of that group is dropped regardless of mcpEnabled too — a project switch
+    // happens only via the explicit POST /api/project route (setProject).
     const mcpServerGroups = await withDatastoreFallback(
       () => listMcpServerGroups(ctx.tenantId),
       {} as Record<string, string | undefined>,
     );
     const threadProjectPin = threadRowState?.project ?? null;
-    const scopedMcp = resolveScopedMcp(activeMcp, mcpServerGroups, threadProjectPin);
-    if (scopedMcp.autoPin && scopedMcp.autoPin !== threadProjectPin) {
+    const scopedMcp = resolveScopedMcp(tenantActiveMcp, mcpServerGroups, threadProjectPin);
+    // Persist the auto-pick only when the thread had no stored pin at all. When a
+    // stored pin exists but named a store-disabled/removed server, the auto-pick
+    // is used for this request only — never a silent rewrite of a pin the user
+    // (or a prior explicit /api/project call) set.
+    if (threadProjectPin == null && scopedMcp.autoPin) {
       void setProject(threadId, scopedMcp.autoPin).catch((err) => {
         app.log.warn({ err, threadId }, 'project auto-pin persist failed');
       });
     }
     const projectPin = scopedMcp.autoPin ?? threadProjectPin;
+    // Ungrouped servers keep today's client mcpEnabled behavior exactly; grouped
+    // survivors from scoping above are the pin winners and are exposed regardless
+    // of what the client's mcpEnabled toggle claims.
+    const activeMcp = scopedMcp.active.filter(
+      (server) =>
+        mcpServerGroups[server] != null || mcpEnabled == null || mcpEnabled[server] !== false,
+    );
 
     const mergedSkills = await withDatastoreFallback(
       () => listMergedSkills(deps.runtime, ctx.tenantId, agentId),
@@ -282,7 +296,14 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     requestContext.set('parentAgentId', agentId);
     requestContext.set('publicBaseUrl', `${req.protocol}://${req.headers.host ?? '127.0.0.1:8787'}`);
     requestContext.set('discoveredToolIds', []);
-    requestContext.set('mcpToolNames', deps.getMcpToolIndex());
+    // Scope the tool-search index to this request's active servers too — otherwise
+    // tool_search would let the model discover (and name) tools on non-pinned
+    // group members or servers disabled by the client.
+    requestContext.set(
+      'mcpToolNames',
+      filterMcpToolIndexToScopedServers(deps.getMcpToolIndex(), activeMcp),
+    );
+    requestContext.set('scopedMcpServers', activeMcp);
     requestContext.set('projectPin', projectPin);
     requestContext.set('persistTodos', async (todos: import('@veylin/tools').TodoItem[]) => {
       await ensureThreadState(identity);
@@ -446,13 +467,14 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     }
 
     // Per-agent MCP: only expose declared servers; none when undeclared.
-    // Uses the project-scoped list, not the raw mcpEnabled-filtered one.
+    // Uses the project-scoped + mcpEnabled-filtered list (activeMcp), not the raw
+    // server-truth list.
     const agentMcp =
       planMode
         ? {}
-        : scopedMcp.active.length > 0
+        : activeMcp.length > 0
           ? Object.fromEntries(
-              Object.entries(deps.getMcpToolsets()).filter(([server]) => scopedMcp.active.includes(server)),
+              Object.entries(deps.getMcpToolsets()).filter(([server]) => activeMcp.includes(server)),
             )
           : {};
 

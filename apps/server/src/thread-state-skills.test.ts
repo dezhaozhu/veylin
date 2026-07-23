@@ -133,6 +133,69 @@ describe('thread project pin', () => {
     assert.equal(scoped.autoPin, null);
   });
 
+  // CRITICAL-finding regression: scoping must run against server-truth active
+  // servers, never the client-mcpEnabled-filtered list — composes the real
+  // store + thread-state + resolveScopedMcp exactly as chat.ts's post-fix
+  // request handler does, including the persistence gate (pin unchanged).
+  it('client mcpEnabled cannot evict the pinned server from scoping, and the stored pin is not rewritten', async () => {
+    const suffix = Date.now() + 2;
+    const group = `compass-proj-${suffix}`;
+    const pinned = `guolu-${suffix}`;
+    const other = `shangzhong-${suffix}`;
+
+    await createRemoteMcpServer(DEV_TENANT_ID, {
+      name: pinned,
+      transport: 'http',
+      url: 'https://example.com/mcp',
+      headers: {},
+      enabled: true,
+      group,
+    });
+    await createRemoteMcpServer(DEV_TENANT_ID, {
+      name: other,
+      transport: 'http',
+      url: 'https://example.com/mcp',
+      headers: {},
+      enabled: true,
+      group,
+    });
+
+    const threadId = `thread-scoped-attack-${suffix}`;
+    await ensureThreadState({ threadId, tenantId: DEV_TENANT_ID, resourceId: 'dev-user' });
+    await setProject(threadId, pinned);
+
+    // Attack: the client claims the pinned server is disabled and the other
+    // group member is enabled.
+    const declaredMcp = [pinned, other];
+    const mcpEnabled: Record<string, boolean> = { [pinned]: false, [other]: true };
+
+    // chat.ts (post-fix): scoping runs against server-truth tenantActiveMcp,
+    // never the client-filtered list.
+    const tenantActiveMcp = await listActiveMcpServerNames(DEV_TENANT_ID, declaredMcp);
+    const groups = await listMcpServerGroups(DEV_TENANT_ID);
+    const threadState = await getThreadState(threadId);
+    const pin = threadState?.project ?? null;
+    assert.equal(pin, pinned);
+
+    const scoped = resolveScopedMcp(tenantActiveMcp, groups, pin);
+    // Pin was valid against server truth — no re-pin needed.
+    assert.equal(scoped.autoPin, null);
+    if (pin == null && scoped.autoPin) {
+      await setProject(threadId, scoped.autoPin);
+    }
+    const activeMcp = scoped.active.filter(
+      (server) => groups[server] != null || mcpEnabled == null || mcpEnabled[server] !== false,
+    );
+
+    // The request still scopes to the pinned server despite the client's toggle.
+    assert.ok(activeMcp.includes(pinned));
+    assert.ok(!activeMcp.includes(other));
+
+    // The stored pin is unchanged — no silent rewrite was persisted.
+    const hydrated = await getThreadState(threadId);
+    assert.equal(hydrated?.project, pinned);
+  });
+
   it('an unpinned thread auto-pins and persists the choice via setProject', async () => {
     const suffix = Date.now() + 1;
     const group = `compass-proj-${suffix}`;
