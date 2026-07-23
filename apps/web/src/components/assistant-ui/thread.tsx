@@ -15,6 +15,7 @@ import { ComposerAttachmentDropzone } from "@/components/assistant-ui/composer-a
 import { ComposerMentionInput } from "@/components/assistant-ui/composer-mention/composer-mention-input";
 import { ComposerModeChips } from "@/components/assistant-ui/composer-mode-chips";
 import { ComposerPlusMenu } from "@/components/assistant-ui/composer-plus-menu";
+import { ComposerProjectChip } from "@/components/assistant-ui/composer-project-chip";
 import { ComposerStatusBar } from "@/components/assistant-ui/composer-status-bar";
 import { ComposerAskPanel } from "@/components/assistant-ui/composer-ask-panel";
 import {
@@ -361,6 +362,7 @@ const ComposerAction: FC = () => {
     <div className="aui-composer-action-wrapper grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-1 gap-y-1">
       <div className="flex min-w-0 items-center gap-1 overflow-hidden">
         <ComposerPlusMenu />
+        <ComposerProjectChip />
         <ComposerModeChips />
       </div>
       <div className="relative z-10 flex min-w-0 shrink-0 items-center justify-end gap-0.5 overflow-visible">

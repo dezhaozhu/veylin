@@ -137,6 +137,8 @@
     "mcp": "MCP Servers",
     "mcpDesc": "Enable or disable tool servers for this chat",
     "mcpToggle": "Toggle {{name}}",
+    "project": "Project",
+    "selectProject": "Select project {{name}}",
     "panels": "Panels",
     "panelsDesc": "Focus a right-side panel as context",
     "sectionAttach": "Attach",

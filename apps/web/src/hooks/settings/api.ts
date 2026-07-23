@@ -85,6 +85,7 @@ export type McpServer = {
   url: string;
   headers: Record<string, string>;
   enabled: boolean;
+  group?: string;
 };
 
 export type McpServerHealth = {
