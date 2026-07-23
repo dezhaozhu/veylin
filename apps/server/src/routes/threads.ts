@@ -17,6 +17,7 @@ import {
   resolveThreadForRead,
   restoreTodosFromHistoryIfEmpty,
   setPlanMode as setThreadPlanModeDb,
+  setProject as setThreadProjectDb,
   setThreadTitle,
   syncWorkingMemory,
   touchThreadActivity,
@@ -420,6 +421,29 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
     }
     const state = body.threadId ? await getThreadState(body.threadId) : null;
     return { ok: true, planMode: state?.planMode ?? false };
+  });
+
+  app.get('/api/project', async (req) => {
+    const { threadId } = req.query as { threadId?: string };
+    if (!threadId) return { project: null };
+    const ctx = await deps.resolveContext(req.headers);
+    const row = await resolveThreadForRead(threadId, ctx);
+    return { project: row?.project ?? null };
+  });
+
+  app.post('/api/project', async (req) => {
+    const body = req.body as { threadId?: string; project?: string | null };
+    const ctx = await deps.resolveContext(req.headers);
+    if (body.threadId != null && body.project !== undefined) {
+      await ensureThreadState({
+        threadId: body.threadId,
+        tenantId: ctx.tenantId,
+        resourceId: ctx.userId,
+      });
+      await setThreadProjectDb(body.threadId, body.project);
+    }
+    const state = body.threadId ? await getThreadState(body.threadId) : null;
+    return { ok: true, project: state?.project ?? null };
   });
 
   app.post('/api/compact', async (req) => {

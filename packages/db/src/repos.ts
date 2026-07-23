@@ -50,6 +50,7 @@ function mapThreadState(r: Record<string, unknown>): ThreadStateRow {
     title: (r.title as string | null) ?? null,
     goal: (r.goal as unknown) ?? null,
     loop: (r.loop as unknown) ?? null,
+    project: (r.project as string | null) ?? null,
     updatedAt: r.updated_at ? String(r.updated_at) : undefined,
   };
 }
@@ -110,6 +111,7 @@ function mapMcp(r: Record<string, unknown>): McpServerRow {
     url: String(r.url ?? ''),
     headers: (r.headers as Record<string, string>) ?? {},
     enabled: Boolean(r.enabled ?? true),
+    group: (r.group as string | null) ?? null,
     createdAt: r.created_at ? String(r.created_at) : undefined,
   };
 }
@@ -244,6 +246,7 @@ export async function insertThreadState(row: Omit<ThreadStateRow, 'updatedAt'>):
     title: row.title ?? null,
     goal: row.goal ?? null,
     loop: row.loop ?? null,
+    project: row.project ?? null,
     updated_at: new Date(),
   });
 }
@@ -285,6 +288,14 @@ export async function updateThreadState(
   if (patch.loop !== undefined) {
     sets.push('loop = $loop');
     vars.loop = patch.loop;
+  }
+  if (patch.project !== undefined) {
+    if (patch.project === null) {
+      sets.push('project = NONE');
+    } else {
+      sets.push('project = $project');
+      vars.project = patch.project;
+    }
   }
   if (patch.tenantId !== undefined) {
     sets.push('tenant_id = $tenantId');
@@ -573,6 +584,7 @@ export async function insertMcpServer(
     url: input.url,
     headers: input.headers,
     enabled: input.enabled,
+    group: input.group ?? null,
   });
   return mapMcp((await selectById<Record<string, unknown>>(getDb(), 'mcp_server', id))!);
 }
@@ -590,11 +602,16 @@ export async function updateMcpServerRow(
     ['url', 'url'],
     ['headers', 'headers'],
     ['enabled', 'enabled'],
+    ['group', '`group`'],
   ] as const) {
     const val = patch[key];
     if (val !== undefined) {
-      sets.push(`${col} = $${key}`);
-      vars[key] = val;
+      if (val === null) {
+        sets.push(`${col} = NONE`);
+      } else {
+        sets.push(`${col} = $${key}`);
+        vars[key] = val;
+      }
     }
   }
   if (sets.length === 0) return null;

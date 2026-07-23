@@ -45,6 +45,7 @@ export interface ThreadStateRow {
   title: string | null;
   goal: ThreadGoalState | null;
   loop: ThreadLoopState | null;
+  project: string | null;
   updatedAt?: Date;
 }
 
@@ -71,6 +72,7 @@ export function ephemeralThreadState(identity: ThreadIdentity): ThreadStateRow {
     title: null,
     goal: null,
     loop: null,
+    project: null,
   };
 }
 
@@ -88,6 +90,7 @@ function toRow(r: Awaited<ReturnType<typeof getThreadStateRow>>): ThreadStateRow
     title: r.title ?? null,
     goal: asGoal(r.goal),
     loop: asLoop(r.loop),
+    project: r.project ?? null,
     updatedAt: r.updatedAt ? new Date(r.updatedAt) : undefined,
   };
 }
@@ -122,6 +125,7 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
     title: null,
     goal: null,
     loop: null,
+    project: null,
   });
   return {
     threadId: identity.threadId,
@@ -135,6 +139,7 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
     title: null,
     goal: null,
     loop: null,
+    project: null,
   };
 }
 
@@ -219,6 +224,11 @@ export async function pruneDesktopThreadClutter(
 
 export async function setPlanMode(threadId: string, planMode: boolean): Promise<void> {
   await updateThreadState(threadId, { planMode });
+}
+
+/** Per-thread project pin (e.g. tenant/dataset scope). `null` clears the pin. */
+export async function setProject(threadId: string, project: string | null): Promise<void> {
+  await updateThreadState(threadId, { project });
 }
 
 export async function setThreadGoal(

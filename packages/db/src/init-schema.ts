@@ -73,6 +73,7 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS title ON thread_state TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS goal ON thread_state FLEXIBLE TYPE option<object>`,
   `DEFINE FIELD IF NOT EXISTS loop ON thread_state FLEXIBLE TYPE option<object>`,
+  `DEFINE FIELD IF NOT EXISTS project ON thread_state TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS updated_at ON thread_state TYPE datetime DEFAULT time::now()`,
   `DEFINE INDEX IF NOT EXISTS thread_state_pk ON thread_state FIELDS thread_id UNIQUE`,
 
@@ -133,6 +134,7 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS url ON mcp_server TYPE string`,
   `DEFINE FIELD IF NOT EXISTS headers ON mcp_server FLEXIBLE TYPE object DEFAULT {}`,
   `DEFINE FIELD IF NOT EXISTS enabled ON mcp_server TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS \`group\` ON mcp_server TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS created_at ON mcp_server TYPE datetime DEFAULT time::now()`,
 
   `DEFINE TABLE IF NOT EXISTS automation SCHEMAFULL`,
