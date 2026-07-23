@@ -31,6 +31,7 @@ import { recordAudit } from '../audit.js';
 
 import {
   buildAttachedBrowserBlock,
+  buildProjectPinBlock,
   lastUserText,
   modelSupportsImages,
   parseChatBody,
@@ -55,6 +56,7 @@ import {
   refreshActivatedSkills,
   type ThreadStateRow,
   setPlanMode as setThreadPlanModeDb,
+  setProject,
   setTodos as setThreadTodosDb,
   setThreadGoal,
   setThreadLoop,
@@ -105,7 +107,8 @@ import {
   listRules,
   buildRulesMemoryBlock,
 } from '../rules-store.js';
-import { listActiveMcpServerNames } from '../mcp-store.js';
+import { listActiveMcpServerNames, listMcpServerGroups } from '../mcp-store.js';
+import { resolveScopedMcp } from '../mcp-scoping.js';
 import { applyTenantModelSettings } from '../model-settings-store.js';
 import { buildKnowledgeContextBlock } from '../rag-store.js';
 import { getHookBus, reloadHooksForTenant } from '../hooks-service.js';
@@ -238,6 +241,23 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       (server) => mcpEnabled == null || mcpEnabled[server] !== false,
     );
 
+    // Server-side project scoping: narrow each grouped MCP server down to the
+    // thread's pinned project, auto-pinning (and persisting) when the pin is
+    // missing or stale. mcpEnabled above is client-declared and untrusted for
+    // this — the scoping below is what actually gates tool exposure.
+    const mcpServerGroups = await withDatastoreFallback(
+      () => listMcpServerGroups(ctx.tenantId),
+      {} as Record<string, string | undefined>,
+    );
+    const threadProjectPin = threadRowState?.project ?? null;
+    const scopedMcp = resolveScopedMcp(activeMcp, mcpServerGroups, threadProjectPin);
+    if (scopedMcp.autoPin && scopedMcp.autoPin !== threadProjectPin) {
+      void setProject(threadId, scopedMcp.autoPin).catch((err) => {
+        app.log.warn({ err, threadId }, 'project auto-pin persist failed');
+      });
+    }
+    const projectPin = scopedMcp.autoPin ?? threadProjectPin;
+
     const mergedSkills = await withDatastoreFallback(
       () => listMergedSkills(deps.runtime, ctx.tenantId, agentId),
       [],
@@ -263,6 +283,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     requestContext.set('publicBaseUrl', `${req.protocol}://${req.headers.host ?? '127.0.0.1:8787'}`);
     requestContext.set('discoveredToolIds', []);
     requestContext.set('mcpToolNames', deps.getMcpToolIndex());
+    requestContext.set('projectPin', projectPin);
     requestContext.set('persistTodos', async (todos: import('@veylin/tools').TodoItem[]) => {
       await ensureThreadState(identity);
       return setThreadTodosDb(threadId, todos);
@@ -425,12 +446,13 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     }
 
     // Per-agent MCP: only expose declared servers; none when undeclared.
+    // Uses the project-scoped list, not the raw mcpEnabled-filtered one.
     const agentMcp =
       planMode
         ? {}
-        : activeMcp.length > 0
+        : scopedMcp.active.length > 0
           ? Object.fromEntries(
-              Object.entries(deps.getMcpToolsets()).filter(([server]) => activeMcp.includes(server)),
+              Object.entries(deps.getMcpToolsets()).filter(([server]) => scopedMcp.active.includes(server)),
             )
           : {};
 
@@ -488,6 +510,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       : buildWorkspacePanelHintBlock(body.workspacePanel);
     const localeBlock = buildLocaleBlock(body.locale);
     const attachedBrowserBlock = buildAttachedBrowserBlock(body.attachedBrowser);
+    const projectPinBlock = buildProjectPinBlock(projectPin);
     const workingMemoryBlock = buildReadOnlyWorkingMemoryBlock(
       threadRowState?.workingMemory ?? null,
     );
@@ -516,6 +539,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       localeBlock,
       attachedBrowserBlock,
       workingMemoryBlock,
+      projectPinBlock,
     });
     if (systemBlocks) {
       agentMessages = [{ role: 'system', content: systemBlocks } as never, ...agentMessages];

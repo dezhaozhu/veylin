@@ -339,6 +339,16 @@ export function buildAttachedBrowserBlock(
   );
 }
 
+/** System reminder scoping this turn to the thread's pinned data project. */
+export function buildProjectPinBlock(pin: string | null): string {
+  if (!pin) return '';
+  return (
+    '<system-reminder>\n' +
+    `当前数据项目: ${pin}(本会话所有数据均来自该项目,勿引用其他项目)\n` +
+    '</system-reminder>'
+  );
+}
+
 export type WorkspacePanelKind = 'table' | 'rag' | 'web' | 'workflow';
 
 export type OpenWebTabContext = {

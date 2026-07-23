@@ -7,6 +7,7 @@ import { after, before, describe, it } from 'node:test';
 import { closeDb, connectDb } from '@veylin/db';
 import {
   createRemoteMcpServer,
+  listMcpServerGroups,
   listRemoteMcpServers,
   updateRemoteMcpServer,
 } from './mcp-store.js';
@@ -81,5 +82,29 @@ describe('mcp-store group field', () => {
     const listed = await listRemoteMcpServers(TENANT);
     const found = listed.find((s) => s.id === created.id);
     assert.equal(found?.group, undefined);
+  });
+
+  it('listMcpServerGroups maps name -> group, undefined for ungrouped', async () => {
+    const groupedName = `groups-helper-grouped-${Date.now()}`;
+    const ungroupedName = `groups-helper-ungrouped-${Date.now()}`;
+    await createRemoteMcpServer(TENANT, {
+      name: groupedName,
+      transport: 'http',
+      url: 'https://example.com/mcp',
+      headers: {},
+      enabled: true,
+      group: 'compass',
+    });
+    await createRemoteMcpServer(TENANT, {
+      name: ungroupedName,
+      transport: 'http',
+      url: 'https://example.com/mcp',
+      headers: {},
+      enabled: true,
+    });
+
+    const groups = await listMcpServerGroups(TENANT);
+    assert.equal(groups[groupedName], 'compass');
+    assert.equal(groups[ungroupedName], undefined);
   });
 });

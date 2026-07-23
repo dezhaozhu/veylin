@@ -159,6 +159,18 @@ export function listBundledMcpServerNames(): string[] {
   return Object.keys(mcpServerConfigs);
 }
 
+/** Name -> group for every remote MCP server row (undefined = ungrouped). */
+export async function listMcpServerGroups(
+  tenantId: string,
+): Promise<Record<string, string | undefined>> {
+  const remote = await listRemoteMcpServers(tenantId);
+  const groups: Record<string, string | undefined> = {};
+  for (const server of remote) {
+    groups[server.name] = server.group;
+  }
+  return groups;
+}
+
 export async function listActiveMcpServerNames(
   tenantId: string,
   declaredMcp: string[] = [],
