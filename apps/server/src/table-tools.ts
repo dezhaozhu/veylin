@@ -22,10 +22,39 @@ const rowSchema = z.record(z.string(), z.union([z.string(), z.number()]));
 const cellValueSchema = z.union([z.string(), z.number()]);
 
 import { unwrapMcpPayload } from './mcp-payload.js';
+import { resolveCompassServer } from './mcp-scoping.js';
 
 export { unwrapMcpPayload } from './mcp-payload.js';
 
 export type ToolsetsGetter = () => Record<string, unknown>;
+
+/** Server-name → project-group map, e.g. `{ compass: undefined, 'compass-guolu': 'compass' }'. */
+export type McpServerGroups = Record<string, string | undefined>;
+export type GroupsGetter = () => McpServerGroups;
+
+/**
+ * Resolve the Compass toolset from `toolsets` via `resolveCompassServer`
+ * (never a hardcoded `toolsets['compass']`). Every call site below backs the
+ * workspace AG-Grid panel (grid load buttons, load_compass_schedule/orders/
+ * resources agent tools) — that panel is genuinely thread-agnostic today, no
+ * threadId flows into any of these calls (see the "Fork seam" comment in
+ * routes/tables.ts), so they always resolve with `pin: null`.
+ * `resolveCompassServer` still protects them: with more than one
+ * Compass-prefixed server connected it refuses (returns `undefined`) rather
+ * than guessing `'compass'` and silently crossing a project's server group.
+ */
+function resolveCompassToolset(
+  getMcpToolsets: ToolsetsGetter | undefined,
+  getMcpGroups: GroupsGetter | undefined,
+): Record<string, { execute: (args: unknown) => Promise<unknown> }> | undefined {
+  const toolsets = getMcpToolsets?.() ?? {};
+  const groups = getMcpGroups?.() ?? {};
+  const serverName = resolveCompassServer(toolsets, groups, null);
+  if (!serverName) return undefined;
+  return toolsets[serverName] as
+    | Record<string, { execute: (args: unknown) => Promise<unknown> }>
+    | undefined;
+}
 
 /**
  * Fetch schedule rows from the Compass `get_schedule_rows` MCP tool and import
@@ -38,15 +67,13 @@ export const SCHEDULE_SHEET_ID = 'schedule';
 export async function importCompassScheduleSheet(
   getMcpToolsets: ToolsetsGetter | undefined,
   input: { limit?: number; workshop?: string; status?: string; order_id?: string },
+  getMcpGroups?: GroupsGetter,
 ): Promise<
   | { ok: true; sheet: string; imported: number; total: number; columns: number }
   | { ok: false; error: string }
 > {
   // Resolve live toolsets via the getter (not a snapshot — rebuildMcp re-assigns the var)
-  const toolsets = getMcpToolsets?.() ?? {};
-  const compass = toolsets['compass'] as
-    | Record<string, { execute: (args: unknown) => Promise<unknown> }>
-    | undefined;
+  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups);
   const tool = compass?.['get_schedule_rows'];
   if (!tool) {
     return {
@@ -123,14 +150,12 @@ export const RESOURCES_SHEET_ID = 'resources';
 
 export async function importCompassResourceSheet(
   getMcpToolsets: ToolsetsGetter | undefined,
+  getMcpGroups?: GroupsGetter,
 ): Promise<
   | { ok: true; sheet: string; imported: number }
   | { ok: false; error: string }
 > {
-  const toolsets = getMcpToolsets?.() ?? {};
-  const compass = toolsets['compass'] as
-    | Record<string, { execute: (args: unknown) => Promise<unknown> }>
-    | undefined;
+  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups);
   const tool = compass?.['get_resources'];
   if (!tool) {
     return { ok: false as const, error: 'compass MCP server not connected (no get_resources)' };
@@ -177,14 +202,12 @@ export const ORDERS_SHEET_ID = 'orders';
 // rows carry order_id and NO stage_code, it returns the order's FULL 三级 route.
 export async function importCompassOrderSheet(
   getMcpToolsets: ToolsetsGetter | undefined,
+  getMcpGroups?: GroupsGetter,
 ): Promise<
   | { ok: true; sheet: string; imported: number; total: number; columns: number }
   | { ok: false; error: string }
 > {
-  const toolsets = getMcpToolsets?.() ?? {};
-  const compass = toolsets['compass'] as
-    | Record<string, { execute: (args: unknown) => Promise<unknown> }>
-    | undefined;
+  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups);
   const tool = compass?.['get_schedule_rows'];
   if (!tool) {
     return { ok: false as const, error: 'compass MCP server not connected (no get_schedule_rows)' };
@@ -252,7 +275,7 @@ export async function importCompassOrderSheet(
 /**
  * Generic spreadsheet/table tools backed by the multi-sheet grid store.
  */
-export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
+export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: GroupsGetter) {
   const tableGet = createTool({
     id: 'table_get',
     description:
@@ -535,10 +558,14 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
       order_id: z.string().optional().describe('按订单号过滤'),
     }),
     execute: async (input) =>
-      importCompassScheduleSheet(getMcpToolsets, {
-        ...input,
-        limit: input.limit == null ? undefined : Number(input.limit),
-      }),
+      importCompassScheduleSheet(
+        getMcpToolsets,
+        {
+          ...input,
+          limit: input.limit == null ? undefined : Number(input.limit),
+        },
+        getMcpGroups,
+      ),
   });
 
   const tableChart = createTool({
@@ -588,7 +615,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
       '从 Compass 拉取本租户的订单总览（每订单一行：产品/分厂/工序数/排产状态/计划完工/交期），' +
       '写入名为 orders 的表 sheet。展开一行 = 该订单的完整三级工艺路线。需要 Compass MCP 已连接。',
     inputSchema: z.object({}),
-    execute: async () => importCompassOrderSheet(getMcpToolsets),
+    execute: async () => importCompassOrderSheet(getMcpToolsets, getMcpGroups),
   });
 
   const loadCompassResources = createTool({
@@ -597,7 +624,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter) {
       '从 Compass 拉取本租户的资源负荷台账（每资源：当前K/建议K/负荷 + 未来12个月负荷趋势），' +
       '写入名为 resources 的表 sheet 供展示（趋势列为迷你图）。需要 Compass MCP 服务器已连接。',
     inputSchema: z.object({}),
-    execute: async () => importCompassResourceSheet(getMcpToolsets),
+    execute: async () => importCompassResourceSheet(getMcpToolsets, getMcpGroups),
   });
 
   return {

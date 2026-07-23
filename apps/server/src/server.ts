@@ -36,7 +36,7 @@ import { buildMcpHealthSnapshot, type McpHealthSnapshot } from './mcp-health';
 import { startupCheckpoint } from './startup-profiler';
 import { ensureDevTenant, DEV_TENANT_ID } from './tenant';
 import { refreshAgentPackages, isAgentHotReloadEnabled } from './agent-packages-sync';
-import { createMcpClient, listActiveMcpServerNames, sanitizeMcpToolsets, seedMcpServersFromEnvIfMissing } from './mcp-store';
+import { createMcpClient, listActiveMcpServerNames, listMcpServerGroups, sanitizeMcpToolsets, seedMcpServersFromEnvIfMissing } from './mcp-store';
 import { listAllCronAutomations, sweepInterruptedAutomationRuns } from './automation-store';
 import { runAutomationJob } from './automation-worker';
 import { buildWorkspaceConfigTool } from './workspace-config-tool';
@@ -158,9 +158,19 @@ async function main() {
   let mcp: MCPClient | null = null;
   let mcpToolsets: Record<string, unknown> = {};
   let mcpToolIndex: { id: string; description: string }[] = [];
+  // Server-name → project-group map for whichever tenant's toolsets are
+  // currently live in `mcpToolsets` — refreshed alongside it so
+  // resolveCompassServer (schedule-edit.ts / table-tools.ts / routes/tables.ts)
+  // always sees groups that match. Same single-active-tenant-in-process
+  // characteristic as `mcpToolsets` itself (pre-existing, not introduced here).
+  let mcpGroups: Record<string, string | undefined> = {};
   const mcpCacheByTenant = new Map<
     string,
-    { toolsets: Record<string, unknown>; index: { id: string; description: string }[] }
+    {
+      toolsets: Record<string, unknown>;
+      index: { id: string; description: string }[];
+      groups: Record<string, string | undefined>;
+    }
   >();
   const mcpHealthByTenant = new Map<string, McpHealthSnapshot>();
   let taskToolset: Record<string, unknown> = {};
@@ -193,7 +203,13 @@ async function main() {
       mcpToolsets = previous ? previous.toolsets : {};
     }
     mcpToolIndex = indexMcpTools(mcpToolsets);
-    mcpCacheByTenant.set(tenantId, { toolsets: mcpToolsets, index: mcpToolIndex });
+    try {
+      mcpGroups = await listMcpServerGroups(tenantId);
+    } catch (err) {
+      mcpGroups = previous ? previous.groups : {};
+      console.warn(`[mcp] listMcpServerGroups failed for tenant ${tenantId}: ${String(err)}`);
+    }
+    mcpCacheByTenant.set(tenantId, { toolsets: mcpToolsets, index: mcpToolIndex, groups: mcpGroups });
     const health = buildMcpHealthSnapshot(activeNames, mcpToolsets, listError);
     mcpHealthByTenant.set(tenantId, health);
     if (listError) {
@@ -206,6 +222,7 @@ async function main() {
     if (cached) {
       mcpToolsets = cached.toolsets;
       mcpToolIndex = cached.index;
+      mcpGroups = cached.groups;
       return;
     }
     await rebuildMcp(tenantId);
@@ -306,6 +323,7 @@ async function main() {
     rebuildMcp,
     ensureMcpForTenant,
     getMcpToolsets: () => mcpToolsets,
+    getMcpGroups: () => mcpGroups,
     getMcpToolIndex: () => mcpToolIndex,
     getTaskToolset: () => taskToolset,
     readTaskSnapshot,
@@ -321,7 +339,7 @@ async function main() {
     await rebuildMcp(DEV_TENANT_ID);
   }
 
-  const tableTools = buildTableTools(() => mcpToolsets);
+  const tableTools = buildTableTools(() => mcpToolsets, () => mcpGroups);
   const viewer3dTools = buildViewer3dTools();
   const workspaceConfig = buildWorkspaceConfigTool({
     runtime,

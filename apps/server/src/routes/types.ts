@@ -39,6 +39,8 @@ export interface ServerDeps {
   rebuildMcp: (tenantId: string) => Promise<void>;
   ensureMcpForTenant: (tenantId: string) => Promise<void>;
   getMcpToolsets: () => Record<string, unknown>;
+  /** Server-name → project-group map for the tenant last resolved via rebuildMcp/ensureMcpForTenant. */
+  getMcpGroups: () => Record<string, string | undefined>;
   getMcpToolIndex: () => { id: string; description: string }[];
   getTaskToolset: () => Record<string, unknown>;
   readTaskSnapshot: (

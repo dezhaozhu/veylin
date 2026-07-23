@@ -528,7 +528,14 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const loopBlock = buildLoopBlock(threadRowState?.loop);
     // Live workspace awareness (table + knowledge base + right-panel focus).
     const tableBlockBase = planMode ? '' : buildTableContextBlock(threadId);
-    const editGuidance = planMode ? '' : scheduleEditGuidanceBlock(deps.getMcpToolsets);
+    // Thread-tied (unlike the workspace grid's own schedule-edit HTTP routes,
+    // see mcp-scoping.ts's module docstring): this request already resolved
+    // `mcpServerGroups` and `projectPin` above for MCP scoping, so the
+    // guidance text's "is Compass connected" check agrees with the pinned
+    // server rather than whatever `'compass'` would resolve to unpinned.
+    const editGuidance = planMode
+      ? ''
+      : scheduleEditGuidanceBlock(deps.getMcpToolsets, mcpServerGroups, projectPin);
     const tableBlock = [tableBlockBase, editGuidance].filter(Boolean).join('\n\n');
     const viewer3dBlock = planMode ? '' : buildViewer3dContextBlock();
     const knowledgeBlock = planMode

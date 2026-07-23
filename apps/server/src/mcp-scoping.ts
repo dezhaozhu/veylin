@@ -4,11 +4,20 @@
  * SCOPE NOTE (consciously deferred — not covered by this module or its callers):
  * - `agent-run.ts` (the Automate/Workflow `run_agent` node entry) invokes the agent
  *   directly and never applies a thread pin — Automate/Workflow runs are unscoped.
- * - `schedule-edit.ts` and `table-tools.ts` read the tool-call toolsets via a
- *   hardcoded `toolsets['compass']` key rather than resolving the pinned/scoped
- *   server name, so a grouped deployment with a non-`compass`-named pinned member
- *   would not be found by those call sites.
- * Both are debt for the next engineer picking up project-scoping, not addressed here.
+ * - `schedule-edit.ts` and `table-tools.ts` now resolve their Compass toolset key
+ *   through `resolveCompassServer` (below) instead of a hardcoded `toolsets['compass']`
+ *   lookup. Their HTTP routes (routes/tables.ts: schedule-detail, the governed
+ *   schedule-edit propose/preview/commit/discard routes, load-compass-schedule) and
+ *   the agent-tool closures in table-tools.ts back the workspace AG-Grid panel, which
+ *   is genuinely thread-agnostic today — no threadId flows into any of those calls
+ *   (see the "Fork seam" comment in routes/tables.ts) — so they resolve with `pin:
+ *   null`. `resolveCompassServer` still protects them: it refuses (returns `null`,
+ *   the existing "compass MCP not connected" failure path) rather than guessing
+ *   `'compass'` when more than one Compass-prefixed server is connected. The one
+ *   call site that IS thread-tied — `scheduleEditGuidanceBlock` from
+ *   `routes/chat.ts`'s `/api/chat` handler — passes the thread's real pin and the
+ *   tenant's real server groups. Threading a real threadId into the workspace grid
+ *   panel itself remains debt for the next engineer.
  */
 
 export interface ScopedMcpResult {
@@ -95,4 +104,47 @@ export function resolveScopedMcp(
   const autoPin = autoPinnedByGroup[0]?.picked ?? null;
 
   return { active, autoPin };
+}
+
+/**
+ * Resolve which connected toolset key holds the Compass MCP tools for a single
+ * call — the ONE place every Compass call site (schedule-edit.ts, table-tools.ts,
+ * routes/tables.ts) goes through instead of hardcoding `toolsets['compass']`.
+ *
+ * Why this exists: hardcoding `'compass'` is safe only for an ungrouped,
+ * single-Compass deployment. Once Compass servers are grouped for per-project
+ * scoping (e.g. a `compass` group member `shangzhong` plus a `compass-guolu`
+ * member), a thread pinned to `compass-guolu` must never silently fall through
+ * to reading (or, for governed schedule edits, WRITING) `compass` instead — that
+ * would be a cross-tenant read/write that bypasses the pin without any error.
+ *
+ * Resolution order:
+ *  1. `pin` names a connected toolset → the pin always wins.
+ *  2. `'compass'` is connected AND ungrouped (`groups['compass']` is `undefined`)
+ *     → use it. This is today's exact behavior for ungrouped deployments — an
+ *     ungrouped server was never in scope for pin-divergence in the first place.
+ *  3. Exactly one connected toolset key starts with `'compass'` → use it. Covers
+ *     single-Compass deployments where the server just isn't literally named
+ *     `compass`, and callers with no thread/pin context at all (e.g. the
+ *     workspace grid panel — see table-tools.ts / routes/tables.ts).
+ *  4. Otherwise → `null`. Callers keep their existing "compass MCP not
+ *     connected" failure path — an honest failure beats a silent guess that
+ *     might cross a project/tenant boundary.
+ */
+export function resolveCompassServer(
+  toolsets: Record<string, unknown>,
+  groups: Record<string, string | undefined>,
+  pin: string | null,
+): string | null {
+  if (pin != null && Object.prototype.hasOwnProperty.call(toolsets, pin)) {
+    return pin;
+  }
+  if (Object.prototype.hasOwnProperty.call(toolsets, 'compass') && groups['compass'] == null) {
+    return 'compass';
+  }
+  const compassKeys = Object.keys(toolsets).filter((key) => key.startsWith('compass'));
+  if (compassKeys.length === 1) {
+    return compassKeys[0]!;
+  }
+  return null;
 }

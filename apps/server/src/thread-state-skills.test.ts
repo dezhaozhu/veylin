@@ -9,6 +9,7 @@ import {
 } from './mcp-store.js';
 import { ensureThreadState, getThreadState, mergeActivatedSkillContents, setProject } from './thread-state.js';
 import { DEV_TENANT_ID, ensureDevTenant } from './tenant.js';
+import { proposeScheduleEdit } from './schedule-edit.js';
 
 describe('mergeActivatedSkillContents', () => {
   it('overwrites activated bodies when disk content changed', () => {
@@ -310,5 +311,80 @@ describe('thread project pin', () => {
     await setProject(threadId, scoped.autoPin);
     const hydrated = await getThreadState(threadId);
     assert.equal(hydrated?.project, alpha);
+  });
+
+  // I1 final-review fix: schedule-edit.ts (and, identically, table-tools.ts /
+  // routes/tables.ts) must resolve the Compass toolset through the thread's
+  // real pin + the tenant's real server groups — never a hardcoded
+  // toolsets['compass'] — or a thread pinned to one group member would still
+  // read/WRITE through another. Composes the real store (grouped MCP server
+  // rows), real thread-state (project pin), and schedule-edit.ts's
+  // proposeScheduleEdit exactly the way routes/chat.ts's guidance block (and,
+  // for a hypothetical thread-scoped grid, routes/tables.ts) would.
+  it('a pinned thread resolves propose_schedule_edit to the pinned Compass server, not the group\'s other member', async () => {
+    const suffix = Date.now() + 4;
+    const group = `compass-i1-${suffix}`;
+    const pinned = `compass-guolu-${suffix}`;
+    const other = `compass-shangzhong-${suffix}`;
+
+    await createRemoteMcpServer(DEV_TENANT_ID, {
+      name: pinned,
+      transport: 'http',
+      url: 'https://example.com/mcp',
+      headers: {},
+      enabled: true,
+      group,
+    });
+    await createRemoteMcpServer(DEV_TENANT_ID, {
+      name: other,
+      transport: 'http',
+      url: 'https://example.com/mcp',
+      headers: {},
+      enabled: true,
+      group,
+    });
+
+    const threadId = `thread-i1-schedule-edit-${suffix}`;
+    await ensureThreadState({ threadId, tenantId: DEV_TENANT_ID, resourceId: 'dev-user' });
+    await setProject(threadId, pinned);
+
+    const groups = await listMcpServerGroups(DEV_TENANT_ID);
+    const threadState = await getThreadState(threadId);
+    const pin = threadState?.project ?? null;
+    assert.equal(pin, pinned);
+
+    // Stub toolsets: both group members are "connected", each with its own
+    // propose_schedule_edit that tags which server handled the call.
+    let calledOn: string | null = null;
+    const toolsets = {
+      [pinned]: {
+        propose_schedule_edit: {
+          execute: async () => {
+            calledOn = pinned;
+            return { ops: 1, note: 'handled by pinned server' };
+          },
+        },
+      },
+      [other]: {
+        propose_schedule_edit: {
+          execute: async () => {
+            calledOn = other;
+            return { ops: 99, note: 'WRONG server' };
+          },
+        },
+      },
+    };
+
+    const out = await proposeScheduleEdit(
+      () => toolsets,
+      { field: 'resource', job_id: 'J1', value: 'M1' },
+      groups,
+      pin,
+    );
+
+    assert.equal(out.ok, true);
+    if (out.ok) assert.equal(out.ops, 1);
+    assert.equal(calledOn, pinned);
+    assert.notEqual(calledOn, other);
   });
 });

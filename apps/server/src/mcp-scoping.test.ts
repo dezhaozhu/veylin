@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resolveScopedMcp, filterMcpToolIndexToScopedServers } from './mcp-scoping.js';
+import {
+  resolveScopedMcp,
+  filterMcpToolIndexToScopedServers,
+  resolveCompassServer,
+} from './mcp-scoping.js';
 
 describe('resolveScopedMcp', () => {
   it('passes ungrouped servers through untouched', () => {
@@ -83,6 +87,50 @@ describe('resolveScopedMcp', () => {
     const result = resolveScopedMcp(serverTruthActive, groups, 'guolu');
     assert.deepEqual(result.active, ['guolu']);
     assert.equal(result.autoPin, null); // pin was valid — no re-pin, nothing to persist
+  });
+});
+
+describe('resolveCompassServer', () => {
+  it('a valid pin wins even when compass is also connected', () => {
+    const toolsets = { compass: {}, 'compass-guolu': {} };
+    const groups = { compass: 'compass-group', 'compass-guolu': 'compass-group' };
+    assert.equal(resolveCompassServer(toolsets, groups, 'compass-guolu'), 'compass-guolu');
+  });
+
+  it('falls back to ungrouped compass when there is no pin', () => {
+    const toolsets = { compass: {} };
+    assert.equal(resolveCompassServer(toolsets, {}, null), 'compass');
+  });
+
+  it('does NOT use grouped compass when the pin names a different member', () => {
+    // The core I1 regression: a thread pinned to compass-guolu must never
+    // fall through to reading/writing the group's 'compass' member.
+    const toolsets = { compass: {}, 'compass-guolu': {} };
+    const groups = { compass: 'compass-group', 'compass-guolu': 'compass-group' };
+    assert.equal(resolveCompassServer(toolsets, groups, 'compass-guolu'), 'compass-guolu');
+    assert.notEqual(resolveCompassServer(toolsets, groups, 'compass-guolu'), 'compass');
+  });
+
+  it('falls back to the single compass-prefixed toolset when there is no pin and compass is grouped/absent', () => {
+    const toolsets = { 'compass-guolu': {} };
+    const groups = { 'compass-guolu': 'compass-group' };
+    assert.equal(resolveCompassServer(toolsets, groups, null), 'compass-guolu');
+  });
+
+  it('refuses (null) when compass is grouped, unpinned, and another compass-prefixed member exists', () => {
+    const toolsets = { compass: {}, 'compass-guolu': {} };
+    const groups = { compass: 'compass-group', 'compass-guolu': 'compass-group' };
+    assert.equal(resolveCompassServer(toolsets, groups, null), null);
+  });
+
+  it('refuses (null) when no compass-prefixed toolset is connected at all', () => {
+    assert.equal(resolveCompassServer({ other: {} }, {}, null), null);
+  });
+
+  it('refuses (null) when the pin names a server that is not connected, and compass is grouped', () => {
+    const toolsets = { compass: {}, 'compass-guolu': {} };
+    const groups = { compass: 'compass-group', 'compass-guolu': 'compass-group' };
+    assert.equal(resolveCompassServer(toolsets, groups, 'compass-shangzhong'), null);
   });
 });
 
