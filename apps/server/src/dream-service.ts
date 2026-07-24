@@ -1,3 +1,4 @@
+import { recallOrEmpty } from './memory-recall.js';
 import { getModelConfig, buildSummarizer, DEFAULT_MODEL } from '@veylin/runtime';
 import type { Runtime } from '@veylin/runtime';
 import { DEFAULT_WORKING_MEMORY_TEMPLATE } from '@veylin/shared';
@@ -89,7 +90,7 @@ export function scheduleDreamConsolidation(runtime: Runtime, identity: ThreadIde
 }
 
 async function runDreamConsolidation(runtime: Runtime, identity: ThreadIdentity): Promise<void> {
-  const recalled = await runtime.memory.recall({
+  const recalled = await recallOrEmpty(runtime.memory, {
     threadId: identity.threadId,
     resourceId: identity.resourceId,
     perPage: 30,

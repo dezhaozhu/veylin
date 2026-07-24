@@ -1,3 +1,4 @@
+import { recallOrEmpty } from './memory-recall.js';
 import type { Memory } from '@mastra/memory';
 import {
   ensureMastraThread,
@@ -103,7 +104,7 @@ export async function syncThreadMessagesFromClient(opts: {
 }): Promise<boolean> {
   return withThreadSyncLock(opts.identity.threadId, async () => {
     await ensureMastraThread(opts.memory, opts.identity);
-    const recalled = await opts.memory.recall({
+    const recalled = await recallOrEmpty(opts.memory, {
       threadId: opts.identity.threadId,
       resourceId: opts.identity.resourceId,
       perPage: false,

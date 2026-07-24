@@ -1,3 +1,4 @@
+import { recallOrEmpty } from './memory-recall.js';
 import type { Memory } from '@mastra/memory';
 import {
   filterAgentContextUiMessageParts,
@@ -314,7 +315,7 @@ export async function replaceThreadMessages(
   messages: UiMessage[],
 ): Promise<void> {
   await ensureMastraThread(memory, identity);
-  const recalled = await memory.recall({ threadId: identity.threadId, perPage: false });
+  const recalled = await recallOrEmpty(memory, { threadId: identity.threadId, perPage: false });
   const existing = recalled.messages ?? [];
   if (existing.length > 0) {
     await memory.deleteMessages(existing.map((m) => m.id).filter(Boolean) as string[]);

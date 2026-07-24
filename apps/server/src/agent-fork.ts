@@ -1,3 +1,4 @@
+import { recallOrEmpty } from './memory-recall.js';
 import type { Memory } from '@mastra/memory';
 import { forkWorkerEnvelope } from '@veylin/runtime';
 
@@ -34,7 +35,7 @@ export async function seedForkWorkerThread(options: {
   directive: string;
   maxMessages?: number;
 }): Promise<string> {
-  const recalled = await options.memory.recall({
+  const recalled = await recallOrEmpty(options.memory, {
     threadId: options.parentThreadId,
     resourceId: options.parentResource,
     perPage: false,
