@@ -1,5 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import type { TableSheetSource } from '@veylin/db';
 import {
   addTableColumn,
   addTableRow,
@@ -9,12 +10,14 @@ import {
   deleteTableRows,
   deleteTableSheet,
   emitTableChart,
+  getTableSheetMeta,
   importTableSheet,
   listTableColumns,
   listTableRowsPage,
   listTableSheets,
   MAX_TABLE_GET_LIMIT,
   resolveTableSheetId,
+  stampTableSheetSource,
   updateTableRow,
 } from './table-store';
 
@@ -43,17 +46,81 @@ export type GroupsGetter = () => McpServerGroups;
  * Compass-prefixed server connected it refuses (returns `undefined`) rather
  * than guessing `'compass'` and silently crossing a project's server group.
  */
+interface ResolvedCompass {
+  /** Connected toolset key, e.g. `'compass'` or `'compass-guolu'` — also the
+   * provenance `source.server` stamped onto sheets loaded through it. */
+  serverName: string;
+  toolset: Record<string, { execute: (args: unknown) => Promise<unknown> }>;
+}
+
 function resolveCompassToolset(
   getMcpToolsets: ToolsetsGetter | undefined,
   getMcpGroups: GroupsGetter | undefined,
-): Record<string, { execute: (args: unknown) => Promise<unknown> }> | undefined {
+): ResolvedCompass | undefined {
   const toolsets = getMcpToolsets?.() ?? {};
   const groups = getMcpGroups?.() ?? {};
   const serverName = resolveCompassServer(toolsets, groups, null);
   if (!serverName) return undefined;
-  return toolsets[serverName] as
+  const toolset = toolsets[serverName] as
     | Record<string, { execute: (args: unknown) => Promise<unknown> }>
     | undefined;
+  if (!toolset) return undefined;
+  return { serverName, toolset };
+}
+
+/** `payload.tenant` when Compass stamped one — the top-level tenant tag on
+ * get_schedule_rows/get_resources responses. */
+function tenantFromPayload(payload: Record<string, unknown>): string | undefined {
+  const tenant = payload['tenant'];
+  return typeof tenant === 'string' && tenant ? tenant : undefined;
+}
+
+/**
+ * Stamps happen in-memory synchronously inside stampTableSheetSource (so an
+ * immediate table_get in the same process sees it), then persist — but a persist
+ * hiccup (no DB configured, transient failure) must not fail the load itself, the
+ * same "fire-and-forget persist" tolerance every other table mutator gets.
+ */
+async function stampCompassLoadSource(
+  sheetId: string,
+  compass: ResolvedCompass,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const source: TableSheetSource = {
+    server: compass.serverName,
+    tenant: tenantFromPayload(payload),
+    loadedAt: new Date().toISOString(),
+  };
+  try {
+    await stampTableSheetSource(sheetId, source);
+  } catch (e) {
+    console.error('[table-tools] provenance stamp persist failed:', e);
+  }
+}
+
+/**
+ * Layer-4 provenance check: a thread pinned to one project reading a sheet
+ * stamped from a different server (or never stamped at all) is exactly the
+ * silent cross-tenant mixing that motivated `source` — surface it as a warning
+ * instead of letting the agent treat the rows as live-scoped data.
+ */
+function buildProvenanceWarning(
+  source: TableSheetSource | null | undefined,
+  projectPin: string | null | undefined,
+): string | undefined {
+  if (!projectPin) return undefined;
+  if (!source) {
+    return '本表无来源记录(旧数据), 无法确认属于当前项目';
+  }
+  if (source.server === projectPin) return undefined;
+  return (
+    `注意: 本表数据来自项目 ${source.server}(租户 ${source.tenant ?? '未知'}, ${source.loadedAt} 加载), ` +
+    `与当前会话项目 ${projectPin} 不一致 — 勿与当前项目的实时数据混用`
+  );
+}
+
+interface TableToolCtx {
+  requestContext?: { get(key: string): unknown };
 }
 
 /**
@@ -74,8 +141,8 @@ export async function importCompassScheduleSheet(
 > {
   // Resolve live toolsets via the getter (not a snapshot — rebuildMcp re-assigns the var)
   const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups);
-  const tool = compass?.['get_schedule_rows'];
-  if (!tool) {
+  const tool = compass?.toolset['get_schedule_rows'];
+  if (!compass || !tool) {
     return {
       ok: false as const,
       error: 'compass MCP server not connected (no get_schedule_rows)',
@@ -136,6 +203,7 @@ export async function importCompassScheduleSheet(
     undefined,
     descriptors,
   );
+  await stampCompassLoadSource(SCHEDULE_SHEET_ID, compass, payload);
 
   return {
     ok: true as const,
@@ -156,8 +224,8 @@ export async function importCompassResourceSheet(
   | { ok: false; error: string }
 > {
   const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups);
-  const tool = compass?.['get_resources'];
-  if (!tool) {
+  const tool = compass?.toolset['get_resources'];
+  if (!compass || !tool) {
     return { ok: false as const, error: 'compass MCP server not connected (no get_resources)' };
   }
 
@@ -192,6 +260,7 @@ export async function importCompassResourceSheet(
     { key: 'source', name: '来源', type: 'text' as const },
   ];
   importTableSheet(RESOURCES_SHEET_ID, [], rows, undefined, descriptors);
+  await stampCompassLoadSource(RESOURCES_SHEET_ID, compass, payload);
   return { ok: true as const, sheet: RESOURCES_SHEET_ID, imported: rows.length };
 }
 
@@ -208,8 +277,8 @@ export async function importCompassOrderSheet(
   | { ok: false; error: string }
 > {
   const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups);
-  const tool = compass?.['get_schedule_rows'];
-  if (!tool) {
+  const tool = compass?.toolset['get_schedule_rows'];
+  if (!compass || !tool) {
     return { ok: false as const, error: 'compass MCP server not connected (no get_schedule_rows)' };
   }
   const res: unknown = await tool.execute({ limit: 1_000_000 });
@@ -266,6 +335,7 @@ export async function importCompassOrderSheet(
   ];
   if (!listTableSheets().find((s) => s.id === ORDERS_SHEET_ID)) createTableSheet(ORDERS_SHEET_ID);
   importTableSheet(ORDERS_SHEET_ID, [], orderRows as Array<Record<string, string | number>>, undefined, descriptors);
+  await stampCompassLoadSource(ORDERS_SHEET_ID, compass, payload);
   return {
     ok: true as const, sheet: ORDERS_SHEET_ID,
     imported: orderRows.length, total: orderRows.length, columns: descriptors.length,
@@ -309,8 +379,20 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       ),
       rows: z.array(rowSchema),
       notice: z.string().optional(),
+      source: z
+        .object({
+          server: z.string(),
+          tenant: z.string().optional(),
+          loadedAt: z.string(),
+        })
+        .optional()
+        .describe('Load provenance, verbatim from sheet metadata. Absent on legacy unstamped sheets.'),
+      warning: z
+        .string()
+        .optional()
+        .describe('Present when this sheet\'s provenance conflicts with (or is missing under) the current project pin.'),
     }),
-    execute: async (input) => {
+    execute: async (input, ctx?: TableToolCtx) => {
       const sheet = resolveTableSheetId(input.sheet);
       // z.coerce.number() already validated string→number; Number() re-narrows the
       // zod-v4 `unknown` input type to a clean number (idempotent at runtime).
@@ -318,6 +400,9 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       const limit = Number(input.limit ?? DEFAULT_TABLE_GET_LIMIT);
       const { totalRows, rows } = listTableRowsPage(sheet, offset, limit);
       const hasMore = offset + rows.length < totalRows;
+      const source = getTableSheetMeta(sheet)?.source ?? undefined;
+      const projectPin = ctx?.requestContext?.get('projectPin') as string | null | undefined;
+      const warning = buildProvenanceWarning(source, projectPin);
       return {
         sheet,
         totalRows,
@@ -330,6 +415,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
           type: c.type,
         })),
         rows,
+        ...(source ? { source } : {}),
+        ...(warning ? { warning } : {}),
         ...(hasMore
           ? {
               notice:
