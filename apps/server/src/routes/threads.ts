@@ -1,3 +1,4 @@
+import { recallOrEmpty } from '../memory-recall.js';
 import type { FastifyInstance } from 'fastify';
 import { setThreadPlanMode } from '@veylin/tools';
 import {
@@ -65,7 +66,7 @@ export function createReadTaskSnapshot(runtime: Runtime) {
     let batch: TasksSnapshot['batch'];
 
     if (batchRows.length > 0) {
-      const recalled = await runtime.memory.recall({
+      const recalled = await recallOrEmpty(runtime.memory, {
         threadId,
         resourceId: ctx.userId,
         perPage: false,
@@ -373,7 +374,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
       return { messages: [] };
     }
     try {
-      const recalled = await deps.runtime.memory.recall({
+      const recalled = await recallOrEmpty(deps.runtime.memory, {
         threadId,
         resourceId: row.resourceId,
         perPage: false,
@@ -509,7 +510,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
       const hookBus = getHookBus(ctx.tenantId);
       await hookBus.emit('PreCompact', { trigger: 'manual', thread_id: threadId }, { threadId });
 
-      const recalled = await deps.runtime.memory.recall({
+      const recalled = await recallOrEmpty(deps.runtime.memory, {
         threadId,
         resourceId: threadRow.resourceId,
         perPage: false,

@@ -1,3 +1,4 @@
+import { recallOrEmpty } from './memory-recall.js';
 import {
   DEFAULT_GOAL_MAX_TURNS,
   DEFAULT_LOOP_MAX_AGE_DAYS,
@@ -217,7 +218,7 @@ export async function pruneDesktopThreadClutter(
       continue;
     }
 
-    const recalled = await memory.recall({
+    const recalled = await recallOrEmpty(memory, {
       threadId,
       resourceId: r.resourceId,
       perPage: 1,
@@ -562,7 +563,7 @@ async function deriveThreadTitleFromMemory(
   resourceId: string,
 ): Promise<string | null> {
   try {
-    const recalled = await memory.recall({ threadId, resourceId, perPage: false });
+    const recalled = await recallOrEmpty(memory, { threadId, resourceId, perPage: false });
     const ui = mastraMessagesToUi(recalled.messages ?? []);
     const text = firstUserText(ui);
     return text ? truncateTitle(text) : null;
@@ -587,7 +588,7 @@ export async function ensureThreadTitleIfMissing(
   let source: readonly unknown[] = requestMessages;
   if (!firstUserText(source) && options?.memory && options.resourceId) {
     try {
-      const recalled = await options.memory.recall({
+      const recalled = await recallOrEmpty(options.memory, {
         threadId,
         resourceId: options.resourceId,
         perPage: false,
@@ -667,7 +668,7 @@ export async function deleteThreadState(
   memory?: Memory,
 ): Promise<void> {
   if (memory) {
-    const recalled = await memory.recall({ threadId, perPage: false });
+    const recalled = await recallOrEmpty(memory, { threadId, perPage: false });
     const messageIds = (recalled.messages ?? [])
       .map((m) => m.id)
       .filter((id): id is string => typeof id === 'string' && id.length > 0);

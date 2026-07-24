@@ -1,3 +1,4 @@
+import { recallOrEmpty } from '../memory-recall.js';
 import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
@@ -489,7 +490,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     let agentInputMessages = messages as UiMessage[];
     if (useThreadMemory) {
       try {
-        const recalled = await deps.runtime.memory.recall({
+        const recalled = await recallOrEmpty(deps.runtime.memory, {
           threadId,
           resourceId: ctx.userId,
           perPage: false,
