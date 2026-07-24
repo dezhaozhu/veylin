@@ -193,12 +193,25 @@ export interface WebhookEndpointRow {
   createdAt?: string;
 }
 
+/**
+ * Load provenance: which MCP server (and, when known, tenant) the sheet's data was
+ * last (re)loaded from, and when. Stamped by the Compass load tools; absent on
+ * sheets that predate this field or were never loaded from Compass ("legacy
+ * unstamped" — table_get/table-tools surfaces a distinct warning for those).
+ */
+export interface TableSheetSource {
+  server: string;
+  tenant?: string;
+  loadedAt: string;
+}
+
 export interface TableSheetRow {
   id: string;
   name: string;
   builtin: boolean;
   /** Chat session isolation key; null/absent = global (e.g. builtin main). */
   threadId?: string | null;
+  source?: TableSheetSource | null;
 }
 
 export interface TableColumnRow {

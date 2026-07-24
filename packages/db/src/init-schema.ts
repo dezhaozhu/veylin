@@ -182,6 +182,9 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS name ON table_sheet TYPE string`,
   `DEFINE FIELD IF NOT EXISTS builtin ON table_sheet TYPE bool DEFAULT false`,
   `DEFINE FIELD IF NOT EXISTS thread_id ON table_sheet TYPE option<string>`,
+  // Load provenance (server/tenant/loadedAt) stamped by Compass load tools; optional —
+  // absent on sheets created before this field existed ("legacy unstamped").
+  `DEFINE FIELD IF NOT EXISTS source ON table_sheet FLEXIBLE TYPE option<object>`,
 
   `DEFINE TABLE IF NOT EXISTS table_column SCHEMAFULL`,
   `DEFINE FIELD IF NOT EXISTS sheet_id ON table_column TYPE string`,

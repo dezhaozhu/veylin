@@ -11,6 +11,7 @@ import {
   replaceTableColumns,
   replaceTableRows,
   upsertTableSheet,
+  type TableSheetSource,
 } from '@veylin/db';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 import { EventEmitter } from 'node:events';
@@ -38,6 +39,13 @@ export interface TableSheetMeta {
   builtin: boolean;
   /** Chat session isolation; null = global (builtin main). */
   threadId?: string | null;
+  /**
+   * Load provenance: which MCP server (+ tenant, when the payload carried one) the
+   * sheet's data was last (re)loaded from, and when. Absent/null on sheets that
+   * predate this field or were never loaded via a Compass load tool ("legacy
+   * unstamped" — table_get surfaces a distinct warning for those under a project pin).
+   */
+  source?: TableSheetSource | null;
 }
 
 export type TableRowData = Record<string, string | number> & { row_id: string };
@@ -406,6 +414,24 @@ export function getTableSheetMeta(sheetId: string): TableSheetMeta | undefined {
   if (!id) return undefined;
   const sheet = getSheet(id);
   return sheet ? { ...sheet.meta } : undefined;
+}
+
+/**
+ * Stamp (or refresh) a sheet's load provenance. Called by the Compass load tools
+ * on every (re)load — sheetId must already exist (callers create the sheet first).
+ * Awaits the persist (unlike the fire-and-forget row/column mutators) so a caller
+ * that reads the sheet back right after stamping — e.g. a reload-from-DB test —
+ * observes it deterministically.
+ */
+export async function stampTableSheetSource(
+  sheetId: string,
+  source: TableSheetSource,
+): Promise<TableSheetMeta | null> {
+  const sheet = getSheet(sheetId);
+  if (!sheet) return null;
+  sheet.meta = { ...sheet.meta, source };
+  await persistSheet(sheetId);
+  return { ...sheet.meta };
 }
 
 /**
