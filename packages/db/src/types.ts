@@ -79,6 +79,16 @@ export interface ThreadStateRow {
   goal?: unknown | null;
   loop?: unknown | null;
   project?: string | null;
+  /**
+   * Move-boundary bookkeeping: the project this thread was pinned to right
+   * before its pin last changed away from a non-null value (set only by
+   * POST /api/project's user-directed move, not the scoped-MCP auto-pin).
+   * `buildProjectPinBlock` uses this to warn the model that turns before the
+   * move belong to a different project's data. `null`/absent = never moved.
+   */
+  movedFrom?: string | null;
+  /** ISO timestamp of the move that set `movedFrom`. */
+  movedAt?: string | null;
   updatedAt?: string;
 }
 

@@ -51,6 +51,8 @@ function mapThreadState(r: Record<string, unknown>): ThreadStateRow {
     goal: (r.goal as unknown) ?? null,
     loop: (r.loop as unknown) ?? null,
     project: (r.project as string | null) ?? null,
+    movedFrom: (r.moved_from as string | null) ?? null,
+    movedAt: (r.moved_at as string | null) ?? null,
     updatedAt: r.updated_at ? String(r.updated_at) : undefined,
   };
 }
@@ -247,6 +249,8 @@ export async function insertThreadState(row: Omit<ThreadStateRow, 'updatedAt'>):
     goal: row.goal ?? null,
     loop: row.loop ?? null,
     project: row.project ?? null,
+    moved_from: row.movedFrom ?? null,
+    moved_at: row.movedAt ?? null,
     updated_at: new Date(),
   });
 }
@@ -295,6 +299,22 @@ export async function updateThreadState(
     } else {
       sets.push('project = $project');
       vars.project = patch.project;
+    }
+  }
+  if (patch.movedFrom !== undefined) {
+    if (patch.movedFrom === null) {
+      sets.push('moved_from = NONE');
+    } else {
+      sets.push('moved_from = $movedFrom');
+      vars.movedFrom = patch.movedFrom;
+    }
+  }
+  if (patch.movedAt !== undefined) {
+    if (patch.movedAt === null) {
+      sets.push('moved_at = NONE');
+    } else {
+      sets.push('moved_at = $movedAt');
+      vars.movedAt = patch.movedAt;
     }
   }
   if (patch.tenantId !== undefined) {

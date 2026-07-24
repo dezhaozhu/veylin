@@ -417,6 +417,23 @@ export function getTableSheetMeta(sheetId: string): TableSheetMeta | undefined {
 }
 
 /**
+ * Hard-mismatch predicate (Layer-4 provenance, audit fix #2): true only when
+ * the sheet carries a STAMPED source that names a different project than the
+ * thread's pin. Legacy unstamped sheets (`source` absent) are deliberately
+ * excluded here — they keep the softer "本表无来源记录" warning instead of a
+ * refusal, since refusing all pre-provenance data under any pin would be too
+ * aggressive (see `buildProvenanceWarning` in table-tools.ts). Shared by
+ * `table_get` (refuses rows outright) and `buildTableContextBlock` (omits the
+ * sheet's data from the injected prompt block) so both surfaces agree.
+ */
+export function isProjectPinMismatch(
+  source: TableSheetSource | null | undefined,
+  projectPin: string | null | undefined,
+): boolean {
+  return Boolean(projectPin) && Boolean(source?.server) && source!.server !== projectPin;
+}
+
+/**
  * Stamp (or refresh) a sheet's load provenance. Called by the Compass load tools
  * on every (re)load — sheetId must already exist (callers create the sheet first).
  * Awaits the persist (unlike the fire-and-forget row/column mutators) so a caller
@@ -491,6 +508,10 @@ export type TableSheetSnapshot = {
   columns: Array<{ key: string; name: string }>;
   rowCount: number;
   sampleRows: TableRowData[];
+  /** True when `isProjectPinMismatch` fired for this sheet — the block omits
+   * its data (name only, one-line note) instead of leaking cross-project rows
+   * into the system prompt. */
+  pinMismatch?: boolean;
 };
 
 /** Format live table snapshots for the agent system prompt (right-panel 表格). */
@@ -504,6 +525,12 @@ export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string
   ];
 
   for (const sheet of snapshots) {
+    if (sheet.pinMismatch) {
+      lines.push(
+        `## Sheet "${sheet.name}" (id: \`${sheet.id}\`) — 跳过: 数据来源与当前项目不一致, 请在当前项目下重新加载`,
+      );
+      continue;
+    }
     const colLabel = sheet.columns
       .map((c) => c.name || c.key)
       .filter(Boolean)
@@ -534,17 +561,26 @@ export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string
   return lines.join('\n');
 }
 
-/** Inject current table state so the model does not miss right-panel spreadsheet data. */
-export function buildTableContextBlock(threadId?: string | null): string {
+/**
+ * Inject current table state so the model does not miss right-panel spreadsheet
+ * data. `projectPin` lets a mismatched sheet (audit fix #2) be omitted from the
+ * injected block the same way `table_get` refuses its rows.
+ */
+export function buildTableContextBlock(
+  threadId?: string | null,
+  projectPin?: string | null,
+): string {
   const snapshots = listTableSheets(threadId).map((meta) => {
-    const columns = listTableColumns(meta.id);
-    const rows = listTableRows(meta.id);
+    const pinMismatch = isProjectPinMismatch(meta.source, projectPin);
+    const columns = pinMismatch ? [] : listTableColumns(meta.id);
+    const rows = pinMismatch ? [] : listTableRows(meta.id);
     return {
       id: meta.id,
       name: meta.name,
       columns: columns.map((c) => ({ key: c.key, name: c.name })),
       rowCount: rows.length,
       sampleRows: rows.slice(0, 3),
+      pinMismatch,
     };
   });
   return formatTableContextBlock(snapshots);

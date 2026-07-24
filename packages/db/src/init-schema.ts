@@ -74,6 +74,12 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS goal ON thread_state FLEXIBLE TYPE option<object>`,
   `DEFINE FIELD IF NOT EXISTS loop ON thread_state FLEXIBLE TYPE option<object>`,
   `DEFINE FIELD IF NOT EXISTS project ON thread_state TYPE option<string>`,
+  // Move-boundary bookkeeping (audit fix #3): `moved_from`/`moved_at` are plain
+  // identifiers, not the reserved `FROM` keyword — SurrealQL only reserves bare
+  // keywords standing alone in a clause, not as a substring of a longer field
+  // name, so no backticks are needed here.
+  `DEFINE FIELD IF NOT EXISTS moved_from ON thread_state TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS moved_at ON thread_state TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS updated_at ON thread_state TYPE datetime DEFAULT time::now()`,
   `DEFINE INDEX IF NOT EXISTS thread_state_pk ON thread_state FIELDS thread_id UNIQUE`,
 

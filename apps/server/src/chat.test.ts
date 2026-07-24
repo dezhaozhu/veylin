@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  buildProjectPinBlock,
   buildWorkspacePanelHintBlock,
   textOfMessage,
   toAgentMessages,
@@ -113,5 +114,36 @@ describe('workspace context blocks', () => {
     const block = buildWorkspacePanelHintBlock({ activePanel: 'rag' });
     assert.match(block, /knowledge_search/);
     assert.match(block, /知识库/);
+  });
+});
+
+describe('buildProjectPinBlock (audit fix #3: thread-move boundary marker)', () => {
+  it('empty when there is no pin, regardless of move state', () => {
+    assert.equal(buildProjectPinBlock(null), '');
+    assert.equal(
+      buildProjectPinBlock(null, { movedFrom: 'compass-guolu', movedAt: '2026-07-01T00:00:00.000Z' }),
+      '',
+    );
+  });
+
+  it('plain pin reminder when there is no move', () => {
+    const block = buildProjectPinBlock('compass-guolu');
+    assert.match(block, /当前数据项目: compass-guolu/);
+    assert.doesNotMatch(block, /曾属于项目/);
+  });
+
+  it('plain pin reminder when move is passed but movedFrom is null', () => {
+    const block = buildProjectPinBlock('compass-guolu', { movedFrom: null, movedAt: null });
+    assert.doesNotMatch(block, /曾属于项目/);
+  });
+
+  it('appends the boundary marker with movedFrom and movedAt when the thread moved', () => {
+    const block = buildProjectPinBlock('compass-shangzhong', {
+      movedFrom: 'compass-guolu',
+      movedAt: '2026-07-01T00:00:00.000Z',
+    });
+    assert.match(block, /当前数据项目: compass-shangzhong/);
+    assert.match(block, /本会话曾属于项目 compass-guolu\(2026-07-01T00:00:00\.000Z 移动\)/);
+    assert.match(block, /此前的对话内容属于原项目,不可作为当前项目的数据依据/);
   });
 });

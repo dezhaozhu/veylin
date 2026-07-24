@@ -47,6 +47,10 @@ export interface ThreadStateRow {
   goal: ThreadGoalState | null;
   loop: ThreadLoopState | null;
   project: string | null;
+  /** Move-boundary bookkeeping — see `@veylin/db`'s `ThreadStateRow` for the
+   * full rationale. Set only by POST /api/project's user-directed move. */
+  movedFrom: string | null;
+  movedAt: string | null;
   updatedAt?: Date;
 }
 
@@ -74,6 +78,8 @@ export function ephemeralThreadState(identity: ThreadIdentity): ThreadStateRow {
     goal: null,
     loop: null,
     project: null,
+    movedFrom: null,
+    movedAt: null,
   };
 }
 
@@ -92,6 +98,8 @@ function toRow(r: Awaited<ReturnType<typeof getThreadStateRow>>): ThreadStateRow
     goal: asGoal(r.goal),
     loop: asLoop(r.loop),
     project: r.project ?? null,
+    movedFrom: r.movedFrom ?? null,
+    movedAt: r.movedAt ?? null,
     updatedAt: r.updatedAt ? new Date(r.updatedAt) : undefined,
   };
 }
@@ -127,6 +135,8 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
     goal: null,
     loop: null,
     project: null,
+    movedFrom: null,
+    movedAt: null,
   });
   return {
     threadId: identity.threadId,
@@ -141,6 +151,8 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
     goal: null,
     loop: null,
     project: null,
+    movedFrom: null,
+    movedAt: null,
   };
 }
 
@@ -230,6 +242,47 @@ export async function setPlanMode(threadId: string, planMode: boolean): Promise<
 /** Per-thread project pin (e.g. tenant/dataset scope). `null` clears the pin. */
 export async function setProject(threadId: string, project: string | null): Promise<void> {
   await updateThreadState(threadId, { project });
+}
+
+/**
+ * Pure move-boundary computation for POST /api/project (audit fix #3): a
+ * user-directed change AWAY from a previously non-null pin stamps
+ * `movedFrom`/`movedAt` so `buildProjectPinBlock` can warn the model that
+ * turns before this point in the thread belong to a different project's
+ * data. No-ops (returns just `{ project }`) when there was no prior pin, or
+ * the pin didn't actually change — re-pinning the same project isn't a move.
+ *
+ * Deliberately NOT folded into the generic `setProject` above: that helper is
+ * also used by `routes/chat.ts`'s scoped-MCP auto-pin, which is inference
+ * (the server deciding a thread's likely project from which MCP group is
+ * connected), not a user-directed move — auto-pin churn shouldn't leave a
+ * "you left project X" trail. Exported for testing at this seam (no HTTP
+ * harness in this repo — mirrors `isValidProjectPin` in routes/threads.ts).
+ *
+ * When there's no real move (no prior pin, or re-pinning the same value),
+ * `movedFrom`/`movedAt` are omitted from the patch entirely rather than set
+ * to `null` — an idempotent re-pin must not erase an earlier move marker.
+ */
+export function computeProjectMovePatch(
+  previousProject: string | null,
+  nextProject: string | null,
+  now: Date = new Date(),
+): Pick<ThreadStateRow, 'project'> & Partial<Pick<ThreadStateRow, 'movedFrom' | 'movedAt'>> {
+  if (previousProject != null && previousProject !== nextProject) {
+    return { project: nextProject, movedFrom: previousProject, movedAt: now.toISOString() };
+  }
+  return { project: nextProject };
+}
+
+/** Sets the project pin with move-boundary bookkeeping — see
+ * {@link computeProjectMovePatch}. Used by POST /api/project only. */
+export async function setProjectWithMoveTracking(
+  threadId: string,
+  previousProject: string | null,
+  nextProject: string | null,
+): Promise<void> {
+  const patch = computeProjectMovePatch(previousProject, nextProject);
+  await updateThreadState(threadId, patch);
 }
 
 export async function setThreadGoal(

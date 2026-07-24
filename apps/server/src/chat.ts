@@ -339,14 +339,32 @@ export function buildAttachedBrowserBlock(
   );
 }
 
-/** System reminder scoping this turn to the thread's pinned data project. */
-export function buildProjectPinBlock(pin: string | null): string {
+/**
+ * System reminder scoping this turn to the thread's pinned data project.
+ *
+ * `move` carries the boundary marker (audit fix #3): when a thread's pin
+ * changed away from a previously non-null project, earlier turns in this
+ * same thread's transcript were written under that OLD project's data
+ * scope — without an explicit marker the model has no signal that a fact
+ * recalled from history may belong to a project it's no longer pinned to.
+ */
+export function buildProjectPinBlock(
+  pin: string | null,
+  move?: { movedFrom: string | null; movedAt: string | null } | null,
+): string {
   if (!pin) return '';
-  return (
-    '<system-reminder>\n' +
-    `当前数据项目: ${pin}(本会话所有数据均来自该项目,勿引用其他项目)\n` +
-    '</system-reminder>'
-  );
+  const lines = [
+    '<system-reminder>',
+    `当前数据项目: ${pin}(本会话所有数据均来自该项目,勿引用其他项目)`,
+  ];
+  if (move?.movedFrom) {
+    lines.push(
+      `本会话曾属于项目 ${move.movedFrom}(${move.movedAt ?? '未知时间'} 移动);` +
+        '此前的对话内容属于原项目,不可作为当前项目的数据依据',
+    );
+  }
+  lines.push('</system-reminder>');
+  return lines.join('\n');
 }
 
 export type WorkspacePanelKind = 'table' | 'rag' | 'web' | 'workflow';

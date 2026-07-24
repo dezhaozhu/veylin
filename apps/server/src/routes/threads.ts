@@ -18,7 +18,7 @@ import {
   resolveThreadForRead,
   restoreTodosFromHistoryIfEmpty,
   setPlanMode as setThreadPlanModeDb,
-  setProject as setThreadProjectDb,
+  setProjectWithMoveTracking,
   setThreadTitle,
   syncWorkingMemory,
   touchThreadActivity,
@@ -469,12 +469,16 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
           .status(400)
           .send({ ok: false, error: 'project is not a configured group member' });
       }
-      await ensureThreadState({
+      const existing = await ensureThreadState({
         threadId: body.threadId,
         tenantId: ctx.tenantId,
         resourceId: ctx.userId,
       });
-      await setThreadProjectDb(body.threadId, body.project);
+      // Move-boundary bookkeeping (audit fix #3): stamps movedFrom/movedAt
+      // when this user-directed change leaves a previously non-null pin —
+      // see setProjectWithMoveTracking's docstring for why this is scoped to
+      // this route rather than folded into the generic setProject.
+      await setProjectWithMoveTracking(body.threadId, existing.project, body.project);
     }
     const state = body.threadId ? await getThreadState(body.threadId) : null;
     return { ok: true, project: state?.project ?? null };
