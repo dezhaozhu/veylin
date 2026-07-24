@@ -190,6 +190,28 @@ export async function resolveThreadForRead(
   return row;
 }
 
+/**
+ * Resolve a thread's project pin, ownership-checked. `threadId` is never
+ * trusted at face value: it goes through `resolveThreadForRead`, the same
+ * ownership check the query-param-threadId routes (GET /api/tasks,
+ * /api/todos, /api/plan-mode, mcp-apps.ts's `resolveScopedServerNames`, …)
+ * use. A missing threadId, or one that doesn't exist / belongs to another
+ * tenant or user, resolves to `null` — never a 500, and never a license to
+ * borrow that thread's pin.
+ *
+ * Shared by every "which project is the CURRENTLY OPEN thread pinned to"
+ * call site (mcp-apps.ts's host/tools routes, routes/tables.ts's
+ * Compass-backed routes) so the ownership check lives in exactly one place.
+ */
+export async function resolveThreadPin(
+  threadId: string | undefined | null,
+  ctx: { tenantId: string; userId: string },
+): Promise<string | null> {
+  if (!threadId) return null;
+  const row = await resolveThreadForRead(threadId, ctx);
+  return row?.project ?? null;
+}
+
 /** Returns 403 when an existing thread belongs to another tenant/resource. */
 export async function requireThreadOwnership(
   threadId: string,
