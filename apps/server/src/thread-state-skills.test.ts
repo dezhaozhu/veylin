@@ -8,11 +8,13 @@ import {
   listMcpServerGroups,
 } from './mcp-store.js';
 import {
+  computeProjectMovePatch,
   ensureThreadState,
   getThreadState,
   listThreadProjects,
   mergeActivatedSkillContents,
   setProject,
+  setProjectWithMoveTracking,
 } from './thread-state.js';
 import { DEV_TENANT_ID, ensureDevTenant } from './tenant.js';
 import { proposeScheduleEdit } from './schedule-edit.js';
@@ -85,6 +87,66 @@ describe('thread project pin', () => {
 
     const hydrated = await getThreadState(threadId);
     assert.equal(hydrated?.project, null);
+  });
+
+  describe('computeProjectMovePatch / setProjectWithMoveTracking (audit fix #3: thread-move boundary marker)', () => {
+    it('computeProjectMovePatch is a no-op move when there was no prior pin', () => {
+      const patch = computeProjectMovePatch(null, 'compass-guolu');
+      assert.deepEqual(patch, { project: 'compass-guolu' });
+    });
+
+    it('computeProjectMovePatch is a no-op move when re-pinning the same project', () => {
+      const patch = computeProjectMovePatch('compass-guolu', 'compass-guolu');
+      assert.deepEqual(patch, { project: 'compass-guolu' });
+    });
+
+    it('computeProjectMovePatch stamps movedFrom/movedAt when leaving a non-null pin for a different one', () => {
+      const now = new Date('2026-07-01T00:00:00.000Z');
+      const patch = computeProjectMovePatch('compass-guolu', 'compass-shangzhong', now);
+      assert.deepEqual(patch, {
+        project: 'compass-shangzhong',
+        movedFrom: 'compass-guolu',
+        movedAt: now.toISOString(),
+      });
+    });
+
+    it('computeProjectMovePatch stamps a move even when clearing the pin to null', () => {
+      const now = new Date('2026-07-01T00:00:00.000Z');
+      const patch = computeProjectMovePatch('compass-guolu', null, now);
+      assert.deepEqual(patch, { project: null, movedFrom: 'compass-guolu', movedAt: now.toISOString() });
+    });
+
+    it('set pin A then pin B → state carries movedFrom=A', async () => {
+      const threadId = `thread-project-move-${Date.now()}`;
+      await ensureThreadState({ threadId, tenantId: DEV_TENANT_ID, resourceId: 'dev-user' });
+
+      await setProjectWithMoveTracking(threadId, null, 'compass-guolu');
+      const afterA = await getThreadState(threadId);
+      assert.equal(afterA?.project, 'compass-guolu');
+      assert.equal(afterA?.movedFrom, null, 'first pin (no prior project) is not a move');
+
+      await setProjectWithMoveTracking(threadId, afterA!.project, 'compass-shangzhong');
+      const afterB = await getThreadState(threadId);
+      assert.equal(afterB?.project, 'compass-shangzhong');
+      assert.equal(afterB?.movedFrom, 'compass-guolu');
+      assert.ok(afterB?.movedAt, 'movedAt should be stamped');
+    });
+
+    it('re-pinning the same project again does not erase the earlier move marker', async () => {
+      const threadId = `thread-project-move-idempotent-${Date.now()}`;
+      await ensureThreadState({ threadId, tenantId: DEV_TENANT_ID, resourceId: 'dev-user' });
+
+      await setProjectWithMoveTracking(threadId, null, 'compass-guolu');
+      await setProjectWithMoveTracking(threadId, 'compass-guolu', 'compass-shangzhong');
+      const afterMove = await getThreadState(threadId);
+      assert.equal(afterMove?.movedFrom, 'compass-guolu');
+
+      // Idempotent re-pin of the same project — not a move, must not clear movedFrom.
+      await setProjectWithMoveTracking(threadId, 'compass-shangzhong', 'compass-shangzhong');
+      const afterNoop = await getThreadState(threadId);
+      assert.equal(afterNoop?.project, 'compass-shangzhong');
+      assert.equal(afterNoop?.movedFrom, 'compass-guolu', 'idempotent re-pin must not erase movedFrom');
+    });
   });
 
   // Enforcement proof: composes the real store (grouped MCP server rows),

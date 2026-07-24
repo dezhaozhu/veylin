@@ -527,7 +527,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const goalBlock = buildGoalBlock(threadRowState?.goal);
     const loopBlock = buildLoopBlock(threadRowState?.loop);
     // Live workspace awareness (table + knowledge base + right-panel focus).
-    const tableBlockBase = planMode ? '' : buildTableContextBlock(threadId);
+    const tableBlockBase = planMode ? '' : buildTableContextBlock(threadId, projectPin);
     // Thread-tied (unlike the workspace grid's own schedule-edit HTTP routes,
     // see mcp-scoping.ts's module docstring): this request already resolved
     // `mcpServerGroups` and `projectPin` above for MCP scoping, so the
@@ -546,7 +546,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       : buildWorkspacePanelHintBlock(body.workspacePanel);
     const localeBlock = buildLocaleBlock(body.locale);
     const attachedBrowserBlock = buildAttachedBrowserBlock(body.attachedBrowser);
-    const projectPinBlock = buildProjectPinBlock(projectPin);
+    const projectPinBlock = buildProjectPinBlock(projectPin, {
+      movedFrom: threadRowState?.movedFrom ?? null,
+      movedAt: threadRowState?.movedAt ?? null,
+    });
     const workingMemoryBlock = buildReadOnlyWorkingMemoryBlock(
       threadRowState?.workingMemory ?? null,
     );

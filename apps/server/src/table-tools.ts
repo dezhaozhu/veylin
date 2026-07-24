@@ -12,6 +12,7 @@ import {
   emitTableChart,
   getTableSheetMeta,
   importTableSheet,
+  isProjectPinMismatch,
   listTableColumns,
   listTableRowsPage,
   listTableSheets,
@@ -101,8 +102,16 @@ async function stampCompassLoadSource(
 /**
  * Layer-4 provenance check: a thread pinned to one project reading a sheet
  * stamped from a different server (or never stamped at all) is exactly the
- * silent cross-tenant mixing that motivated `source` — surface it as a warning
- * instead of letting the agent treat the rows as live-scoped data.
+ * silent cross-tenant mixing that motivated `source`.
+ *
+ * A STAMPED mismatch (source.server names a different project) is now a hard
+ * refusal in `table_get` — see `isProjectPinMismatch` — this text becomes the
+ * refusal's `warning`. An UNSTAMPED ("legacy") sheet under a pin keeps the
+ * softer text below as a plain warning (rows still returned): refusing every
+ * pre-provenance sheet the moment a thread gets pinned would cut users off
+ * from data they had every right to read, for no signal stronger than "we
+ * don't know" — audit fix #2 deliberately draws the line at "we know it's
+ * wrong" vs. "we don't know".
  */
 function buildProvenanceWarning(
   source: TableSheetSource | null | undefined,
@@ -370,14 +379,14 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     }),
     outputSchema: z.object({
       sheet: z.string(),
-      totalRows: z.number(),
-      offset: z.number(),
-      limit: z.number(),
-      hasMore: z.boolean(),
-      columns: z.array(
-        z.object({ key: z.string(), name: z.string(), type: z.string() }),
-      ),
-      rows: z.array(rowSchema),
+      totalRows: z.number().optional(),
+      offset: z.number().optional(),
+      limit: z.number().optional(),
+      hasMore: z.boolean().optional(),
+      columns: z
+        .array(z.object({ key: z.string(), name: z.string(), type: z.string() }))
+        .optional(),
+      rows: z.array(rowSchema).optional(),
       notice: z.string().optional(),
       source: z
         .object({
@@ -391,17 +400,38 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         .string()
         .optional()
         .describe('Present when this sheet\'s provenance conflicts with (or is missing under) the current project pin.'),
+      refused: z
+        .boolean()
+        .optional()
+        .describe(
+          'True when the sheet\'s stamped source names a different project than the current pin — ' +
+            'rows are withheld entirely (not just warned about); reload the sheet under the correct project.',
+        ),
     }),
     execute: async (input, ctx?: TableToolCtx) => {
       const sheet = resolveTableSheetId(input.sheet);
+      const source = getTableSheetMeta(sheet)?.source ?? undefined;
+      const projectPin = ctx?.requestContext?.get('projectPin') as string | null | undefined;
+
+      // Hard refusal (audit fix #2): a STAMPED mismatch means we positively
+      // know these rows belong to a different project — withhold them
+      // entirely rather than let the agent treat a warning as optional
+      // context. Legacy unstamped sheets fall through to the soft warning
+      // below (buildProvenanceWarning's "本表无来源记录" branch).
+      if (isProjectPinMismatch(source, projectPin)) {
+        return {
+          sheet,
+          refused: true,
+          warning: `${buildProvenanceWarning(source, projectPin)} — 请在当前项目下重新加载`,
+        };
+      }
+
       // z.coerce.number() already validated string→number; Number() re-narrows the
       // zod-v4 `unknown` input type to a clean number (idempotent at runtime).
       const offset = Number(input.offset ?? 0);
       const limit = Number(input.limit ?? DEFAULT_TABLE_GET_LIMIT);
       const { totalRows, rows } = listTableRowsPage(sheet, offset, limit);
       const hasMore = offset + rows.length < totalRows;
-      const source = getTableSheetMeta(sheet)?.source ?? undefined;
-      const projectPin = ctx?.requestContext?.get('projectPin') as string | null | undefined;
       const warning = buildProvenanceWarning(source, projectPin);
       return {
         sheet,
