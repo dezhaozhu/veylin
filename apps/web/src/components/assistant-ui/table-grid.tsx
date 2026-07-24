@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAuiState } from '@assistant-ui/react';
 import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X, Loader2, Search } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
 import {
@@ -133,10 +134,15 @@ interface ScheduleDetail {
   semantics?: Record<string, string>;
 }
 
-async function fetchScheduleDetail(orderId: unknown, stageCode: unknown): Promise<ScheduleDetail> {
+async function fetchScheduleDetail(
+  orderId: unknown,
+  stageCode: unknown,
+  threadId: string | undefined,
+): Promise<ScheduleDetail> {
   const qs = new URLSearchParams();
   if (orderId != null && orderId !== '') qs.set('order_id', String(orderId));
   if (stageCode != null && stageCode !== '') qs.set('stage_code', String(stageCode));
+  if (threadId) qs.set('threadId', threadId);
   try {
     const res = await fetch(`/api/schedule-detail?${qs.toString()}`);
     if (!res.ok) return { rows: [] };
@@ -399,9 +405,16 @@ function StatusBadge({
 function ScheduleDetailPanel(params: { data?: Record<string, unknown> }) {
   const [rows, setRows] = useState<Record<string, unknown>[] | null>(null);
   const [semantics, setSemantics] = useState<Record<string, string> | undefined>(undefined);
+  // Same remoteId-first pattern as mcp-app-tool.tsx: pin this read-only lookup
+  // to the currently open thread so a grouped Compass deployment resolves
+  // unambiguously instead of refusing (see the panel-level threadId note on
+  // TableGrid below).
+  const localThreadId = useAuiState((s) => s.threadListItem.id);
+  const remoteThreadId = useAuiState((s) => s.threadListItem.remoteId ?? s.threadListItem.externalId);
+  const threadId = remoteThreadId ?? localThreadId ?? undefined;
   useEffect(() => {
     let alive = true;
-    void fetchScheduleDetail(params.data?.['order_id'], params.data?.['stage_code']).then((d) => {
+    void fetchScheduleDetail(params.data?.['order_id'], params.data?.['stage_code'], threadId).then((d) => {
       if (alive) {
         setRows(d.rows);
         setSemantics(d.semantics);
@@ -410,7 +423,7 @@ function ScheduleDetailPanel(params: { data?: Record<string, unknown> }) {
     return () => {
       alive = false;
     };
-  }, [params.data]);
+  }, [params.data, threadId]);
   const day = (v: unknown) => (typeof v === 'string' && v.length >= 10 ? v.slice(0, 10) : '');
 
   return (
@@ -508,6 +521,16 @@ function AgColumnHeader(params: AgColumnHeaderParams) {
 
 export function TableGrid() {
   const { t } = useTranslation();
+  // Same remoteId-first pattern as mcp-app-tool.tsx / composer-activated-skills.tsx:
+  // the local composer id until the thread's first message assigns a server
+  // remoteId/externalId. The grid panel is workspace-wide (no per-session props —
+  // see the "Fork seam" comment in routes/tables.ts), but the Compass-backed
+  // load/edit calls below still send this so a grouped Compass deployment
+  // resolves via the CURRENTLY OPEN thread's project pin instead of refusing
+  // under ambiguity.
+  const localThreadId = useAuiState((s) => s.threadListItem.id);
+  const remoteThreadId = useAuiState((s) => s.threadListItem.remoteId ?? s.threadListItem.externalId);
+  const threadId = remoteThreadId ?? localThreadId ?? undefined;
   const [sheets, setSheets] = useState<TableSheet[]>([]);
   const [activeSheetId, setActiveSheetId] = useState('main');
   const [columnDefs, setColumnDefs] = useState<TableColumnDef[]>([]);
@@ -775,12 +798,21 @@ export function TableGrid() {
     }
   };
 
+  // Bootstrap-on-mount only (deps below deliberately omit threadId): the grid
+  // panel is workspace-wide, not remounted per thread (see the "Fork seam"
+  // comment in routes/tables.ts), so this fires once. `threadId` is still read
+  // from the closure so whichever thread is open when the panel first loads
+  // resolves Compass through that thread's project pin.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       setCompassLoading(true);
       try {
-        const res = await fetch('/api/table/load-compass-schedule', { method: 'POST' });
+        const res = await fetch('/api/table/load-compass-schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ threadId }),
+        });
         const data = await readJsonResponse<{
           ok?: boolean;
           sheet?: string;
@@ -906,7 +938,7 @@ export function TableGrid() {
         const res = await fetch('/api/schedule-edit/propose', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ ...body, threadId }),
         });
         const data = await readJsonResponse<{ ok?: boolean; ops?: number; refused?: string; error?: string }>(res);
         if (!res.ok || !data.ok) {
@@ -925,7 +957,7 @@ export function TableGrid() {
         showToast(e instanceof Error ? e.message : t('table.draftProposeFailed'), 'error');
       }
     },
-    [activeSheetId, load, showToast, t],
+    [activeSheetId, load, showToast, t, threadId],
   );
 
   const openPreview = useCallback(async () => {
@@ -933,7 +965,11 @@ export function TableGrid() {
     setPreviewLoading(true);
     setPreviewData(null);
     try {
-      const res = await fetch('/api/schedule-edit/preview', { method: 'POST' });
+      const res = await fetch('/api/schedule-edit/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId }),
+      });
       const data = await readJsonResponse<{
         ok?: boolean;
         rows?: Array<Record<string, unknown>>;
@@ -952,13 +988,17 @@ export function TableGrid() {
     } finally {
       setPreviewLoading(false);
     }
-  }, [showToast, t]);
+  }, [showToast, t, threadId]);
 
   const commitDraft = useCallback(async () => {
     if (committing) return;
     setCommitting(true);
     try {
-      const res = await fetch('/api/schedule-edit/commit', { method: 'POST' });
+      const res = await fetch('/api/schedule-edit/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId }),
+      });
       const data = await readJsonResponse<{
         ok?: boolean;
         committed?: number;
@@ -987,11 +1027,15 @@ export function TableGrid() {
     } finally {
       setCommitting(false);
     }
-  }, [activeSheetId, committing, load, showToast, t]);
+  }, [activeSheetId, committing, load, showToast, t, threadId]);
 
   const discardDraft = useCallback(async () => {
     try {
-      const res = await fetch('/api/schedule-edit/discard', { method: 'POST' });
+      const res = await fetch('/api/schedule-edit/discard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId }),
+      });
       const data = await readJsonResponse<{ ok?: boolean; error?: string }>(res);
       if (!res.ok || !data.ok) {
         showToast(data.error ?? t('table.draftProposeFailed'), 'error');
@@ -1005,7 +1049,7 @@ export function TableGrid() {
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : t('table.draftProposeFailed'), 'error');
     }
-  }, [activeSheetId, load, showToast, t]);
+  }, [activeSheetId, load, showToast, t, threadId]);
 
   const pushHistory = useCallback((batch: HistoryBatch) => {
     if (batch.length === 0) return;

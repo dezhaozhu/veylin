@@ -3,7 +3,7 @@ import { MCPClient } from '@mastra/mcp';
 import type { ServerDeps } from './types.js';
 import { buildMcpServerConfigs, listActiveMcpServerNames, listMcpServerGroups } from '../mcp-store.js';
 import { resolveScopedMcp } from '../mcp-scoping.js';
-import { getThreadState, resolveThreadForRead } from '../thread-state.js';
+import { resolveThreadForRead } from '../thread-state.js';
 
 let hostSeq = 0;
 // A per-request MCP client with a UNIQUE id. createMcpClient() uses a fixed id
@@ -62,20 +62,19 @@ export async function resolveScopedServerNames(
     listMcpServerGroups(tenantId),
   ]);
 
-  let ownedThreadId: string | undefined;
-  if (threadId) {
-    const row = await resolveThreadForRead(threadId, { tenantId, userId });
-    ownedThreadId = row ? threadId : undefined;
-  }
+  // Resolves the owned row directly (not via the resolveThreadPin helper other
+  // call sites use) because this function needs to tell "no owned thread" apart
+  // from "owned thread with no pin set" — they take different branches below
+  // (deny every grouped server vs. resolveScopedMcp's per-group auto-pin).
+  const row = threadId ? await resolveThreadForRead(threadId, { tenantId, userId }) : null;
 
-  if (!ownedThreadId) {
+  if (!row) {
     const hasGroupedServer = Object.values(groups).some((group) => group != null);
     if (!hasGroupedServer) return undefined;
     return new Set(activeNames.filter((name) => groups[name] == null));
   }
 
-  const threadState = await getThreadState(ownedThreadId);
-  const pin = threadState?.project ?? null;
+  const pin = row.project ?? null;
   const scoped = resolveScopedMcp(activeNames, groups, pin);
   return new Set(scoped.active);
 }

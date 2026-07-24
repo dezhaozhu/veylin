@@ -4,20 +4,24 @@
  * SCOPE NOTE (consciously deferred — not covered by this module or its callers):
  * - `agent-run.ts` (the Automate/Workflow `run_agent` node entry) invokes the agent
  *   directly and never applies a thread pin — Automate/Workflow runs are unscoped.
- * - `schedule-edit.ts` and `table-tools.ts` now resolve their Compass toolset key
+ * - `schedule-edit.ts` and `table-tools.ts` resolve their Compass toolset key
  *   through `resolveCompassServer` (below) instead of a hardcoded `toolsets['compass']`
  *   lookup. Their HTTP routes (routes/tables.ts: schedule-detail, the governed
- *   schedule-edit propose/preview/commit/discard routes, load-compass-schedule) and
- *   the agent-tool closures in table-tools.ts back the workspace AG-Grid panel, which
- *   is genuinely thread-agnostic today — no threadId flows into any of those calls
- *   (see the "Fork seam" comment in routes/tables.ts) — so they resolve with `pin:
- *   null`. `resolveCompassServer` still protects them: it refuses (returns `null`,
- *   the existing "compass MCP not connected" failure path) rather than guessing
- *   `'compass'` when more than one Compass-prefixed server is connected. The one
- *   call site that IS thread-tied — `scheduleEditGuidanceBlock` from
- *   `routes/chat.ts`'s `/api/chat` handler — passes the thread's real pin and the
- *   tenant's real server groups. Threading a real threadId into the workspace grid
- *   panel itself remains debt for the next engineer.
+ *   schedule-edit propose/preview/commit/discard routes, load-compass-schedule) resolve
+ *   `pin` from the request's `threadId` (query for the GET, body-or-query for the
+ *   POSTs — see `threadIdFromRequest` in routes/tables.ts) via `resolveThreadPin`
+ *   (thread-state.ts) — the same `resolveThreadForRead` ownership check
+ *   routes/mcp-apps.ts's `resolveScopedServerNames` applies, so a missing/foreign
+ *   threadId still resolves to `pin: null` (today's pre-threading refusal behavior,
+ *   unchanged). The `load_compass_*` agent-tool closures in table-tools.ts resolve
+ *   their pin from the chat request's `requestContext.get('projectPin')` (set by
+ *   routes/chat.ts) instead of a threadId, since they run inside an already-scoped
+ *   chat turn. `resolveCompassServer` still protects every caller: it refuses
+ *   (returns `null`, the existing "compass MCP not connected" failure path) rather
+ *   than guessing `'compass'` when more than one Compass-prefixed server is connected
+ *   and no pin matches. The other call site that is thread-tied —
+ *   `scheduleEditGuidanceBlock` from `routes/chat.ts`'s `/api/chat` handler — passes
+ *   the thread's real pin and the tenant's real server groups the same way.
  */
 
 export interface ScopedMcpResult {
