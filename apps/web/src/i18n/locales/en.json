@@ -147,6 +147,8 @@
     "project": "Project",
     "projectsInSidebar": "Project data sources are managed in the sidebar",
     "projectSwitchHint": "Switch projects from the sidebar's Projects section",
+    "capabilityStatusConnected": "{{capability}} · Connected · Data source: {{source}} (switch in sidebar)",
+    "capabilityStatusDisconnected": "{{capability}} · Not connected",
     "panels": "Panels",
     "panelsDesc": "Focus a right-side panel as context",
     "sectionAttach": "Attach",
