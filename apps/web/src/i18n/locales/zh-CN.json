@@ -147,6 +147,8 @@
     "project": "项目",
     "projectsInSidebar": "项目数据源在侧边栏管理",
     "projectSwitchHint": "在侧边栏「项目」中切换",
+    "capabilityStatusConnected": "{{capability}} · 已连接 · 数据源：{{source}}（侧边栏切换）",
+    "capabilityStatusDisconnected": "{{capability}} · 未连接",
     "panels": "面板",
     "panelsDesc": "聚焦右侧工作面板作为上下文",
     "sectionAttach": "附加",

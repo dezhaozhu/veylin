@@ -3,8 +3,23 @@ import type { FC } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ComposerMenuPanel } from '@/components/assistant-ui/composer-menu-flyout';
 import { mcpServerIcon } from '@/lib/mcp-icon';
+import { type McpGroupMember, useMcpServerHealth } from '@/lib/mcp-groups-sync';
+import { projectLabel } from '@/lib/project-labels';
 import { cn } from '@/lib/utils';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
+import { useProjectScope } from '@/lib/use-composer-settings';
+
+/** Shared capability name for a group: if every member's name shares a
+ * common prefix before the first '-' (e.g. "compass", "compass-guolu" ->
+ * "compass"), capitalize that; otherwise fall back to the raw group id. */
+function capabilityLabel(groupId: string, members: McpGroupMember[]): string {
+  const names = members.filter((m) => m.group === groupId).map((m) => m.name);
+  if (names.length === 0) return groupId;
+  const prefixes = names.map((name) => name.split('-')[0] ?? name);
+  const first = prefixes[0];
+  if (!first || !prefixes.every((p) => p === first)) return groupId;
+  return first.charAt(0).toUpperCase() + first.slice(1);
+}
 
 function McpToggle({
   checked,
@@ -41,8 +56,10 @@ function McpToggle({
  * Grouped ("project") servers are managed exclusively from the sidebar's
  * Projects section (see project-list.tsx) and are excluded here; client-side
  * toggles never affected them server-side anyway (the pin is server-enforced
- * per thread). If every server is grouped, show a hint pointing at the
- * sidebar instead of an empty panel. */
+ * per thread). Instead of hiding grouped servers entirely, each group renders
+ * a read-only capability-status row (shared capability name + whether the
+ * current thread's pinned member is actually connected) so the user still
+ * sees "one Compass capability, N data sources chosen by the sidebar". */
 export const ComposerMcpFlyout: FC<{
   servers: string[];
   query: string;
@@ -53,9 +70,14 @@ export const ComposerMcpFlyout: FC<{
 }> = ({ servers, query, onQueryChange, isEnabled, onToggle, groupOf }) => {
   const { t } = useTranslation();
   const { openCustomize } = useSettingsPanel();
+  const { groupedServers, currentProject } = useProjectScope();
+  const health = useMcpServerHealth();
   const q = query.trim().toLowerCase();
   const filtered = q ? servers.filter((s) => s.toLowerCase().includes(q)) : servers;
   const ungrouped = groupOf ? filtered.filter((s) => groupOf(s) == null) : filtered;
+  const groupIds = groupOf
+    ? Array.from(new Set(filtered.filter((s) => groupOf(s) != null).map((s) => groupOf(s) as string)))
+    : [];
 
   return (
     <ComposerMenuPanel>
@@ -73,11 +95,34 @@ export const ComposerMcpFlyout: FC<{
         {filtered.length === 0 && (
           <div className="text-muted-foreground px-2.5 py-2 text-xs">{t('mention.noMcpServers')}</div>
         )}
-        {filtered.length > 0 && ungrouped.length === 0 && (
-          <div className="text-muted-foreground px-2.5 py-2 text-xs">
-            {t('mention.projectsInSidebar')}
-          </div>
-        )}
+        {filtered.length > 0 &&
+          ungrouped.length === 0 &&
+          groupIds.map((groupId) => {
+            const label = capabilityLabel(groupId, groupedServers);
+            const pinnedHere =
+              currentProject && groupedServers.some((m) => m.group === groupId && m.name === currentProject)
+                ? currentProject
+                : null;
+            const connected = pinnedHere ? Boolean(health.get(pinnedHere)?.connected) : false;
+            return (
+              <div key={groupId} className="flex items-center gap-2 px-2.5 py-2 text-xs">
+                <span
+                  className={cn(
+                    'size-1.5 shrink-0 rounded-full',
+                    connected ? 'bg-emerald-500' : 'bg-red-500',
+                  )}
+                />
+                <span className="text-muted-foreground truncate">
+                  {connected
+                    ? t('mention.capabilityStatusConnected', {
+                        capability: label,
+                        source: projectLabel(pinnedHere as string),
+                      })
+                    : t('mention.capabilityStatusDisconnected', { capability: label })}
+                </span>
+              </div>
+            );
+          })}
         {ungrouped.map((server) => {
           const icon = mcpServerIcon(server);
           const on = isEnabled(server);
