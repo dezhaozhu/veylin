@@ -265,12 +265,18 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       });
     }
     const projectPin = scopedMcp.autoPin ?? threadProjectPin;
-    // Ungrouped servers keep today's client mcpEnabled behavior exactly; grouped
-    // survivors from scoping above are the pin winners and are exposed regardless
-    // of what the client's mcpEnabled toggle claims.
+    // Which scoping happens (the pin winner per group) is decided above, against
+    // server-truth `tenantActiveMcp` only — mcpEnabled never reaches that decision,
+    // so it can never evict the pinned server or force a re-pin (see the attack
+    // test in mcp-scoping.test.ts). Whether the pin winner's tools are actually
+    // exposed *for this request* is a separate question this filter answers, and
+    // here mcpEnabled applies uniformly to grouped and ungrouped servers alike: a
+    // grouped capability's toggle (composer-mcp-flyout.tsx renders one toggle per
+    // group, writing the same mcpEnabled value to every member) is a plain on/off
+    // switch, not a data-source switch — off means no tools from that pin winner
+    // this turn, never a silent re-pin to a different group member.
     const activeMcp = scopedMcp.active.filter(
-      (server) =>
-        mcpServerGroups[server] != null || mcpEnabled == null || mcpEnabled[server] !== false,
+      (server) => mcpEnabled == null || mcpEnabled[server] !== false,
     );
 
     const mergedSkills = await withDatastoreFallback(
@@ -304,14 +310,28 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       'mcpToolNames',
       filterMcpToolIndexToScopedServers(deps.getMcpToolIndex(), activeMcp),
     );
-    // Subagent dispatch must see the project-pin-scoped list computed on
-    // server-truth `tenantActiveMcp` (`scopedMcp.active`), never `activeMcp`
-    // (which is additionally narrowed by the client's untrusted mcpEnabled
-    // toggles). Baseline behavior handed a dispatched subagent its preset's
-    // full declared MCP list regardless of client toggles — only the pin
-    // should narrow what a subagent can reach; a client hiding a tool from
-    // its own toolbar must not silently strip it from a subagent too.
-    requestContext.set('scopedMcpServers', scopedMcp.active);
+    // Subagent dispatch allowlist. Two different mcpEnabled semantics apply here,
+    // and they must not be conflated:
+    //  - Implicit/ungrouped filtering (the old regression): baseline behavior let
+    //    an ordinary ungrouped server's client toggle leak into the subagent
+    //    allowlist, silently stripping a tool from a dispatched subagent's preset
+    //    just because the user hid it from their own toolbar for this chat. That
+    //    stays fixed here — an ungrouped server's mcpEnabled is ignored for this
+    //    allowlist, same as before.
+    //  - Explicit grouped-capability off (new, deliberate): the flyout's one
+    //    toggle per group is a plain on/off switch for that whole capability
+    //    (e.g. "Compass"). A user turning it off for this turn plausibly means
+    //    "no Compass tools for anything this turn triggers", subagents included —
+    //    so an explicit mcpEnabled[member] === false on the *pinned* grouped
+    //    member also drops it from the subagent allowlist. It never re-pins or
+    //    switches to another group member (that's still decided above, against
+    //    server-truth `tenantActiveMcp`, before mcpEnabled is ever consulted) —
+    //    the group simply contributes nothing to this request or its subagents.
+    const scopedMcpServersForSubagents = scopedMcp.active.filter(
+      (server) =>
+        mcpServerGroups[server] == null || mcpEnabled == null || mcpEnabled[server] !== false,
+    );
+    requestContext.set('scopedMcpServers', scopedMcpServersForSubagents);
     requestContext.set('projectPin', projectPin);
     requestContext.set('persistTodos', async (todos: import('@veylin/tools').TodoItem[]) => {
       await ensureThreadState(identity);

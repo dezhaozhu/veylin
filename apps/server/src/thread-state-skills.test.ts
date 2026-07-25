@@ -202,11 +202,16 @@ describe('thread project pin', () => {
     assert.equal(scoped.autoPin, null);
   });
 
-  // CRITICAL-finding regression: scoping must run against server-truth active
-  // servers, never the client-mcpEnabled-filtered list — composes the real
-  // store + thread-state + resolveScopedMcp exactly as chat.ts's post-fix
-  // request handler does, including the persistence gate (pin unchanged).
-  it('client mcpEnabled cannot evict the pinned server from scoping, and the stored pin is not rewritten', async () => {
+  // CRITICAL-finding regression, refined: scoping (which member of a group is
+  // the pin winner) must still run against server-truth active servers, never
+  // the client-mcpEnabled-filtered list — that property must SURVIVE. What
+  // changed: an explicit client mcpEnabled[pinned] === false is no longer
+  // ignored outright — it now suppresses the pinned member's tools for *this
+  // request* (composer-mcp-flyout.tsx's plain toggle-off semantics), while
+  // still never causing a re-pin/switch to another group member, and never
+  // rewriting the stored pin. Composes the real store + thread-state +
+  // resolveScopedMcp exactly as chat.ts's request handler does.
+  it('client mcpEnabled=false on the pinned member never re-pins/persists, but does suppress its tools for this request', async () => {
     const suffix = Date.now() + 2;
     const group = `compass-proj-${suffix}`;
     const pinned = `guolu-${suffix}`;
@@ -233,13 +238,17 @@ describe('thread project pin', () => {
     await ensureThreadState({ threadId, tenantId: DEV_TENANT_ID, resourceId: 'dev-user' });
     await setProject(threadId, pinned);
 
-    // Attack: the client claims the pinned server is disabled and the other
-    // group member is enabled.
+    // The user explicitly turned the group's capability toggle off in the
+    // flyout for this chat; the client claims the pinned server is disabled
+    // and the other group member is enabled (it never was — grouped toggles
+    // write the same value to every member, but a stale/adversarial client
+    // body must not matter either way).
     const declaredMcp = [pinned, other];
     const mcpEnabled: Record<string, boolean> = { [pinned]: false, [other]: true };
 
-    // chat.ts (post-fix): scoping runs against server-truth tenantActiveMcp,
-    // never the client-filtered list.
+    // chat.ts: scoping runs against server-truth tenantActiveMcp, never the
+    // client-filtered list — this decides the pin winner and is untouched by
+    // mcpEnabled.
     const tenantActiveMcp = await listActiveMcpServerNames(DEV_TENANT_ID, declaredMcp);
     const groups = await listMcpServerGroups(DEV_TENANT_ID);
     const threadState = await getThreadState(threadId);
@@ -247,33 +256,43 @@ describe('thread project pin', () => {
     assert.equal(pin, pinned);
 
     const scoped = resolveScopedMcp(tenantActiveMcp, groups, pin);
-    // Pin was valid against server truth — no re-pin needed.
+    // SURVIVES: pin was valid against server truth — no re-pin/switch needed,
+    // regardless of the client's toggle.
     assert.equal(scoped.autoPin, null);
     if (pin == null && scoped.autoPin) {
       await setProject(threadId, scoped.autoPin);
     }
+    // NEW: mcpEnabled applies uniformly to grouped and ungrouped servers —
+    // an explicit false drops the pinned member's tools for this request too.
     const activeMcp = scoped.active.filter(
-      (server) => groups[server] != null || mcpEnabled == null || mcpEnabled[server] !== false,
+      (server) => mcpEnabled == null || mcpEnabled[server] !== false,
     );
 
-    // The request still scopes to the pinned server despite the client's toggle.
-    assert.ok(activeMcp.includes(pinned));
-    assert.ok(!activeMcp.includes(other));
+    // NEW property: the explicit off-switch suppresses the pinned member's
+    // tools for this request — no compass tools this turn.
+    assert.ok(!activeMcp.includes(pinned), 'explicit mcpEnabled=false suppresses the pinned member');
+    assert.ok(!activeMcp.includes(other), 'the non-pinned member was never in scope regardless');
 
-    // The stored pin is unchanged — no silent rewrite was persisted.
+    // SURVIVES: the stored pin is unchanged — no silent rewrite was persisted,
+    // and no switch to `other` happened even though `other` claims enabled:true.
     const hydrated = await getThreadState(threadId);
     assert.equal(hydrated?.project, pinned);
   });
 
-  // Regression for the subagent-allowlist/client-toggle conflation: baseline
-  // handed a dispatched subagent its preset's full declared MCP list
-  // regardless of client mcpEnabled toggles. chat.ts's `scopedMcpServers`
-  // (read by scopedMcpServersFromCtx for subagent dispatch, see
-  // agent-task-runner.ts) must reflect only the project pin — computed from
-  // `resolveScopedMcp` on server-truth active servers — never the additional
-  // client-mcpEnabled narrowing applied to `activeMcp` (which still governs
-  // the parent agent's own toolsets/tool-search index, see chat.ts).
-  it('scopedMcpServers (subagent allowlist) ignores client mcpEnabled toggles on ungrouped servers, but still excludes a non-pinned grouped server', async () => {
+  // Regression for the subagent-allowlist/client-toggle conflation, refined.
+  // Baseline (original bug) handed a dispatched subagent its preset's full
+  // declared MCP list regardless of client mcpEnabled toggles. The first fix
+  // made chat.ts's `scopedMcpServers` (read by scopedMcpServersFromCtx for
+  // subagent dispatch, see agent-task-runner.ts) ignore mcpEnabled entirely —
+  // fine for *ungrouped* servers (an implicit per-server toggle-off in the
+  // toolbar shouldn't silently strip a subagent's tool), but too broad for
+  // *grouped* servers now that the flyout exposes an explicit one-toggle-per-
+  // capability off-switch: a deliberate "Compass off for this chat" should
+  // plausibly also mean "no Compass tools for subagents dispatched from this
+  // turn". This test covers both: ungrouped toggle-off still does NOT reach
+  // the subagent allowlist; an explicit grouped toggle-off on the pinned
+  // member DOES (without ever re-pinning/switching to another group member).
+  it('scopedMcpServers (subagent allowlist): ungrouped toggle-off is ignored, but an explicit grouped toggle-off on the pinned member is honored', async () => {
     const suffix = Date.now() + 3;
     const ungrouped = `solo-${suffix}`;
     const group = `compass-proj-${suffix}`;
@@ -309,10 +328,11 @@ describe('thread project pin', () => {
     await ensureThreadState({ threadId, tenantId: DEV_TENANT_ID, resourceId: 'dev-user' });
     await setProject(threadId, pinned);
 
-    // Client toggles the ungrouped server off; no group toggle is meaningful
-    // client-side (grouped servers ignore mcpEnabled per chat.ts).
+    // Client toggles the ungrouped server off AND the group's capability off
+    // (the flyout writes the same mcpEnabled value to every group member, so
+    // both the pinned and non-pinned member claim false here).
     const declaredMcp = [ungrouped, pinned, other];
-    const mcpEnabled: Record<string, boolean> = { [ungrouped]: false, [pinned]: true, [other]: true };
+    const mcpEnabled: Record<string, boolean> = { [ungrouped]: false, [pinned]: false, [other]: false };
 
     const tenantActiveMcp = await listActiveMcpServerNames(DEV_TENANT_ID, declaredMcp);
     const groups = await listMcpServerGroups(DEV_TENANT_ID);
@@ -320,24 +340,38 @@ describe('thread project pin', () => {
     const pin = threadState?.project ?? null;
 
     const scoped = resolveScopedMcp(tenantActiveMcp, groups, pin);
+    // SURVIVES: scoping itself (the pin winner) is decided before mcpEnabled
+    // is ever consulted — no re-pin/switch happened.
+    assert.equal(scoped.autoPin, null);
+    assert.ok(scoped.active.includes(pinned), 'scoping still resolves the pin winner regardless of mcpEnabled');
+    assert.ok(!scoped.active.includes(other), 'non-pinned grouped server excluded from scoping regardless');
 
-    // Pre-fix bug: `activeMcp` (client-toggle-filtered) would have dropped
-    // `ungrouped`. Post-fix `scopedMcpServers` is `scoped.active` — untouched
-    // by mcpEnabled — so the ungrouped server survives for subagent dispatch.
-    assert.ok(scoped.active.includes(ungrouped), 'ungrouped server survives despite client toggle-off');
-
-    // The client-filtered list, still used for the parent agent's own
-    // toolsets/tool-search index, does drop it — proving the two lists
-    // diverge exactly as intended.
+    // The parent agent's own toolsets/tool-search index (activeMcp): mcpEnabled
+    // applies uniformly now, so both toggled-off servers drop out.
     const activeMcp = scoped.active.filter(
-      (server) => groups[server] != null || mcpEnabled == null || mcpEnabled[server] !== false,
+      (server) => mcpEnabled == null || mcpEnabled[server] !== false,
     );
-    assert.ok(!activeMcp.includes(ungrouped), 'client-filtered activeMcp still drops the toggled-off server');
+    assert.ok(!activeMcp.includes(ungrouped), 'ungrouped toggle-off drops it from the parent agent');
+    assert.ok(!activeMcp.includes(pinned), 'grouped toggle-off drops the pinned member from the parent agent');
 
-    // A grouped, non-pinned server is excluded from the subagent allowlist
-    // regardless — project scoping, not client toggles, governs groups.
-    assert.ok(!scoped.active.includes(other), 'non-pinned grouped server excluded from subagent allowlist');
-    assert.ok(scoped.active.includes(pinned), 'pinned grouped server included in subagent allowlist');
+    // The subagent allowlist: ungrouped toggle-off is ignored (unchanged from
+    // the original fix); an explicit grouped toggle-off on the pinned member
+    // IS honored (the new decision) — and still never re-pins to `other`.
+    const scopedMcpServersForSubagents = scoped.active.filter(
+      (server) => groups[server] == null || mcpEnabled == null || mcpEnabled[server] !== false,
+    );
+    assert.ok(
+      scopedMcpServersForSubagents.includes(ungrouped),
+      'ungrouped server survives in the subagent allowlist despite client toggle-off',
+    );
+    assert.ok(
+      !scopedMcpServersForSubagents.includes(pinned),
+      'explicit grouped toggle-off on the pinned member suppresses it in the subagent allowlist too',
+    );
+    assert.ok(
+      !scopedMcpServersForSubagents.includes(other),
+      'non-pinned grouped server stays excluded from the subagent allowlist (unrelated to the toggle)',
+    );
   });
 
   it('an unpinned thread auto-pins and persists the choice via setProject', async () => {
