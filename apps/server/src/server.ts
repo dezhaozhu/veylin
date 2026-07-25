@@ -33,6 +33,7 @@ import {
 } from './resumable-chat-stream';
 import { subscribeTaskEvents } from './task-events';
 import { buildMcpHealthSnapshot, type McpHealthSnapshot } from './mcp-health';
+import { createMcpAutoRetryLoop, isMcpAutoRetryEnabled } from './mcp-retry-loop';
 import { startupCheckpoint } from './startup-profiler';
 import { ensureDevTenant, DEV_TENANT_ID } from './tenant';
 import { refreshAgentPackages, isAgentHotReloadEnabled } from './agent-packages-sync';
@@ -333,6 +334,13 @@ async function main() {
   };
   await registerApiRoutes(app, deps);
 
+  // Self-heals a remote MCP server left disconnected after boot/reconnect
+  // (e.g. an ssh tunnel blip during mac sleep) by periodically re-running the
+  // same rebuildMcp path the manual /api/mcp-servers/reconnect route uses —
+  // per-tenant, with exponential backoff. Built once per process; started
+  // below, right after the first tenant's MCP init is kicked off.
+  const mcpAutoRetryLoop = createMcpAutoRetryLoop({ mcpHealthByTenant, rebuildMcp });
+
   await seedMcpServersFromEnvIfMissing(DEV_TENANT_ID);
   // Connect MCP servers; expose their tools to chat as a toolset.
   if (!isLazyMcpBoot()) {
@@ -433,12 +441,21 @@ async function main() {
       .catch((err) => app.log.warn({ err }, 'background MCP boot failed'));
   }
 
+  // First tenant's MCP init has been issued (awaited above, or kicked off in
+  // the background for lazy boot) — safe to start the self-heal loop now.
+  if (isMcpAutoRetryEnabled()) {
+    mcpAutoRetryLoop.start();
+  } else {
+    app.log.info('VEYLIN_MCP_AUTO_RETRY=0 — MCP auto-retry loop disabled');
+  }
+
   let shuttingDown = false;
   const gracefulShutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     app.log.info(`Shutting down (${signal})…`);
     try {
+      mcpAutoRetryLoop.stop();
       await queue.stop();
       await waitForActiveChatDrain(Number(process.env.SHUTDOWN_DRAIN_MS ?? 30_000));
       if (mcp) {
