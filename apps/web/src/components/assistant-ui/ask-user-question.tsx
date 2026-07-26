@@ -1,6 +1,6 @@
 import { makeAssistantToolUI, useAuiState } from '@assistant-ui/react';
 import { HelpCircleIcon } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { normalizeAskQuestions } from '@/lib/ask-user-question-normalize';
 import {
@@ -11,7 +11,6 @@ import {
   hasAskUserAnswers,
   clearAskUserSession,
   getAskUserSessionForThread,
-  setAskUserSession,
   type AskUserResult,
 } from '@/lib/ask-user-question-session';
 
@@ -35,35 +34,14 @@ export const AskUserQuestionToolUI = makeAssistantToolUI<Args, AskUserResult>({
 
     const answered = hasAskUserAnswers(result);
     const awaiting = Boolean(addResult) && questions.length > 0 && !answered;
-    const addResultRef = useRef(addResult);
-    addResultRef.current = addResult;
 
-    const questionsKey = JSON.stringify(
-      questions.map((q) => ({
-        question: q.question,
-        options: q.options.map((o) => o.label),
-      })),
-    );
-
+    // The composer panel is opened from message state by the chat runtime — this
+    // component sits inside the collapsible Worked-for shell and is unmounted
+    // while collapsed, so it can only retire a session, never own one.
     useEffect(() => {
-      if (answered) {
-        clearAskUserSession(threadId, toolCallId);
-        return;
-      }
-      if (!awaiting || !addResult) return;
-      setAskUserSession({
-        threadId,
-        toolCallId,
-        questions,
-        addResult: (payload) => {
-          const fn = addResultRef.current;
-          if (!fn) {
-            throw new Error('ask_user_question addResult unavailable');
-          }
-          fn(payload);
-        },
-      });
-    }, [awaiting, addResult, threadId, toolCallId, questionsKey]);
+      if (!answered) return;
+      clearAskUserSession(threadId, toolCallId);
+    }, [answered, threadId, toolCallId]);
 
     if (!answered && questions.length === 0) {
       const stillStreaming = status.type === 'running';

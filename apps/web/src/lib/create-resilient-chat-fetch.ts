@@ -22,7 +22,6 @@ import {
 } from '@/lib/transport-reconnect';
 import { wrapStreamWithLiveness } from '@/lib/wrap-stream-liveness';
 import { isBenignChatError } from '@/lib/format-chat-error';
-import { dispatchChatStreamRecovery } from '@/lib/chat-stream-recovery';
 
 export type ResilientChatFetchOptions = {
   fetch?: typeof globalThis.fetch;
@@ -57,6 +56,16 @@ function threadIdFromChatBody(body: BodyInit | null | undefined): string | null 
     return id || null;
   } catch {
     return null;
+  }
+}
+
+function isNativeResumeChatBody(body: BodyInit | null | undefined): boolean {
+  if (typeof body !== 'string') return false;
+  try {
+    const parsed = JSON.parse(body) as { resume?: unknown };
+    return Boolean(parsed.resume && typeof parsed.resume === 'object');
+  } catch {
+    return false;
   }
 }
 
@@ -213,14 +222,35 @@ async function resilientChatPost(
   const decoder = new TextDecoder();
   let accumulator = '';
   const requestThreadId = threadIdFromChatBody(init?.body ?? null);
+  const nativeResume = isNativeResumeChatBody(init?.body ?? null);
+  let nativeResumePostAttempts = 0;
 
   const fetchPost = () =>
     postChatWithRetry(
-      (attemptSignal) =>
-        baseFetch(input, {
+      async (attemptSignal) => {
+        const attempt = nativeResumePostAttempts++;
+        if (nativeResume && attempt > 0 && requestThreadId) {
+          // The first POST may have reached the server even if its response was
+          // lost. Reattach to that active resumed stream before attempting the
+          // same run/tool resume again.
+          for (let probe = 0; probe < 3; probe += 1) {
+            const resumed = await baseFetch(
+              `/api/chat/${encodeURIComponent(requestThreadId)}/stream`,
+              {
+                method: 'GET',
+                credentials: init?.credentials,
+                signal: attemptSignal,
+              },
+            );
+            if (resumed.status !== 204) return resumed;
+            await sleepMs(150 * (probe + 1), attemptSignal);
+          }
+        }
+        return baseFetch(input, {
           ...init,
           signal: attemptSignal,
-        }),
+        });
+      },
       {
       signal,
       onRetry: ({ attempt, delayMs, reason }) => {
@@ -414,9 +444,6 @@ function createAutoResumeStream(
           if (resumed === null) {
             closed = true;
             options.onFinished();
-            if (!options.getFinishedSeen()) {
-              dispatchChatStreamRecovery('stream_gone');
-            }
             controller.close();
             return;
           }
@@ -442,9 +469,6 @@ function createAutoResumeStream(
           if (resumed === null) {
             closed = true;
             options.onFinished();
-            if (!options.getFinishedSeen()) {
-              dispatchChatStreamRecovery('stream_gone');
-            }
             controller.close();
             return;
           }

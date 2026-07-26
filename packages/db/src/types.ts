@@ -89,6 +89,7 @@ export interface ThreadStateRow {
   movedFrom?: string | null;
   /** ISO timestamp of the move that set `movedFrom`. */
   movedAt?: string | null;
+  suspendedRun?: unknown | null;
   updatedAt?: string;
 }
 

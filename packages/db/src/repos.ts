@@ -54,6 +54,7 @@ function mapThreadState(r: Record<string, unknown>): ThreadStateRow {
     project: (r.project as string | null) ?? null,
     movedFrom: (r.moved_from as string | null) ?? null,
     movedAt: (r.moved_at as string | null) ?? null,
+    suspendedRun: (r.suspended_run as unknown) ?? null,
     updatedAt: r.updated_at ? String(r.updated_at) : undefined,
   };
 }
@@ -266,6 +267,7 @@ export async function insertThreadState(row: Omit<ThreadStateRow, 'updatedAt'>):
     project: row.project ?? null,
     moved_from: row.movedFrom ?? null,
     moved_at: row.movedAt ?? null,
+    ...(row.suspendedRun != null ? { suspended_run: row.suspendedRun } : {}),
     updated_at: new Date(),
   });
 }
@@ -330,6 +332,14 @@ export async function updateThreadState(
     } else {
       sets.push('moved_at = $movedAt');
       vars.movedAt = patch.movedAt;
+    }
+  }
+  if (patch.suspendedRun !== undefined) {
+    if (patch.suspendedRun === null) {
+      sets.push('suspended_run = NONE');
+    } else {
+      sets.push('suspended_run = $suspendedRun');
+      vars.suspendedRun = patch.suspendedRun;
     }
   }
   if (patch.tenantId !== undefined) {
