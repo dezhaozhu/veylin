@@ -1,6 +1,10 @@
-# Veylin
+<p align="center">
+  <img src="docs/images/veylin-logo.png" alt="Veylin" width="128" />
+</p>
 
-English · [简体中文](./README.zh-CN.md)
+<h1 align="center">Veylin</h1>
+
+<p align="center">English · <a href="./README.zh-CN.md">简体中文</a></p>
 
 > An open-source, **self-hosted general-purpose AI agent desktop platform**. Claude Code–class agent loops (tools, plan mode, subagents, skills, hooks) plus a DIY workspace — table, knowledge, workflow, and web — so you can ship domain apps on a clean monorepo architecture. Double-click to run: no Docker, Postgres, or Redis.
 
