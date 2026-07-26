@@ -33,6 +33,14 @@ import type { ModelKey } from '@veylin/runtime';
 
 const WM_TEMPLATE = DEFAULT_WORKING_MEMORY_TEMPLATE;
 
+export interface ThreadSuspendedRunState {
+  agentId: string;
+  runId: string;
+  toolCallId: string;
+  suspendPayload: unknown;
+  createdAt: number;
+}
+
 export interface ThreadStateRow {
   threadId: string;
   tenantId: string;
@@ -45,6 +53,7 @@ export interface ThreadStateRow {
   title: string | null;
   goal: ThreadGoalState | null;
   loop: ThreadLoopState | null;
+  suspendedRun: ThreadSuspendedRunState | null;
   updatedAt?: Date;
 }
 
@@ -56,6 +65,26 @@ function asGoal(value: unknown): ThreadGoalState | null {
 function asLoop(value: unknown): ThreadLoopState | null {
   if (!value || typeof value !== 'object') return null;
   return value as ThreadLoopState;
+}
+
+function asSuspendedRun(value: unknown): ThreadSuspendedRunState | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<ThreadSuspendedRunState>;
+  if (
+    typeof candidate.agentId !== 'string' ||
+    typeof candidate.runId !== 'string' ||
+    typeof candidate.toolCallId !== 'string' ||
+    typeof candidate.createdAt !== 'number'
+  ) {
+    return null;
+  }
+  return {
+    agentId: candidate.agentId,
+    runId: candidate.runId,
+    toolCallId: candidate.toolCallId,
+    suspendPayload: candidate.suspendPayload,
+    createdAt: candidate.createdAt,
+  };
 }
 
 export function ephemeralThreadState(identity: ThreadIdentity): ThreadStateRow {
@@ -71,6 +100,7 @@ export function ephemeralThreadState(identity: ThreadIdentity): ThreadStateRow {
     title: null,
     goal: null,
     loop: null,
+    suspendedRun: null,
   };
 }
 
@@ -88,6 +118,7 @@ function toRow(r: Awaited<ReturnType<typeof getThreadStateRow>>): ThreadStateRow
     title: r.title ?? null,
     goal: asGoal(r.goal),
     loop: asLoop(r.loop),
+    suspendedRun: asSuspendedRun(r.suspendedRun),
     updatedAt: r.updatedAt ? new Date(r.updatedAt) : undefined,
   };
 }
@@ -122,6 +153,7 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
     title: null,
     goal: null,
     loop: null,
+    suspendedRun: null,
   });
   return {
     threadId: identity.threadId,
@@ -135,6 +167,7 @@ export async function ensureThreadState(identity: ThreadIdentity): Promise<Threa
     title: null,
     goal: null,
     loop: null,
+    suspendedRun: null,
   };
 }
 
@@ -233,6 +266,13 @@ export async function setThreadLoop(
   loop: ThreadLoopState | null,
 ): Promise<void> {
   await updateThreadState(threadId, { loop });
+}
+
+export async function setThreadSuspendedRun(
+  threadId: string,
+  suspendedRun: ThreadSuspendedRunState | null,
+): Promise<void> {
+  await updateThreadState(threadId, { suspendedRun });
 }
 
 export function createActiveGoal(

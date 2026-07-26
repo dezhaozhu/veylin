@@ -34,7 +34,6 @@ import {
   wrapModelContentEnvelope,
   aiSDKV6FormatAdapter,
   sliceMessagesUntil,
-  useStreamingTiming,
 } from '@/vendor/assistant-ui';
 import type { AISDKStorageFormat } from '@/vendor/assistant-ui';
 import { sliceMessagesForLinearEdit } from "./slice-messages-for-linear-edit";
@@ -60,24 +59,8 @@ import {
   FRONTEND_SUSPEND_TOOL_NAMES,
   getFrontendSuspendToolName,
   isAwaitingFrontendToolAnswer,
-  needsFrontendSuspendContinuation,
   pendingFrontendToolCallId,
-  registerFrontendToolStop,
-  registerStreamStop,
-  trimAssistantAfterAwaitingTool,
 } from "./frontend-suspend-tools";
-import {
-  createFrontendToolContinuationController,
-  createToolContinuationAttemptTracker,
-  canAutoContinueChat,
-  markToolContinuationAttempt,
-  requestFrontendToolContinuation,
-  resetFrontendToolContinuationController,
-  resetToolContinuationAttemptTracker,
-  toolContinuationFingerprint,
-  tryContinueFrontendToolChat,
-  unmarkToolContinuationAttempt,
-} from "./frontend-tool-continuation";
 import {
   buildInterruptedBackgroundTaskRows,
   collectCoordinatorDispatchTaskIds,
@@ -97,6 +80,7 @@ import {
   type BackgroundTasksApiSnapshot,
 } from "./background-task-events";
 import { registerAskUserResultSubmitter } from "./ask-user-submit-bridge";
+import { registerPendingAskUserSession } from "./pending-ask-user-session";
 import {
   abortAllReadOpenPageReads,
   clearReadOpenPageSubmitted,
@@ -112,10 +96,20 @@ import {
 import { isPersistableThreadId, syncThreadMessagesToServer } from "./sync-thread-messages";
 import { normalizeAssistantMessageParts, assistantPartsSemanticallyEqual } from "@veylin/shared";
 import {
-  CHAT_STREAM_RECOVERY_EVENT,
-  isStuckAwaitingToolContinuation,
-} from "./chat-stream-recovery";
+  discardNativeResumeRequest,
+  findNativeToolSuspension,
+  stageNativeResumeRequest,
+} from "./native-suspend-resume";
+import {
+  assistantTurnWorkMs,
+  createAssistantTurnTiming,
+  reasoningSegmentKey,
+  reduceAssistantTurnTiming,
+  type AssistantTurnTiming,
+} from "./assistant-turn-timing";
+import type { MessageTiming } from "@assistant-ui/core";
 
+/** Idle grace period before a still-"running" turn is treated as wedged. */
 export type CustomToCreateMessageFunction = <
   UI_MESSAGE extends UIMessage = UIMessage,
 >(
@@ -292,7 +286,6 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
    * persisted turn — only live tool completions (via applyToolResult) may continue.
    */
   const restoredHistoryHeadRef = useRef<string | null>(null);
-  const frontendContinuationRef = useRef(createFrontendToolContinuationController());
   const refreshBackgroundTasksRef = useRef<(() => void) | null>(null);
   /** Task ids cancelled by Stop — keep them cancelled until the API reports a terminal status. */
   const interruptedTaskIdsRef = useRef<Set<string>>(new Set());
@@ -329,25 +322,18 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
   const awaitingFrontendToolAnswer = isAwaitingFrontendToolAnswer(
     chatHelpers.messages,
   );
-  const needsSuspendContinuation = needsFrontendSuspendContinuation(
-    chatHelpers.messages,
-  );
-  const continuation = frontendContinuationRef.current;
-  const continuationInFlight =
-    continuation.pending || continuation.continuing;
-  // Subagents now run synchronously inside the `task` tool call, so the parent
-  // chat stream stays open (status streaming/submitted) for the whole subagent
-  // run. Also treat ask/read_open_page continuation gaps as running so Worked-for
-  // does not fold between answer submit and the follow-up stream.
+  // A native suspension is an idle run waiting on the user, not active work.
+  // Tool status can remain "executing" in assistant-ui while suspended, so do
+  // not let it pin the message timer/spinner.
+  const derivedRunning = hasExecutingTools && !awaitingFrontendToolAnswer;
   const isRunning =
     chatHelpers.status === "submitted" ||
     chatHelpers.status === "streaming" ||
-    hasExecutingTools ||
-    awaitingFrontendToolAnswer ||
-    needsSuspendContinuation ||
-    continuationInFlight;
+    derivedRunning;
 
   // Keep a non-React copy so Cmd+R / unload can stop without reading URL.
+  const reasoningStartsRef = useRef(new Map<string, number>());
+
   useEffect(() => {
     const threadId = getThreadId?.() ?? chatHelpers.id;
     const streamId = resumableStorage.getStreamId();
@@ -358,7 +344,155 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     if (!isRunning) clearActiveChatRun();
   }, [isRunning, chatHelpers.id, getThreadId, chatHelpers.status]);
 
-  const rawMessageTiming = useStreamingTiming(chatHelpers.messages, isRunning);
+  useEffect(() => {
+    const lastAssistant = chatHelpers.messages.findLast(
+      (message) => message.role === "assistant",
+    );
+    if (!lastAssistant) return;
+
+    const metadata = lastAssistant.metadata as
+      | { custom?: { turnTiming?: AssistantTurnTiming } }
+      | undefined;
+    const existing = metadata?.custom?.turnTiming;
+    const suspension = findNativeToolSuspension(
+      chatHelpers.messages,
+      undefined,
+    );
+    const runId = suspension?.runId ?? existing?.runId ?? lastAssistant.id;
+    const priorForRun = [...chatHelpers.messages]
+      .reverse()
+      .map(
+        (message) =>
+          (
+            message.metadata as
+              | { custom?: { turnTiming?: AssistantTurnTiming } }
+              | undefined
+          )?.custom?.turnTiming,
+      )
+      .find((timing) => timing?.runId === runId);
+    let base = existing ?? priorForRun ?? createAssistantTurnTiming(runId);
+    const now = Date.now();
+    const activelyStreaming =
+      chatHelpers.status === "submitted" || chatHelpers.status === "streaming";
+    if (
+      activelyStreaming &&
+      suspension?.suspendedAt != null &&
+      base.openSegment?.kind === "work" &&
+      base.openSegment.startedAt <= suspension.suspendedAt
+    ) {
+      base = reduceAssistantTurnTiming(base, {
+        type: "suspended",
+        now: suspension.suspendedAt,
+      });
+    }
+    let next =
+      activelyStreaming
+        ? reduceAssistantTurnTiming(base, { type: "running", runId, now })
+        : suspension && awaitingFrontendToolAnswer
+          ? reduceAssistantTurnTiming(base, {
+              type: "suspended",
+              now: suspension.suspendedAt ?? now,
+            })
+          : reduceAssistantTurnTiming(base, {
+              type: chatHelpers.error ? "failed" : "finished",
+              now,
+            });
+
+    const activeReasoningIndex =
+      activelyStreaming &&
+      lastAssistant.parts.at(-1)?.type === "reasoning"
+        ? lastAssistant.parts.length - 1
+        : -1;
+    for (let index = 0; index < lastAssistant.parts.length; index += 1) {
+      if (lastAssistant.parts[index]?.type !== "reasoning") continue;
+      const key = reasoningSegmentKey(lastAssistant.parts, index, runId);
+      const segmentIdentity = key.split(":reasoning:")[1];
+      const trackerKey = `${lastAssistant.id}\0${segmentIdentity}`;
+      const alreadyClosed = next.segments.some(
+        (segment) =>
+          segment.kind === "reasoning" &&
+          segment.key.split(":reasoning:")[1] === segmentIdentity,
+      );
+      if (alreadyClosed) {
+        reasoningStartsRef.current.delete(trackerKey);
+        continue;
+      }
+      if (index === activeReasoningIndex) {
+        if (!reasoningStartsRef.current.has(trackerKey)) {
+          reasoningStartsRef.current.set(trackerKey, now);
+        }
+        continue;
+      }
+      const startedAt = reasoningStartsRef.current.get(trackerKey);
+      if (startedAt == null) continue;
+      reasoningStartsRef.current.delete(trackerKey);
+      const endedAt = Math.max(startedAt, now);
+      next = {
+        ...next,
+        segments: [
+          ...next.segments,
+          {
+            key,
+            kind: "reasoning",
+            startedAt,
+            endedAt,
+            durationMs: endedAt - startedAt,
+          },
+        ],
+      };
+    }
+
+    if (JSON.stringify(existing) === JSON.stringify(next)) return;
+    chatHelpers.setMessages((current) =>
+      current.map((message) =>
+        message.id !== lastAssistant.id
+          ? message
+          : {
+              ...message,
+              metadata: {
+                ...(message.metadata as Record<string, unknown> | undefined),
+                custom: {
+                  ...((message.metadata as
+                    | { custom?: Record<string, unknown> }
+                    | undefined)?.custom ?? {}),
+                  turnTiming: next,
+                },
+              },
+            },
+      ),
+    );
+  }, [
+    chatHelpers.status,
+    chatHelpers.messages,
+    chatHelpers.error,
+    awaitingFrontendToolAnswer,
+  ]);
+
+  const rawMessageTiming = useMemo(() => {
+    const timings: Record<string, MessageTiming> = {};
+    for (const message of chatHelpers.messages) {
+      if (message.role !== "assistant") continue;
+      const turnTiming = (
+        message.metadata as
+          | { custom?: { turnTiming?: AssistantTurnTiming } }
+          | undefined
+      )?.custom?.turnTiming;
+      if (!turnTiming) continue;
+      const streamStartTime =
+        turnTiming.segments[0]?.startedAt ??
+        turnTiming.openSegment?.startedAt ??
+        0;
+      timings[message.id] = {
+        streamStartTime,
+        totalStreamTime: assistantTurnWorkMs(turnTiming),
+        totalChunks: turnTiming.segments.length,
+        toolCallCount: (message.parts ?? []).filter((part) =>
+          isToolUIPart(part as never),
+        ).length,
+      };
+    }
+    return timings;
+  }, [chatHelpers.messages]);
   const prunedTimingIdsRef = useRef<Set<string>>(new Set());
   const [timingPruneEpoch, setTimingPruneEpoch] = useState(0);
   const messageTiming = useMemo(() => {
@@ -566,10 +700,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     };
   }, [getThreadId]);
 
-  const stoppedFrontendToolIdsRef = useRef<Set<string>>(new Set());
   const stampedAssistantIdsRef = useRef<Set<string>>(new Set());
-  const continuationLastErrorRef = useRef<unknown>(null);
-  const toolContinuationAttemptRef = useRef(createToolContinuationAttemptTracker());
   const prevChatStatusRef = useRef(chatHelpers.status);
   /** When set, auto-continue is blocked for this assistant message id (user cancelled). */
   const suppressedForAssistantIdRef = useRef<string | null>(null);
@@ -578,14 +709,10 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     const last = chatHelpersRef.current.messages.at(-1);
     suppressedForAssistantIdRef.current =
       last?.role === "assistant" ? last.id : null;
-    resetFrontendToolContinuationController(frontendContinuationRef.current);
-    resetToolContinuationAttemptTracker(toolContinuationAttemptRef.current);
   };
 
   const clearToolContinuationSuppression = () => {
     suppressedForAssistantIdRef.current = null;
-    resetToolContinuationAttemptTracker(toolContinuationAttemptRef.current);
-    resetFrontendToolContinuationController(frontendContinuationRef.current);
   };
 
   const isToolContinuationSuppressed = (messages: UI_MESSAGE[]) => {
@@ -687,123 +814,36 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     }
   };
 
-  const stopFrontendToolStream = (reason: string, toolCallIds?: string | string[]) => {
-    useNetworkReconnectStore.getState().clearReconnecting();
-    chatHelpersRef.current.stop();
-    const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
-    if (!threadId) return;
-    const stopPromise = requestChatStop(threadId).catch((err) => {
-      console.warn(`[chat] frontend tool ${reason} stop failed`, err);
-    });
-    const ids = (
-      toolCallIds == null ? [] : Array.isArray(toolCallIds) ? toolCallIds : [toolCallIds]
-    ).filter(Boolean);
-    for (const id of ids) {
-      registerFrontendToolStop(id, stopPromise);
-    }
-  };
-
-  const ensureFrontendToolStreamStopped = async (): Promise<void> => {
-    chatHelpersRef.current.stop();
-    const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
-    if (!threadId) return;
-    const streamId = resumableStorage.getStreamId();
-    const stopPromise = requestChatStop(threadId, { activeStreamId: streamId }).catch((err) => {
-      console.warn("[chat] frontend tool ensure stop failed", err);
-    });
-    registerStreamStop(stopPromise);
-    await stopPromise;
-  };
-
-  const continueFrontendToolIfReady = () => {
-    void tryContinueFrontendToolChat({
-      controller: frontendContinuationRef.current,
-      getStatus: () => chatHelpersRef.current.status,
-      getMessages: () => chatHelpersRef.current.messages,
-      stopStream: () => stopFrontendToolStream("continue", undefined),
-      ensureStopped: ensureFrontendToolStreamStopped,
-      sendMessage: async () => {
-        resumableStorage.clear();
-        await chatHelpersRef.current.sendMessage(undefined, {
-          metadata: lastRunConfigRef.current,
-        });
-      },
-      clearError: () => chatHelpersRef.current.clearError(),
-      lastError: continuationLastErrorRef,
-      onSendFailed: () => {
-        resetToolContinuationAttemptTracker(toolContinuationAttemptRef.current);
-      },
-    });
-  };
-
-  const scheduleToolContinuationIfNeeded = () => {
-    const messages = chatHelpersRef.current.messages;
-    const status = chatHelpersRef.current.status;
-    if (isToolContinuationSuppressed(messages)) return;
-
-    if (status !== "ready") return;
-    if (!canAutoContinueChat(messages, status)) {
-      return;
-    }
-
-    const fingerprint = toolContinuationFingerprint(messages);
-    if (!fingerprint) return;
-    if (
-      !markToolContinuationAttempt(
-        toolContinuationAttemptRef.current,
-        fingerprint,
-      )
-    ) {
-      return;
-    }
-
-    if (
-      !requestFrontendToolContinuation(
-        frontendContinuationRef.current,
-        continueFrontendToolIfReady,
-      )
-    ) {
-      unmarkToolContinuationAttempt(
-        toolContinuationAttemptRef.current,
-        fingerprint,
-      );
-    }
-  };
-
-  const recoverStuckChatRun = useCallback(async () => {
-    const chat = chatHelpersRef.current;
-    const messages = chat.messages;
-    const status = chat.status;
-    // Only the frontend-suspend tool continuation can wedge now (a client-completed
-    // suspend tool whose follow-up POST never fired). Subagents keep the stream open
-    // legitimately, so a streaming coordinator turn is not "stuck".
-    const stuckTool = isStuckAwaitingToolContinuation(messages, status);
-    if (!stuckTool) {
-      return;
-    }
-
-    const threadId = getThreadId?.() ?? chat.id;
-    if (threadId) {
-      try {
-        const activityRes = await fetch("/api/threads/activity", {
-          credentials: "include",
-        });
-        if (activityRes.ok) {
-          const data = (await activityRes.json()) as {
-            activity?: Record<string, { kind?: string }>;
-          };
-          if (data.activity?.[threadId]?.kind === "running") return;
+  /**
+   * Drop tool statuses whose tool call already settled (or vanished). The tracker
+   * only emits on transitions, so a run aborted mid-tool leaves an "executing"
+   * entry behind forever, which pins `isRunning`.
+   */
+  const pruneSettledToolStatuses = () => {
+    const live = new Set<string>();
+    for (const message of chatHelpersRef.current.messages) {
+      for (const part of message.parts ?? []) {
+        if (!isToolUIPart(part as never)) continue;
+        const toolPart = part as { toolCallId?: string; state?: string };
+        if (
+          toolPart.state === "output-available" ||
+          toolPart.state === "output-error"
+        ) {
+          continue;
         }
-      } catch {
-        /* proceed — activity probe is best-effort */
+        if (toolPart.toolCallId) live.add(toolPart.toolCallId);
       }
     }
-
-    resumableStorage.clear();
-    useNetworkReconnectStore.getState().clearTransientBanner();
-    resetFrontendToolContinuationController(frontendContinuationRef.current);
-    chat.stop();
-  }, [getThreadId]);
+    setToolStatuses((current) => {
+      const next: Record<string, ToolExecutionStatus> = {};
+      let changed = false;
+      for (const [id, status] of Object.entries(current)) {
+        if (live.has(id)) next[id] = status;
+        else changed = true;
+      }
+      return changed ? next : current;
+    });
+  };
 
   const applyToolResult = useCallback(
     async ({
@@ -833,6 +873,51 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       ).includes(toolName);
 
       const chat = chatHelpersRef.current;
+      if (isFrontendSuspend) {
+        const suspension = findNativeToolSuspension(chat.messages, toolCallId);
+        if (!suspension || suspension.toolName !== toolName) {
+          throw new Error(
+            `Cannot resume ${toolName}: native suspension metadata is missing`,
+          );
+        }
+        const threadId = getThreadId?.() ?? chat.id;
+        const resumeData =
+          toolName === "ask_user_question" &&
+          result &&
+          typeof result === "object"
+            ? (() => {
+                const {
+                  questions: _questions,
+                  ...answers
+                } = result as Record<string, unknown>;
+                return answers;
+              })()
+            : result;
+        const request = {
+          threadId,
+          runId: suspension.runId,
+          toolCallId: suspension.toolCallId,
+          resumeData,
+        };
+        stageNativeResumeRequest(request);
+        try {
+          resumableStorage.clear();
+          await chat.sendMessage(undefined, {
+            metadata: lastRunConfigRef.current,
+          });
+          const latestChat = chatHelpersRef.current;
+          if (latestChat.status === "error" || latestChat.error) {
+            throw latestChat.error ?? new Error("Native resume stream failed");
+          }
+        } catch (error) {
+          // Keep the exact same run/tool identity retryable; never fall back to
+          // replaying the full transcript as a new user turn.
+          stageNativeResumeRequest(request);
+          throw error;
+        }
+        return;
+      }
+
       if (isError) {
         await chat.addToolOutput({
           state: "output-error",
@@ -855,23 +940,8 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         });
       }
 
-      if (!isFrontendSuspend) return;
-
-      if (isToolContinuationSuppressed(chatHelpersRef.current.messages)) {
-        return;
-      }
-
-      const status = chatHelpersRef.current.status;
-      if (status === "streaming" || status === "submitted") {
-        requestFrontendToolContinuation(
-          frontendContinuationRef.current,
-          continueFrontendToolIfReady,
-        );
-      } else if (status === "ready") {
-        scheduleToolContinuationIfNeeded();
-      }
     },
-    [],
+    [getThreadId],
   );
 
   useEffect(() => {
@@ -887,8 +957,11 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       return applyToolResult({
         toolCallId,
         toolName: "read_open_page",
-        result: options?.isError ? (result.error ?? result) : result,
+        result,
         isError: options?.isError,
+      }).catch((error) => {
+        clearReadOpenPageSubmitted(toolCallId);
+        throw error;
       });
     });
     return () => {
@@ -1045,19 +1118,17 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
 
   useEffect(() => {
     stampedAssistantIdsRef.current = new Set();
-    stoppedFrontendToolIdsRef.current = new Set();
     restoredHistoryHeadRef.current = null;
     clearReadOpenPageSubmitted();
     abortAllReadOpenPageReads();
     setToolStatuses({});
-    resetFrontendToolContinuationController(frontendContinuationRef.current);
-    resetToolContinuationAttemptTracker(toolContinuationAttemptRef.current);
     resumableStorage.clear();
     useNetworkReconnectStore.getState().clearReconnecting();
     const chat = chatHelpersRef.current;
     if (chat.status === "streaming" || chat.status === "submitted") {
       chat.stop();
     }
+    return () => discardNativeResumeRequest(chatHelpers.id);
   }, [chatHelpers.id]);
 
   useEffect(() => {
@@ -1070,7 +1141,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     prevChatStatusRef.current = chatHelpers.status;
 
     if (chatHelpers.status === "ready" && prev !== "ready") {
-      frontendContinuationRef.current.sendStarted = false;
+      pruneSettledToolStatuses();
       const last = chatHelpers.messages.at(-1);
       if (last?.role === "assistant") {
         const stripped = stripTaskNotificationUserMessages(chatHelpers.messages);
@@ -1088,37 +1159,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       return;
     }
 
-    // A turn restored from persisted history must not auto-resume on load/refresh.
-    // Live tool completions still continue via applyToolResult, which clears this.
-    const last = chatHelpers.messages.at(-1);
-    if (last && restoredHistoryHeadRef.current === last.id) {
-      return;
-    }
-
-    scheduleToolContinuationIfNeeded();
   }, [chatHelpers.status, chatHelpers.messages]);
-
-  useEffect(() => {
-    const onRecovery = () => {
-      void recoverStuckChatRun();
-    };
-    window.addEventListener(CHAT_STREAM_RECOVERY_EVENT, onRecovery);
-    return () => window.removeEventListener(CHAT_STREAM_RECOVERY_EVENT, onRecovery);
-  }, [recoverStuckChatRun]);
-
-  useEffect(() => {
-    const stuckTool = isStuckAwaitingToolContinuation(
-      chatHelpers.messages,
-      chatHelpers.status,
-    );
-    if (!stuckTool) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void recoverStuckChatRun();
-    }, 750);
-    return () => window.clearTimeout(timer);
-  }, [chatHelpers.messages, chatHelpers.status, recoverStuckChatRun]);
 
   useEffect(() => {
     const last = chatHelpers.messages.at(-1);
@@ -1130,22 +1171,31 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     const pendingPart = last.parts[pendingIndex] as {
       toolCallId?: string;
       type?: string;
-      input?: { mode?: 'text' | 'html'; maxChars?: number };
-      args?: { mode?: 'text' | 'html'; maxChars?: number };
+      input?: { mode?: 'text' | 'html'; maxChars?: number; questions?: unknown[] };
+      args?: { mode?: 'text' | 'html'; maxChars?: number; questions?: unknown[] };
     };
     const toolCallId = pendingFrontendToolCallId(last, pendingIndex, pendingPart);
     const toolName = getFrontendSuspendToolName(pendingPart);
+    const suspension = findNativeToolSuspension(
+      chatHelpers.messages,
+      pendingPart.toolCallId ?? toolCallId,
+    );
+    if (!suspension || suspension.toolName !== toolName) return;
 
-    if (!stoppedFrontendToolIdsRef.current.has(toolCallId)) {
-      stoppedFrontendToolIdsRef.current.add(toolCallId);
-      const stopIds = [toolCallId];
-      if (pendingPart.toolCallId && pendingPart.toolCallId !== toolCallId) {
-        stopIds.push(pendingPart.toolCallId);
-      }
-      stopFrontendToolStream("open", stopIds);
+    // Open the composer ask panel from message state: the inline tool UI lives
+    // inside the collapsible Worked-for shell, which unmounts while collapsed.
+    // Keyed by chat id — the same key the panel and the submitter bridge use.
+    if (toolName === 'ask_user_question' && chatHelpers.id) {
+      registerPendingAskUserSession(
+        chatHelpers.id,
+        last,
+        pendingIndex,
+        pendingPart,
+      );
     }
 
-    // Drive read_open_page via bridge — does not depend on ToolUI addResult after chat.stop().
+    // Native suspension has already ended the stream; drive the desktop read and
+    // resume the exact run when its result is available.
     if (toolName === 'read_open_page' && !isReadOpenPageSubmitted(toolCallId)) {
       const threadId = getThreadId?.() ?? chatHelpers.id;
       const input = (pendingPart.input ?? pendingPart.args ?? {}) as {
@@ -1164,10 +1214,6 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       });
     }
 
-    const trimmed = trimAssistantAfterAwaitingTool(chatHelpers.messages);
-    if (trimmed) {
-      chatHelpers.setMessages(trimmed as UI_MESSAGE[]);
-    }
   }, [chatHelpers.messages, chatHelpers, getThreadId]);
 
   useEffect(() => {
@@ -1264,8 +1310,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage), {
       metadata: message.runConfig,
     });
-    // Clear suppression only after the new user message is in flight so a
-    // pending sendMessage(undefined) auto-continue cannot race.
+    // A real user turn starts a fresh trajectory and clears Stop suppression.
     clearToolContinuationSuppression();
     setChatSettings({ pendingSkill: null });
   };

@@ -3,12 +3,8 @@ import { isTaskNotificationText } from '@veylin/shared';
 export type AssistantPartLike = {
   type?: string;
   text?: string;
+  toolName?: string;
 };
-
-const FRONTEND_SUSPEND_TOOL_TYPES = new Set([
-  'tool-ask_user_question',
-  'tool-read_open_page',
-]);
 
 /** True when a text part has user-visible content (not empty / task noise). */
 export function isSubstantialTextPart(part: AssistantPartLike | undefined): boolean {
@@ -32,31 +28,12 @@ export function findLastSubstantialTextIndex(
   return -1;
 }
 
-/** Last ask_user_question / read_open_page part index, or -1. */
-export function findLastFrontendSuspendToolIndex(
-  parts: readonly AssistantPartLike[],
-): number {
-  for (let i = parts.length - 1; i >= 0; i--) {
-    const type = parts[i]?.type;
-    if (typeof type === 'string' && FRONTEND_SUSPEND_TOOL_TYPES.has(type)) {
-      return i;
-    }
-  }
-  return -1;
-}
-
 /**
- * Index of the final prose part kept outside Worked-for:
- * - with a frontend-suspend tool: last substantial text *after* that tool
- * - without: last substantial text overall
+ * A finished native run has one unambiguous visible result: its last
+ * substantial text. Tool suspensions are lifecycle events, not prose markers.
  */
 export function findFinalProseIndex(parts: readonly AssistantPartLike[]): number {
-  const suspendIdx = findLastFrontendSuspendToolIndex(parts);
-  const from = suspendIdx >= 0 ? suspendIdx + 1 : 0;
-  for (let i = parts.length - 1; i >= from; i--) {
-    if (isSubstantialTextPart(parts[i])) return i;
-  }
-  return -1;
+  return findLastSubstantialTextIndex(parts);
 }
 
 /** Whether this part index is the final prose kept outside Worked-for. */

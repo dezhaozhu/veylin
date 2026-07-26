@@ -73,6 +73,7 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS title ON thread_state TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS goal ON thread_state FLEXIBLE TYPE option<object>`,
   `DEFINE FIELD IF NOT EXISTS loop ON thread_state FLEXIBLE TYPE option<object>`,
+  `DEFINE FIELD IF NOT EXISTS suspended_run ON thread_state FLEXIBLE TYPE option<object>`,
   `DEFINE FIELD IF NOT EXISTS updated_at ON thread_state TYPE datetime DEFAULT time::now()`,
   `DEFINE INDEX IF NOT EXISTS thread_state_pk ON thread_state FIELDS thread_id UNIQUE`,
 

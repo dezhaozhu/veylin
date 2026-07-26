@@ -55,6 +55,7 @@ import {
   setTodos as setThreadTodosDb,
   setThreadGoal,
   setThreadLoop,
+  setThreadSuspendedRun,
   syncWorkingMemory,
   restoreTodosFromHistoryIfEmpty,
   requireThreadOwnership,
@@ -74,6 +75,7 @@ import { isMemoryStoreFailure, syncThreadMessagesFromClient } from '../thread-sy
 import { isDatastoreFailure, withDatastoreFallback } from '../store-errors.js';
 import {
   mastraMessagesToAgentContext,
+  mastraMessagesToUi,
   mergeAgentContextMessages,
   type UiMessage,
 } from '../message-sync.js';
@@ -109,6 +111,12 @@ import { getHookBus, reloadHooksForTenant } from '../hooks-service.js';
 import { wrapToolsetsWithHooks } from '../tool-hooks.js';
 import { wrapToolsetsWithAudit } from '../tool-audit.js';
 import { getEnterprisePorts } from '../ports/index.js';
+import {
+  consumeSuspendedRun,
+  observeSuspensionChunk,
+  registerSuspendedRun,
+  type SuspendedRunRecord,
+} from '../chat-suspension-registry.js';
 import type { ServerDeps } from './types.js';
 
 /**
@@ -121,33 +129,43 @@ import type { ServerDeps } from './types.js';
 const SSE_KEEPALIVE_INTERVAL_MS = 15_000;
 
 export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void {
-  app.post('/api/resume', async (req) => {
-    const ctx = await deps.resolveContext(req.headers);
-    await applyTenantModelSettings(ctx.tenantId);
-    const body = req.body as { runId?: string; resumeData?: unknown; agentId?: string };
-    const agent = deps.runtime.getAgent(body.agentId ?? DEFAULT_AGENT_ID) as unknown as {
-      resumeStream?: (data: unknown, opts: { runId: string }) => Promise<unknown>;
-    };
-    if (!body.runId || !agent?.resumeStream) {
-      return { ok: false, error: 'runId and resumeStream required' };
-    }
-    const stream = await agent.resumeStream(body.resumeData, { runId: body.runId });
-    return { ok: true, stream: stream != null };
-  });
-
   app.post('/api/chat', async (req, reply) => {
     const body = parseChatBody(req.body);
+    const ctx = await deps.resolveContext(req.headers);
+    const resume = body.resume;
+    const isResume = resume != null;
     const messages = body.messages ?? [];
-    if (messages.length === 0) {
+    if (!isResume && messages.length === 0) {
       return reply.status(400).send({ error: 'messages required' });
     }
+    if (
+      isResume &&
+      (typeof resume !== 'object' ||
+        typeof resume.runId !== 'string' ||
+        !resume.runId.trim() ||
+        (resume.toolCallId != null &&
+          (typeof resume.toolCallId !== 'string' || !resume.toolCallId.trim())) ||
+        !Object.prototype.hasOwnProperty.call(resume, 'resumeData'))
+    ) {
+      return reply.status(400).send({ error: 'invalid_resume' });
+    }
+    const requestedThreadId = body.id ?? body.threadId;
+    if (
+      (requestedThreadId != null &&
+        (typeof requestedThreadId !== 'string' || !requestedThreadId.trim())) ||
+      (isResume && typeof requestedThreadId !== 'string')
+    ) {
+      return reply.status(400).send({ error: 'invalid_thread_id' });
+    }
+    if (body.agentId != null && (typeof body.agentId !== 'string' || !body.agentId.trim())) {
+      return reply.status(400).send({ error: 'invalid_agent_id' });
+    }
 
-    const ctx = await deps.resolveContext(req.headers);
     await applyTenantModelSettings(ctx.tenantId);
     await deps.ensureMcpForTenant(ctx.tenantId);
     await reloadHooksForTenant(ctx.tenantId);
     const hookBus = getHookBus(ctx.tenantId);
-    const threadId = body.id ?? body.threadId ?? `thread-${ctx.userId}`;
+    const threadId = requestedThreadId ?? `thread-${ctx.userId}`;
     const agentId = body.agentId ?? DEFAULT_AGENT_ID;
     const identity = {
       threadId,
@@ -161,8 +179,25 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     try {
       const before = await getThreadState(threadId);
       isNewSession = !before;
-      threadRow = await ensureThreadState(identity);
-      await touchThreadActivity(threadId);
+      if (isResume) {
+        if (before) {
+          try {
+            threadRow = await requireThreadOwnership(threadId, ctx);
+          } catch (err) {
+            if (deps.isForbiddenError(err)) {
+              return reply.status(403).send({ error: 'forbidden' });
+            }
+            throw err;
+          }
+        } else {
+          // A prior ephemeral turn may have suspended while the datastore was
+          // unavailable. The process-local run registry remains authoritative.
+          threadRow = ephemeralThreadState(identity);
+        }
+      } else {
+        threadRow = await ensureThreadState(identity);
+      }
+      if (before) await touchThreadActivity(threadId);
     } catch (err) {
       if (!isDatastoreFailure(err)) throw err;
       threadStoreOk = false;
@@ -176,8 +211,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       { source: isNewSession ? 'startup' : 'resume', thread_id: threadId, agent_id: agentId },
       { threadId },
     );
-    await stopChatStream({ threadId }).catch(() => undefined);
-    if (threadStoreOk) {
+    if (!isResume) {
+      await stopChatStream({ threadId }).catch(() => undefined);
+    }
+    if (threadStoreOk && !isResume) {
       await withDatastoreFallback(
         () => restoreTodosFromHistoryIfEmpty(threadId, messages as never),
         undefined,
@@ -204,7 +241,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const planMode = body.planMode === true || (threadRowState?.planMode ?? false);
 
     await refreshAgentPackages(deps.runtime);
-    const agent = requireAgent(deps.runtime, agentId);
+    const agent = deps.runtime.getAgent(agentId);
+    if (!agent) {
+      return reply.status(404).send({ error: 'agent_not_found' });
+    }
     const modelKey = (body.model ?? 'default') as ModelKey;
     const modelConfig = getModelConfig(modelKey);
     if (!modelConfig.apiKey.trim()) {
@@ -214,7 +254,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       });
     }
 
-    if (threadStoreOk && !threadRow.title?.trim()) {
+    if (!isResume && threadStoreOk && !threadRow.title?.trim()) {
       void ensureThreadTitleIfMissing(threadId, messages, {
         memory: deps.runtime.memory,
         resourceId: ctx.userId,
@@ -398,26 +438,28 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     );
     let skillBlock = getSkillMemoryBlock(activatedSkills);
 
-    let useThreadMemory = threadStoreOk;
-    try {
-      await syncThreadMessagesFromClient({
-        memory: deps.runtime.memory,
-        identity,
-        clientMessages: messages as never,
-        forceReplace: body.forceReplace,
-      });
-      if (threadStoreOk) {
-        threadRowState = (await getThreadState(threadId)) ?? threadRowState;
-      }
-    } catch (err) {
-      if (isMemoryStoreFailure(err)) {
-        useThreadMemory = false;
-        app.log.warn(
-          { err, threadId },
-          'message sync failed (memory store); continuing chat without thread memory',
-        );
-      } else {
-        throw err;
+    let useThreadMemory = threadStoreOk && !isResume;
+    if (!isResume) {
+      try {
+        await syncThreadMessagesFromClient({
+          memory: deps.runtime.memory,
+          identity,
+          clientMessages: messages as never,
+          forceReplace: body.forceReplace,
+        });
+        if (threadStoreOk) {
+          threadRowState = (await getThreadState(threadId)) ?? threadRowState;
+        }
+      } catch (err) {
+        if (isMemoryStoreFailure(err)) {
+          useThreadMemory = false;
+          app.log.warn(
+            { err, threadId },
+            'message sync failed (memory store); continuing chat without thread memory',
+          );
+        } else {
+          throw err;
+        }
       }
     }
 
@@ -432,30 +474,33 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
           : {};
 
     const effectiveModel = body.model ?? deps.runtime.definitions.get(agentId)?.definition.model;
-    let agentInputMessages = messages as UiMessage[];
-    if (useThreadMemory) {
-      try {
-        const recalled = await deps.runtime.memory.recall({
-          threadId,
-          resourceId: ctx.userId,
-          perPage: false,
-        });
-        const recalledForAgent = mastraMessagesToAgentContext(recalled.messages ?? []);
-        agentInputMessages = mergeAgentContextMessages(
-          messages as UiMessage[],
-          recalledForAgent,
-        );
-      } catch (err) {
-        app.log.warn({ err, threadId }, 'agent context merge failed; using client messages');
+    let agentMessages: Awaited<ReturnType<typeof toAgentMessages>> = [];
+    if (!isResume) {
+      let agentInputMessages = messages as UiMessage[];
+      if (useThreadMemory) {
+        try {
+          const recalled = await deps.runtime.memory.recall({
+            threadId,
+            resourceId: ctx.userId,
+            perPage: false,
+          });
+          const recalledForAgent = mastraMessagesToAgentContext(recalled.messages ?? []);
+          agentInputMessages = mergeAgentContextMessages(
+            messages as UiMessage[],
+            recalledForAgent,
+          );
+        } catch (err) {
+          app.log.warn({ err, threadId }, 'agent context merge failed; using client messages');
+        }
       }
-    }
-    agentInputMessages = stripInterruptedAssistantTurnsForAgent(agentInputMessages);
-    let agentMessages = await toAgentMessages(
-      agentInputMessages as Parameters<typeof toAgentMessages>[0],
-      modelSupportsImages(effectiveModel),
-    );
-    if (body.pendingLoop === true && !isLoopActive(threadRowState?.loop)) {
-      agentMessages = appendPendingLoopTurnNote(agentMessages);
+      agentInputMessages = stripInterruptedAssistantTurnsForAgent(agentInputMessages);
+      agentMessages = await toAgentMessages(
+        agentInputMessages as Parameters<typeof toAgentMessages>[0],
+        modelSupportsImages(effectiveModel),
+      );
+      if (body.pendingLoop === true && !isLoopActive(threadRowState?.loop)) {
+        agentMessages = appendPendingLoopTurnNote(agentMessages);
+      }
     }
 
     const rules = await withDatastoreFallback(
@@ -550,26 +595,28 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       { threadId, tenantId: ctx.tenantId, userId: ctx.userId },
     );
 
-    const promptSubmit = await hookBus.emit(
-      'UserPromptSubmit',
-      {
-        prompt: lastUserText(messages),
-        thread_id: threadId,
-        agent_id: agentId,
-      },
-      { threadId },
-    );
-    if (promptSubmit.decision === 'deny') {
-      return reply.status(400).send({
-        error: 'prompt_blocked',
-        message: promptSubmit.reason ?? 'Prompt blocked by hook',
-      });
-    }
-    if (promptSubmit.additionalContext) {
-      agentMessages = [
-        { role: 'system', content: promptSubmit.additionalContext } as never,
-        ...agentMessages,
-      ];
+    if (!isResume) {
+      const promptSubmit = await hookBus.emit(
+        'UserPromptSubmit',
+        {
+          prompt: lastUserText(messages),
+          thread_id: threadId,
+          agent_id: agentId,
+        },
+        { threadId },
+      );
+      if (promptSubmit.decision === 'deny') {
+        return reply.status(400).send({
+          error: 'prompt_blocked',
+          message: promptSubmit.reason ?? 'Prompt blocked by hook',
+        });
+      }
+      if (promptSubmit.additionalContext) {
+        agentMessages = [
+          { role: 'system', content: promptSubmit.additionalContext } as never,
+          ...agentMessages,
+        ];
+      }
     }
 
     await hookBus.emit(
@@ -585,6 +632,13 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     requestContext.set('runAbortSignal', runAbort.signal);
 
     const attachments = collectLangfuseAttachments(messages);
+    const suspensionOwner = {
+      threadId,
+      tenantId: ctx.tenantId,
+      userId: ctx.userId,
+      agentId,
+    };
+    let consumedSuspended: SuspendedRunRecord | null = null;
     let stream;
     try {
       // Do NOT pass `memory` into agent.stream. Mastra's SaveQueue / MessageHistory
@@ -593,7 +647,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       // concat-content shows the turn as duplicated. Thread context is already
       // recalled above; WM is injected via systemBlocks; persistence is
       // client-authoritative via syncThreadMessagesFromClient.
-      stream = await agent.stream(agentMessages as never, {
+      const streamOptions = {
         maxSteps: 25,
         abortSignal: runAbort.signal,
         requestContext,
@@ -610,7 +664,40 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
             ...(attachments.length > 0 ? { attachments } : {}),
           },
         },
-      } as never);
+      };
+      if (resume) {
+        const persisted = threadRowState?.suspendedRun;
+        if (
+          persisted?.runId === resume.runId &&
+          persisted.toolCallId === resume.toolCallId &&
+          persisted.agentId === agentId
+        ) {
+          registerSuspendedRun({
+            ...suspensionOwner,
+            ...persisted,
+          });
+        }
+        consumedSuspended = consumeSuspendedRun(
+          suspensionOwner,
+          resume.runId,
+          resume.toolCallId,
+        );
+        if (!consumedSuspended) {
+          unregisterRunAbort(streamId);
+          return reply.status(409).send({ error: 'invalid_or_consumed_resume' });
+        }
+        // Validate and reserve the exact suspended run before touching any live
+        // stream. A duplicate resume must return 409 without aborting the first.
+        await stopChatStream({ threadId }).catch(() => undefined);
+        await setThreadSuspendedRun(threadId, null);
+        stream = await agent.resumeStream(resume.resumeData, {
+          ...streamOptions,
+          runId: resume.runId,
+          toolCallId: resume.toolCallId ?? consumedSuspended.toolCallId,
+        } as never);
+      } else {
+        stream = await agent.stream(agentMessages as never, streamOptions as never);
+      }
     } catch (err) {
       await hookBus.emit(
         'StopFailure',
@@ -620,6 +707,16 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         },
         { threadId },
       );
+      if (consumedSuspended) {
+        registerSuspendedRun(consumedSuspended, { restoreConsumed: true });
+        await setThreadSuspendedRun(threadId, {
+          agentId: consumedSuspended.agentId,
+          runId: consumedSuspended.runId,
+          toolCallId: consumedSuspended.toolCallId,
+          suspendPayload: consumedSuspended.suspendPayload,
+          createdAt: consumedSuspended.createdAt,
+        }).catch(() => undefined);
+      }
       throw err;
     }
 
@@ -634,9 +731,27 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         });
     }, 300);
 
+    let originalUiMessages = messages as UiMessage[];
+    if (resume) {
+      try {
+        const recalled = await deps.runtime.memory.recall({
+          threadId,
+          resourceId: ctx.userId,
+          perPage: false,
+        });
+        originalUiMessages = mastraMessagesToUi(recalled.messages ?? []);
+      } catch (err) {
+        app.log.warn(
+          { err, threadId, runId: resume.runId },
+          'resume UI context recall failed',
+        );
+      }
+    }
+
     const from = 'agent';
+    let sawSuspension = false;
     const uiMessageStream = createUIMessageStream({
-      originalMessages: messages as never,
+      originalMessages: originalUiMessages as never,
       onFinish: () => {
         clearInterval(cancelPoll);
         unregisterRunAbort(streamId);
@@ -644,6 +759,11 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
           app.log.warn({ err, threadId }, 'clearActiveStream failed');
         });
         markThreadChatActivity(threadId, 'finished');
+        if (!sawSuspension) {
+          void setThreadSuspendedRun(threadId, null).catch((err) => {
+            app.log.warn({ err, threadId }, 'clear suspended run state failed');
+          });
+        }
         scheduleDreamConsolidation(deps.runtime, identity);
         void hookBus.emit('Stop', { thread_id: threadId }, { threadId });
         void hookBus.emit('PostToolBatch', { thread_id: threadId }, { threadId });
@@ -788,12 +908,39 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
             },
           } as never)) {
             if (runAbort.signal.aborted) break;
+            const observedPart = observeSuspensionChunk(part, suspensionOwner);
+            const suspensionPart = observedPart as {
+              type?: string;
+              data?: {
+                runId?: unknown;
+                toolCallId?: unknown;
+                suspendPayload?: unknown;
+                suspendedAt?: unknown;
+              };
+            };
+            if (
+              suspensionPart.type === 'data-tool-call-suspended' &&
+              typeof suspensionPart.data?.runId === 'string' &&
+              typeof suspensionPart.data.toolCallId === 'string'
+            ) {
+              sawSuspension = true;
+              await setThreadSuspendedRun(threadId, {
+                agentId,
+                runId: suspensionPart.data.runId,
+                toolCallId: suspensionPart.data.toolCallId,
+                suspendPayload: suspensionPart.data.suspendPayload,
+                createdAt:
+                  typeof suspensionPart.data.suspendedAt === 'number'
+                    ? suspensionPart.data.suspendedAt
+                    : Date.now(),
+              });
+            }
             // Input processors may finish after stream() returns; emit once when payload appears.
             writeCompactNoticeIfNeeded();
-            for (const repaired of repairUiStreamChunk(part as never, streamRepair)) {
+            for (const repaired of repairUiStreamChunk(observedPart as never, streamRepair)) {
               writer.write(repaired as never);
             }
-            const partType = (part as { type?: string }).type;
+            const partType = (observedPart as { type?: string }).type;
             if (partType === 'finish-step' || partType === 'finish') {
               writeContextUsageIfNeeded(lastStepUsage);
             }

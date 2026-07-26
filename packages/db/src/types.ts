@@ -78,6 +78,7 @@ export interface ThreadStateRow {
   title?: string | null;
   goal?: unknown | null;
   loop?: unknown | null;
+  suspendedRun?: unknown | null;
   updatedAt?: string;
 }
 

@@ -70,46 +70,52 @@ const annotationSchema = z.object({
   notes: z.string().optional(),
 });
 
-/** Client-completed tools suspend until the chat run is stopped (user answered on UI). */
-function awaitClientToolCompletion(ctx: { requestContext?: { get: (key: string) => unknown } } | undefined): Promise<never> {
-  const signal = ctx?.requestContext?.get('runAbortSignal') as AbortSignal | undefined;
-  return new Promise((_resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'));
-      return;
-    }
-    if (!signal) return;
-    signal.addEventListener(
-      'abort',
-      () => {
-        reject(new DOMException('Aborted', 'AbortError'));
-      },
-      { once: true },
-    );
-  });
-}
+const askInputSchema = z.object({
+  questions: z.array(questionSchema).min(1).max(4),
+});
+
+const askResumeSchema = z.object({
+  answers: z.record(z.string(), z.string()),
+  annotations: z.record(z.string(), annotationSchema).optional(),
+});
+
+const askOutputSchema = askInputSchema.extend({
+  answers: z.record(z.string(), z.string()),
+  annotations: z.record(z.string(), annotationSchema).optional(),
+});
 
 /**
- * Ask the user structured multiple-choice questions (the agent AskUserQuestionTool).
- * Completed on the client; the server blocks this execute until the run is aborted.
+ * Ask the user structured multiple-choice questions (Claude Code AskUserQuestionTool).
+ * Suspends the native Mastra run; the client resumes the same tool call with answers.
  */
 export const askUserQuestion = createTool({
   id: 'ask_user_question',
   description:
-    'Prompt the user with 1-4 multiple-choice questions when you need a decision. ' +
-    'Each question has a header and 2-4 options with descriptions. An "Other" choice is always offered in the UI. ' +
-    'In plan mode: use this to clarify requirements or trade-offs while exploring. ' +
-    'Do NOT use it to ask whether the plan may be executed — call exit_plan_mode for that approval.',
-  inputSchema: z.object({
-    questions: z.array(questionSchema).min(1).max(4),
-  }),
-  outputSchema: z.object({
-    questions: z.array(questionSchema),
-    answers: z.record(z.string(), z.string()),
-    annotations: z.record(z.string(), annotationSchema).optional(),
-  }),
-  execute: async (_input, ctx) => {
-    await awaitClientToolCompletion(ctx);
+    'Ask the user multiple-choice questions during execution to gather preferences or ' +
+    'requirements, clarify ambiguous instructions, get decisions on implementation choices, ' +
+    'or offer direction choices. Ask 1-4 questions per call; each has a short header and 2-4 options. ' +
+    'Users can always select "Other" for custom text. Use multiSelect: true when choices are not ' +
+    'mutually exclusive. If you recommend an option, put it first and append "(Recommended)" to the label. ' +
+    'In plan mode: use this to clarify requirements or choose approaches BEFORE finalizing the plan. ' +
+    'Do NOT use it to ask whether the plan may be executed or if the plan looks good — call ' +
+    'exit_plan_mode for that approval (the user cannot see the plan in the UI until then).',
+  inputSchema: askInputSchema,
+  outputSchema: askOutputSchema,
+  suspendSchema: askInputSchema,
+  resumeSchema: askResumeSchema,
+  execute: async (input, ctx) => {
+    const resumeData = ctx?.agent?.resumeData;
+    if (!resumeData) {
+      if (ctx?.agent?.suspend) {
+        return ctx.agent.suspend({ questions: input.questions });
+      }
+      return { questions: input.questions, answers: {} };
+    }
+    return {
+      questions: input.questions,
+      answers: resumeData.answers,
+      ...(resumeData.annotations ? { annotations: resumeData.annotations } : {}),
+    };
   },
 });
 
@@ -155,7 +161,27 @@ export const readOpenPage = createTool({
     truncated: z.boolean().optional(),
     error: z.string().optional(),
   }),
-  execute: async (_input, ctx) => {
-    await awaitClientToolCompletion(ctx);
+  suspendSchema: z.object({
+    tabId: z.string().optional(),
+    mode: z.enum(['text', 'html']).optional(),
+    maxChars: z.number().int().positive().max(200_000).optional(),
+  }),
+  resumeSchema: z.object({
+    mode: z.enum(['text', 'html']).optional(),
+    url: z.string().optional(),
+    title: z.string().optional(),
+    content: z.string().optional(),
+    truncated: z.boolean().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (input, ctx) => {
+    const resumeData = ctx?.agent?.resumeData;
+    if (!resumeData) {
+      if (ctx?.agent?.suspend) {
+        return ctx.agent.suspend(input);
+      }
+      return { error: 'read_open_page requires an agent suspension host' };
+    }
+    return resumeData;
   },
 });
