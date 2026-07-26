@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/veylin-logo-black.png" alt="Veylin" width="144" />
+  <img src="docs/images/veylin-logo-black.png" alt="Veylin" width="96" />
 </p>
 
 <h1 align="center">Veylin</h1>
