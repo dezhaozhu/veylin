@@ -53,6 +53,8 @@ type InstalledItem = {
   enabled: boolean;
   source: 'bundled' | 'remote' | 'plugin';
   remoteId?: string;
+  /** Auto-managed by the compass-identity reconciler — edits would just be overwritten. */
+  managed?: boolean;
 };
 
 type PluginMcpServer = {
@@ -93,15 +95,25 @@ function InstalledRow({
         : t('customize.mcpPage.disconnected')
       : null;
 
-  const menuItems = [
-    {
-      label: item.enabled ? t('common.disable') : t('common.enable'),
-      onClick: () => onToggle(!item.enabled),
-    },
-    ...(onDelete
-      ? [{ label: t('common.delete'), onClick: onDelete, destructive: true }]
-      : []),
-  ];
+  // Managed entries are owned by the compass-identity reconciler (see
+  // apps/server/src/compass-identity.ts) — it overwrites url/headers/enabled
+  // on every sync, so offering enable/disable or delete here would just be
+  // silently reverted. Show a muted hint instead and drop the menu entirely.
+  const detail = statusLine ? `${item.detail} · ${statusLine}` : item.detail;
+  const subtitle = item.managed
+    ? `${detail} · ${t('customize.mcpPage.managedHint')}`
+    : detail;
+  const menuItems = item.managed
+    ? []
+    : [
+        {
+          label: item.enabled ? t('common.disable') : t('common.enable'),
+          onClick: () => onToggle(!item.enabled),
+        },
+        ...(onDelete
+          ? [{ label: t('common.delete'), onClick: onDelete, destructive: true }]
+          : []),
+      ];
 
   return (
     <SettingsListRow
@@ -109,7 +121,7 @@ function InstalledRow({
       title={item.name}
       subtitle={t('customize.mcpPage.serverLine', {
         transport: item.transport,
-        detail: statusLine ? `${item.detail} · ${statusLine}` : item.detail,
+        detail: subtitle,
       })}
       subtitleAction
       menuItems={menuItems}
@@ -199,6 +211,7 @@ export function McpSettingsScreen() {
       enabled: s.enabled,
       source: 'remote' as const,
       remoteId: s.id,
+      managed: s.managed,
     })),
   ].filter((item) => !q || item.name.toLowerCase().includes(q) || item.detail.toLowerCase().includes(q));
 

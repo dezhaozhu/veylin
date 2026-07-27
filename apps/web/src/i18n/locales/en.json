@@ -544,6 +544,7 @@
       "connected": "Connected",
       "plugin": "Plugin",
       "serverLine": "{{transport}} · {{detail}}",
+      "managedHint": "Auto-managed by Compass identity",
       "libraryTitle": "Library",
       "addTitle": "Add MCP server",
       "editorDescription": "Connect a remote MCP server over SSE or HTTP.",

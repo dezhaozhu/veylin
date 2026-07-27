@@ -91,5 +91,15 @@ export function registerMcpRoutes(app: FastifyInstance, deps: ServerDeps): void 
     return { ok: true };
   });
 
-
+  // Manual trigger for the compass-identity reconciler (see compass-identity.ts) —
+  // same summary shape as the boot run and the self-scheduling 10-minute tick.
+  // No-op (not 404) when VEYLIN_COMPASS_IDENTITY isn't configured, mirroring how
+  // the rest of this feature stays silent when off.
+  app.post('/api/compass-identity/refresh', async () => {
+    if (!deps.syncCompassIdentity) {
+      return { ok: true, enabled: false, summary: null };
+    }
+    const summary = await deps.syncCompassIdentity();
+    return { ok: true, enabled: true, summary };
+  });
 }

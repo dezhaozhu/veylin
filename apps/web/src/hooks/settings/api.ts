@@ -86,6 +86,8 @@ export type McpServer = {
   headers: Record<string, string>;
   enabled: boolean;
   group?: string;
+  /** Auto-materialized + kept in sync by the compass-identity reconciler — see compass-identity.ts. */
+  managed?: boolean;
 };
 
 export type McpServerHealth = {

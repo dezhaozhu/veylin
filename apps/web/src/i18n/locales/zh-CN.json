@@ -544,6 +544,7 @@
       "connected": "已连接",
       "plugin": "插件",
       "serverLine": "{{transport}} · {{detail}}",
+      "managedHint": "由 Compass 身份自动管理",
       "libraryTitle": "服务库",
       "addTitle": "添加 MCP 服务",
       "editorDescription": "通过 SSE 或 HTTP 连接远程 MCP 服务。",

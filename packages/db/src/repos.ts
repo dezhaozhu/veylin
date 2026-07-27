@@ -114,6 +114,7 @@ function mapMcp(r: Record<string, unknown>): McpServerRow {
     headers: (r.headers as Record<string, string>) ?? {},
     enabled: Boolean(r.enabled ?? true),
     group: (r.group as string | null) ?? null,
+    managed: (r.managed as boolean | null) ?? null,
     createdAt: r.created_at ? String(r.created_at) : undefined,
   };
 }
@@ -615,6 +616,7 @@ export async function insertMcpServer(
     headers: input.headers,
     enabled: input.enabled,
     group: input.group ?? null,
+    managed: input.managed ?? null,
   });
   return mapMcp((await selectById<Record<string, unknown>>(getDb(), 'mcp_server', id))!);
 }
@@ -633,6 +635,7 @@ export async function updateMcpServerRow(
     ['headers', 'headers'],
     ['enabled', 'enabled'],
     ['group', '`group`'],
+    ['managed', 'managed'],
   ] as const) {
     const val = patch[key];
     if (val !== undefined) {

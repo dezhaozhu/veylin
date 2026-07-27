@@ -141,6 +141,8 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS headers ON mcp_server FLEXIBLE TYPE object DEFAULT {}`,
   `DEFINE FIELD IF NOT EXISTS enabled ON mcp_server TYPE bool DEFAULT true`,
   `DEFINE FIELD IF NOT EXISTS \`group\` ON mcp_server TYPE option<string>`,
+  // Not a reserved word in SurrealQL (unlike `group`, which collides with GROUP BY) — no backticks needed.
+  `DEFINE FIELD IF NOT EXISTS managed ON mcp_server TYPE option<bool>`,
   `DEFINE FIELD IF NOT EXISTS created_at ON mcp_server TYPE datetime DEFAULT time::now()`,
 
   `DEFINE TABLE IF NOT EXISTS automation SCHEMAFULL`,
