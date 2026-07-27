@@ -155,35 +155,24 @@ describe('resolveScopedServerNames', () => {
     assert.ok(allow!.has(ungrouped));
   });
 
-  it('an unpinned thread owned by the caller auto-pins deterministically (does not include every group member)', async () => {
-    const suffix = Date.now() + 4;
-    const group = `mcp-apps-proj-${suffix}`;
-    const alpha = `alpha-mcpapps-${suffix}`;
-    const beta = `beta-mcpapps-${suffix}`;
-
+  it('an owned thread WITHOUT a pin denies grouped servers (no silent default member)', async () => {
+    // review 2026-07-27 orphan-thread finding: the chat path may auto-pin
+    // (persisted, visible); this read-only proxy must deny grouped members
+    // until the thread actually has a pin.
+    const suffix = Date.now().toString(36);
+    const grouped = `scoped-${suffix}-grouped`;
     await createRemoteMcpServer(DEV_TENANT_ID, {
-      name: beta,
+      name: grouped,
       transport: 'http',
-      url: 'https://example.com/mcp',
+      url: 'http://127.0.0.1:1/mcp/',
       headers: {},
       enabled: true,
-      group,
+      group: `grp-${suffix}`,
     });
-    await createRemoteMcpServer(DEV_TENANT_ID, {
-      name: alpha,
-      transport: 'http',
-      url: 'https://example.com/mcp',
-      headers: {},
-      enabled: true,
-      group,
-    });
-
-    const threadId = `thread-mcpapps-autopin-${suffix}`;
+    const threadId = `orphan-scope-${suffix}`;
     await ensureThreadState({ threadId, tenantId: DEV_TENANT_ID, resourceId: DEV_USER });
-
-    const allow = await resolveScopedServerNames(DEV_TENANT_ID, DEV_USER, threadId);
-    assert.ok(allow);
-    assert.ok(allow!.has(alpha)); // alphabetically-first auto-pin
-    assert.ok(!allow!.has(beta));
+    const scoped = await resolveScopedServerNames(DEV_TENANT_ID, DEV_USER, threadId);
+    assert.ok(scoped, 'grouped tenant must scope down, not widen');
+    assert.equal(scoped.has(grouped), false);
   });
 });
