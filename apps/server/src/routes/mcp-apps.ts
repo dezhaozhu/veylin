@@ -63,9 +63,10 @@ export async function resolveScopedServerNames(
   ]);
 
   // Resolves the owned row directly (not via the resolveThreadPin helper other
-  // call sites use) because this function needs to tell "no owned thread" apart
-  // from "owned thread with no pin set" — they take different branches below
-  // (deny every grouped server vs. resolveScopedMcp's per-group auto-pin).
+  // call sites use). Both "no owned thread" and "owned thread without a valid
+  // pin" deny grouped servers — only a real, active, grouped pin opens its
+  // group member (deny-by-default; the chat path's auto-pin is different
+  // because it persists a visible pin).
   const row = threadId ? await resolveThreadForRead(threadId, { tenantId, userId }) : null;
 
   if (!row) {
@@ -75,6 +76,17 @@ export async function resolveScopedServerNames(
   }
 
   const pin = row.project ?? null;
+  const pinIsActiveGroupMember = pin != null && activeNames.includes(pin) && groups[pin] != null;
+  if (!pinIsActiveGroupMember) {
+    // Owned thread but NO (valid) pin: the chat path may auto-pin because it
+    // PERSISTS the choice (the thread visibly joins a project); this widget
+    // proxy must not silently default to an arbitrary group member — deny
+    // grouped servers until the thread actually has a pin (audit posture:
+    // deny-by-default, review 2026-07-27 orphan-thread finding).
+    const hasGroupedServer = Object.values(groups).some((group) => group != null);
+    if (!hasGroupedServer) return undefined;
+    return new Set(activeNames.filter((name) => groups[name] == null));
+  }
   const scoped = resolveScopedMcp(activeNames, groups, pin);
   return new Set(scoped.active);
 }
