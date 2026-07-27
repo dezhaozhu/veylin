@@ -6,7 +6,7 @@
  */
 const PROJECT_LABELS: Record<string, string> = {
   'compass-guolu': '锅炉厂',
-  compass: '上重',
+  'compass-shangzhong': '上重',
 };
 
 export function projectLabel(serverName: string): string {
