@@ -64,7 +64,7 @@
     "archive": "Archive",
     "delete": "Delete",
     "projects": "Projects",
-    "recent": "Recent",
+    "personal": "Personal",
     "newChatInProject": "New chat in {{name}}",
     "emptyProject": "No chats yet",
     "moveToProject": "Move to project…",

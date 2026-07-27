@@ -65,8 +65,9 @@ export async function resolveScopedServerNames(
   // Resolves the owned row directly (not via the resolveThreadPin helper other
   // call sites use). Both "no owned thread" and "owned thread without a valid
   // pin" deny grouped servers — only a real, active, grouped pin opens its
-  // group member (deny-by-default; the chat path's auto-pin is different
-  // because it persists a visible pin).
+  // group member (deny-by-default; the chat path — routes/chat.ts — agrees:
+  // it no longer auto-pins an unpinned thread either, see that file's
+  // 全项目制 + 个人区 comment).
   const row = threadId ? await resolveThreadForRead(threadId, { tenantId, userId }) : null;
 
   if (!row) {
@@ -78,11 +79,12 @@ export async function resolveScopedServerNames(
   const pin = row.project ?? null;
   const pinIsActiveGroupMember = pin != null && activeNames.includes(pin) && groups[pin] != null;
   if (!pinIsActiveGroupMember) {
-    // Owned thread but NO (valid) pin: the chat path may auto-pin because it
-    // PERSISTS the choice (the thread visibly joins a project); this widget
-    // proxy must not silently default to an arbitrary group member — deny
-    // grouped servers until the thread actually has a pin (audit posture:
-    // deny-by-default, review 2026-07-27 orphan-thread finding).
+    // Owned thread but NO (valid) pin: this widget proxy must not silently
+    // default to an arbitrary group member — deny grouped servers until the
+    // thread actually has a pin (audit posture: deny-by-default, review
+    // 2026-07-27 orphan-thread finding). The chat path — routes/chat.ts —
+    // now denies the same way (its former auto-pin-and-persist path was
+    // removed the same day; see 全项目制 + 个人区).
     const hasGroupedServer = Object.values(groups).some((group) => group != null);
     if (!hasGroupedServer) return undefined;
     return new Set(activeNames.filter((name) => groups[name] == null));

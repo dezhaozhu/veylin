@@ -176,6 +176,7 @@ const ThreadListItemMenu: FC = () => {
   const aui = useAui();
   const id = useAuiState((s) => s.threadListItem.id);
   const remoteId = useAuiState((s) => s.threadListItem.remoteId);
+  const externalId = useAuiState((s) => s.threadListItem.externalId);
   const groupedServers = useGroupedMcpServers();
   const threadProjects = useThreadProjects();
   const [view, setView] = useState<'root' | 'move'>('root');
@@ -183,7 +184,10 @@ const ThreadListItemMenu: FC = () => {
   const deletingRef = useRef(false);
   const [movingTo, setMovingTo] = useState<string | null>(null);
 
-  const currentProject = remoteId ? threadProjects[remoteId] : undefined;
+  // Triple fallback — see thread-list.tsx's partitionByProject: a brand-new
+  // EMPTY thread has no remoteId until its first message, but the local id
+  // later BECOMES the remoteId, so this resolves to the same map key.
+  const currentProject = threadProjects[remoteId ?? externalId ?? id];
 
   const handleDelete = useCallback(
     async (close: () => void) => {

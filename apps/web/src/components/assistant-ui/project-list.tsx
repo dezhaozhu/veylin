@@ -12,7 +12,6 @@ import { Button } from '@/components/ui/button';
 import { RowMenu, RowMenuItem } from '@/components/assistant-ui/thread-list-row-menu';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { placeComposerCaret } from '@/lib/composer-caret';
-import { setChatSettings } from '@/lib/chat-settings';
 import { postThreadProject, writeCachedThreadProject } from '@/lib/project-sync';
 import { invalidateThreadProjects } from '@/lib/thread-projects-sync';
 import { projectLabel } from '@/lib/project-labels';
@@ -106,10 +105,14 @@ const ProjectRow: FC<{ name: string; indices: number[]; threadIds: readonly stri
         // we have a real server threadId to pin immediately, instead of waiting for
         // the first message.
         await aui.threads().switchToNewThread();
-        const { remoteId } = await aui.threads().item('main').initialize();
-        const confirmed = await postThreadProject(remoteId, name);
-        writeCachedThreadProject(remoteId, confirmed ?? name);
-        setChatSettings({ lastProject: confirmed ?? name });
+        const item = aui.threads().item('main');
+        const initialized = await item.initialize();
+        // Same triple fallback as thread-list.tsx's partitionByProject / the
+        // move menu — the local id later BECOMES the remoteId, so this always
+        // resolves to the id the pin ends up keyed under.
+        const rid = initialized.remoteId ?? initialized.externalId ?? item.getState().id;
+        const confirmed = await postThreadProject(rid, name);
+        writeCachedThreadProject(rid, confirmed ?? name);
         invalidateThreadProjects();
         placeComposerCaret(0);
       } catch (err) {

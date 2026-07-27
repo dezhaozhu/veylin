@@ -64,7 +64,7 @@
     "archive": "归档",
     "delete": "删除",
     "projects": "项目",
-    "recent": "最近",
+    "personal": "个人",
     "newChatInProject": "在「{{name}}」中新建对话",
     "emptyProject": "暂无对话",
     "moveToProject": "移动到项目…",

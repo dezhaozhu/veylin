@@ -342,21 +342,33 @@ export function buildAttachedBrowserBlock(
 /**
  * System reminder scoping this turn to the thread's pinned data project.
  *
+ * Unpinned (`pin === null`) is not silently unscoped: routes/chat.ts no
+ * longer auto-pins an unpinned thread to a group's alphabetical-first member
+ * (a silent default-tenant guess) — the thread simply has no grouped MCP
+ * servers this turn (个人/personal area). This reminder tells the model that
+ * plainly, plus how a human gets factory data into scope, instead of leaving
+ * it to guess why no Compass tools showed up.
+ *
  * `move` carries the boundary marker (audit fix #3): when a thread's pin
  * changed away from a previously non-null project, earlier turns in this
  * same thread's transcript were written under that OLD project's data
  * scope — without an explicit marker the model has no signal that a fact
  * recalled from history may belong to a project it's no longer pinned to.
+ * This still applies when the thread moved back OUT to the personal area
+ * (`pin === null`, `move.movedFrom` set).
  */
 export function buildProjectPinBlock(
   pin: string | null,
   move?: { movedFrom: string | null; movedAt: string | null } | null,
 ): string {
-  if (!pin) return '';
-  const lines = [
-    '<system-reminder>',
-    `当前数据项目: ${pin}(本会话所有数据均来自该项目,勿引用其他项目)`,
-  ];
+  const lines = ['<system-reminder>'];
+  if (pin) {
+    lines.push(`当前数据项目: ${pin}(本会话所有数据均来自该项目,勿引用其他项目)`);
+  } else {
+    lines.push(
+      '当前会话在「个人」区,未绑定任何项目数据源;需要查看工厂数据时,请在侧边栏选择项目新建会话,或用会话菜单将本会话移动到项目。',
+    );
+  }
   if (move?.movedFrom) {
     lines.push(
       `本会话曾属于项目 ${move.movedFrom}(${move.movedAt ?? '未知时间'} 移动);` +
