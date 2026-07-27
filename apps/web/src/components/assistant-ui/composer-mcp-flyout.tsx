@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { ComposerMenuPanel } from '@/components/assistant-ui/composer-menu-flyout';
 import { mcpServerIcon } from '@/lib/mcp-icon';
 import { type McpGroupMember, useGroupedMcpServers } from '@/lib/mcp-groups-sync';
+import { resolveGroupToggleState } from '@/lib/chat-settings';
 import { cn } from '@/lib/utils';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 
@@ -144,14 +145,23 @@ export const ComposerMcpFlyout: FC<{
             onChange={(enabled) => onToggle(server, enabled)}
           />
         ))}
-        {groups.map(({ groupId, members }) => (
-          <McpServerRow
-            key={groupId}
-            label={capabilityLabel(groupId, groupedServers)}
-            checked={members.length === 0 || members.every((m) => isEnabled(m))}
-            onChange={(enabled) => members.forEach((m) => onToggle(m, enabled))}
-          />
-        ))}
+        {groups.map(({ groupId, members }) => {
+          // Legacy per-member state (from the removed radio-belt UI) can still
+          // be MIXED (some members false, some not) — treat that as ON rather
+          // than the stale AND-of-members read, so a bad group toggle stays
+          // usable in the UI while chat-settings heals storage in the background.
+          const { enabled: checked } = resolveGroupToggleState(
+            members.map((name) => ({ name, enabled: isEnabled(name) })),
+          );
+          return (
+            <McpServerRow
+              key={groupId}
+              label={capabilityLabel(groupId, groupedServers)}
+              checked={members.length === 0 || checked}
+              onChange={(enabled) => members.forEach((m) => onToggle(m, enabled))}
+            />
+          );
+        })}
       </div>
       <div className="border-border mt-1 border-t pt-1">
         <button
