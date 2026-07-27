@@ -13,6 +13,13 @@ import type { McpServer, McpServerInput } from '@veylin/shared';
  * to the account+scene form), and disabling (never deleting) managed rows
  * whose source grant has been revoked.
  *
+ * Cross-scene sessions (see
+ * docs/superpowers/specs/2026-07-27-cross-scene-design.md §4): once a tenant
+ * has ≥2 granted sources, one extra managed `compass-对比` entry is also
+ * materialized — same url, `x-compass-source` carrying every source
+ * comma-joined — so a single MCP session can bind the whole scene set. It
+ * rides the exact same create/adopt/disable machinery as any other entry.
+ *
  * Mirrors mcp-retry-loop.ts's shape: a pure decision function
  * (`desiredVsCurrent`) that unit tests drive directly, plus an orchestration
  * function (`reconcileCompassIdentity`) that takes its collaborators as
@@ -104,23 +111,52 @@ export type DesiredCompassEntry = {
   managed: true;
 };
 
-/** Desired MCP server entries per spec §2.2, one per granted source. */
+/** Managed name of the auto-materialized multi-scene comparison entry, spec §4. */
+export const COMPASS_COMPARE_ENTRY_NAME = 'compass-对比';
+
+/**
+ * Desired MCP server entries per spec §2.2, one per granted source, PLUS
+ * (spec §4) one extra managed `compass-对比` entry once the tenant has ≥2
+ * granted sources — same url, but its `x-compass-source` header carries the
+ * full sorted, de-duplicated, comma-joined source list, matching the
+ * multi-scene session binding the Compass side accepts (§1). Below 2 sources
+ * the entry is simply absent from `desired`, so `desiredVsCurrent` disables
+ * any previously-materialized one the same way it disables a revoked scene.
+ */
 export function desiredCompassEntries(
   config: CompassIdentityConfig,
   sources: string[],
 ): DesiredCompassEntry[] {
-  return sources.map((source) => ({
+  const entries = sources.map((source) => ({
     name: `compass-${source}`,
-    transport: 'http',
+    transport: 'http' as const,
     url: `${config.url}/mcp/`,
     headers: {
       Authorization: `Bearer ${config.token}`,
       'x-compass-source': source,
     },
-    enabled: true,
+    enabled: true as const,
     group: COMPASS_IDENTITY_GROUP,
-    managed: true,
+    managed: true as const,
   }));
+
+  const uniqueSources = Array.from(new Set(sources));
+  if (uniqueSources.length >= 2) {
+    entries.push({
+      name: COMPASS_COMPARE_ENTRY_NAME,
+      transport: 'http',
+      url: `${config.url}/mcp/`,
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        'x-compass-source': uniqueSources.sort().join(','),
+      },
+      enabled: true,
+      group: COMPASS_IDENTITY_GROUP,
+      managed: true,
+    });
+  }
+
+  return entries;
 }
 
 export type CompassDiffAction =
