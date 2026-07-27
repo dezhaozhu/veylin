@@ -40,11 +40,9 @@ import {
 } from '@/lib/mcp-groups-sync';
 import {
   fetchThreadProject,
-  postThreadProject,
   readCachedThreadProject,
   writeCachedThreadProject,
 } from '@/lib/project-sync';
-import { invalidateThreadProjects } from '@/lib/thread-projects-sync';
 
 function applyPlanModeForThread(threadId: string | undefined, on: boolean): void {
   if (threadId) writeCachedThreadPlanMode(threadId, on);
@@ -442,11 +440,11 @@ export function useMcpEnabled() {
 /**
  * Grouped ("project") MCP servers + the current thread's project pin.
  *
- * Read-only: switching a thread's project pin now happens exclusively from
- * the sidebar's Projects section (project-list.tsx new-chat-in-project,
+ * Read-only: switching a thread's project pin happens exclusively from the
+ * sidebar's Projects section (project-list.tsx new-chat-in-project,
  * thread-list-item.tsx move-to-project menu), which POST /api/thread-project
- * directly and set `lastProject` themselves. This hook only surfaces the
- * current pin plus the brand-new-thread preselect below.
+ * directly. A brand-new thread with no pin stays unpinned — it lands in the
+ * 个人 (personal) area by design; there is no preselect/auto-pin here.
  */
 export function useProjectScope() {
   const threadId = useAuiState(
@@ -461,7 +459,6 @@ export function useProjectScope() {
   const [currentProject, setCurrentProject] = useState<string | null>(
     () => readCachedThreadProject(threadId) ?? null,
   );
-  const preselectedThreadRef = useRef<string | null>(null);
 
   useEffect(() => {
     void fetchGroupedMcpServers().then(setGroupedServers);
@@ -484,23 +481,6 @@ export function useProjectScope() {
       cancelled = true;
     };
   }, [threadId]);
-
-  // Brand-new thread, no pin yet, but the user has picked a project before on
-  // some other thread: adopt it immediately instead of waiting for the
-  // server's alphabetical auto-pin on first chat send.
-  useEffect(() => {
-    if (!threadId || currentProject != null || groupedServers.length === 0) return;
-    if (readCachedThreadProject(threadId) === undefined) return; // GET not resolved yet
-    if (preselectedThreadRef.current === threadId) return;
-    const { lastProject } = getChatSettings();
-    if (!lastProject || !groupedServers.some((s) => s.name === lastProject)) return;
-    preselectedThreadRef.current = threadId;
-    void postThreadProject(threadId, lastProject).then((confirmed) => {
-      writeCachedThreadProject(threadId, confirmed);
-      setCurrentProject(confirmed);
-      if (confirmed != null) invalidateThreadProjects();
-    });
-  }, [threadId, currentProject, groupedServers]);
 
   return { threadId, groupedServers, currentProject };
 }

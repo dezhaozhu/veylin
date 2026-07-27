@@ -57,7 +57,6 @@ import {
   refreshActivatedSkills,
   type ThreadStateRow,
   setPlanMode as setThreadPlanModeDb,
-  setProject,
   setTodos as setThreadTodosDb,
   setThreadGoal,
   setThreadLoop,
@@ -237,34 +236,38 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     // Server truth: enabled-in-store ∩ declared-by-agent. mcpEnabled (below) is
     // client-declared and untrusted — project scoping must run against this list,
     // never the client-filtered one, or a client could evict the pinned server
-    // from scoping by claiming it's disabled and force an (auto-pinned, formerly
-    // persisted) re-pin. See attack test in mcp-scoping.test.ts.
+    // from scoping by claiming it's disabled and force a re-pin. See attack
+    // test in mcp-scoping.test.ts.
     const tenantActiveMcp = await withDatastoreFallback(
       () => listActiveMcpServerNames(ctx.tenantId, declaredMcp),
       [] as string[],
     );
 
     // Server-side project scoping: narrow each grouped MCP server down to the
-    // thread's pinned project, auto-pinning when the pin is missing or stale.
-    // A group's pin winner survives regardless of mcpEnabled; every other member
-    // of that group is dropped regardless of mcpEnabled too — a project switch
-    // happens only via the explicit POST /api/project route (setProject).
+    // thread's pinned project. A group's pin winner survives regardless of
+    // mcpEnabled; every other member of that group is dropped regardless of
+    // mcpEnabled too — a project switch happens only via the explicit
+    // POST /api/project route (setProject).
     const mcpServerGroups = await withDatastoreFallback(
       () => listMcpServerGroups(ctx.tenantId),
       {} as Record<string, string | undefined>,
     );
     const threadProjectPin = threadRowState?.project ?? null;
     const scopedMcp = resolveScopedMcp(tenantActiveMcp, mcpServerGroups, threadProjectPin);
-    // Persist the auto-pick only when the thread had no stored pin at all. When a
-    // stored pin exists but named a store-disabled/removed server, the auto-pick
-    // is used for this request only — never a silent rewrite of a pin the user
-    // (or a prior explicit /api/project call) set.
-    if (threadProjectPin == null && scopedMcp.autoPin) {
-      void setProject(threadId, scopedMcp.autoPin).catch((err) => {
-        app.log.warn({ err, threadId }, 'project auto-pin persist failed');
-      });
-    }
-    const projectPin = scopedMcp.autoPin ?? threadProjectPin;
+    const projectPin = threadProjectPin;
+    // 全项目制 + 个人区 (2026-07-27): an unpinned thread gets NO grouped
+    // servers, full stop — no silent auto-pin to the group's alphabetical-
+    // first member, and nothing is persisted. `resolveScopedMcp`'s `autoPin`
+    // computation above is left untouched (mcp-apps.ts's
+    // resolveScopedServerNames still calls the same pure fn against a REAL
+    // pin), but this route must neither apply nor persist it for a null pin:
+    // that's the removed "default-tenant" behavior. Deny-by-default here
+    // matches routes/mcp-apps.ts's unpinned-deny for the widget proxy —
+    // grouped members only ever surface once a thread actually has a pin.
+    const scopedActive =
+      threadProjectPin == null
+        ? scopedMcp.active.filter((server) => mcpServerGroups[server] == null)
+        : scopedMcp.active;
     // Which scoping happens (the pin winner per group) is decided above, against
     // server-truth `tenantActiveMcp` only — mcpEnabled never reaches that decision,
     // so it can never evict the pinned server or force a re-pin (see the attack
@@ -275,7 +278,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     // group, writing the same mcpEnabled value to every member) is a plain on/off
     // switch, not a data-source switch — off means no tools from that pin winner
     // this turn, never a silent re-pin to a different group member.
-    const activeMcp = scopedMcp.active.filter(
+    const activeMcp = scopedActive.filter(
       (server) => mcpEnabled == null || mcpEnabled[server] !== false,
     );
 
@@ -327,7 +330,11 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     //    switches to another group member (that's still decided above, against
     //    server-truth `tenantActiveMcp`, before mcpEnabled is ever consulted) —
     //    the group simply contributes nothing to this request or its subagents.
-    const scopedMcpServersForSubagents = scopedMcp.active.filter(
+    //  - Derived from `scopedActive`, not `scopedMcp.active`, so an unpinned
+    //    thread's personal-area deny is inherited here too — a dispatched
+    //    subagent never gets a grouped server the parent turn itself was
+    //    denied.
+    const scopedMcpServersForSubagents = scopedActive.filter(
       (server) =>
         mcpServerGroups[server] == null || mcpEnabled == null || mcpEnabled[server] !== false,
     );

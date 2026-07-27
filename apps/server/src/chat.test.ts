@@ -117,13 +117,21 @@ describe('workspace context blocks', () => {
   });
 });
 
-describe('buildProjectPinBlock (audit fix #3: thread-move boundary marker)', () => {
-  it('empty when there is no pin, regardless of move state', () => {
-    assert.equal(buildProjectPinBlock(null), '');
-    assert.equal(
-      buildProjectPinBlock(null, { movedFrom: 'compass-guolu', movedAt: '2026-07-01T00:00:00.000Z' }),
-      '',
-    );
+describe('buildProjectPinBlock (audit fix #3: thread-move boundary marker; 全项目制: personal-area hint)', () => {
+  it('an unpinned thread gets the personal-area hint, not an empty block (no silent auto-pin)', () => {
+    const block = buildProjectPinBlock(null);
+    assert.match(block, /当前会话在「个人」区/);
+    assert.match(block, /侧边栏选择项目新建会话/);
+    assert.match(block, /会话菜单将本会话移动到项目/);
+  });
+
+  it('the personal-area hint still carries the move marker when the thread moved OUT of a project', () => {
+    const block = buildProjectPinBlock(null, {
+      movedFrom: 'compass-guolu',
+      movedAt: '2026-07-01T00:00:00.000Z',
+    });
+    assert.match(block, /当前会话在「个人」区/);
+    assert.match(block, /本会话曾属于项目 compass-guolu\(2026-07-01T00:00:00\.000Z 移动\)/);
   });
 
   it('plain pin reminder when there is no move', () => {

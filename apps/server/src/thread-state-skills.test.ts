@@ -259,9 +259,6 @@ describe('thread project pin', () => {
     // SURVIVES: pin was valid against server truth — no re-pin/switch needed,
     // regardless of the client's toggle.
     assert.equal(scoped.autoPin, null);
-    if (pin == null && scoped.autoPin) {
-      await setProject(threadId, scoped.autoPin);
-    }
     // NEW: mcpEnabled applies uniformly to grouped and ungrouped servers —
     // an explicit false drops the pinned member's tools for this request too.
     const activeMcp = scoped.active.filter(
@@ -374,7 +371,14 @@ describe('thread project pin', () => {
     );
   });
 
-  it('an unpinned thread auto-pins and persists the choice via setProject', async () => {
+  // 全项目制 + 个人区 (2026-07-27): routes/chat.ts no longer applies or
+  // persists resolveScopedMcp's auto-pin for an unpinned thread — that was
+  // a silent default-tenant guess. resolveScopedMcp's pure `autoPin`
+  // computation is untouched (mcp-apps.ts's resolveScopedServerNames still
+  // calls it against a REAL pin), but an unpinned thread must get NO
+  // grouped servers at all, and the pin must stay null. Composes the real
+  // store + thread-state exactly as chat.ts's request handler does.
+  it('an unpinned thread denies grouped servers and does not persist an auto-pin (personal area)', async () => {
     const suffix = Date.now() + 1;
     const group = `compass-proj-${suffix}`;
     const alpha = `alpha-${suffix}`;
@@ -397,22 +401,30 @@ describe('thread project pin', () => {
       group,
     });
 
-    const threadId = `thread-scoped-autopin-${suffix}`;
+    const threadId = `thread-scoped-personal-${suffix}`;
     await ensureThreadState({ threadId, tenantId: DEV_TENANT_ID, resourceId: 'dev-user' });
 
     const declaredMcp = [alpha, beta];
     const activeMcp = await listActiveMcpServerNames(DEV_TENANT_ID, declaredMcp);
     const groups = await listMcpServerGroups(DEV_TENANT_ID);
     const threadState = await getThreadState(threadId);
-    const scoped = resolveScopedMcp(activeMcp, groups, threadState?.project ?? null);
+    const pin = threadState?.project ?? null;
+    assert.equal(pin, null);
 
+    const scoped = resolveScopedMcp(activeMcp, groups, pin);
+    // The pure fn still computes an auto-pick (other callers rely on it) …
     assert.equal(scoped.autoPin, alpha); // alphabetically first
-    assert.ok(scoped.active.includes(alpha));
-    assert.ok(!scoped.active.includes(beta));
 
-    await setProject(threadId, scoped.autoPin);
+    // … but chat.ts's request handler must not apply it: filter every
+    // grouped member out of `active` instead of keeping the auto-pick.
+    const scopedActive =
+      pin == null ? scoped.active.filter((server) => groups[server] == null) : scoped.active;
+    assert.ok(!scopedActive.includes(alpha));
+    assert.ok(!scopedActive.includes(beta));
+
+    // No silent persistence: the thread stays unpinned.
     const hydrated = await getThreadState(threadId);
-    assert.equal(hydrated?.project, alpha);
+    assert.equal(hydrated?.project, null);
   });
 
   // I1 final-review fix: schedule-edit.ts (and, identically, table-tools.ts /

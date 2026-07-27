@@ -276,11 +276,14 @@ export async function setProject(threadId: string, project: string | null): Prom
  * the pin didn't actually change — re-pinning the same project isn't a move.
  *
  * Deliberately NOT folded into the generic `setProject` above: that helper is
- * also used by `routes/chat.ts`'s scoped-MCP auto-pin, which is inference
- * (the server deciding a thread's likely project from which MCP group is
- * connected), not a user-directed move — auto-pin churn shouldn't leave a
- * "you left project X" trail. Exported for testing at this seam (no HTTP
- * harness in this repo — mirrors `isValidProjectPin` in routes/threads.ts).
+ * a low-level primitive (also used directly by tests to seed thread state)
+ * with no move-boundary bookkeeping of its own. `routes/chat.ts` no longer
+ * calls it for a scoped-MCP auto-pin at all (removed 2026-07-27 — a silent
+ * auto-pin to the group's alphabetical-first member defeated the point of
+ * asking users to choose a project; see chat.ts's buildProjectPinBlock and
+ * mcp-scoping.ts's module docstring). Exported for testing at this seam (no
+ * HTTP harness in this repo — mirrors `isValidProjectPin` in
+ * routes/threads.ts).
  *
  * When there's no real move (no prior pin, or re-pinning the same value),
  * `movedFrom`/`movedAt` are omitted from the patch entirely rather than set

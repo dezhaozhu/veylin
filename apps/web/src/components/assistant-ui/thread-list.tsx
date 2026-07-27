@@ -61,7 +61,10 @@ type ThreadListGroup = { label: string; indices: number[] };
  * is byte-identical to the pre-Projects sidebar. */
 function partitionByProject(
   threadIds: readonly string[],
-  itemsById: Map<string, { remoteId: string | undefined; lastMessageAt?: Date | undefined }>,
+  itemsById: Map<
+    string,
+    { remoteId: string | undefined; externalId?: string | undefined; lastMessageAt?: Date | undefined }
+  >,
   groupedServers: McpGroupMember[],
   threadProjects: Record<string, string>,
 ): { buckets: ProjectBucket[]; remainingIndices: number[] } {
@@ -75,8 +78,13 @@ function partitionByProject(
   const byProject = new Map<string, number[]>(groupedServers.map((s) => [s.name, []]));
   const remaining: number[] = [];
   threadIds.forEach((id, index) => {
-    const remoteId = itemsById.get(id)?.remoteId;
-    const project = remoteId ? threadProjects[remoteId] : undefined;
+    const item = itemsById.get(id);
+    // Triple fallback — a brand-new EMPTY thread has no remoteId until its
+    // first message; the local id later BECOMES the remoteId (see
+    // server-thread-list-adapter.ts's initialize()), so falling back to it
+    // here resolves to the exact same key the ✍️ pin was posted under.
+    const key = item?.remoteId ?? item?.externalId ?? id;
+    const project = threadProjects[key];
     const bucket = project ? byProject.get(project) : undefined;
     if (bucket) bucket.push(index);
     else remaining.push(index);
@@ -139,7 +147,7 @@ const ThreadListItems: FC = () => {
       {hasProjects && <ProjectsSection buckets={buckets} threadIds={threadIds} />}
       {hasProjects && remainingIndices.length > 0 && (
         <div className="aui-thread-list-group-label text-muted-foreground px-2.5 pt-3 pb-1 text-xs font-medium">
-          {t('threadList.recent')}
+          {t('threadList.personal')}
         </div>
       )}
       {!hasProjects && !groups ? (
