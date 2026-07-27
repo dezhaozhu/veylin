@@ -158,6 +158,7 @@ export interface McpServerRow {
   headers: Record<string, string>;
   enabled: boolean;
   group?: string | null;
+  managed?: boolean | null;
   createdAt?: string;
 }
 

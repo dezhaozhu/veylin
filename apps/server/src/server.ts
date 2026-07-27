@@ -34,10 +34,25 @@ import {
 import { subscribeTaskEvents } from './task-events';
 import { buildMcpHealthSnapshot, type McpHealthSnapshot } from './mcp-health';
 import { createMcpAutoRetryLoop, isMcpAutoRetryEnabled } from './mcp-retry-loop';
+import {
+  createCompassIdentitySyncLoop,
+  isCompassIdentitySyncEnabled,
+  parseCompassIdentityConfig,
+  reconcileCompassIdentity,
+} from './compass-identity';
 import { startupCheckpoint } from './startup-profiler';
 import { ensureDevTenant, DEV_TENANT_ID } from './tenant';
 import { refreshAgentPackages, isAgentHotReloadEnabled } from './agent-packages-sync';
-import { createMcpClient, listActiveMcpServerNames, listMcpServerGroups, sanitizeMcpToolsets, seedMcpServersFromEnvIfMissing } from './mcp-store';
+import {
+  createMcpClient,
+  createRemoteMcpServer,
+  listActiveMcpServerNames,
+  listMcpServerGroups,
+  listRemoteMcpServers,
+  sanitizeMcpToolsets,
+  seedMcpServersFromEnvIfMissing,
+  updateRemoteMcpServer,
+} from './mcp-store';
 import { listAllCronAutomations, sweepInterruptedAutomationRuns } from './automation-store';
 import { runAutomationJob } from './automation-worker';
 import { buildWorkspaceConfigTool } from './workspace-config-tool';
@@ -229,6 +244,25 @@ async function main() {
     await rebuildMcp(tenantId);
   }
 
+  // Absent (or malformed) VEYLIN_COMPASS_IDENTITY → feature off, byte-identical
+  // to today's behavior (no compass-identity route/loop wiring does anything).
+  const compassIdentityConfig = parseCompassIdentityConfig();
+  const compassIdentitySyncOn = compassIdentityConfig != null && isCompassIdentitySyncEnabled();
+
+  async function syncCompassIdentity(tenantId: string) {
+    if (!compassIdentityConfig) {
+      return { created: 0, adopted: 0, disabled: 0, unchanged: 0 };
+    }
+    return reconcileCompassIdentity({
+      tenantId,
+      config: compassIdentityConfig,
+      listRemoteMcpServers,
+      createRemoteMcpServer,
+      updateRemoteMcpServer,
+      rebuildMcp,
+    });
+  }
+
   const app = Fastify({
     logger: true,
     bodyLimit: RAG_UPLOAD_MAX_BYTES,
@@ -331,6 +365,9 @@ async function main() {
     subscribeTaskEvents,
     mcpHealthByTenant,
     RAG_UPLOAD_MAX_BYTES,
+    syncCompassIdentity: compassIdentityConfig
+      ? () => syncCompassIdentity(DEV_TENANT_ID)
+      : undefined,
   };
   await registerApiRoutes(app, deps);
 
@@ -340,6 +377,14 @@ async function main() {
   // per-tenant, with exponential backoff. Built once per process; started
   // below, right after the first tenant's MCP init is kicked off.
   const mcpAutoRetryLoop = createMcpAutoRetryLoop({ mcpHealthByTenant, rebuildMcp });
+
+  // Auto-materializes compass-<source> MCP server entries from the account's
+  // /my/sources grants (see compass-identity.ts). Built once per process
+  // regardless of the kill switch; started conditionally below alongside the
+  // self-heal loop, right after the first tenant's MCP init is kicked off.
+  const compassIdentitySyncLoop = createCompassIdentitySyncLoop({
+    sync: () => syncCompassIdentity(DEV_TENANT_ID),
+  });
 
   await seedMcpServersFromEnvIfMissing(DEV_TENANT_ID);
   // Connect MCP servers; expose their tools to chat as a toolset.
@@ -438,7 +483,10 @@ async function main() {
   if (isLazyMcpBoot()) {
     void rebuildMcp(DEV_TENANT_ID)
       .then(() => app.log.info('MCP toolsets ready (background boot)'))
+      .then(() => (compassIdentitySyncOn ? syncCompassIdentity(DEV_TENANT_ID) : undefined))
       .catch((err) => app.log.warn({ err }, 'background MCP boot failed'));
+  } else if (compassIdentitySyncOn) {
+    await syncCompassIdentity(DEV_TENANT_ID);
   }
 
   // First tenant's MCP init has been issued (awaited above, or kicked off in
@@ -449,6 +497,12 @@ async function main() {
     app.log.info('VEYLIN_MCP_AUTO_RETRY=0 — MCP auto-retry loop disabled');
   }
 
+  if (compassIdentitySyncOn) {
+    compassIdentitySyncLoop.start();
+  } else if (compassIdentityConfig) {
+    app.log.info('VEYLIN_COMPASS_IDENTITY_SYNC=0 — compass-identity periodic sync disabled');
+  }
+
   let shuttingDown = false;
   const gracefulShutdown = async (signal: string) => {
     if (shuttingDown) return;
@@ -456,6 +510,7 @@ async function main() {
     app.log.info(`Shutting down (${signal})…`);
     try {
       mcpAutoRetryLoop.stop();
+      compassIdentitySyncLoop.stop();
       await queue.stop();
       await waitForActiveChatDrain(Number(process.env.SHUTDOWN_DRAIN_MS ?? 30_000));
       if (mcp) {

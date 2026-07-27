@@ -4,6 +4,7 @@ import type { QueuePort, SubagentJob, AutomationJob, WorkflowJob } from '../queu
 import type { TaskEvent } from '../task-events.js';
 import type { McpHealthSnapshot } from '../mcp-health.js';
 import type { RequestContext } from '../server-context.js';
+import type { CompassIdentitySummary } from '../compass-identity.js';
 
 export type TasksSnapshot = {
   tasks: Array<{
@@ -51,6 +52,8 @@ export interface ServerDeps {
   subscribeTaskEvents: (threadId: string, cb: (event: TaskEvent) => void) => () => void;
   mcpHealthByTenant: Map<string, McpHealthSnapshot>;
   RAG_UPLOAD_MAX_BYTES: number;
+  /** Present only when VEYLIN_COMPASS_IDENTITY is configured — undefined = feature off (404-equivalent no-op). */
+  syncCompassIdentity?: () => Promise<CompassIdentitySummary>;
 }
 
 export type RouteRegistrar = (app: FastifyInstance, deps: ServerDeps) => void | Promise<void>;

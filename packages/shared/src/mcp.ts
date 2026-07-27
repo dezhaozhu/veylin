@@ -12,6 +12,7 @@ export const mcpServerSchema = z.object({
   headers: z.record(z.string(), z.string()).default({}),
   enabled: z.boolean(),
   group: z.string().trim().min(1).optional(),
+  managed: z.boolean().optional(),
   createdAt: z.string().optional(),
 });
 
@@ -24,6 +25,7 @@ export const mcpServerInputSchema = z.object({
   headers: z.record(z.string(), z.string()).default({}),
   enabled: z.boolean().default(true),
   group: z.string().trim().min(1).optional(),
+  managed: z.boolean().optional(),
 });
 
 export type McpServerInput = z.infer<typeof mcpServerInputSchema>;

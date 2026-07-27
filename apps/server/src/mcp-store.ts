@@ -26,6 +26,7 @@ function rowToMcp(row: Awaited<ReturnType<typeof listMcpServerRows>>[number]): M
     headers: row.headers ?? {},
     enabled: row.enabled,
     group: row.group ?? undefined,
+    managed: row.managed ?? undefined,
     createdAt: row.createdAt,
   };
 }
@@ -43,6 +44,7 @@ export async function createRemoteMcpServer(tenantId: string, input: McpServerIn
     headers: input.headers ?? {},
     enabled: input.enabled ?? true,
     group: input.group,
+    managed: input.managed,
   });
   return rowToMcp(row);
 }
@@ -50,7 +52,10 @@ export async function createRemoteMcpServer(tenantId: string, input: McpServerIn
 export async function updateRemoteMcpServer(
   tenantId: string,
   id: string,
-  patch: Partial<Omit<McpServerInput, 'group'>> & { group?: string | null },
+  patch: Partial<Omit<McpServerInput, 'group' | 'managed'>> & {
+    group?: string | null;
+    managed?: boolean | null;
+  },
 ) {
   const row = await updateMcpServerRow(tenantId, id, {
     ...(patch.name != null ? { name: patch.name.trim() } : {}),
@@ -61,6 +66,10 @@ export async function updateRemoteMcpServer(
     // Unlike the other fields, `group` is explicitly clearable: pass `null` to
     // remove an existing group (mirrors ThreadStateRow.title's clear-via-null).
     ...(patch.group !== undefined ? { group: patch.group } : {}),
+    // Same clear-via-null treatment as `group` — the compass-identity reconciler
+    // sets this true on adopt; nothing currently clears it back to null, but the
+    // round-trip stays symmetric with `group` rather than a special case.
+    ...(patch.managed !== undefined ? { managed: patch.managed } : {}),
   });
   return row ? rowToMcp(row) : null;
 }
