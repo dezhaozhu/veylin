@@ -311,7 +311,12 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
           // pinned server wins over any non-pinned group member by construction.
           for (const server of Object.keys(toolsets).sort((a, b) => a.localeCompare(b))) {
             const tool = toolsets[server]?.[name];
-            if (tool) return await tool.execute({ context: params?.arguments ?? {} });
+            // Mastra tools take the raw args object as execute's FIRST param
+            // (`execute(input, context)`); the old `{context: args}` wrapper
+            // nested every argument under a stray `context` key on the wire,
+            // silently dropping e.g. get_scene_card's `scene` on multi-scene
+            // projects (table-tools/schedule-edit already pass args directly).
+            if (tool) return await tool.execute(params?.arguments ?? {});
           }
           return reply.code(404).send({ error: `tool not found: ${name}` });
         }
