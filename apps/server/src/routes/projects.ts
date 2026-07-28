@@ -31,6 +31,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import type { Project } from '@veylin/shared';
+import { invalidateCompassPool } from '../compass-pool.js';
 import { grantedSourcesSorted } from '../project-migration.js';
 import {
   assertSourcesGranted,
@@ -149,6 +150,13 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
       reply.code(404);
       return { ok: false, error: 'project not found' };
     }
+    if (patch.sources !== undefined) {
+      // The old scene-set's pooled connection is now unreferenced by this
+      // project — drop it so sessions/fds don't linger until the next
+      // reconciler tick (scope is re-resolved per request either way; this
+      // is retention hygiene, not a correctness need).
+      await invalidateCompassPool(ctx.tenantId);
+    }
     return { ok: true, project: toApiProject(updated) };
   });
 
@@ -168,6 +176,7 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
     // revoked-default posture) and no pin cleanup runs — re-pinning is a user
     // action. Idempotent on an already-disabled row.
     await disableProject(ctx.tenantId, id);
+    await invalidateCompassPool(ctx.tenantId);
     return { ok: true };
   });
 }

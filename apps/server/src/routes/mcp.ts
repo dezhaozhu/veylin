@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { mcpServerInputSchema } from '@veylin/shared';
+import { COMPASS_IDENTITY_GROUP } from '../compass-identity.js';
 import {
   createRemoteMcpServer,
   deleteRemoteMcpServer,
@@ -24,6 +25,24 @@ async function findManagedRow(tenantId: string, id: string) {
   const rows = await listRemoteMcpServers(tenantId);
   const row = rows.find((r) => r.id === id);
   return row?.managed ? row : null;
+}
+
+/**
+ * Companion guard (review F1-gap): the API must not be able to CREATE what
+ * the immutability guard protects, either. `managed: true` via POST/PUT
+ * would mint a self-locked row (403 forever, no API recovery); a second row
+ * in COMPASS_IDENTITY_GROUP would trip the prelude's exactly-one anomaly
+ * refusal and silently cut every project-pinned thread off compass
+ * tenant-wide. Both fields are system-maintained: `managed` only by the
+ * reconciler (store-level), the compass group only by reconcile output.
+ * Returns an error string, or null when the body is acceptable.
+ */
+function rejectSystemFields(data: { managed?: boolean; group?: string | null }): string | null {
+  if (data.managed !== undefined) return 'managed 由系统维护,不可通过 API 设置';
+  if (data.group === COMPASS_IDENTITY_GROUP) {
+    return `分组 ${COMPASS_IDENTITY_GROUP} 由 Compass 身份保留,不可手工加入`;
+  }
+  return null;
 }
 
 export function registerMcpRoutes(app: FastifyInstance, deps: ServerDeps): void {
@@ -73,6 +92,11 @@ export function registerMcpRoutes(app: FastifyInstance, deps: ServerDeps): void 
       reply.code(400);
       return { ok: false, message: parsed.error.message };
     }
+    const rejected = rejectSystemFields(parsed.data);
+    if (rejected) {
+      reply.code(400);
+      return { ok: false, message: rejected };
+    }
     const server = await createRemoteMcpServer(ctx.tenantId, parsed.data);
     await deps.rebuildMcp(ctx.tenantId);
     return { ok: true, server };
@@ -85,6 +109,11 @@ export function registerMcpRoutes(app: FastifyInstance, deps: ServerDeps): void 
     if (!parsed.success) {
       reply.code(400);
       return { ok: false, message: parsed.error.message };
+    }
+    const rejected = rejectSystemFields(parsed.data);
+    if (rejected) {
+      reply.code(400);
+      return { ok: false, message: rejected };
     }
     if (await findManagedRow(ctx.tenantId, id)) {
       reply.code(403);

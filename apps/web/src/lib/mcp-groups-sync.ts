@@ -42,8 +42,9 @@ export function readCachedGroupedMcpServers(): McpGroupMember[] | null {
   return cached;
 }
 
-/** Reactive grouped-servers list — used by the Projects sidebar to decide
- * whether to render a Projects section at all. */
+/** Reactive grouped-servers list. Since v3 the Projects sidebar is driven by
+ * `useProjects()` (projects-sync.ts) — the remaining consumer here is the
+ * composer MCP flyout's group toggle rendering. */
 export function useGroupedMcpServers(): McpGroupMember[] {
   const [servers, setServers] = useState<McpGroupMember[]>(() => cached ?? []);
   useEffect(() => {

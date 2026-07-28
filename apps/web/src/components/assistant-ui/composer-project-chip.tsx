@@ -19,8 +19,15 @@ export const ComposerProjectChip: FC = () => {
 
   if (projects.length === 0) return null;
 
+  // Dangling pin (deleted/disabled project id): projectLabel only maps legacy
+  // entry names, so an unmapped id would render as a raw UUID — fall back to
+  // an honest "unavailable" label instead.
+  const legacyOrFallback = (pin: string) => {
+    const legacy = projectLabel(pin);
+    return legacy === pin && pin.includes('-') ? t('mention.projectUnavailable') : legacy;
+  };
   const label = currentProject
-    ? (projects.find((p) => p.id === currentProject)?.name ?? projectLabel(currentProject))
+    ? (projects.find((p) => p.id === currentProject)?.name ?? legacyOrFallback(currentProject))
     : t('mention.project');
 
   return (

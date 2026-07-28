@@ -86,13 +86,13 @@ describe('managed MCP row immutability (F1)', () => {
     assert.equal(row?.managed, true);
   });
 
-  it('PUT stripping managed/headers on a managed row → 403 likewise', async () => {
+  it('PUT stripping managed/headers on a managed row → refused (400: body-level system-field rejection fires before the 403 target check), row byte-unchanged', async () => {
     const res = await app.inject({
       method: 'PUT',
       url: `/api/mcp-servers/${managedId}`,
       payload: { managed: false, headers: {} },
     });
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 400);
     const row = (await listRemoteMcpServers(TENANT)).find((r) => r.id === managedId);
     assert.equal(row?.managed, true);
     assert.deepEqual(row?.headers, { Authorization: 'Bearer x' });
@@ -102,6 +102,56 @@ describe('managed MCP row immutability (F1)', () => {
     const res = await app.inject({ method: 'DELETE', url: `/api/mcp-servers/${managedId}` });
     assert.equal(res.statusCode, 403);
     assert.ok((await listRemoteMcpServers(TENANT)).some((r) => r.id === managedId));
+  });
+
+  it('POST minting managed:true → 400 (no self-locked zombie rows)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/mcp-servers',
+      payload: { name: 'zombie', transport: 'http', url: 'http://x.invalid/', managed: true },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(!(await listRemoteMcpServers(TENANT)).some((r) => r.name === 'zombie'));
+  });
+
+  it('POST into the compass protection group → 400 (no second enabled group member)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/mcp-servers',
+      payload: {
+        name: 'impostor',
+        transport: 'http',
+        url: 'http://x.invalid/',
+        group: COMPASS_IDENTITY_GROUP,
+      },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(!(await listRemoteMcpServers(TENANT)).some((r) => r.name === 'impostor'));
+  });
+
+  it('PUT converting a manual row to managed or into the group → 400, row untouched', async () => {
+    for (const payload of [{ managed: true }, { group: COMPASS_IDENTITY_GROUP }]) {
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/mcp-servers/${manualId}`,
+        payload,
+      });
+      assert.equal(res.statusCode, 400);
+    }
+    const row = (await listRemoteMcpServers(TENANT)).find((r) => r.id === manualId);
+    assert.ok(!row?.managed);
+    assert.ok(row?.group !== COMPASS_IDENTITY_GROUP);
+  });
+
+  it('POST with an unrelated group stays allowed (generic grouping intact)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/mcp-servers',
+      payload: { name: 'grouped-ok', transport: 'http', url: 'http://x.invalid/', group: 'misc' },
+    });
+    assert.equal(res.statusCode, 200);
+    const row = (await listRemoteMcpServers(TENANT)).find((r) => r.name === 'grouped-ok');
+    assert.equal(row?.group, 'misc');
   });
 
   it('manual rows stay editable and deletable', async () => {

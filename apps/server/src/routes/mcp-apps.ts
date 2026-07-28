@@ -302,7 +302,7 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
           if (!name) return reply.code(400).send({ error: 'missing tool name' });
           const toolsets = (await client.listToolsets()) as unknown as Record<
             string,
-            Record<string, { execute: (a: { context: unknown }) => Promise<unknown> }>
+            Record<string, { execute: (input: unknown) => Promise<unknown> }>
           >;
           // Deterministic server precedence when >1 server exposes the same tool
           // name — alphabetical, not object-iteration order. When threadId
