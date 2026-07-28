@@ -1,11 +1,19 @@
-import { useEffect, useMemo, useState, type ComponentProps, type FC } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type FC } from 'react';
 import {
   McpAppRenderer,
   McpAppsRemoteHost,
+  useAui,
 } from '@assistant-ui/react';
 import { useResource } from '@assistant-ui/tap';
 import { LoaderIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { McpAppActionBridge } from '@/components/assistant-ui/mcp-app-action-bridge';
+import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
+import { placeComposerCaret } from '@/lib/composer-caret';
+import { correctionDraftSpec, type CorrectionPayload } from '@/lib/correction-bridge';
+import { projectSourceLabel } from '@/lib/project-labels';
+import { postThreadProject, writeCachedThreadProject } from '@/lib/project-sync';
+import { invalidateThreadProjects } from '@/lib/thread-projects-sync';
 import { SCENE_CARD_TOOL, sceneCardArgs } from './scene-card-grid';
 
 /**
@@ -29,7 +37,10 @@ export const SceneCardCell: FC<{
   source: string;
   /** All of the project's sources — >1 ⇒ the call names its scene. */
   sources: readonly string[];
-}> = ({ hostUrl, resourceUri, server, source, sources }) => {
+  /** The page's CURRENT project — the 修正桥's only possible target (host
+   * context; the widget message never selects a project). */
+  projectId: string;
+}> = ({ hostUrl, resourceUri, server, source, sources, projectId }) => {
   const { t } = useTranslation();
   const args = useMemo(() => sceneCardArgs(sources, source), [sources, source]);
   const argsKey = JSON.stringify(args);
@@ -79,6 +90,45 @@ export const SceneCardCell: FC<{
     McpAppRenderer({ host: mcpHost, fallback: errorLine }),
   );
 
+  // 修正桥, 项目首页 context: the widget's "这里不对?" opens a NEW thread
+  // pinned to the page's CURRENT project (this component's props — never the
+  // message payload), navigates to chat and prefills the composer. Same
+  // creation/pin sequence as project-list.tsx's new-chat-in-project. The
+  // scene label is host-derived too: this cell's own `source`. Draft only;
+  // nothing is auto-sent.
+  const aui = useAui();
+  const { closeWorkspace } = useSettingsPanel();
+  const creatingRef = useRef(false);
+  const handleCorrection = useCallback(
+    (p: CorrectionPayload) => {
+      if (creatingRef.current) return;
+      creatingRef.current = true;
+      void (async () => {
+        try {
+          await aui.threads().switchToNewThread();
+          const item = aui.threads().item('main');
+          const initialized = await item.initialize();
+          // Triple fallback as in project-list.tsx — the local id later
+          // BECOMES the remoteId, so the pin lands under the right key.
+          const rid = initialized.remoteId ?? initialized.externalId ?? item.getState().id;
+          const confirmed = await postThreadProject(rid, projectId);
+          writeCachedThreadProject(rid, confirmed ?? projectId);
+          invalidateThreadProjects();
+          const spec = correctionDraftSpec(projectSourceLabel(source), p);
+          const draft = t(spec.key, spec.vars);
+          aui.composer().setText(draft);
+          closeWorkspace();
+          placeComposerCaret(draft.length);
+        } catch (err) {
+          console.error('[scene-card] open-correction failed:', err);
+        } finally {
+          creatingRef.current = false;
+        }
+      })();
+    },
+    [aui, projectId, source, t, closeWorkspace],
+  );
+
   if (state.status === 'loading') {
     return (
       <div className="text-muted-foreground flex min-h-24 items-center justify-center">
@@ -104,5 +154,9 @@ export const SceneCardCell: FC<{
     mcp: { app: { resourceUri } },
   } as unknown as ComponentProps<typeof Render>;
 
-  return <Render {...part} />;
+  return (
+    <McpAppActionBridge onCorrection={handleCorrection}>
+      <Render {...part} />
+    </McpAppActionBridge>
+  );
 };
