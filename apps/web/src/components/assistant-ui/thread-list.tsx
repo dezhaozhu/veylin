@@ -12,7 +12,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { onThreadActivityAckChange } from "@/lib/thread-activity-ack";
 import { useThreadActivityMap } from "@/lib/use-thread-activity";
-import { useGroupedMcpServers, type McpGroupMember } from "@/lib/mcp-groups-sync";
+import { useProjects, type ProjectInfo } from "@/lib/projects-sync";
 import { useThreadProjects } from "@/lib/thread-projects-sync";
 import {
   ThreadActivityContext,
@@ -56,26 +56,28 @@ const dateGroupKey = (
 type ThreadListGroup = { label: string; indices: number[] };
 
 /** Partition every threadId into per-project buckets (threads pinned to a
- * grouped MCP server, "project") plus the remaining/unpinned indices. When
- * the tenant has no grouped servers, every index is "remaining" and behavior
- * is byte-identical to the pre-Projects sidebar. */
+ * first-class project — pin value = `project.id`) plus the remaining/unpinned
+ * indices. When the tenant has no projects, every index is "remaining" and
+ * behavior is byte-identical to the pre-Projects sidebar. Pins naming
+ * unknown/disabled projects fall into "remaining" (they read as unpinned —
+ * same deny-by-default posture as the server). */
 function partitionByProject(
   threadIds: readonly string[],
   itemsById: Map<
     string,
     { remoteId: string | undefined; externalId?: string | undefined; lastMessageAt?: Date | undefined }
   >,
-  groupedServers: McpGroupMember[],
+  projects: ProjectInfo[],
   threadProjects: Record<string, string>,
 ): { buckets: ProjectBucket[]; remainingIndices: number[] } {
-  if (groupedServers.length === 0) {
+  if (projects.length === 0) {
     return { buckets: [], remainingIndices: threadIds.map((_, index) => index) };
   }
 
   const time = (index: number) =>
     itemsById.get(threadIds[index]!)?.lastMessageAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
 
-  const byProject = new Map<string, number[]>(groupedServers.map((s) => [s.name, []]));
+  const byProject = new Map<string, number[]>(projects.map((p) => [p.id, []]));
   const remaining: number[] = [];
   threadIds.forEach((id, index) => {
     const item = itemsById.get(id);
@@ -93,7 +95,7 @@ function partitionByProject(
   for (const indices of byProject.values()) indices.sort((a, b) => time(b) - time(a));
   remaining.sort((a, b) => time(b) - time(a));
 
-  const buckets = groupedServers.map((s) => ({ name: s.name, indices: byProject.get(s.name) ?? [] }));
+  const buckets = projects.map((p) => ({ project: p, indices: byProject.get(p.id) ?? [] }));
   return { buckets, remainingIndices: remaining };
 }
 
@@ -101,9 +103,9 @@ const ThreadListItems: FC = () => {
   const { t, i18n } = useTranslation();
   const threadIds = useAuiState((s) => s.threads.threadIds);
   const threadItems = useAuiState((s) => s.threads.threadItems);
-  const groupedServers = useGroupedMcpServers();
+  const projects = useProjects();
   const threadProjects = useThreadProjects();
-  const hasProjects = groupedServers.length > 0;
+  const hasProjects = projects.length > 0;
 
   const itemsById = useMemo(
     () => new Map(threadItems.map((item) => [item.id, item])),
@@ -111,8 +113,8 @@ const ThreadListItems: FC = () => {
   );
 
   const { buckets, remainingIndices } = useMemo(
-    () => partitionByProject(threadIds, itemsById, groupedServers, threadProjects),
-    [threadIds, itemsById, groupedServers, threadProjects],
+    () => partitionByProject(threadIds, itemsById, projects, threadProjects),
+    [threadIds, itemsById, projects, threadProjects],
   );
 
   const groups = useMemo<ThreadListGroup[] | null>(() => {

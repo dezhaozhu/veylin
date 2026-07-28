@@ -20,10 +20,9 @@ import {
   onThreadActivityAckChange,
 } from "@/lib/thread-activity-ack";
 import { type ThreadActivity } from "@/lib/use-thread-activity";
-import { useGroupedMcpServers } from "@/lib/mcp-groups-sync";
+import { useProjects } from "@/lib/projects-sync";
 import { useThreadProjects, invalidateThreadProjects } from "@/lib/thread-projects-sync";
 import { postThreadProject, writeCachedThreadProject } from "@/lib/project-sync";
-import { projectLabel } from "@/lib/project-labels";
 import {
   RowMenu,
   RowMenuBack,
@@ -110,7 +109,7 @@ const ThreadListItemActivityBadge: FC<{
 };
 
 /** Original one-click delete icon — rendered as-is (no … menu) for tenants
- * with no grouped MCP servers, so ungrouped rows stay byte-identical to
+ * with no projects, so ungrouped rows stay byte-identical to
  * pre-projects-sidebar behavior. */
 const ThreadListItemDelete: FC = () => {
   const { t } = useTranslation();
@@ -169,7 +168,7 @@ const ThreadListItemDelete: FC = () => {
 };
 
 /** "…" row menu: move-to-project drill-down + delete. Rendered only when the
- * tenant has grouped MCP servers to move threads into; otherwise
+ * tenant has projects to move threads into; otherwise
  * ThreadListItemDelete keeps the original lone delete icon. */
 const ThreadListItemMenu: FC = () => {
   const { t } = useTranslation();
@@ -177,7 +176,7 @@ const ThreadListItemMenu: FC = () => {
   const id = useAuiState((s) => s.threadListItem.id);
   const remoteId = useAuiState((s) => s.threadListItem.remoteId);
   const externalId = useAuiState((s) => s.threadListItem.externalId);
-  const groupedServers = useGroupedMcpServers();
+  const projects = useProjects();
   const threadProjects = useThreadProjects();
   const [view, setView] = useState<'root' | 'move'>('root');
   const [deleting, setDeleting] = useState(false);
@@ -212,16 +211,18 @@ const ThreadListItemMenu: FC = () => {
   );
 
   const handleMove = useCallback(
-    async (project: string, close: () => void) => {
+    // `projectId` is the pin value — POST /api/project validates it as an
+    // enabled project of this tenant.
+    async (projectId: string, close: () => void) => {
       if (movingTo) return;
-      setMovingTo(project);
+      setMovingTo(projectId);
       try {
         let rid = remoteId;
         if (!rid) {
           const initialized = await aui.threads().item({ id }).initialize();
           rid = initialized.remoteId;
         }
-        const confirmed = await postThreadProject(rid, project);
+        const confirmed = await postThreadProject(rid, projectId);
         if (confirmed != null) writeCachedThreadProject(rid, confirmed);
         invalidateThreadProjects();
         setView('root');
@@ -249,20 +250,20 @@ const ThreadListItemMenu: FC = () => {
           <>
             <RowMenuBack label={t('threadList.back')} onClick={() => setView('root')} />
             <RowMenuSection>{t('threadList.moveToProjectHint')}</RowMenuSection>
-            {groupedServers.map((server) => (
+            {projects.map((project) => (
               <RowMenuItem
-                key={server.name}
-                label={projectLabel(server.name)}
-                disabled={movingTo === server.name || currentProject === server.name}
+                key={project.id}
+                label={project.name}
+                disabled={movingTo === project.id || currentProject === project.id}
                 onClick={() => {
-                  void handleMove(server.name, close);
+                  void handleMove(project.id, close);
                 }}
               />
             ))}
           </>
         ) : (
           <>
-            {groupedServers.length > 0 && (
+            {projects.length > 0 && (
               <RowMenuItem
                 label={t('threadList.moveToProject')}
                 description={t('threadList.moveToProjectHint')}
@@ -286,7 +287,7 @@ const ThreadListItemMenu: FC = () => {
 
 export const ThreadListItem: FC = () => {
   const { t } = useTranslation();
-  const groupedServers = useGroupedMcpServers();
+  const projects = useProjects();
   const activityMap = useContext(ThreadActivityContext);
   const threadId = useAuiState(
     (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId ?? s.threadListItem.id,
@@ -334,7 +335,7 @@ export const ThreadListItem: FC = () => {
         </span>
       </ThreadListItemPrimitive.Trigger>
       <div className="aui-thread-list-item-meta flex shrink-0 items-center gap-1 pe-1.5">
-        {groupedServers.length > 0 ? <ThreadListItemMenu /> : <ThreadListItemDelete />}
+        {projects.length > 0 ? <ThreadListItemMenu /> : <ThreadListItemDelete />}
         <ThreadListItemTime />
       </div>
     </ThreadListItemPrimitive.Root>

@@ -88,6 +88,21 @@ function InstalledRow({
 }) {
   const { t } = useTranslation();
 
+  // Managed entries are owned by the compass-identity reconciler (see
+  // apps/server/src/compass-identity.ts) — it overwrites url/headers/enabled
+  // on every sync, so offering enable/disable or delete here would just be
+  // silently reverted: no menu. 减法原则: the managed compass row renders
+  // PLAIN — name + enabled dot only, no status line (tools count /
+  // disconnected), no url/transport detail, no hint. One fact, one place.
+  if (item.managed) {
+    return (
+      <SettingsListRow
+        icon={<McpIcon name={item.name} enabled={item.enabled} />}
+        title={item.name}
+      />
+    );
+  }
+
   const statusLine =
     item.enabled && health
       ? health.connected
@@ -95,25 +110,16 @@ function InstalledRow({
         : t('customize.mcpPage.disconnected')
       : null;
 
-  // Managed entries are owned by the compass-identity reconciler (see
-  // apps/server/src/compass-identity.ts) — it overwrites url/headers/enabled
-  // on every sync, so offering enable/disable or delete here would just be
-  // silently reverted. Show a muted hint instead and drop the menu entirely.
-  const detail = statusLine ? `${item.detail} · ${statusLine}` : item.detail;
-  const subtitle = item.managed
-    ? `${detail} · ${t('customize.mcpPage.managedHint')}`
-    : detail;
-  const menuItems = item.managed
-    ? []
-    : [
-        {
-          label: item.enabled ? t('common.disable') : t('common.enable'),
-          onClick: () => onToggle(!item.enabled),
-        },
-        ...(onDelete
-          ? [{ label: t('common.delete'), onClick: onDelete, destructive: true }]
-          : []),
-      ];
+  const subtitle = statusLine ? `${item.detail} · ${statusLine}` : item.detail;
+  const menuItems = [
+    {
+      label: item.enabled ? t('common.disable') : t('common.enable'),
+      onClick: () => onToggle(!item.enabled),
+    },
+    ...(onDelete
+      ? [{ label: t('common.delete'), onClick: onDelete, destructive: true }]
+      : []),
+  ];
 
   return (
     <SettingsListRow
@@ -203,16 +209,23 @@ export function McpSettingsScreen() {
       enabled: !disabledMcp.has(s.name),
       source: 'plugin' as const,
     })),
-    ...remote.map((s) => ({
-      key: s.id,
-      name: s.name,
-      transport: s.transport.toUpperCase(),
-      detail: s.url,
-      enabled: s.enabled,
-      source: 'remote' as const,
-      remoteId: s.id,
-      managed: s.managed,
-    })),
+    ...remote
+      // 减法: disabled MANAGED rows are hidden. Post-v3 these are the legacy
+      // reconciler-owned per-scene/对比 compass entries (compass-guolu etc.),
+      // kept disabled-not-deleted in the DB as history — the UI shows only
+      // the single live managed compass row. User-owned disabled rows stay
+      // visible (they have a re-enable menu).
+      .filter((s) => !(s.managed && !s.enabled))
+      .map((s) => ({
+        key: s.id,
+        name: s.name,
+        transport: s.transport.toUpperCase(),
+        detail: s.url,
+        enabled: s.enabled,
+        source: 'remote' as const,
+        remoteId: s.id,
+        managed: s.managed,
+      })),
   ].filter((item) => !q || item.name.toLowerCase().includes(q) || item.detail.toLowerCase().includes(q));
 
   const libraryItems = LIBRARY.filter(

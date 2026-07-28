@@ -99,6 +99,13 @@ export const CHAT_SETTINGS_EVENT = EVENT;
  * (matching the old UX's implication that the group was in use) and flagged
  * for repair. Uniform all-false stays off (a real explicit off); uniform
  * on/unset stays on.
+ *
+ * v3 note: after the project-cognition cutover a group normally has the
+ * single member `compass` (single-member resolution is trivial: its own
+ * value, never anything to heal). Leftover `mcpEnabled` keys for the old
+ * members (`compass-guolu` etc.) are inert — those names match no active
+ * server and are excluded from the grouped list — and are deliberately left
+ * in storage untouched.
  */
 export interface GroupMemberState {
   name: string;
