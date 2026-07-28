@@ -79,6 +79,7 @@
     "title": "Project overview",
     "loading": "Loading…",
     "cardError": "Couldn't load",
+    "narrative": "AI summary",
     "threads": "Chats",
     "notFound": "This project is unavailable or disabled"
   },
