@@ -104,6 +104,11 @@ const SettingsWorkspace = lazy(() =>
     default: m.SettingsWorkspace,
   })),
 );
+const ProjectWorkspace = lazy(() =>
+  import('@/components/features/project-page/project-overview').then((m) => ({
+    default: m.ProjectWorkspace,
+  })),
+);
 const ThreadRightSidebar = lazy(() =>
   import('@/components/assistant-ui/thread-right-sidebar').then((m) => ({
     default: m.ThreadRightSidebar,
@@ -130,6 +135,14 @@ export function LazySettingsWorkspace() {
   return (
     <Suspense fallback={null}>
       <SettingsWorkspace />
+    </Suspense>
+  );
+}
+
+export function LazyProjectWorkspace() {
+  return (
+    <Suspense fallback={null}>
+      <ProjectWorkspace />
     </Suspense>
   );
 }

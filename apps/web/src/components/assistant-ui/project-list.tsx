@@ -82,6 +82,7 @@ const ProjectRow: FC<{ project: ProjectInfo; indices: number[]; threadIds: reado
 }) => {
   const { t } = useTranslation();
   const aui = useAui();
+  const { openProject } = useSettingsPanel();
   // Collapse state is keyed by project.id (stable across renames).
   const [open, setOpen] = useState(() => !readCollapsedSet().has(project.id));
   const [creating, setCreating] = useState(false);
@@ -97,14 +98,30 @@ const ProjectRow: FC<{ project: ProjectInfo; indices: number[]; threadIds: reado
     });
   }, [project.id]);
 
+  // Split affordances: the NAME row opens the main-area 项目首页, the chevron
+  // keeps its collapse/expand behavior. stopPropagation matters — with a
+  // workspace view already open, ThreadListSidebar's SidebarContent onClick is
+  // closeWorkspace, which would otherwise win over openProject in the same
+  // batch and bounce the user back to chat.
+  const navigate = useCallback(
+    (e: MouseEvent<HTMLDivElement> | KeyboardEvent<HTMLDivElement>) => {
+      e.stopPropagation();
+      openProject(project.id, project.name);
+    },
+    [openProject, project.id, project.name],
+  );
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLDivElement>) => {
+      // Only when the row itself is focused — the chevron button's own
+      // Enter/Space (toggle) bubbles through here and must not navigate.
+      if (e.target !== e.currentTarget) return;
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        toggle();
+        navigate(e);
       }
     },
-    [toggle],
+    [navigate],
   );
 
   const handleNewChat = useCallback(
@@ -145,19 +162,29 @@ const ProjectRow: FC<{ project: ProjectInfo; indices: number[]; threadIds: reado
       <div
         role="button"
         tabIndex={0}
-        onClick={toggle}
+        onClick={navigate}
         onKeyDown={handleKeyDown}
-        aria-expanded={open}
         className="group/project-row hover:bg-muted focus-visible:bg-muted relative flex h-8 cursor-pointer items-center gap-1 rounded-md transition-colors focus-visible:outline-none"
       >
         <span className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2 text-start text-sm">
-          <ChevronRightIcon
-            className={cn(
-              'text-muted-foreground size-3.5 shrink-0 transition-transform',
-              open && 'rotate-90',
-            )}
-            aria-hidden
-          />
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={t('threadList.toggleProject', { name: project.name })}
+            className="hover:bg-muted-foreground/15 -m-0.5 flex shrink-0 items-center justify-center rounded p-0.5 focus-visible:outline-none"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggle();
+            }}
+          >
+            <ChevronRightIcon
+              className={cn(
+                'text-muted-foreground size-3.5 shrink-0 transition-transform',
+                open && 'rotate-90',
+              )}
+              aria-hidden
+            />
+          </button>
           {open ? (
             <FolderOpenIcon className="text-muted-foreground size-4 shrink-0" aria-hidden />
           ) : (

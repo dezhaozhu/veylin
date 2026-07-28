@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 import {
   EMPTY_NAV,
   MAX_NAV_ENTRIES,
+  buildWorkspaceLocation,
+  locationKey,
   locationsEqual,
   pushLocation,
   reconcileNav,
@@ -49,5 +51,27 @@ describe('workspace-navigation', () => {
     const reconciled = reconcileNav(nav, a);
     assert.equal(reconciled.index, 0);
     assert.ok(locationsEqual(reconciled.entries[0]!, a));
+  });
+
+  it('project locations are keyed by project id, not display name', () => {
+    const a = { view: 'project' as const, projectId: 'project:p1', projectName: '锅炉厂' };
+    const renamed = { view: 'project' as const, projectId: 'project:p1', projectName: '锅炉' };
+    const other = { view: 'project' as const, projectId: 'project:p2', projectName: '锅炉厂' };
+    assert.equal(locationKey(a), 'project:project:p1');
+    assert.ok(locationsEqual(a, renamed));
+    assert.ok(!locationsEqual(a, other));
+  });
+
+  it('buildWorkspaceLocation project view requires a projectId', () => {
+    const base = {
+      view: 'project' as const,
+      customizeTab: 'rules' as const,
+      settingsTab: 'general' as const,
+    };
+    assert.equal(buildWorkspaceLocation(base), null);
+    assert.deepEqual(
+      buildWorkspaceLocation({ ...base, projectId: 'project:p1', projectName: ' 锅炉厂 ' }),
+      { view: 'project', projectId: 'project:p1', projectName: '锅炉厂' },
+    );
   });
 });
