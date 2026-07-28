@@ -82,6 +82,12 @@
     "threads": "Chats",
     "notFound": "This project is unavailable or disabled"
   },
+  "correctionBridge": {
+    "draft": "In “{{scene}}”, under “{{label}}”: {{current}} — this looks wrong: ",
+    "draftNoScene": "Under “{{label}}”: {{current}} — this looks wrong: ",
+    "draftNoCurrent": "In “{{scene}}”, under “{{label}}” — this looks wrong: ",
+    "draftBare": "Under “{{label}}” — this looks wrong: "
+  },
   "header": {
     "back": "Back",
     "forward": "Forward",

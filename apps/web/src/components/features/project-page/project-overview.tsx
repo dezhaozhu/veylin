@@ -137,6 +137,7 @@ const ProjectCardsGrid: FC<{
             server={column.server}
             source={source}
             sources={project.sources}
+            projectId={project.id}
           />
         )),
       )}

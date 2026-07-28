@@ -1,12 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   McpAppRenderer,
   McpAppsRemoteHost,
+  useAui,
   useAuiState,
   type ToolCallMessagePartComponent,
 } from '@assistant-ui/react';
 import { useResource } from '@assistant-ui/tap';
+import { useTranslation } from 'react-i18next';
+import { McpAppActionBridge } from '@/components/assistant-ui/mcp-app-action-bridge';
 import { ToolFallback } from '@/components/assistant-ui/tool-fallback';
+import { placeComposerCaret } from '@/lib/composer-caret';
+import { correctionDraftSpec, type CorrectionPayload } from '@/lib/correction-bridge';
 
 // Data plane for MCP Apps: the sandboxed widget's loadResource/callTool/
 // readResource requests are POSTed to the Veylin host route, which proxies to
@@ -81,5 +86,26 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
   const { render: Render } = useResource(
     McpAppRenderer({ host: mcpHost, fallback: <ToolFallback {...props} /> }),
   );
-  return <Render {...part} />;
+
+  // 修正桥, in-chat context: the widget's "这里不对?" prefills the CURRENT
+  // thread's composer (host context = this thread; no new thread, no re-pin).
+  // The scene label here is the sanitized display-text claim from the widget —
+  // this context has no host-side scene knowledge. Draft only; never sent.
+  const { t } = useTranslation();
+  const aui = useAui();
+  const handleCorrection = useCallback(
+    (p: CorrectionPayload) => {
+      const spec = correctionDraftSpec(p.scene, p);
+      const draft = t(spec.key, spec.vars);
+      aui.composer().setText(draft);
+      placeComposerCaret(draft.length);
+    },
+    [aui, t],
+  );
+
+  return (
+    <McpAppActionBridge onCorrection={handleCorrection}>
+      <Render {...part} />
+    </McpAppActionBridge>
+  );
 };

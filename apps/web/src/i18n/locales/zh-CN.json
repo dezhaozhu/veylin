@@ -82,6 +82,12 @@
     "threads": "对话",
     "notFound": "项目不存在或已停用"
   },
+  "correctionBridge": {
+    "draft": "在「{{scene}}」的「{{label}}」里:{{current}} —— 这里不对:",
+    "draftNoScene": "在「{{label}}」里:{{current}} —— 这里不对:",
+    "draftNoCurrent": "在「{{scene}}」的「{{label}}」里 —— 这里不对:",
+    "draftBare": "在「{{label}}」里 —— 这里不对:"
+  },
   "header": {
     "back": "后退",
     "forward": "前进",
