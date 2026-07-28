@@ -79,6 +79,7 @@
     "title": "项目首页",
     "loading": "加载中…",
     "cardError": "无法加载",
+    "narrative": "AI 摘要",
     "threads": "对话",
     "notFound": "项目不存在或已停用"
   },

@@ -17,6 +17,15 @@ import { useThreadActivityMap } from '@/lib/use-thread-activity';
 import { startWindowDrag } from '@/lib/window-drag';
 import { SceneCardCell } from './scene-card-cell';
 import { sceneCardColumns, type McpAppToolsByServer } from './scene-card-grid';
+import {
+  canMergeCards,
+  extractDisplayRows,
+  extractNarrative,
+  type SceneCandidate,
+  type SceneNarrative,
+} from './scene-card-merge';
+import { SceneCardMergeTable } from './scene-card-merge-table';
+import { useSceneCardPayloads, type SceneCardEntry } from './use-scene-card-payloads';
 
 /** Workspace shell for the 项目首页 view — same frame pattern as
  * AutomateWorkspace (drag strip when the rail is collapsed + WorkspaceMain). */
@@ -103,14 +112,26 @@ const ProjectOverview: FC = () => {
   );
 };
 
+/**
+ * The cards area, in one of two shapes:
+ * - 对比合并视图 — a multi-scene project whose cards ALL carry the generic
+ *   `display` contract collapses into one comparison table;
+ * - side-by-side widget cells — every other case (single scene, a card that
+ *   failed, a card whose server ships no `display`). Honest degradation: the
+ *   page never merges half a comparison.
+ */
 const ProjectCardsGrid: FC<{
   project: ProjectInfo;
   byServer: McpAppToolsByServer | null;
 }> = ({ project, byServer }) => {
   const { t } = useTranslation();
   const hostUrl = `/api/mcp-apps/host?projectId=${encodeURIComponent(project.id)}`;
+  const columns = useMemo(() => sceneCardColumns(byServer), [byServer]);
+  const entries = useSceneCardPayloads(hostUrl, columns, project.sources);
 
-  if (byServer === null) {
+  // One page-level loader for the whole area (the calls settle together), so
+  // the merge decision is made once instead of flickering through it.
+  if (byServer === null || entries === null) {
     return (
       <div className="text-muted-foreground mb-8 flex min-h-24 items-center justify-center">
         <LoaderIcon className="size-4 animate-spin" aria-label={t('projectPage.loading')} />
@@ -118,29 +139,51 @@ const ProjectCardsGrid: FC<{
     );
   }
 
-  const columns = sceneCardColumns(byServer);
   // No server exposes get_scene_card — the grid simply doesn't exist (normal
   // capability absence, not an error state).
   if (columns.length === 0) return null;
+
+  const candidates: SceneCandidate[] = entries.map((e) => ({
+    source: e.source,
+    rows: e.fetched.status === 'ready' ? extractDisplayRows(e.fetched.result) : null,
+  }));
+
+  if (canMergeCards(candidates)) {
+    const narratives = entries
+      .map((e) => (e.fetched.status === 'ready' ? extractNarrative(e.source, e.fetched.result) : null))
+      .filter((n): n is SceneNarrative => n !== null);
+    // Column sub-labels only when >1 capability server answers — otherwise a
+    // scene's single column needs no qualifier (一个事实一处表达).
+    const servers = new Set(entries.map((e) => e.server));
+    return (
+      <SceneCardMergeTable
+        scenes={candidates.map((c) => ({ source: c.source, rows: c.rows! }))}
+        serverLabels={
+          servers.size > 1 ? entries.map((e) => e.server) : undefined
+        }
+        narratives={narratives}
+      />
+    );
+  }
 
   return (
     <div
       className="mb-8 grid gap-4"
       style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
     >
-      {project.sources.map((source) =>
-        columns.map((column) => (
-          <SceneCardCell
-            key={`${source}::${column.server}`}
-            hostUrl={hostUrl}
-            resourceUri={column.resourceUri}
-            server={column.server}
-            source={source}
-            sources={project.sources}
-            projectId={project.id}
-          />
-        )),
-      )}
+      {entries.map((entry: SceneCardEntry) => (
+        <SceneCardCell
+          key={`${entry.source}::${entry.server}`}
+          hostUrl={hostUrl}
+          resourceUri={entry.resourceUri}
+          server={entry.server}
+          source={entry.source}
+          projectId={project.id}
+          fetched={entry.fetched}
+          args={entry.args}
+          argsKey={entry.argsKey}
+        />
+      ))}
     </div>
   );
 };
