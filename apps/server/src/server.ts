@@ -25,7 +25,7 @@ import { buildAgentTaskTools } from './agent-task-tool';
 import { executeSubagentJob, CancelledTaskError } from './agent-task-runner';
 import { buildTableTools } from './table-tools';
 import { buildViewer3dTools } from './viewer3d-tools';
-import { initTableStore } from './table-store';
+import { initTableStore, listTableSheets, stampTableSheetSource } from './table-store';
 import { pruneDesktopThreadClutter } from './thread-state';
 import {
   initResumableChatStreams,
@@ -54,6 +54,7 @@ import {
   updateRemoteMcpServer,
 } from './mcp-store';
 import { createProject, listProjects, updateProject } from './project-store';
+import { runProjectMigration } from './project-migration';
 import { listAllCronAutomations, sweepInterruptedAutomationRuns } from './automation-store';
 import { runAutomationJob } from './automation-worker';
 import { buildWorkspaceConfigTool } from './workspace-config-tool';
@@ -74,6 +75,8 @@ import {
   closeDb,
   ensureDataDir,
   mastraLibsqlUrl,
+  listThreadStatesWithProject,
+  updateThreadStateProjectBulk,
 } from '@veylin/db';
 import {
   resolveContext,
@@ -275,6 +278,31 @@ async function main() {
       // TODO(Task 4 — compass client pool): pass invalidateCompassPool here so
       // grant/token changes drop pooled connections. No-op until the pool exists.
     });
+  }
+
+  // Legacy entry-name pins/provenance → project ids (Phase B Task 3). Runs at
+  // boot strictly AFTER the first compass-identity reconcile pass — default
+  // projects must exist for anything to map — and is idempotent (later boots
+  // find nothing, or pick up pins whose source got re-granted since). A throw
+  // must never take the boot down: log and retry on the next boot.
+  async function migrateProjectPins(tenantId: string) {
+    try {
+      await runProjectMigration({
+        tenantId,
+        listProjects,
+        createProject,
+        listPinnedThreadStates: listThreadStatesWithProject,
+        updateThreadStateProjectBulk,
+        listSheets: listTableSheets,
+        stampSheetSource: stampTableSheetSource,
+      });
+    } catch (err) {
+      console.warn(
+        `[project-migration] tenant=${tenantId} failed (will retry next boot): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   const app = Fastify({
@@ -497,10 +525,26 @@ async function main() {
   if (isLazyMcpBoot()) {
     void rebuildMcp(DEV_TENANT_ID)
       .then(() => app.log.info('MCP toolsets ready (background boot)'))
-      .then(() => (compassIdentitySyncOn ? syncCompassIdentity(DEV_TENANT_ID) : undefined))
+      .then(async () => {
+        if (!compassIdentitySyncOn) {
+          app.log.info(
+            '[project-migration] skipped — compass-identity sync is off (no config or kill switch), default projects may not exist',
+          );
+          return;
+        }
+        await syncCompassIdentity(DEV_TENANT_ID);
+        // AFTER the reconcile pass: default projects exist, legacy pins can map.
+        await migrateProjectPins(DEV_TENANT_ID);
+      })
       .catch((err) => app.log.warn({ err }, 'background MCP boot failed'));
   } else if (compassIdentitySyncOn) {
     await syncCompassIdentity(DEV_TENANT_ID);
+    // AFTER the reconcile pass: default projects exist, legacy pins can map.
+    await migrateProjectPins(DEV_TENANT_ID);
+  } else {
+    app.log.info(
+      '[project-migration] skipped — compass-identity sync is off (no config or kill switch), default projects may not exist',
+    );
   }
 
   // First tenant's MCP init has been issued (awaited above, or kicked off in

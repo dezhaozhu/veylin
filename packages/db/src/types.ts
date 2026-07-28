@@ -227,6 +227,13 @@ export interface TableSheetSource {
   server: string;
   tenant?: string;
   loadedAt: string;
+  /**
+   * Project id (v3) the sheet's data belongs to — the durable provenance key
+   * once pins are project ids. `server` is kept for display. Absent on stamps
+   * that predate the Phase B migration and were not mappable at boot; the
+   * comparison-time shim `legacyServerToProjectId` covers those permanently.
+   */
+  project?: string;
 }
 
 export interface TableSheetRow {
