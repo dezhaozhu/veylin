@@ -114,7 +114,11 @@ import {
   filterMcpToolIndexToScopedServers,
   type McpToolIndexEntry,
 } from '../mcp-scoping.js';
-import { resolvePinnedProjectScope, type PinnedProjectScope } from '../project-store.js';
+import {
+  listProjects,
+  resolvePinnedProjectScope,
+  type PinnedProjectScope,
+} from '../project-store.js';
 import {
   getCompassToolIndexEntries,
   getPooledCompassToolsets,
@@ -516,6 +520,17 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     requestContext.set('mcpToolNames', mcpScope.mcpToolNames);
     requestContext.set('scopedMcpServers', scopedMcpServersForSubagents);
     requestContext.set('projectPin', projectPin);
+    // Tenant project rows for the provenance legacy-stamp shim (Phase B 5c):
+    // table_get / buildTableContextBlock map a pre-migration `source.server`
+    // stamp to its project id via legacyServerToProjectId. Fetched only for
+    // pinned turns (the mismatch predicate is inert without a pin); a
+    // datastore failure degrades to [] — legacy stamps then read as
+    // unmappable and hard-refuse (fail-closed, never a leak).
+    const tenantProjects =
+      projectPin != null
+        ? await withDatastoreFallback(() => listProjects(ctx.tenantId), [])
+        : [];
+    requestContext.set('tenantProjects', tenantProjects);
     // 5b/5c consumers: the resolved project scope (id/name for provenance +
     // display, sources for pooled lookups, entryPin for toolset resolution).
     requestContext.set(
@@ -757,7 +772,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const goalBlock = buildGoalBlock(threadRowState?.goal);
     const loopBlock = buildLoopBlock(threadRowState?.loop);
     // Live workspace awareness (table + knowledge base + right-panel focus).
-    const tableBlockBase = planMode ? '' : buildTableContextBlock(threadId, projectPin);
+    const tableBlockBase = planMode
+      ? ''
+      : buildTableContextBlock(threadId, projectPin, tenantProjects);
     // Thread-tied (unlike the workspace grid's own schedule-edit HTTP routes,
     // see mcp-scoping.ts's module docstring): this request already resolved
     // its final per-request toolsets (`agentMcp`, pooled compass included)

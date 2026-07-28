@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { TableSheetSource } from '@veylin/db';
+import type { Project } from '@veylin/shared';
 import {
   addTableColumn,
   addTableRow,
@@ -37,23 +38,49 @@ export type McpServerGroups = Record<string, string | undefined>;
 export type GroupsGetter = () => McpServerGroups;
 
 /**
- * Resolve the Compass toolset from `toolsets` via `resolveCompassServer`
- * (never a hardcoded `toolsets['compass']`). Every call site below backs the
- * workspace AG-Grid panel (grid load buttons, load_compass_schedule/orders/
- * resources agent tools). `pin` defaults to `null` for callers with no thread
- * context (the routes/tables.ts HTTP routes when their request carries no
- * resolvable threadId — see the "Fork seam" comment there); the
- * load_compass_* AGENT tools below resolve a real pin from the chat request's
- * `requestContext` ('projectPin', set by routes/chat.ts) so a grouped Compass
- * deployment picks the CURRENTLY OPEN thread's pinned member during a chat
- * turn. `resolveCompassServer` still protects every caller: with more than
- * one Compass-prefixed server connected and no matching pin, it refuses
- * (returns `undefined`) rather than guessing `'compass'` and silently
- * crossing a project's server group.
+ * Per-call Compass resolution + provenance scope (project-cognition v3,
+ * Phase B 5c).
+ *
+ * - `toolsets` — when present, the AUTHORITATIVE per-request toolset record:
+ *   the chat turn's `requestContext.get('scopedMcpToolsets')` (project-scoped
+ *   + mcpEnabled-filtered + pooled compass overlay, set by routes/chat.ts) or
+ *   the HTTP routes' pooled record (routes/tables.ts's
+ *   `resolveCompassRequestScope`). Resolution never falls back to the tenant
+ *   getter past it — the record already encodes every per-request decision
+ *   (deny, explicit-off, pool failure), and post-Task-4 the tenant cache
+ *   cannot contain compass anyway (plan risk #2: a miss means "no compass",
+ *   never a differently-scoped substitute). `undefined` (callers with no
+ *   request scope at all — tests, legacy ungrouped deployments) falls back to
+ *   the tenant getter, today's pre-v3 behavior.
+ * - `entryPin` — the entry-level pin from the shared prelude
+ *   (`scope.entryPin`, i.e. `'compass'`), fed to `resolveCompassServer`.
+ * - `projectId` — the pinned PROJECT id, stamped as `source.project` on
+ *   loaded sheets. Plan risk #1 (highest of the phase): this is NEVER the
+ *   resolved toolset key — every project resolves the same `'compass'` key,
+ *   so stamping the key would make all projects' stamps identical and blind
+ *   `isProjectPinMismatch` completely.
+ */
+export type CompassLoadScope = {
+  toolsets?: Record<string, unknown>;
+  entryPin: string | null;
+  projectId: string | null;
+};
+
+/**
+ * Resolve the Compass toolset via `resolveCompassServer` (never a hardcoded
+ * `toolsets['compass']`). Every call site below backs the workspace AG-Grid
+ * panel (grid load buttons, load_compass_schedule/orders/resources agent
+ * tools). The load_compass_* AGENT tools resolve their scope from the chat
+ * request's `requestContext` (`compassScopeFromCtx`); the routes/tables.ts
+ * HTTP routes resolve theirs from the request threadId via the shared prelude
+ * + pool. `resolveCompassServer` still protects every caller: with no
+ * matching pin and no unambiguous compass key it refuses (returns
+ * `undefined`) rather than guessing and silently crossing a project boundary.
  */
 interface ResolvedCompass {
-  /** Connected toolset key, e.g. `'compass'` or `'compass-guolu'` — also the
-   * provenance `source.server` stamped onto sheets loaded through it. */
+  /** Connected toolset key (`'compass'` post-v3) — kept as the provenance
+   * `source.server` for DISPLAY only; the durable identity is
+   * `source.project`. */
   serverName: string;
   toolset: Record<string, { execute: (args: unknown) => Promise<unknown> }>;
 }
@@ -61,11 +88,13 @@ interface ResolvedCompass {
 function resolveCompassToolset(
   getMcpToolsets: ToolsetsGetter | undefined,
   getMcpGroups: GroupsGetter | undefined,
-  pin: string | null = null,
+  scope?: CompassLoadScope,
 ): ResolvedCompass | undefined {
-  const toolsets = getMcpToolsets?.() ?? {};
+  // Request-scoped record (chat turn / pooled HTTP lookup) is authoritative
+  // when present; the tenant getter is only the no-request-scope fallback.
+  const toolsets = scope?.toolsets ?? getMcpToolsets?.() ?? {};
   const groups = getMcpGroups?.() ?? {};
-  const serverName = resolveCompassServer(toolsets, groups, pin);
+  const serverName = resolveCompassServer(toolsets, groups, scope?.entryPin ?? null);
   if (!serverName) return undefined;
   const toolset = toolsets[serverName] as
     | Record<string, { execute: (args: unknown) => Promise<unknown> }>
@@ -91,9 +120,18 @@ async function stampCompassLoadSource(
   sheetId: string,
   compass: ResolvedCompass,
   payload: Record<string, unknown>,
+  projectId: string | null,
 ): Promise<void> {
   const source: TableSheetSource = {
+    // Display only. The durable cross-project identity is `project` below —
+    // NEVER this key (plan risk #1: post-v3 every project resolves the same
+    // 'compass' toolset key, so keying provenance on it would collapse every
+    // project's stamp into one value and blind isProjectPinMismatch).
     server: compass.serverName,
+    // The pinned PROJECT id at load time. Absent only for loads with no
+    // project scope at all (legacy ungrouped deployments) — those stamps stay
+    // server-only and hard-refuse under any project pin via the legacy shim.
+    ...(projectId ? { project: projectId } : {}),
     tenant: tenantFromPayload(payload),
     loadedAt: new Date().toISOString(),
   };
@@ -109,7 +147,8 @@ async function stampCompassLoadSource(
  * stamped from a different server (or never stamped at all) is exactly the
  * silent cross-tenant mixing that motivated `source`.
  *
- * A STAMPED mismatch (source.server names a different project) is now a hard
+ * A STAMPED mismatch (source.project — or the shim-mapped legacy
+ * source.server — names a different project) is now a hard
  * refusal in `table_get` — see `isProjectPinMismatch` — this text becomes the
  * refusal's `warning`. An UNSTAMPED ("legacy") sheet under a pin keeps the
  * softer text below as a plain warning (rows still returned): refusing every
@@ -121,14 +160,18 @@ async function stampCompassLoadSource(
 function buildProvenanceWarning(
   source: TableSheetSource | null | undefined,
   projectPin: string | null | undefined,
+  projects: Project[] = [],
 ): string | undefined {
   if (!projectPin) return undefined;
   if (!source) {
     return '本表无来源记录(旧数据), 无法确认属于当前项目';
   }
-  if (source.server === projectPin) return undefined;
+  // v3 re-key: match/mismatch is decided by the SAME predicate table_get and
+  // buildTableContextBlock refuse on (source.project ?? legacy shim vs the
+  // project-id pin) — never a raw string compare against the toolset key.
+  if (!isProjectPinMismatch(source, projectPin, projects)) return undefined;
   return (
-    `注意: 本表数据来自项目 ${source.server}(租户 ${source.tenant ?? '未知'}, ${source.loadedAt} 加载), ` +
+    `注意: 本表数据来自项目 ${source.project ?? source.server}(租户 ${source.tenant ?? '未知'}, ${source.loadedAt} 加载), ` +
     `与当前会话项目 ${projectPin} 不一致 — 勿与当前项目的实时数据混用`
   );
 }
@@ -138,14 +181,49 @@ interface TableToolCtx {
 }
 
 /**
- * Read the chat turn's project pin off the mastra tool `execute` ctx —
- * `requestContext.get('projectPin')`, set by routes/chat.ts (see `table_get`
- * above for the identical read). Used by the load_compass_* tools below so an
- * agent-driven load resolves Compass through the CURRENTLY OPEN thread's pin
- * instead of always resolving unpinned (`null`).
+ * Read the chat turn's project pin (a PROJECT id post-v3) off the mastra tool
+ * `execute` ctx — `requestContext.get('projectPin')`, set by routes/chat.ts.
+ * Used by `table_get`'s provenance check.
  */
 function readProjectPin(ctx?: TableToolCtx): string | null {
   return (ctx?.requestContext?.get('projectPin') as string | null | undefined) ?? null;
+}
+
+/**
+ * Read the tenant's project rows off the ctx — `requestContext.get(
+ * 'tenantProjects')`, set by routes/chat.ts for pinned turns. Feeds the
+ * legacy-stamp shim in `isProjectPinMismatch`; absent (older callers, tests)
+ * means legacy stamps are unmappable and hard-refuse under a pin (fail-closed).
+ */
+function readTenantProjects(ctx?: TableToolCtx): Project[] {
+  const value = ctx?.requestContext?.get('tenantProjects');
+  return Array.isArray(value) ? (value as Project[]) : [];
+}
+
+/**
+ * Compose the per-request Compass scope for the load_compass_* AGENT tools
+ * from the chat turn's requestContext (all three set by routes/chat.ts):
+ * `scopedMcpToolsets` (the final per-request toolsets, pooled compass
+ * included) + `pinnedProjectScope` (`{id, entryPin}` — the provenance project
+ * id and the entry-level resolution pin). No requestContext at all (a tool
+ * invoked outside a chat turn) → `undefined`, i.e. tenant-getter fallback
+ * with a null pin — today's no-thread-context refusal behavior under
+ * ambiguity.
+ */
+function compassScopeFromCtx(ctx?: TableToolCtx): CompassLoadScope | undefined {
+  const rc = ctx?.requestContext;
+  if (!rc) return undefined;
+  const scoped = rc.get('scopedMcpToolsets');
+  const pinScope = rc.get('pinnedProjectScope') as
+    | { id: string; entryPin: string | null }
+    | null
+    | undefined;
+  return {
+    toolsets:
+      scoped && typeof scoped === 'object' ? (scoped as Record<string, unknown>) : undefined,
+    entryPin: pinScope?.entryPin ?? null,
+    projectId: pinScope?.id ?? null,
+  };
 }
 
 /**
@@ -160,13 +238,13 @@ export async function importCompassScheduleSheet(
   getMcpToolsets: ToolsetsGetter | undefined,
   input: { limit?: number; workshop?: string; status?: string; order_id?: string },
   getMcpGroups?: GroupsGetter,
-  pin: string | null = null,
+  scope?: CompassLoadScope,
 ): Promise<
   | { ok: true; sheet: string; imported: number; total: number; columns: number }
   | { ok: false; error: string }
 > {
   // Resolve live toolsets via the getter (not a snapshot — rebuildMcp re-assigns the var)
-  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, pin);
+  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
   const tool = compass?.toolset['get_schedule_rows'];
   if (!compass || !tool) {
     return {
@@ -229,7 +307,7 @@ export async function importCompassScheduleSheet(
     undefined,
     descriptors,
   );
-  await stampCompassLoadSource(SCHEDULE_SHEET_ID, compass, payload);
+  await stampCompassLoadSource(SCHEDULE_SHEET_ID, compass, payload, scope?.projectId ?? null);
 
   return {
     ok: true as const,
@@ -245,12 +323,12 @@ export const RESOURCES_SHEET_ID = 'resources';
 export async function importCompassResourceSheet(
   getMcpToolsets: ToolsetsGetter | undefined,
   getMcpGroups?: GroupsGetter,
-  pin: string | null = null,
+  scope?: CompassLoadScope,
 ): Promise<
   | { ok: true; sheet: string; imported: number }
   | { ok: false; error: string }
 > {
-  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, pin);
+  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
   const tool = compass?.toolset['get_resources'];
   if (!compass || !tool) {
     return { ok: false as const, error: 'compass MCP server not connected (no get_resources)' };
@@ -287,7 +365,7 @@ export async function importCompassResourceSheet(
     { key: 'source', name: '来源', type: 'text' as const },
   ];
   importTableSheet(RESOURCES_SHEET_ID, [], rows, undefined, descriptors);
-  await stampCompassLoadSource(RESOURCES_SHEET_ID, compass, payload);
+  await stampCompassLoadSource(RESOURCES_SHEET_ID, compass, payload, scope?.projectId ?? null);
   return { ok: true as const, sheet: RESOURCES_SHEET_ID, imported: rows.length };
 }
 
@@ -299,12 +377,12 @@ export const ORDERS_SHEET_ID = 'orders';
 export async function importCompassOrderSheet(
   getMcpToolsets: ToolsetsGetter | undefined,
   getMcpGroups?: GroupsGetter,
-  pin: string | null = null,
+  scope?: CompassLoadScope,
 ): Promise<
   | { ok: true; sheet: string; imported: number; total: number; columns: number }
   | { ok: false; error: string }
 > {
-  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, pin);
+  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
   const tool = compass?.toolset['get_schedule_rows'];
   if (!compass || !tool) {
     return { ok: false as const, error: 'compass MCP server not connected (no get_schedule_rows)' };
@@ -363,7 +441,7 @@ export async function importCompassOrderSheet(
   ];
   if (!listTableSheets().find((s) => s.id === ORDERS_SHEET_ID)) createTableSheet(ORDERS_SHEET_ID);
   importTableSheet(ORDERS_SHEET_ID, [], orderRows as Array<Record<string, string | number>>, undefined, descriptors);
-  await stampCompassLoadSource(ORDERS_SHEET_ID, compass, payload);
+  await stampCompassLoadSource(ORDERS_SHEET_ID, compass, payload, scope?.projectId ?? null);
   return {
     ok: true as const, sheet: ORDERS_SHEET_ID,
     imported: orderRows.length, total: orderRows.length, columns: descriptors.length,
@@ -410,6 +488,10 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       source: z
         .object({
           server: z.string(),
+          project: z
+            .string()
+            .optional()
+            .describe('Pinned project id at load time (v3 durable provenance identity).'),
           tenant: z.string().optional(),
           loadedAt: z.string(),
         })
@@ -430,18 +512,21 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     execute: async (input, ctx?: TableToolCtx) => {
       const sheet = resolveTableSheetId(input.sheet);
       const source = getTableSheetMeta(sheet)?.source ?? undefined;
-      const projectPin = ctx?.requestContext?.get('projectPin') as string | null | undefined;
+      // v3: both pin and stamp are PROJECT ids; tenantProjects feeds the
+      // legacy-stamp shim (see isProjectPinMismatch's re-key note).
+      const projectPin = readProjectPin(ctx);
+      const tenantProjects = readTenantProjects(ctx);
 
       // Hard refusal (audit fix #2): a STAMPED mismatch means we positively
       // know these rows belong to a different project — withhold them
       // entirely rather than let the agent treat a warning as optional
       // context. Legacy unstamped sheets fall through to the soft warning
       // below (buildProvenanceWarning's "本表无来源记录" branch).
-      if (isProjectPinMismatch(source, projectPin)) {
+      if (isProjectPinMismatch(source, projectPin, tenantProjects)) {
         return {
           sheet,
           refused: true,
-          warning: `${buildProvenanceWarning(source, projectPin)} — 请在当前项目下重新加载`,
+          warning: `${buildProvenanceWarning(source, projectPin, tenantProjects)} — 请在当前项目下重新加载`,
         };
       }
 
@@ -451,7 +536,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       const limit = Number(input.limit ?? DEFAULT_TABLE_GET_LIMIT);
       const { totalRows, rows } = listTableRowsPage(sheet, offset, limit);
       const hasMore = offset + rows.length < totalRows;
-      const warning = buildProvenanceWarning(source, projectPin);
+      const warning = buildProvenanceWarning(source, projectPin, tenantProjects);
       return {
         sheet,
         totalRows,
@@ -701,7 +786,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
           limit: input.limit == null ? undefined : Number(input.limit),
         },
         getMcpGroups,
-        readProjectPin(ctx),
+        compassScopeFromCtx(ctx),
       ),
   });
 
@@ -753,7 +838,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       '写入名为 orders 的表 sheet。展开一行 = 该订单的完整三级工艺路线。需要 Compass MCP 已连接。',
     inputSchema: z.object({}),
     execute: async (_input, ctx?: TableToolCtx) =>
-      importCompassOrderSheet(getMcpToolsets, getMcpGroups, readProjectPin(ctx)),
+      importCompassOrderSheet(getMcpToolsets, getMcpGroups, compassScopeFromCtx(ctx)),
   });
 
   const loadCompassResources = createTool({
@@ -763,7 +848,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       '写入名为 resources 的表 sheet 供展示（趋势列为迷你图）。需要 Compass MCP 服务器已连接。',
     inputSchema: z.object({}),
     execute: async (_input, ctx?: TableToolCtx) =>
-      importCompassResourceSheet(getMcpToolsets, getMcpGroups, readProjectPin(ctx)),
+      importCompassResourceSheet(getMcpToolsets, getMcpGroups, compassScopeFromCtx(ctx)),
   });
 
   return {

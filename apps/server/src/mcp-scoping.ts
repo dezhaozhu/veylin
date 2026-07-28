@@ -23,28 +23,31 @@
  *   directly and never applies a thread pin — Automate/Workflow runs are unscoped.
  * - `schedule-edit.ts` and `table-tools.ts` resolve their Compass toolset key
  *   through `resolveCompassServer` (below) instead of a hardcoded `toolsets['compass']`
- *   lookup. Their HTTP routes (routes/tables.ts: schedule-detail, the governed
- *   schedule-edit propose/preview/commit/discard routes, load-compass-schedule) resolve
- *   `pin` from the request's `threadId` (query for the GET, body-or-query for the
- *   POSTs — see `threadIdFromRequest` in routes/tables.ts) via `resolveThreadPin`
- *   (thread-state.ts) — the same `resolveThreadForRead` ownership check
- *   routes/mcp-apps.ts's `resolveScopedServerNames` applies, so a missing/foreign
- *   threadId still resolves to `pin: null` (today's pre-threading refusal behavior,
- *   unchanged). The `load_compass_*` agent-tool closures in table-tools.ts resolve
- *   their pin from the chat request's `requestContext.get('projectPin')` (set by
- *   routes/chat.ts) instead of a threadId, since they run inside an already-scoped
- *   chat turn. `resolveCompassServer` still protects every caller: it refuses
- *   (returns `null`, the existing "compass MCP not connected" failure path) rather
- *   than guessing `'compass'` when more than one Compass-prefixed server is connected
- *   and no pin matches. The other call site that is thread-tied —
+ *   lookup — re-keyed onto project scoping by Phase B 5c. Their HTTP routes
+ *   (routes/tables.ts: schedule-detail, the governed schedule-edit
+ *   propose/preview/commit/discard routes, load-compass-schedule) resolve the
+ *   request's `threadId` (query for the GET, body-or-query for the POSTs — see
+ *   `threadIdFromRequest` in routes/tables.ts) via `resolveThreadPin`
+ *   (thread-state.ts, the same `resolveThreadForRead` ownership check
+ *   routes/mcp-apps.ts's `resolveScopedServerNames` applies) into a PROJECT-id
+ *   pin, then through the shared prelude + pool
+ *   (`resolveCompassRequestScope`): a granted pin yields the POOLED scene-set
+ *   toolsets + `entryPin`; a missing/foreign threadId or denied pin falls back
+ *   to the tenant toolsets with `pin: null` (pre-threading refusal behavior,
+ *   unchanged — and post-cutover the tenant cache holds no compass at all).
+ *   The `load_compass_*` agent-tool closures in table-tools.ts resolve their
+ *   scope from the chat request's `requestContext` (`scopedMcpToolsets` +
+ *   `pinnedProjectScope`, set by routes/chat.ts — see `compassScopeFromCtx`),
+ *   since they run inside an already-scoped chat turn. `resolveCompassServer`
+ *   still protects every caller: it refuses (returns `null`, the existing
+ *   "compass MCP not connected" failure path) rather than guessing under any
+ *   ambiguity. The other call site that is thread-tied —
  *   `scheduleEditGuidanceBlock` from `routes/chat.ts`'s `/api/chat` handler — is
  *   passed the per-request pooled toolsets (`agentMcp`) and the entry-level pin.
- *   v3 interim (until Phase B 5c re-keys the table/schedule paths onto
- *   `requestContext.get('scopedMcpToolsets')` + project-id provenance): the
- *   `projectPin` context value now carries a PROJECT id, which never matches a
- *   toolset key, and the tenant toolsets contain no compass entry at all — so
- *   `resolveCompassServer` refuses on those paths. Fail-closed: an honest
- *   "compass not connected", never a cross-scene guess.
+ *   Provenance is re-keyed with it: sheets stamp `source.project` = the pinned
+ *   PROJECT id (never the resolved toolset key — plan risk #1) and
+ *   `isProjectPinMismatch` (table-store.ts) compares project ids, with the
+ *   permanent `legacyServerToProjectId` shim for pre-migration stamps.
  */
 
 export interface ScopedMcpResult {

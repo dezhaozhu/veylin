@@ -200,6 +200,24 @@ export function scopeServersToAllowlist(servers: string[], allowlist?: string[])
   return servers.filter((server) => allowed.has(server));
 }
 
+/**
+ * Toolsets a dispatched subagent receives: declared/preset servers ∩ the
+ * dispatching request's allowlist, each resolved OVERLAY-FIRST.
+ *
+ * `overlayToolsets` is the parent chat request's final per-request record
+ * (`requestContext.get('scopedMcpToolsets')`, set by routes/chat.ts:
+ * project-scoped + mcpEnabled-filtered + the POOLED compass toolsets for the
+ * pinned project's scene set), threaded through agent-task-tool.ts /
+ * SubagentJob. Plan risk #2 (wrong-scene-set toolset substitution): since
+ * Task 4, `buildMcpServerConfigs` excludes the compass identity group from
+ * every generic client, so `deps.mcpToolsets` (the tenant-level cache) can
+ * NEVER contain a compass entry — for compass the overlay is the ONLY
+ * possible source, and an overlay miss (no overlay, or compass denied/off/
+ * pool-failed for the parent turn) falls through to a tenant-cache miss =
+ * "no compass tools", never a headerless or other-project connection. The
+ * `deps.mcpToolsets` fallback therefore only ever serves ordinary
+ * (non-compass) servers, exactly as before.
+ */
 function toolsetsForPreset(
   preset: SubagentPreset | undefined,
   agentId: string,
@@ -207,12 +225,14 @@ function toolsetsForPreset(
   deps: AgentTaskRunnerDeps,
   fork?: boolean,
   scopedMcpServers?: string[],
+  overlayToolsets?: Record<string, unknown>,
 ): Record<string, unknown> {
   const declared = runtime.definitions.get(agentId)?.definition.mcpServers ?? [];
   const toolsets: Record<string, unknown> = {};
   const servers = fork ? declared : preset?.includeMcp?.length ? preset.includeMcp : declared;
   for (const server of scopeServersToAllowlist(servers, scopedMcpServers)) {
-    if (deps.mcpToolsets[server]) toolsets[server] = deps.mcpToolsets[server];
+    const toolset = overlayToolsets?.[server] ?? deps.mcpToolsets[server];
+    if (toolset) toolsets[server] = toolset;
   }
   return toolsets;
 }
@@ -319,6 +339,8 @@ export async function runSubagentGenerate(options: {
   taskId?: string | null;
   /** Dispatching request's scoped/active MCP servers — see `scopeServersToAllowlist`. */
   scopedMcpServers?: string[];
+  /** Dispatching request's per-request toolsets (pooled compass included) — see `toolsetsForPreset`. */
+  overlayToolsets?: Record<string, unknown>;
 }): Promise<SubagentRunResult> {
   const agent = options.runtime.getAgent(options.agentId);
   if (!agent) throw new Error(`Agent not registered: ${options.agentId}`);
@@ -378,6 +400,7 @@ export async function runSubagentGenerate(options: {
       options.deps,
       options.fork,
       options.scopedMcpServers,
+      options.overlayToolsets,
     ),
     abortSignal: options.abortSignal,
     tracingOptions: {
@@ -572,6 +595,7 @@ export async function executeSubagentJob(
       taskId: job.taskId,
       abortSignal: job.abortSignal,
       scopedMcpServers: job.scopedMcpServers,
+      overlayToolsets: job.overlayToolsets,
     });
 
     if (job.abortSignal?.aborted) {
@@ -661,6 +685,24 @@ export function scopedMcpServersFromCtx(
   return Array.isArray(value) ? (value as string[]) : undefined;
 }
 
+/**
+ * Read chat.ts's `scopedMcpToolsets` (the dispatching request's FINAL
+ * per-request toolset record — project-scoped, mcpEnabled-filtered, pooled
+ * compass overlay included) off a tool's requestContext — same pattern as
+ * `scopedMcpServersFromCtx` above, for the record-typed value. `undefined`
+ * when the dispatching request set none (no scoping context, e.g.
+ * Automate/Workflow) — subagents then fall back to `deps.mcpToolsets` alone,
+ * which post-Task-4 can never contain compass (see `toolsetsForPreset`).
+ */
+export function scopedMcpToolsetsFromCtx(
+  ctx: { requestContext?: { get(key: string): unknown } } | undefined,
+): Record<string, unknown> | undefined {
+  const value = ctx?.requestContext?.get('scopedMcpToolsets');
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
 export function devTenantFallback(): string {
   return DEV_TENANT_FALLBACK;
 }
@@ -672,6 +714,7 @@ export async function continueTaskThread(
   deps: AgentTaskRunnerDeps,
   resourceId: string,
   scopedMcpServers?: string[],
+  overlayToolsets?: Record<string, unknown>,
 ): Promise<SubagentRunResult> {
   const threadId = task.workerThreadId ?? `task-${task.id}`;
   const isFork = task.subagentType === FORK_SUBAGENT_TYPE;
@@ -707,6 +750,7 @@ export async function continueTaskThread(
       tenantId: task.tenantId,
       fork: true,
       scopedMcpServers,
+      overlayToolsets,
     });
   }
 
@@ -724,5 +768,6 @@ export async function continueTaskThread(
     resourceId,
     tenantId: task.tenantId,
     scopedMcpServers,
+    overlayToolsets,
   });
 }

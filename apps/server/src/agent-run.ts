@@ -31,7 +31,24 @@ export interface RunAgentResult {
   text: string;
 }
 
-/** Shared Mastra agent invocation used by Automate and Workflow run_agent nodes. */
+/**
+ * Shared Mastra agent invocation used by Automate and Workflow run_agent nodes.
+ *
+ * SCOPE NOTE (project-cognition v3 — mirrors mcp-scoping.ts's; consciously
+ * deferred, no functional change here): Automate/Workflow runs are UNSCOPED —
+ * no thread project pin is applied, and this path builds its own generic MCP
+ * client via `createMcpClient(tenantId, 'run')`. Since Phase B Task 4,
+ * `buildMcpServerConfigs` excludes every `COMPASS_IDENTITY_GROUP` entry from
+ * generic client configs, so this client can NEVER connect compass (neither
+ * headerless nor with a scene-set header) and `mcpToolsets` below never
+ * contains a compass toolset: automations that used to declare legacy
+ * `compass-<scene>` entries simply resolve nothing (those entries are
+ * disabled). Isolation gets strictly NARROWER here, never wider — an
+ * automation loses compass access rather than gaining an unscoped or
+ * wrong-scene connection (plan risk #2). Project-scoped compass for
+ * automations (a project binding on the automation itself + a pooled lookup,
+ * like routes/tables.ts's resolveCompassRequestScope) is future work.
+ */
 export async function runAgentPrompt(options: RunAgentOptions): Promise<RunAgentResult> {
   const {
     runtime,

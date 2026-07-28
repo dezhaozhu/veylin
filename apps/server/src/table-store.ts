@@ -13,8 +13,9 @@ import {
   upsertTableSheet,
   type TableSheetSource,
 } from '@veylin/db';
-import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
+import { DEFAULT_TABLE_STATUS_OPTIONS, type Project } from '@veylin/shared';
 import { EventEmitter } from 'node:events';
+import { legacyServerToProjectId } from './project-migration.js';
 
 // 'sparkline': cell holds a comma-separated numeric series ("3,5,2,…") rendered
 // as an in-cell trend chart when AG-Grid Enterprise is licensed (plain text otherwise).
@@ -425,12 +426,31 @@ export function getTableSheetMeta(sheetId: string): TableSheetMeta | undefined {
  * aggressive (see `buildProvenanceWarning` in table-tools.ts). Shared by
  * `table_get` (refuses rows outright) and `buildTableContextBlock` (omits the
  * sheet's data from the injected prompt block) so both surfaces agree.
+ *
+ * PROJECT-PIN RE-KEY (v3, Phase B 5c — plan risk #1, the highest of the
+ * phase): both sides of the comparison are PROJECT ids now. `projectPin` is
+ * the thread's pinned project id; the sheet's identity is
+ * `source.project` — stamped by the Compass load tools with the pinned
+ * project's id, NEVER the resolved toolset key (every project resolves the
+ * same `'compass'` key post-v3, so stamping the key would make every
+ * project's stamp identical and blind this check entirely). Legacy
+ * pre-migration stamps carry only `source.server` (an old entry name like
+ * `compass-guolu`): they are mapped through the permanent
+ * `legacyServerToProjectId` shim against the tenant's project rows
+ * (`projects`, threaded in by the caller). A stamped source that maps to NO
+ * project — foreign server, unknown source, or the caller supplied no
+ * project rows — is a positive "not this pin's project" and hard-refuses,
+ * exactly like the pre-re-key `server !== pin` comparison did (fail-closed).
  */
 export function isProjectPinMismatch(
   source: TableSheetSource | null | undefined,
   projectPin: string | null | undefined,
+  projects: Project[] = [],
 ): boolean {
-  return Boolean(projectPin) && Boolean(source?.server) && source!.server !== projectPin;
+  if (!projectPin) return false;
+  if (!source?.project && !source?.server) return false; // unstamped → soft-warning path
+  const sourceProject = source.project ?? legacyServerToProjectId(source.server, projects);
+  return sourceProject !== projectPin;
 }
 
 /**
@@ -564,14 +584,18 @@ export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string
 /**
  * Inject current table state so the model does not miss right-panel spreadsheet
  * data. `projectPin` lets a mismatched sheet (audit fix #2) be omitted from the
- * injected block the same way `table_get` refuses its rows.
+ * injected block the same way `table_get` refuses its rows. `projects` (the
+ * tenant's project rows, threaded from routes/chat.ts) feeds the legacy-stamp
+ * shim inside `isProjectPinMismatch` — omitting it under a pin makes every
+ * legacy-stamped sheet read as mismatched (fail-closed, never a leak).
  */
 export function buildTableContextBlock(
   threadId?: string | null,
   projectPin?: string | null,
+  projects: Project[] = [],
 ): string {
   const snapshots = listTableSheets(threadId).map((meta) => {
-    const pinMismatch = isProjectPinMismatch(meta.source, projectPin);
+    const pinMismatch = isProjectPinMismatch(meta.source, projectPin, projects);
     const columns = pinMismatch ? [] : listTableColumns(meta.id);
     const rows = pinMismatch ? [] : listTableRows(meta.id);
     return {

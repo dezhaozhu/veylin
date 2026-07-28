@@ -22,9 +22,15 @@ import {
   type TableEvent,
 } from '../table-store.js';
 import type { ServerDeps } from './types.js';
-import { unwrapMcpPayload, importCompassScheduleSheet } from '../table-tools.js';
+import {
+  unwrapMcpPayload,
+  importCompassScheduleSheet,
+  type CompassLoadScope,
+} from '../table-tools.js';
 import { resolveCompassServer } from '../mcp-scoping.js';
 import { resolveThreadPin } from '../thread-state.js';
+import { resolvePinnedProjectScope } from '../project-store.js';
+import { getPooledCompassToolsets, type CompassPoolDeps } from '../compass-pool.js';
 import {
   proposeScheduleEdit,
   previewScheduleEdit,
@@ -59,6 +65,80 @@ function threadIdFromRequest(req: {
   const body = req.body as { threadId?: string } | undefined;
   const query = req.query as { threadId?: string } | undefined;
   return body?.threadId ?? query?.threadId;
+}
+
+/**
+ * Per-request Compass scope for this file's Compass-backed routes
+ * (schedule-detail, the governed schedule-edit routes, load-compass-schedule)
+ * — project-cognition v3, Phase B 5c.
+ *
+ * `threadId → resolveThreadPin` (ownership-checked; the pin is a PROJECT id
+ * post-migration) `→ resolvePinnedProjectScope` (the shared prelude)
+ * `→ getPooledCompassToolsets` for the pinned project's scene set:
+ *
+ * - Pin resolves to an enabled project + compass entry → `getToolsets`
+ *   returns the POOLED record `{ [entryPin]: tools }` — the connection whose
+ *   `x-compass-source` header is exactly the project's scene set. The tenant
+ *   cache is never consulted (plan risk #2: post-Task-4 it cannot contain
+ *   compass; a pooled miss must mean "no compass", never a differently-scoped
+ *   substitute).
+ * - Pool failure → `getToolsets` returns `{}`: the honest "compass MCP not
+ *   connected" refusal every caller already has, never a fallback connection.
+ * - No/denied pin (missing, foreign, disabled, or unowned/foreign threadId —
+ *   `resolveThreadPin`'s ownership check) → tenant-toolsets fallback with a
+ *   null pin, today's pre-v3 no-thread-context path: post-cutover the tenant
+ *   cache has no compass (refusal); a legacy ungrouped manual `compass` entry
+ *   keeps resolving via `resolveCompassServer` rules 2/3.
+ *
+ * `projectId` is the provenance value stamped as `source.project` on sheets
+ * loaded through these routes (plan risk #1: the PROJECT id, never the
+ * resolved toolset key).
+ *
+ * Exported (with injectable seams, compass-pool deps style) as the testable
+ * seam — no HTTP harness exists in this repo (see tables-thread-pin.test.ts).
+ */
+export type CompassRequestScope = {
+  getToolsets: () => Record<string, unknown>;
+  entryPin: string | null;
+  projectId: string | null;
+  /** Scope for importCompassScheduleSheet; undefined = tenant-getter fallback (no pin). */
+  loadScope: CompassLoadScope | undefined;
+};
+
+export async function resolveCompassRequestScope(
+  threadId: string | undefined,
+  ctx: { tenantId: string; userId: string },
+  deps: { getMcpToolsets: () => Record<string, unknown> },
+  seams: {
+    resolveScope?: typeof resolvePinnedProjectScope;
+    getPooledToolsets?: typeof getPooledCompassToolsets;
+    poolDeps?: CompassPoolDeps;
+  } = {},
+): Promise<CompassRequestScope> {
+  const pin = await resolveThreadPin(threadId, ctx);
+  const scope = await (seams.resolveScope ?? resolvePinnedProjectScope)(ctx.tenantId, pin);
+  if (scope.entryPin == null || scope.entry == null || scope.project == null) {
+    return {
+      getToolsets: deps.getMcpToolsets,
+      entryPin: null,
+      projectId: null,
+      loadScope: undefined,
+    };
+  }
+  const pooled = await (seams.getPooledToolsets ?? getPooledCompassToolsets)(
+    ctx.tenantId,
+    scope.entry,
+    scope.sources,
+    seams.poolDeps ?? {},
+  );
+  const record: Record<string, unknown> =
+    pooled == null ? {} : { [scope.entryPin]: pooled[scope.entryPin] ?? {} };
+  return {
+    getToolsets: () => record,
+    entryPin: scope.entryPin,
+    projectId: scope.project.id,
+    loadScope: { toolsets: record, entryPin: scope.entryPin, projectId: scope.project.id },
+  };
 }
 
 type SheetAccess = { sheetId: string; threadId: string | null };
@@ -139,15 +219,16 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       limit?: string;
       threadId?: string;
     };
-    // Resolve the pin from the CURRENTLY OPEN thread (query param — mirrors
-    // GET /api/mcp-apps/tools in routes/mcp-apps.ts). A missing/foreign
-    // threadId resolves to `null` via resolveThreadPin's ownership check —
-    // resolveCompassServer then refuses (rather than guessing 'compass') when
-    // that leaves more than one Compass-prefixed server connected.
-    const pin = await resolveThreadPin(threadId, ctx);
-    const serverName = resolveCompassServer(deps.getMcpToolsets(), deps.getMcpGroups(), pin);
+    // Resolve the scope from the CURRENTLY OPEN thread (query param — mirrors
+    // GET /api/mcp-apps/tools in routes/mcp-apps.ts): threadId → project pin
+    // → pooled scene-set toolsets (see resolveCompassRequestScope above). A
+    // missing/foreign threadId falls back to the tenant toolsets with a null
+    // pin — resolveCompassServer then refuses rather than guessing.
+    const scope = await resolveCompassRequestScope(threadId, ctx, deps);
+    const scopedToolsets = scope.getToolsets();
+    const serverName = resolveCompassServer(scopedToolsets, deps.getMcpGroups(), scope.entryPin);
     const compass = serverName
-      ? (deps.getMcpToolsets()[serverName] as
+      ? (scopedToolsets[serverName] as
           | Record<string, { execute: (args: unknown) => Promise<unknown> }>
           | undefined)
       : undefined;
@@ -177,16 +258,16 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   // Compass's draft lane (propose → preview → commit/discard). The draft lives
   // in Compass keyed by the server's OBO principal — never a silent live write.
   //
-  // Each route below resolves its pin from the CURRENTLY OPEN thread (body or
-  // query threadId — the web client sends it in the JSON body since these are
-  // POSTs; query is accepted too, mirroring POST /api/mcp-apps/host). A
-  // missing/foreign threadId resolves to `null` via resolveThreadPin's
-  // ownership check — the same "no thread context" fallback these routes had
-  // before threading landed. deps.getMcpGroups() is still passed through so
-  // resolveCompassServer can refuse (rather than silently guess 'compass')
-  // when a grouped deployment has more than one Compass-prefixed server
-  // connected and no matching pin — an honest "not connected" beats a
-  // governed WRITE landing on the wrong tenant's Compass server.
+  // Each route below resolves its scope from the CURRENTLY OPEN thread (body
+  // or query threadId — the web client sends it in the JSON body since these
+  // are POSTs; query is accepted too, mirroring POST /api/mcp-apps/host) via
+  // resolveCompassRequestScope: threadId → project pin (ownership-checked) →
+  // pooled scene-set toolsets. A missing/foreign threadId keeps the same "no
+  // thread context" fallback these routes had before threading landed.
+  // deps.getMcpGroups() is still passed through so resolveCompassServer can
+  // refuse (rather than silently guess 'compass') under any ambiguity — an
+  // honest "not connected" beats a governed WRITE landing on the wrong
+  // project's Compass connection.
   // ------------------------------------------------------------------
   app.post('/api/schedule-edit/propose', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
@@ -195,24 +276,24 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     const { threadId: _threadId, ...body } = (req.body ?? {}) as ProposeEditBody & {
       threadId?: string;
     };
-    const pin = await resolveThreadPin(threadIdFromRequest(req), ctx);
-    const out = await proposeScheduleEdit(deps.getMcpToolsets, body, deps.getMcpGroups(), pin);
+    const scope = await resolveCompassRequestScope(threadIdFromRequest(req), ctx, deps);
+    const out = await proposeScheduleEdit(scope.getToolsets, body, deps.getMcpGroups(), scope.entryPin);
     if (!out.ok) reply.code('refused' in out && out.refused ? 403 : 503);
     return out;
   });
 
   app.post('/api/schedule-edit/preview', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const pin = await resolveThreadPin(threadIdFromRequest(req), ctx);
-    const out = await previewScheduleEdit(deps.getMcpToolsets, deps.getMcpGroups(), pin);
+    const scope = await resolveCompassRequestScope(threadIdFromRequest(req), ctx, deps);
+    const out = await previewScheduleEdit(scope.getToolsets, deps.getMcpGroups(), scope.entryPin);
     if (!out.ok) reply.code(503);
     return out;
   });
 
   app.post('/api/schedule-edit/commit', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const pin = await resolveThreadPin(threadIdFromRequest(req), ctx);
-    const out = await commitScheduleEdit(deps.getMcpToolsets, deps.getMcpGroups(), pin);
+    const scope = await resolveCompassRequestScope(threadIdFromRequest(req), ctx, deps);
+    const out = await commitScheduleEdit(scope.getToolsets, deps.getMcpGroups(), scope.entryPin);
     if (!out.ok) {
       reply.code('conflict' in out && out.conflict ? 409 : 503);
       return out;
@@ -221,7 +302,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     // (importTableSheet emits sheetReplace → SSE → client refetch).
     // Best-effort: the commit already happened — never turn a refresh failure into an error response.
     try {
-      await importCompassScheduleSheet(deps.getMcpToolsets, {}, deps.getMcpGroups, pin);
+      await importCompassScheduleSheet(deps.getMcpToolsets, {}, deps.getMcpGroups, scope.loadScope);
     } catch {
       /* best-effort refresh; grid converges on next manual load */
     }
@@ -230,8 +311,8 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
 
   app.post('/api/schedule-edit/discard', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const pin = await resolveThreadPin(threadIdFromRequest(req), ctx);
-    const out = await discardScheduleEdits(deps.getMcpToolsets, deps.getMcpGroups(), pin);
+    const scope = await resolveCompassRequestScope(threadIdFromRequest(req), ctx, deps);
+    const out = await discardScheduleEdits(scope.getToolsets, deps.getMcpGroups(), scope.entryPin);
     if (!out.ok) {
       reply.code(503);
       return out;
@@ -239,7 +320,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     // Re-import to revert the grid's optimistic cell echoes back to canonical.
     // Best-effort: the discard already happened — never turn a refresh failure into an error response.
     try {
-      await importCompassScheduleSheet(deps.getMcpToolsets, {}, deps.getMcpGroups, pin);
+      await importCompassScheduleSheet(deps.getMcpToolsets, {}, deps.getMcpGroups, scope.loadScope);
     } catch {
       /* best-effort refresh; grid converges on next manual load */
     }
@@ -256,8 +337,13 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       order_id?: string;
       threadId?: string;
     };
-    const pin = await resolveThreadPin(threadIdFromRequest(req), ctx);
-    const result = await importCompassScheduleSheet(deps.getMcpToolsets, body, deps.getMcpGroups, pin);
+    const scope = await resolveCompassRequestScope(threadIdFromRequest(req), ctx, deps);
+    const result = await importCompassScheduleSheet(
+      deps.getMcpToolsets,
+      body,
+      deps.getMcpGroups,
+      scope.loadScope,
+    );
     if (!result.ok) {
       reply.code(result.error.includes('not connected') ? 503 : 400);
       return result;
