@@ -1,9 +1,16 @@
 /**
- * Client-side display labels for grouped ("project") MCP servers. v1 identity
- * is the server name; this map is a small, hand-edited overlay for the
- * sidebar's human-readable labels. Unknown/new grouped servers fall back to
- * the raw server name — extend this map to rename them.
+ * Client-side display labels for projects.
+ *
+ * Source (scene) labels live in `@veylin/shared` (`PROJECT_SOURCE_LABELS`) —
+ * the server needs them to name reconciler-created default projects; re-exported
+ * here so web code keeps a single import site.
+ *
+ * The map below is the LEGACY per-entry overlay (v1 identity = MCP entry name).
+ * It stays web-side purely as a display fallback for pre-migration values that
+ * still hold old entry names (e.g. `moved_from`, unmigrated caches).
  */
+export { PROJECT_SOURCE_LABELS, projectSourceLabel } from '@veylin/shared';
+
 const PROJECT_LABELS: Record<string, string> = {
   'compass-guolu': '锅炉厂',
   'compass-shangzhong': '上重',

@@ -1,29 +1,34 @@
-import type { McpServer, McpServerInput } from '@veylin/shared';
+import type { McpServer, McpServerInput, Project } from '@veylin/shared';
+import { projectSourceLabel } from '@veylin/shared';
 
 /**
- * Auto-materializes MCP server entries from a single unified Compass account
- * identity — see docs/superpowers/specs/2026-07-27-unified-compass-identity-design.md §2.
+ * Syncs the single unified Compass account identity into the store — see
+ * docs/superpowers/specs/2026-07-27-project-cognition-v3-design.md §B1.
  *
  * `VEYLIN_COMPASS_IDENTITY` carries one account-level `{url, token}` pair.
  * `GET {url}/my/sources` (Compass side, already deployed) returns the list of
- * data-source "scenes" that account is granted. This module turns that list
- * into `compass-<source>` MCP server rows — creating new ones, *adopting*
- * same-name manual rows in place (the zero-migration cutover: today's
- * `compass-guolu`/`compass-shangzhong` entries just get their headers swapped
- * to the account+scene form), and disabling (never deleting) managed rows
- * whose source grant has been revoked.
+ * data-source "scenes" that account is granted. Each reconcile pass keeps two
+ * things in sync:
  *
- * Cross-scene sessions (see
- * docs/superpowers/specs/2026-07-27-cross-scene-design.md §4): once a tenant
- * has ≥2 granted sources, one extra managed `compass-对比` entry is also
- * materialized — same url, `x-compass-source` carrying every source
- * comma-joined — so a single MCP session can bind the whole scene set. It
- * rides the exact same create/adopt/disable machinery as any other entry.
+ * 1. **Exactly ONE managed MCP entry** named `compass` (`COMPASS_ENTRY_NAME`)
+ *    carrying only the account `Authorization` header — never
+ *    `x-compass-source`. Scene binding is per-*connection*, composed by the
+ *    compass client pool (Task 4) from the pinned project's source set; the
+ *    entry itself is scene-less. Legacy per-scene entries
+ *    (`compass-guolu`/`compass-shangzhong`/`compass-对比`) are no longer in
+ *    the desired set, so `desiredVsCurrent`'s existing disable branch retires
+ *    them automatically (disabled, never deleted).
  *
- * Mirrors mcp-retry-loop.ts's shape: a pure decision function
- * (`desiredVsCurrent`) that unit tests drive directly, plus an orchestration
- * function (`reconcileCompassIdentity`) that takes its collaborators as
- * `deps` so tests can stub the network call and the store.
+ * 2. **One managed default Project per granted source**
+ *    (`desiredDefaultProjectsVsCurrent`): created on first grant (named via
+ *    the shared source-label map), re-enabled on re-grant, disabled on
+ *    revoke. User-composed (`managed: false`) projects are never touched.
+ *
+ * Mirrors mcp-retry-loop.ts's shape: pure decision functions
+ * (`desiredVsCurrent`, `desiredDefaultProjectsVsCurrent`) that unit tests
+ * drive directly, plus an orchestration function
+ * (`reconcileCompassIdentity`) that takes its collaborators as `deps` so
+ * tests can stub the network call and the store.
  */
 
 export const COMPASS_IDENTITY_GROUP = 'compass-proj';
@@ -111,52 +116,39 @@ export type DesiredCompassEntry = {
   managed: true;
 };
 
-/** Managed name of the auto-materialized multi-scene comparison entry, spec §4. */
-export const COMPASS_COMPARE_ENTRY_NAME = 'compass-对比';
+/** Managed name of THE single Compass MCP entry (v3 §B1). */
+export const COMPASS_ENTRY_NAME = 'compass';
 
 /**
- * Desired MCP server entries per spec §2.2, one per granted source, PLUS
- * (spec §4) one extra managed `compass-对比` entry once the tenant has ≥2
- * granted sources — same url, but its `x-compass-source` header carries the
- * full sorted, de-duplicated, comma-joined source list, matching the
- * multi-scene session binding the Compass side accepts (§1). Below 2 sources
- * the entry is simply absent from `desired`, so `desiredVsCurrent` disables
- * any previously-materialized one the same way it disables a revoked scene.
+ * Desired MCP server entries: exactly ONE, named `compass`, carrying only the
+ * account `Authorization` header. Deliberately NO `x-compass-source` — scene
+ * binding moved to per-connection headers composed by the compass client pool
+ * from the pinned project's source set (v3 §B1), so the entry is scene-less.
+ *
+ * The grant list does not shape the entry (it shapes the default projects,
+ * see `desiredDefaultProjectsVsCurrent`); it is accepted here only so the
+ * reconciler's call site reads uniformly. Judgment call: the entry exists
+ * whenever the identity is configured, even at zero granted sources — access
+ * control lives at the project layer (no enabled project ⇒ every pin denies),
+ * and the pool never opens a connection without a source set.
  */
 export function desiredCompassEntries(
   config: CompassIdentityConfig,
-  sources: string[],
+  _sources: string[],
 ): DesiredCompassEntry[] {
-  const entries = sources.map((source) => ({
-    name: `compass-${source}`,
-    transport: 'http' as const,
-    url: `${config.url}/mcp/`,
-    headers: {
-      Authorization: `Bearer ${config.token}`,
-      'x-compass-source': source,
-    },
-    enabled: true as const,
-    group: COMPASS_IDENTITY_GROUP,
-    managed: true as const,
-  }));
-
-  const uniqueSources = Array.from(new Set(sources));
-  if (uniqueSources.length >= 2) {
-    entries.push({
-      name: COMPASS_COMPARE_ENTRY_NAME,
-      transport: 'http',
+  return [
+    {
+      name: COMPASS_ENTRY_NAME,
+      transport: 'http' as const,
       url: `${config.url}/mcp/`,
       headers: {
         Authorization: `Bearer ${config.token}`,
-        'x-compass-source': uniqueSources.sort().join(','),
       },
-      enabled: true,
+      enabled: true as const,
       group: COMPASS_IDENTITY_GROUP,
-      managed: true,
-    });
-  }
-
-  return entries;
+      managed: true as const,
+    },
+  ];
 }
 
 export type CompassDiffAction =
@@ -199,6 +191,11 @@ function matchesDesired(existing: McpServer, entry: DesiredCompassEntry): boolea
  *   disabled, and never touched (create/adopt/disable) if NOT managed — a
  *   manual entry that merely shares no name with any desired entry is left
  *   alone entirely.
+ *
+ * v3 note: with desired = [`compass`], the legacy managed per-scene rows
+ * (`compass-guolu`/`compass-shangzhong`/`compass-对比`) fall into the disable
+ * branch above with no special casing — their names never equal `compass`, so
+ * adopt-by-name cannot capture them.
  */
 export function desiredVsCurrent(
   desired: DesiredCompassEntry[],
@@ -229,11 +226,77 @@ export function desiredVsCurrent(
   return actions;
 }
 
+export type DefaultProjectActions = {
+  /** Granted source with no managed default project yet → create one. */
+  createProjects: { name: string; source: string }[];
+  /** Managed default project disabled earlier, source re-granted → re-enable. */
+  enableProjects: { id: string; name: string }[];
+  /** Managed default project whose source grant was revoked → disable. */
+  disableProjects: { id: string; name: string }[];
+};
+
+/**
+ * Pure diff: granted sources vs. the tenant's current project rows, producing
+ * the default-project sync actions (v3 §B1: one managed default project per
+ * granted source, `enabled` tracking the grant).
+ *
+ * - Only `managed: true` rows are ever considered — user-composed
+ *   (`managed: false`) projects are invisible to this diff and NEVER touched,
+ *   even when their sources overlap a granted or revoked source.
+ * - A default project is identified by being managed with exactly one source.
+ *   Managed rows with any other source count are an anomaly this fn leaves
+ *   alone (the reconciler only ever creates single-source managed rows).
+ * - Disabled-not-deleted: revoke → disable action; re-grant finds the
+ *   disabled row again and re-enables it instead of creating a duplicate.
+ */
+export function desiredDefaultProjectsVsCurrent(
+  sources: string[],
+  currentProjects: Project[],
+): DefaultProjectActions {
+  const granted = Array.from(new Set(sources));
+  const grantedSet = new Set(granted);
+
+  const managedBySource = new Map<string, Project>();
+  for (const project of currentProjects) {
+    if (!project.managed) continue; // user-composed rows: never touched
+    if (project.sources.length !== 1) continue; // not a default row: left alone
+    const source = project.sources[0]!;
+    if (!managedBySource.has(source)) managedBySource.set(source, project);
+  }
+
+  const actions: DefaultProjectActions = {
+    createProjects: [],
+    enableProjects: [],
+    disableProjects: [],
+  };
+
+  for (const source of granted) {
+    const existing = managedBySource.get(source);
+    if (!existing) {
+      actions.createProjects.push({ name: projectSourceLabel(source), source });
+    } else if (!existing.enabled) {
+      actions.enableProjects.push({ id: existing.id, name: existing.name });
+    }
+    // enabled + managed + granted → already in the desired state, no action.
+  }
+
+  for (const [source, project] of managedBySource) {
+    if (grantedSet.has(source)) continue;
+    if (!project.enabled) continue; // already disabled: no repeat action
+    actions.disableProjects.push({ id: project.id, name: project.name });
+  }
+
+  return actions;
+}
+
 export type CompassIdentitySummary = {
   created: number;
   adopted: number;
   disabled: number;
   unchanged: number;
+  projectsCreated: number;
+  projectsEnabled: number;
+  projectsDisabled: number;
 };
 
 export type CompassIdentityDeps = {
@@ -249,6 +312,24 @@ export type CompassIdentityDeps = {
   ) => Promise<McpServer | null>;
   /** The same rebuild function the manual /api/mcp-servers/reconnect route calls. */
   rebuildMcp: (tenantId: string) => Promise<void>;
+  /** Project store (default-project sync) — server.ts binds project-store.ts. */
+  listProjects: (tenantId: string) => Promise<Project[]>;
+  createProject: (
+    tenantId: string,
+    input: { name: string; sources: string[]; managed?: boolean; enabled?: boolean },
+  ) => Promise<Project>;
+  updateProject: (
+    tenantId: string,
+    id: string,
+    patch: { enabled?: boolean },
+  ) => Promise<Project | null>;
+  /**
+   * Invalidates the tenant's pooled compass connections (compass-pool.ts)
+   * whenever this pass changed anything (entry OR project), so no connection
+   * outlives a token/grant change — server.ts binds the real
+   * `invalidateCompassPool`. Optional so pure/stubbed tests can omit it.
+   */
+  invalidateCompassPool?: (tenantId: string) => void | Promise<void>;
   log?: (line: string) => void;
   warn?: (line: string) => void;
 };
@@ -258,13 +339,19 @@ const emptySummary = (): CompassIdentitySummary => ({
   adopted: 0,
   disabled: 0,
   unchanged: 0,
+  projectsCreated: 0,
+  projectsEnabled: 0,
+  projectsDisabled: 0,
 });
 
 /**
- * Fetch /my/sources, diff against the store, and apply. Never destructive on
- * fetch failure — logs one line and leaves every existing entry untouched.
- * Triggers the same rebuild/reconnect path the manual reconnect route uses
- * whenever anything actually changed.
+ * Fetch /my/sources, diff against the store, and apply — both the single
+ * `compass` entry AND the default projects in the same pass. Never destructive
+ * on fetch failure — logs one line and leaves every existing entry and project
+ * untouched. Triggers the same rebuild/reconnect path the manual reconnect
+ * route uses whenever an *entry* actually changed (project rows don't feed the
+ * generic MCP client, so project-only changes skip the rebuild); the pool
+ * invalidation hook fires on ANY change.
  */
 export async function reconcileCompassIdentity(
   deps: CompassIdentityDeps,
@@ -284,7 +371,7 @@ export async function reconcileCompassIdentity(
   const actions = desiredVsCurrent(desired, current);
 
   const summary = emptySummary();
-  let changed = false;
+  let entriesChanged = false;
 
   for (const action of actions) {
     switch (action.kind) {
@@ -300,7 +387,7 @@ export async function reconcileCompassIdentity(
           managed: true,
         });
         summary.created += 1;
-        changed = true;
+        entriesChanged = true;
         break;
       }
       case 'adopt': {
@@ -313,13 +400,13 @@ export async function reconcileCompassIdentity(
           managed: true,
         });
         summary.adopted += 1;
-        changed = true;
+        entriesChanged = true;
         break;
       }
       case 'disable': {
         await deps.updateRemoteMcpServer(deps.tenantId, action.id, { enabled: false });
         summary.disabled += 1;
-        changed = true;
+        entriesChanged = true;
         break;
       }
       case 'unchanged': {
@@ -329,12 +416,42 @@ export async function reconcileCompassIdentity(
     }
   }
 
-  if (changed) {
+  // Default-project sync — same pass, same grant list (v3 §B1).
+  const currentProjects = await deps.listProjects(deps.tenantId);
+  const projectActions = desiredDefaultProjectsVsCurrent(result.sources, currentProjects);
+  for (const create of projectActions.createProjects) {
+    await deps.createProject(deps.tenantId, {
+      name: create.name,
+      sources: [create.source],
+      managed: true,
+      enabled: true,
+    });
+    summary.projectsCreated += 1;
+  }
+  for (const enable of projectActions.enableProjects) {
+    await deps.updateProject(deps.tenantId, enable.id, { enabled: true });
+    summary.projectsEnabled += 1;
+  }
+  for (const disable of projectActions.disableProjects) {
+    await deps.updateProject(deps.tenantId, disable.id, { enabled: false });
+    summary.projectsDisabled += 1;
+  }
+  const projectsChanged =
+    summary.projectsCreated > 0 || summary.projectsEnabled > 0 || summary.projectsDisabled > 0;
+
+  if (entriesChanged) {
     await deps.rebuildMcp(deps.tenantId);
+  }
+  if (entriesChanged || projectsChanged) {
+    // Drops every pooled compass connection for the tenant (compass-pool.ts) —
+    // the pool reconnects lazily with fresh entry headers/grants on demand.
+    await deps.invalidateCompassPool?.(deps.tenantId);
   }
   log(
     `[compass-identity] tenant=${deps.tenantId} created=${summary.created} adopted=${summary.adopted} ` +
-      `disabled=${summary.disabled} unchanged=${summary.unchanged}`,
+      `disabled=${summary.disabled} unchanged=${summary.unchanged} ` +
+      `projectsCreated=${summary.projectsCreated} projectsEnabled=${summary.projectsEnabled} ` +
+      `projectsDisabled=${summary.projectsDisabled}`,
   );
   return summary;
 }

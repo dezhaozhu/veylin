@@ -145,6 +145,21 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS managed ON mcp_server TYPE option<bool>`,
   `DEFINE FIELD IF NOT EXISTS created_at ON mcp_server TYPE datetime DEFAULT time::now()`,
 
+  // Project = first-class pin target (v3): a named set of granted Compass
+  // sources ("scene set"). Reconciler-managed default rows carry `managed:
+  // true` (one per granted source, `enabled` tracks the grant); user-composed
+  // rows are `managed: false`. Disabled-not-deleted, like mcp_server rows.
+  `DEFINE TABLE IF NOT EXISTS project SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON project TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON project TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON project TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS sources ON project FLEXIBLE TYPE array DEFAULT []`,
+  `DEFINE FIELD IF NOT EXISTS managed ON project TYPE bool DEFAULT false`,
+  `DEFINE FIELD IF NOT EXISTS enabled ON project TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS migrated_from ON project TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON project TYPE datetime DEFAULT time::now()`,
+  `DEFINE INDEX IF NOT EXISTS project_tenant_idx ON project FIELDS tenant_id`,
+
   `DEFINE TABLE IF NOT EXISTS automation SCHEMAFULL`,
   `DEFINE FIELD IF NOT EXISTS id ON automation TYPE string`,
   `DEFINE FIELD IF NOT EXISTS tenant_id ON automation TYPE string`,

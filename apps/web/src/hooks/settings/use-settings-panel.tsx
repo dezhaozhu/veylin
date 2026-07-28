@@ -4,13 +4,20 @@ import { dispatchOverlayDismiss } from '@/lib/overlay-dismiss';
 
 export type { CustomizeTab, SettingsTab, WorkspaceView };
 
+/** Identity + display label of the 项目首页 the workspace is showing.
+ * The name is a snapshot for headers/nav labels; live data comes from
+ * `useProjects()` by id. */
+export type ProjectPageTarget = { id: string; name?: string };
+
 type WorkspacePanelContextValue = {
   view: WorkspaceView;
   customizeTab: CustomizeTab;
   settingsTab: SettingsTab;
+  projectPage: ProjectPageTarget | null;
   openCustomize: (tab?: CustomizeTab) => void;
   openAutomate: () => void;
   openAppSettings: () => void;
+  openProject: (projectId: string, projectName?: string) => void;
   closeWorkspace: () => void;
   setCustomizeTab: (tab: CustomizeTab) => void;
   setSettingsTab: (tab: SettingsTab) => void;
@@ -25,6 +32,7 @@ export function SettingsPanelProvider({ children }: { children: ReactNode }) {
   const [view, setView] = useState<WorkspaceView>('chat');
   const [customizeTab, setCustomizeTab] = useState<CustomizeTab>('rules');
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  const [projectPage, setProjectPage] = useState<ProjectPageTarget | null>(null);
 
   useEffect(() => {
     dispatchOverlayDismiss('workspace-view');
@@ -41,6 +49,11 @@ export function SettingsPanelProvider({ children }: { children: ReactNode }) {
 
   const openAppSettings = useCallback(() => {
     setView('settings');
+  }, []);
+
+  const openProject = useCallback((projectId: string, projectName?: string) => {
+    setProjectPage({ id: projectId, name: projectName });
+    setView('project');
   }, []);
 
   const closeWorkspace = useCallback(() => {
@@ -63,6 +76,10 @@ export function SettingsPanelProvider({ children }: { children: ReactNode }) {
         setSettingsTab(loc.tab);
         setView('settings');
         break;
+      case 'project':
+        setProjectPage({ id: loc.projectId, name: loc.projectName });
+        setView('project');
+        break;
     }
   }, []);
 
@@ -83,9 +100,11 @@ export function SettingsPanelProvider({ children }: { children: ReactNode }) {
       view,
       customizeTab,
       settingsTab,
+      projectPage,
       openCustomize,
       openAutomate,
       openAppSettings,
+      openProject,
       closeWorkspace,
       setCustomizeTab,
       setSettingsTab,
@@ -96,9 +115,11 @@ export function SettingsPanelProvider({ children }: { children: ReactNode }) {
       view,
       customizeTab,
       settingsTab,
+      projectPage,
       openCustomize,
       openAutomate,
       openAppSettings,
+      openProject,
       closeWorkspace,
       applyWorkspaceLocation,
       openSettings,

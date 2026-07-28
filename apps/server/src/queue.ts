@@ -26,6 +26,19 @@ export interface SubagentJob {
    * behavior.
    */
   scopedMcpServers?: string[];
+  /**
+   * The dispatching request's FINAL per-request toolset record (chat.ts's
+   * `scopedMcpToolsets`: project-scoped + mcpEnabled-filtered + the POOLED
+   * compass toolsets for the pinned project's scene set), captured at
+   * enqueue time. Resolved overlay-first in `toolsetsForPreset` — for
+   * compass this is the ONLY source (the tenant cache never contains
+   * compass post-Task-4). Contains live `execute` closures, so it is
+   * inherently non-serializable: the in-proc queue passes the job object by
+   * reference; a future distributed/serializing queue must drop this field,
+   * which fails CLOSED to "subagent gets no compass" (plan risk #2 — never
+   * a differently-scoped connection).
+   */
+  overlayToolsets?: Record<string, unknown>;
   /** Set by the in-proc queue when the job is cancelled mid-run. */
   abortSignal?: AbortSignal;
 }

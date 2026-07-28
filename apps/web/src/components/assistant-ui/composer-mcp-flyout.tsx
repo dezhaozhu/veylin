@@ -9,9 +9,10 @@ import { cn } from '@/lib/utils';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 
 /** Shared capability name for a group: the common name-prefix before the
- * first '-' across every member (e.g. "compass", "compass-guolu" ->
- * "compass"), lowercase as-is; falls back to the raw group id if members
- * don't share one. */
+ * first '-' across every member, lowercase as-is; falls back to the raw group
+ * id if members don't share one. Post-v3 a group normally has the single
+ * member "compass", so this is simply that name — the multi-member handling
+ * stays for generality (and legacy mixed states, see chat-settings.ts). */
 function capabilityLabel(groupId: string, members: McpGroupMember[]): string {
   const names = members.filter((m) => m.group === groupId).map((m) => m.name);
   if (names.length === 0) return groupId;
@@ -89,15 +90,15 @@ function McpServerRow({
   );
 }
 
-/** Plus-menu MCP flyout — toggles MCP servers for this chat. Grouped
- * ("project") servers (see project-list.tsx: which member of a group is
- * active for a thread is a project pin, managed from the sidebar) collapse
- * to one row per group — label is the group's shared capability name — that
- * looks and behaves exactly like an ungrouped server row. Toggling it writes
- * the same mcpEnabled value to every member of the group, so the off-state
- * survives project switches: it's a plain "does this chat get this
- * capability's tools" switch, never a data-source picker (the composer's
- * project chip already shows which source is pinned). */
+/** Plus-menu MCP flyout — toggles MCP servers for this chat. Grouped servers
+ * collapse to one row per group — label is the group's shared capability name
+ * — that looks and behaves exactly like an ungrouped server row. Toggling it
+ * writes the same mcpEnabled value to every member of the group, so the
+ * off-state survives project switches: it's a plain "does this chat get this
+ * capability's tools" switch, never a data-source picker (which data a thread
+ * sees is its project pin — a first-class project id, managed from the
+ * sidebar and shown by the composer's project chip). Post-v3 the compass
+ * group has the single member `compass`. */
 export const ComposerMcpFlyout: FC<{
   servers: string[];
   query: string;

@@ -7,6 +7,7 @@ import {
 } from '@veylin/db';
 import { mcpServerConfigs } from '@veylin/mcp-servers';
 import { mcpServerInputSchema, type McpServer, type McpServerInput } from '@veylin/shared';
+import { COMPASS_IDENTITY_GROUP } from './compass-identity.js';
 import {
   listEnabledPluginMcpServerNames,
   loadEnabledPluginMcpConfigs,
@@ -134,6 +135,15 @@ export async function buildMcpServerConfigs(tenantId: string): Promise<McpServer
 
   for (const server of remote) {
     if (!active.has(server.name)) continue;
+    // Compass-identity entries connect ONLY through the compass client pool
+    // (compass-pool.ts), which composes the per-connection `x-compass-source`
+    // scene binding. The entry itself is scene-less, so letting any generic
+    // client built from these configs — the tenant rebuild (server.ts via
+    // createMcpClient), agent-run.ts's createMcpClient('run'), or the
+    // mcp-apps freshClient base (routes/mcp-apps.ts) — connect it would open
+    // a headerless (unscoped) compass session. Skipped here, at the single
+    // config-builder all three paths share.
+    if (server.group === COMPASS_IDENTITY_GROUP) continue;
     configs[server.name] = {
       url: new URL(server.url),
       ...(Object.keys(server.headers).length > 0 ? { requestInit: { headers: server.headers } } : {}),

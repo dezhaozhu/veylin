@@ -46,7 +46,16 @@ describe('POST /api/compass-identity/refresh', () => {
   it('calls through to deps.syncCompassIdentity and returns its summary when configured', async () => {
     const app = Fastify();
     let calls = 0;
-    const summary = { created: 1, adopted: 2, disabled: 0, unchanged: 3 };
+    // v3 summary shape: entry counts + additive default-project sync counts.
+    const summary = {
+      created: 1,
+      adopted: 2,
+      disabled: 0,
+      unchanged: 3,
+      projectsCreated: 2,
+      projectsEnabled: 0,
+      projectsDisabled: 1,
+    };
     registerMcpRoutes(
       app,
       buildDeps({

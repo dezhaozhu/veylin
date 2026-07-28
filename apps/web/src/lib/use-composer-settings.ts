@@ -438,11 +438,13 @@ export function useMcpEnabled() {
 }
 
 /**
- * Grouped ("project") MCP servers + the current thread's project pin.
+ * Grouped MCP servers (capability plane, for the flyout's groupOf) + the
+ * current thread's project pin (a first-class project id since v3; display
+ * name lookup lives with the consumers via lib/projects-sync.ts).
  *
  * Read-only: switching a thread's project pin happens exclusively from the
  * sidebar's Projects section (project-list.tsx new-chat-in-project,
- * thread-list-item.tsx move-to-project menu), which POST /api/thread-project
+ * thread-list-item.tsx move-to-project menu), which POST /api/project
  * directly. A brand-new thread with no pin stays unpinned — it lands in the
  * 个人 (personal) area by design; there is no preselect/auto-pin here.
  */

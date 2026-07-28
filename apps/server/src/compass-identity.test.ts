@@ -1,26 +1,39 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { closeDb, connectDb } from '@veylin/db';
-import type { McpServer } from '@veylin/shared';
+import type { McpServer, Project } from '@veylin/shared';
 import {
-  COMPASS_COMPARE_ENTRY_NAME,
+  COMPASS_ENTRY_NAME,
   COMPASS_IDENTITY_GROUP,
   createCompassIdentitySyncLoop,
   desiredCompassEntries,
+  desiredDefaultProjectsVsCurrent,
   desiredVsCurrent,
   isCompassIdentitySyncEnabled,
   parseCompassIdentityConfig,
   reconcileCompassIdentity,
   type CompassIdentityConfig,
+  type CompassIdentitySummary,
 } from './compass-identity.js';
 import {
   createRemoteMcpServer,
   listRemoteMcpServers,
   updateRemoteMcpServer,
 } from './mcp-store.js';
+import { createProject, listProjects, updateProject } from './project-store.js';
 import { DEV_TENANT_ID, ensureDevTenant } from './tenant.js';
 
 const CONFIG: CompassIdentityConfig = { url: 'http://compass.local:8000', token: 'acct-jwt' };
+
+const ZERO_SUMMARY: CompassIdentitySummary = {
+  created: 0,
+  adopted: 0,
+  disabled: 0,
+  unchanged: 0,
+  projectsCreated: 0,
+  projectsEnabled: 0,
+  projectsDisabled: 0,
+};
 
 function server(overrides: Partial<McpServer> & Pick<McpServer, 'id' | 'name'>): McpServer {
   return {
@@ -28,6 +41,16 @@ function server(overrides: Partial<McpServer> & Pick<McpServer, 'id' | 'name'>):
     transport: 'http',
     url: 'https://stale.example.com/mcp',
     headers: {},
+    enabled: true,
+    ...overrides,
+  };
+}
+
+function project(overrides: Partial<Project> & Pick<Project, 'id' | 'sources'>): Project {
+  return {
+    tenantId: DEV_TENANT_ID,
+    name: overrides.id,
+    managed: true,
     enabled: true,
     ...overrides,
   };
@@ -66,260 +89,238 @@ describe('isCompassIdentitySyncEnabled', () => {
   });
 });
 
-describe('desiredCompassEntries', () => {
-  it('builds one compass-<source> entry per granted source, per spec §2.2', () => {
+describe('desiredCompassEntries (v3 — exactly ONE scene-less entry)', () => {
+  it('builds exactly one `compass` entry whose headers carry Authorization ONLY (no x-compass-source)', () => {
     const entries = desiredCompassEntries(CONFIG, ['guolu']);
+    assert.equal(entries.length, 1);
+    const [compass] = entries;
+    assert.equal(compass?.name, COMPASS_ENTRY_NAME);
+    assert.equal(compass?.url, 'http://compass.local:8000/mcp/');
+    assert.equal(compass?.transport, 'http');
+    assert.equal(compass?.enabled, true);
+    assert.equal(compass?.managed, true);
+    assert.equal(compass?.group, COMPASS_IDENTITY_GROUP);
+    // Byte-exact header set: Authorization and NOTHING else. Scene binding is
+    // per-connection (pool, Task 4), never on the entry.
+    assert.deepEqual(compass?.headers, { Authorization: 'Bearer acct-jwt' });
+    assert.ok(!('x-compass-source' in (compass?.headers ?? {})));
+  });
+
+  it('is the same single entry regardless of how many sources are granted', () => {
+    const one = desiredCompassEntries(CONFIG, ['guolu']);
+    const many = desiredCompassEntries(CONFIG, ['guolu', 'shangzhong', 'newfactory']);
+    assert.deepEqual(one, many);
     assert.deepEqual(
-      entries.map((e) => e.name),
-      ['compass-guolu'],
+      many.map((e) => e.name),
+      [COMPASS_ENTRY_NAME],
     );
-    const [guolu] = entries;
-    assert.equal(guolu?.url, 'http://compass.local:8000/mcp/');
-    assert.equal(guolu?.transport, 'http');
-    assert.equal(guolu?.enabled, true);
-    assert.equal(guolu?.managed, true);
-    assert.equal(guolu?.group, COMPASS_IDENTITY_GROUP);
-    assert.deepEqual(guolu?.headers, {
-      Authorization: 'Bearer acct-jwt',
-      'x-compass-source': 'guolu',
-    });
   });
 
-  it('is empty for an empty grant list', () => {
-    assert.deepEqual(desiredCompassEntries(CONFIG, []), []);
-  });
-
-  it('below 2 sources: no compass-对比 entry — one granted source stays exactly today\'s shape', () => {
-    const entries = desiredCompassEntries(CONFIG, ['guolu']);
-    assert.ok(!entries.some((e) => e.name === COMPASS_COMPARE_ENTRY_NAME));
-  });
-
-  it('at ≥2 sources, per spec §4, ALSO materializes one compass-对比 entry with every source comma-joined', () => {
+  it('never emits per-scene compass-<source> or compass-对比 names', () => {
     const entries = desiredCompassEntries(CONFIG, ['guolu', 'shangzhong']);
-    assert.deepEqual(
-      entries.map((e) => e.name),
-      ['compass-guolu', 'compass-shangzhong', COMPASS_COMPARE_ENTRY_NAME],
-    );
-    const compare = entries.find((e) => e.name === COMPASS_COMPARE_ENTRY_NAME);
-    assert.equal(compare?.url, 'http://compass.local:8000/mcp/');
-    assert.equal(compare?.enabled, true);
-    assert.equal(compare?.managed, true);
-    assert.equal(compare?.group, COMPASS_IDENTITY_GROUP);
-    assert.deepEqual(compare?.headers, {
-      Authorization: 'Bearer acct-jwt',
-      'x-compass-source': 'guolu,shangzhong',
-    });
+    assert.ok(!entries.some((e) => e.name.startsWith('compass-')));
   });
 
-  it('sorts and de-duplicates the compass-对比 header regardless of grant-list order', () => {
-    const entries = desiredCompassEntries(CONFIG, ['shangzhong', 'guolu', 'shangzhong']);
-    const compare = entries.find((e) => e.name === COMPASS_COMPARE_ENTRY_NAME);
-    assert.equal(compare?.headers['x-compass-source'], 'guolu,shangzhong');
-  });
-
-  it('materializes compass-对比 for 3+ sources too, sorted comma-joined', () => {
-    const entries = desiredCompassEntries(CONFIG, ['shangzhong', 'guolu', 'newfactory']);
-    const compare = entries.find((e) => e.name === COMPASS_COMPARE_ENTRY_NAME);
-    assert.equal(compare?.headers['x-compass-source'], 'guolu,newfactory,shangzhong');
+  it('still yields the single entry at zero granted sources — access control lives at the project layer', () => {
+    const entries = desiredCompassEntries(CONFIG, []);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]?.name, COMPASS_ENTRY_NAME);
   });
 });
 
-describe('desiredVsCurrent (pure diff matrix)', () => {
-  it('creates entries with no existing same-name row', () => {
+describe('desiredVsCurrent (pure diff — untouched fn, re-keyed fixtures)', () => {
+  it('creates the compass entry when no same-name row exists', () => {
     const desired = desiredCompassEntries(CONFIG, ['guolu']);
     const actions = desiredVsCurrent(desired, []);
     assert.deepEqual(actions, [{ kind: 'create', entry: desired[0] }]);
   });
 
-  it('adopts a same-name row whose fields differ — the zero-migration cutover', () => {
+  it('adopts a manual row a human happened to name `compass` (adopt-by-name unchanged)', () => {
     const desired = desiredCompassEntries(CONFIG, ['guolu']);
     const current = [
       server({
         id: 'srv-1',
-        name: 'compass-guolu',
+        name: COMPASS_ENTRY_NAME,
         url: 'https://old-tunnel.example.com/mcp',
         headers: { Authorization: 'Bearer old-per-tenant-jwt' },
-        // Not managed yet — this is exactly today's manual compass-guolu entry.
       }),
     ];
     const actions = desiredVsCurrent(desired, current);
     assert.deepEqual(actions, [{ kind: 'adopt', id: 'srv-1', entry: desired[0] }]);
   });
 
-  it('adopts a previously-managed row whose fields drifted (e.g. url changed)', () => {
+  it('is unchanged when the managed compass row already matches exactly', () => {
     const desired = desiredCompassEntries(CONFIG, ['guolu']);
     const current = [
       server({
         id: 'srv-1',
-        name: 'compass-guolu',
-        url: 'http://compass.local:8000/mcp/',
-        headers: { Authorization: 'Bearer stale-token', 'x-compass-source': 'guolu' },
-        group: COMPASS_IDENTITY_GROUP,
-        managed: true,
-      }),
-    ];
-    const actions = desiredVsCurrent(desired, current);
-    assert.deepEqual(actions, [{ kind: 'adopt', id: 'srv-1', entry: desired[0] }]);
-  });
-
-  it('is unchanged when a managed row already matches the desired entry exactly', () => {
-    const desired = desiredCompassEntries(CONFIG, ['guolu']);
-    const current = [
-      server({
-        id: 'srv-1',
-        name: 'compass-guolu',
+        name: COMPASS_ENTRY_NAME,
         url: desired[0]!.url,
         headers: desired[0]!.headers,
         group: desired[0]!.group,
         managed: true,
       }),
     ];
-    const actions = desiredVsCurrent(desired, current);
-    assert.deepEqual(actions, [{ kind: 'unchanged', id: 'srv-1' }]);
+    assert.deepEqual(desiredVsCurrent(desired, current), [{ kind: 'unchanged', id: 'srv-1' }]);
   });
 
-  it('disables a managed, enabled row whose source is no longer granted', () => {
+  it('legacy-entry disable matrix: managed compass-guolu/-shangzhong/-对比 all fall into the disable branch; manual rows untouched', () => {
+    // These legacy names never equal `compass`, so adopt-by-name cannot capture
+    // them — desiredVsCurrent retires them via its ordinary disable branch.
+    const desired = desiredCompassEntries(CONFIG, ['guolu', 'shangzhong']);
     const current = [
-      server({
-        id: 'srv-1',
-        name: 'compass-shangzhong',
-        managed: true,
-        enabled: true,
-        group: COMPASS_IDENTITY_GROUP,
-      }),
-    ];
-    const actions = desiredVsCurrent([], current);
-    assert.deepEqual(actions, [{ kind: 'disable', id: 'srv-1', name: 'compass-shangzhong' }]);
-  });
-
-  it('leaves an already-disabled managed row alone (no repeat disable action)', () => {
-    const current = [
-      server({ id: 'srv-1', name: 'compass-shangzhong', managed: true, enabled: false }),
-    ];
-    assert.deepEqual(desiredVsCurrent([], current), []);
-  });
-
-  it('never touches a manual (unmanaged) row that merely shares no name with any desired entry', () => {
-    const current = [
-      server({ id: 'srv-1', name: 'some-other-server', managed: false, enabled: true }),
-    ];
-    assert.deepEqual(desiredVsCurrent([], current), []);
-  });
-
-  it('mixes create + adopt + disable + unchanged in one pass (2+ sources also creates compass-对比)', () => {
-    const desired = desiredCompassEntries(CONFIG, ['guolu', 'newfactory']);
-    const current = [
-      // guolu: already fully in sync -> unchanged
       server({
         id: 'srv-guolu',
         name: 'compass-guolu',
-        url: desired[0]!.url,
-        headers: desired[0]!.headers,
-        group: desired[0]!.group,
+        url: 'http://compass.local:8000/mcp/',
+        headers: { Authorization: 'Bearer acct-jwt', 'x-compass-source': 'guolu' },
+        group: COMPASS_IDENTITY_GROUP,
         managed: true,
       }),
-      // shangzhong: managed, grant revoked -> disable
-      server({ id: 'srv-shangzhong', name: 'compass-shangzhong', managed: true, enabled: true }),
-      // an unrelated manual server -> left alone
-      server({ id: 'srv-other', name: 'github', managed: false }),
+      server({
+        id: 'srv-shangzhong',
+        name: 'compass-shangzhong',
+        url: 'http://compass.local:8000/mcp/',
+        headers: { Authorization: 'Bearer acct-jwt', 'x-compass-source': 'shangzhong' },
+        group: COMPASS_IDENTITY_GROUP,
+        managed: true,
+      }),
+      server({
+        id: 'srv-compare',
+        name: 'compass-对比',
+        url: 'http://compass.local:8000/mcp/',
+        headers: { Authorization: 'Bearer acct-jwt', 'x-compass-source': 'guolu,shangzhong' },
+        group: COMPASS_IDENTITY_GROUP,
+        managed: true,
+      }),
+      // Manual (unmanaged) row: must stay entirely untouched.
+      server({ id: 'srv-github', name: 'github', managed: false }),
     ];
     const actions = desiredVsCurrent(desired, current);
     assert.deepEqual(actions, [
-      { kind: 'unchanged', id: 'srv-guolu' },
-      { kind: 'create', entry: desired[1] },
-      { kind: 'create', entry: desired[2] }, // compass-对比, materialized because 2 sources are granted
+      { kind: 'create', entry: desired[0] },
+      { kind: 'disable', id: 'srv-guolu', name: 'compass-guolu' },
       { kind: 'disable', id: 'srv-shangzhong', name: 'compass-shangzhong' },
+      { kind: 'disable', id: 'srv-compare', name: 'compass-对比' },
     ]);
-    assert.equal(desired[2]?.name, COMPASS_COMPARE_ENTRY_NAME);
   });
 
-  describe('compass-对比 (spec §4 — the multi-scene comparison project)', () => {
-    it('creates compass-对比 once a tenant crosses to 2 granted sources', () => {
-      const desired = desiredCompassEntries(CONFIG, ['guolu', 'shangzhong']);
-      const actions = desiredVsCurrent(desired, []);
-      const compareAction = actions.find(
-        (a) => 'entry' in a && a.entry.name === COMPASS_COMPARE_ENTRY_NAME,
-      );
-      assert.deepEqual(compareAction, {
-        kind: 'create',
-        entry: desired.find((e) => e.name === COMPASS_COMPARE_ENTRY_NAME),
-      });
-    });
+  it('leaves already-disabled legacy managed rows alone (no repeat disable)', () => {
+    const desired = desiredCompassEntries(CONFIG, ['guolu']);
+    const current = [
+      server({ id: 'srv-guolu', name: 'compass-guolu', managed: true, enabled: false }),
+      server({ id: 'srv-compare', name: 'compass-对比', managed: true, enabled: false }),
+    ];
+    assert.deepEqual(desiredVsCurrent(desired, current), [{ kind: 'create', entry: desired[0] }]);
+  });
 
-    it('adopts (header update) when the granted source set changes under an existing compass-对比 row', () => {
-      const desired = desiredCompassEntries(CONFIG, ['guolu', 'shangzhong', 'newfactory']);
-      const compareDesired = desired.find((e) => e.name === COMPASS_COMPARE_ENTRY_NAME)!;
-      const current = [
-        server({
-          id: 'srv-compare',
-          name: COMPASS_COMPARE_ENTRY_NAME,
-          url: compareDesired.url,
-          // Stale header: the previous 2-source set, before newfactory was granted.
-          headers: {
-            Authorization: 'Bearer acct-jwt',
-            'x-compass-source': 'guolu,shangzhong',
-          },
-          group: COMPASS_IDENTITY_GROUP,
-          managed: true,
-        }),
-      ];
-      const actions = desiredVsCurrent(desired, current);
-      const compareAction = actions.find((a) => a.kind === 'adopt');
-      assert.deepEqual(compareAction, { kind: 'adopt', id: 'srv-compare', entry: compareDesired });
-      assert.equal(compareDesired.headers['x-compass-source'], 'guolu,newfactory,shangzhong');
-    });
+  it('never touches a MANUAL row that looks like a legacy per-scene entry (unmanaged compass-guolu)', () => {
+    const desired = desiredCompassEntries(CONFIG, ['guolu']);
+    const current = [
+      server({ id: 'srv-manual', name: 'compass-guolu', managed: false, enabled: true }),
+    ];
+    const actions = desiredVsCurrent(desired, current);
+    assert.deepEqual(actions, [{ kind: 'create', entry: desired[0] }]);
+  });
+});
 
-    it('disables a managed, enabled compass-对比 row once sources drop back below 2', () => {
-      // Only one source left granted -> desiredCompassEntries no longer includes
-      // compass-对比 at all, so it is diffed exactly like a revoked scene.
-      const desired = desiredCompassEntries(CONFIG, ['guolu']);
-      const current = [
-        server({
-          id: 'srv-compare',
-          name: COMPASS_COMPARE_ENTRY_NAME,
-          managed: true,
-          enabled: true,
-          group: COMPASS_IDENTITY_GROUP,
-        }),
-      ];
-      const actions = desiredVsCurrent(desired, current);
-      assert.deepEqual(
-        actions.filter((a) => 'id' in a && a.id === 'srv-compare'),
-        [{ kind: 'disable', id: 'srv-compare', name: COMPASS_COMPARE_ENTRY_NAME }],
-      );
+describe('desiredDefaultProjectsVsCurrent (pure default-project sync matrix)', () => {
+  it('creates one managed default project per freshly granted source, named via the shared label map', () => {
+    const actions = desiredDefaultProjectsVsCurrent(['guolu', 'shangzhong', 'newfactory'], []);
+    assert.deepEqual(actions, {
+      createProjects: [
+        { name: '锅炉厂', source: 'guolu' },
+        { name: '上重', source: 'shangzhong' },
+        // Unknown source: label falls back to the raw code.
+        { name: 'newfactory', source: 'newfactory' },
+      ],
+      enableProjects: [],
+      disableProjects: [],
     });
+  });
 
-    it('adopts a plain manual same-name row exactly like any other scene entry — the zero-migration cutover applies here too', () => {
-      const desired = desiredCompassEntries(CONFIG, ['guolu', 'shangzhong']);
-      const compareDesired = desired.find((e) => e.name === COMPASS_COMPARE_ENTRY_NAME)!;
-      const current = [
-        server({
-          id: 'srv-manual-compare',
-          name: COMPASS_COMPARE_ENTRY_NAME,
-          url: 'https://old-tunnel.example.com/mcp',
-          headers: { Authorization: 'Bearer old-per-tenant-jwt' },
-          // Not managed — a human happened to name a manual server compass-对比.
-        }),
-      ];
-      const actions = desiredVsCurrent(desired, current);
-      const compareAction = actions.find((a) => 'id' in a && a.id === 'srv-manual-compare');
-      assert.deepEqual(compareAction, {
-        kind: 'adopt',
-        id: 'srv-manual-compare',
-        entry: compareDesired,
-      });
+  it('emits no actions when every granted source already has an enabled managed default', () => {
+    const current = [
+      project({ id: 'proj-guolu', name: '锅炉厂', sources: ['guolu'] }),
+      project({ id: 'proj-shangzhong', name: '上重', sources: ['shangzhong'] }),
+    ];
+    const actions = desiredDefaultProjectsVsCurrent(['guolu', 'shangzhong'], current);
+    assert.deepEqual(actions, { createProjects: [], enableProjects: [], disableProjects: [] });
+  });
+
+  it('re-enables (never duplicates) a disabled managed default when its source is re-granted', () => {
+    const current = [
+      project({ id: 'proj-guolu', name: '锅炉厂', sources: ['guolu'], enabled: false }),
+    ];
+    const actions = desiredDefaultProjectsVsCurrent(['guolu'], current);
+    assert.deepEqual(actions, {
+      createProjects: [],
+      enableProjects: [{ id: 'proj-guolu', name: '锅炉厂' }],
+      disableProjects: [],
+    });
+  });
+
+  it('disables an enabled managed default whose source grant was revoked — and only once', () => {
+    const current = [
+      project({ id: 'proj-guolu', name: '锅炉厂', sources: ['guolu'] }),
+      project({ id: 'proj-shangzhong', name: '上重', sources: ['shangzhong'] }),
+      // Already disabled + still revoked: no repeat action.
+      project({ id: 'proj-old', name: 'oldfactory', sources: ['oldfactory'], enabled: false }),
+    ];
+    const actions = desiredDefaultProjectsVsCurrent(['guolu'], current);
+    assert.deepEqual(actions, {
+      createProjects: [],
+      enableProjects: [],
+      disableProjects: [{ id: 'proj-shangzhong', name: '上重' }],
+    });
+  });
+
+  it('NEVER touches user-composed (managed:false) rows — and still creates the default alongside them', () => {
+    const current = [
+      // User composed their own single-source guolu project; the managed
+      // default is a separate row and must still be created.
+      project({ id: 'proj-user', name: '我的锅炉', sources: ['guolu'], managed: false }),
+    ];
+    const actions = desiredDefaultProjectsVsCurrent(['guolu'], current);
+    assert.deepEqual(actions, {
+      createProjects: [{ name: '锅炉厂', source: 'guolu' }],
+      enableProjects: [],
+      disableProjects: [],
+    });
+  });
+
+  it('leaves a user-composed multi-source row alone even when one of its sources is revoked', () => {
+    const current = [
+      project({ id: 'proj-guolu', name: '锅炉厂', sources: ['guolu'] }),
+      project({
+        id: 'proj-compare',
+        name: '对比分析',
+        sources: ['guolu', 'shangzhong'],
+        managed: false,
+      }),
+    ];
+    // shangzhong revoked: the composed row keeps its frozen source set untouched.
+    const actions = desiredDefaultProjectsVsCurrent(['guolu'], current);
+    assert.deepEqual(actions, { createProjects: [], enableProjects: [], disableProjects: [] });
+  });
+
+  it('de-duplicates the grant list and skips anomalous managed multi-source rows', () => {
+    const current = [
+      // Managed multi-source row: never created by the reconciler; left alone.
+      project({ id: 'proj-weird', name: 'weird', sources: ['a', 'b'] }),
+    ];
+    const actions = desiredDefaultProjectsVsCurrent(['guolu', 'guolu'], current);
+    assert.deepEqual(actions, {
+      createProjects: [{ name: '锅炉厂', source: 'guolu' }],
+      enableProjects: [],
+      disableProjects: [],
     });
   });
 });
 
 describe('createCompassIdentitySyncLoop', () => {
   it('start()/stop() do not throw and stop() is idempotent', () => {
-    const loop = createCompassIdentitySyncLoop({ sync: async () => ({
-      created: 0,
-      adopted: 0,
-      disabled: 0,
-      unchanged: 0,
-    }) });
+    const loop = createCompassIdentitySyncLoop({ sync: async () => ({ ...ZERO_SUMMARY }) });
     loop.start();
     loop.stop();
     loop.stop();
@@ -351,7 +352,7 @@ describe('createCompassIdentitySyncLoop', () => {
       sync: async () => {
         calls += 1;
         await gate;
-        return { created: 0, adopted: 0, disabled: 0, unchanged: 0 };
+        return { ...ZERO_SUMMARY };
       },
     });
 
@@ -366,7 +367,7 @@ describe('createCompassIdentitySyncLoop', () => {
 });
 
 describe('reconcileCompassIdentity — fetch failure is a no-op', () => {
-  it('never touches the store and returns a zero summary when /my/sources fails', async () => {
+  it('never touches entries OR projects and returns a zero summary when /my/sources fails', async () => {
     const warnings: string[] = [];
     let storeTouched = false;
     const summary = await reconcileCompassIdentity({
@@ -388,11 +389,26 @@ describe('reconcileCompassIdentity — fetch failure is a no-op', () => {
       rebuildMcp: async () => {
         storeTouched = true;
       },
+      listProjects: async () => {
+        storeTouched = true;
+        return [];
+      },
+      createProject: async () => {
+        storeTouched = true;
+        throw new Error('must not be called');
+      },
+      updateProject: async () => {
+        storeTouched = true;
+        throw new Error('must not be called');
+      },
+      invalidateCompassPool: () => {
+        storeTouched = true;
+      },
       warn: (l) => warnings.push(l),
       log: () => undefined,
     });
 
-    assert.deepEqual(summary, { created: 0, adopted: 0, disabled: 0, unchanged: 0 });
+    assert.deepEqual(summary, ZERO_SUMMARY);
     assert.equal(storeTouched, false);
     assert.match(warnings[0] ?? '', /ECONNREFUSED/);
   });
@@ -408,30 +424,32 @@ describe('reconcileCompassIdentity — integration against the real embedded sto
     await closeDb();
   });
 
-  it('creates missing entries, adopts a same-name manual entry, disables a revoked one, and rebuilds', async () => {
+  /** Real project-store bindings shared by every integration reconcile call. */
+  const projectDeps = { listProjects, createProject, updateProject };
+
+  it('creates the single compass entry + default projects, disables legacy per-scene rows, and rebuilds', async () => {
     // Own tenant id per test (not DEV_TENANT_ID) — the reconciler diffs against
     // *every* current row for a tenant, so integration tests need full
     // isolation from each other, not just unique names within a shared tenant.
     const suffix = Date.now();
     const tenantId = `compass-identity-test-${suffix}`;
-    const manualName = `compass-guolu-${suffix}`;
-    const revokedName = `compass-shangzhong-${suffix}`;
     const untouchedName = `unrelated-${suffix}`;
 
-    // Pre-existing manual entry sharing the name of a to-be-desired server.
-    await createRemoteMcpServer(tenantId, {
-      name: manualName,
-      transport: 'http',
-      url: 'https://old-tunnel.example.com/mcp',
-      headers: { Authorization: 'Bearer old-per-tenant-jwt' },
-      enabled: true,
-    });
-    // Pre-existing managed entry whose source is about to vanish from the grant list.
-    const revoked = await createRemoteMcpServer(tenantId, {
-      name: revokedName,
+    // Legacy per-scene managed rows from the pre-v3 reconciler.
+    const legacyGuolu = await createRemoteMcpServer(tenantId, {
+      name: 'compass-guolu',
       transport: 'http',
       url: 'http://compass.local:8000/mcp/',
-      headers: { Authorization: 'Bearer acct-jwt', 'x-compass-source': revokedName },
+      headers: { Authorization: 'Bearer acct-jwt', 'x-compass-source': 'guolu' },
+      enabled: true,
+      group: COMPASS_IDENTITY_GROUP,
+      managed: true,
+    });
+    const legacyCompare = await createRemoteMcpServer(tenantId, {
+      name: 'compass-对比',
+      transport: 'http',
+      url: 'http://compass.local:8000/mcp/',
+      headers: { Authorization: 'Bearer acct-jwt', 'x-compass-source': 'guolu,shangzhong' },
       enabled: true,
       group: COMPASS_IDENTITY_GROUP,
       managed: true,
@@ -446,113 +464,137 @@ describe('reconcileCompassIdentity — integration against the real embedded sto
     });
 
     let rebuildCalls = 0;
-    const config: CompassIdentityConfig = { url: 'http://compass.local:8000', token: 'acct-jwt' };
-    const grantedSources = [manualName.replace('compass-', ''), `new-${suffix}`];
+    let invalidateCalls = 0;
     const summary = await reconcileCompassIdentity({
       tenantId,
-      config,
-      // Grants: the manual entry's source (adopt) plus a brand-new source (create).
-      // The revoked entry's source is intentionally absent (disable). Two
-      // sources granted also exercises spec §4: a fresh compass-对比 row is
-      // created alongside compass-<new-source> (summary.created == 2).
-      fetchSources: async () => ({ ok: true, sources: grantedSources }),
+      config: CONFIG,
+      fetchSources: async () => ({ ok: true, sources: ['guolu', 'shangzhong'] }),
       listRemoteMcpServers,
       createRemoteMcpServer,
       updateRemoteMcpServer,
       rebuildMcp: async () => {
         rebuildCalls += 1;
       },
+      invalidateCompassPool: () => {
+        invalidateCalls += 1;
+      },
+      ...projectDeps,
       log: () => undefined,
       warn: () => undefined,
     });
 
-    assert.equal(summary.created, 2);
-    assert.equal(summary.adopted, 1);
-    assert.equal(summary.disabled, 1);
+    assert.equal(summary.created, 1); // the single `compass` entry
+    assert.equal(summary.adopted, 0);
+    assert.equal(summary.disabled, 2); // both legacy rows
+    assert.equal(summary.projectsCreated, 2); // 锅炉厂 + 上重 defaults
     assert.equal(rebuildCalls, 1);
+    assert.equal(invalidateCalls, 1);
 
-    const after = await listRemoteMcpServers(tenantId);
+    const servers = await listRemoteMcpServers(tenantId);
 
-    const adopted = after.find((s) => s.name === manualName);
-    assert.equal(adopted?.managed, true);
-    assert.equal(adopted?.url, `${config.url}/mcp/`);
-    assert.equal(adopted?.headers['x-compass-source'], manualName.replace('compass-', ''));
-    assert.equal(adopted?.group, COMPASS_IDENTITY_GROUP);
+    const compass = servers.find((s) => s.name === COMPASS_ENTRY_NAME);
+    assert.equal(compass?.managed, true);
+    assert.equal(compass?.enabled, true);
+    assert.equal(compass?.group, COMPASS_IDENTITY_GROUP);
+    assert.equal(compass?.url, `${CONFIG.url}/mcp/`);
+    assert.deepEqual(compass?.headers, { Authorization: 'Bearer acct-jwt' });
 
-    const created = after.find((s) => s.name === `compass-new-${suffix}`);
-    assert.equal(created?.managed, true);
-    assert.equal(created?.enabled, true);
+    // Legacy-entry auto-disable, verified against the real store.
+    const guoluAfter = servers.find((s) => s.id === legacyGuolu.id);
+    assert.equal(guoluAfter?.enabled, false);
+    assert.equal(guoluAfter?.managed, true); // disabled, never deleted
+    const compareAfter = servers.find((s) => s.id === legacyCompare.id);
+    assert.equal(compareAfter?.enabled, false);
 
-    const compare = after.find((s) => s.name === COMPASS_COMPARE_ENTRY_NAME);
-    assert.equal(compare?.managed, true);
-    assert.equal(compare?.enabled, true);
-    assert.equal(compare?.group, COMPASS_IDENTITY_GROUP);
-    assert.deepEqual(
-      compare?.headers['x-compass-source']?.split(','),
-      [...grantedSources].sort(),
-    );
-
-    const disabled = after.find((s) => s.id === revoked.id);
-    assert.equal(disabled?.enabled, false);
-    assert.equal(disabled?.managed, true); // disabled, never deleted, still managed
-
-    const untouched = after.find((s) => s.name === untouchedName);
+    const untouched = servers.find((s) => s.name === untouchedName);
     assert.equal(untouched?.enabled, true);
     assert.equal(untouched?.managed, undefined);
+
+    const projects = await listProjects(tenantId);
+    const guoluProject = projects.find((p) => p.name === '锅炉厂');
+    assert.deepEqual(guoluProject?.sources, ['guolu']);
+    assert.equal(guoluProject?.managed, true);
+    assert.equal(guoluProject?.enabled, true);
+    const shangzhongProject = projects.find((p) => p.name === '上重');
+    assert.deepEqual(shangzhongProject?.sources, ['shangzhong']);
+    assert.equal(shangzhongProject?.managed, true);
   });
 
-  it('disables compass-对比 once the source grant list drops back below 2 (adoption/drop symmetry)', async () => {
+  it('revoke → disable, re-grant → re-enable the SAME default project row (no duplicates)', async () => {
     const suffix = Date.now();
-    const tenantId = `compass-identity-test-compare-${suffix}`;
+    const tenantId = `compass-identity-test-regrant-${suffix}`;
     const sourceA = `alpha-${suffix}`;
     const sourceB = `beta-${suffix}`;
-    const config: CompassIdentityConfig = { url: 'http://compass.local:8000', token: 'acct-jwt' };
 
-    // Round 1: both sources granted -> compass-对比 gets created.
-    const round1 = await reconcileCompassIdentity({
+    const invalidations: number[] = [];
+    const deps = (sources: string[], counters: { rebuilds: number }) => ({
       tenantId,
-      config,
-      fetchSources: async () => ({ ok: true, sources: [sourceA, sourceB] }),
+      config: CONFIG,
+      fetchSources: async () => ({ ok: true as const, sources }),
       listRemoteMcpServers,
       createRemoteMcpServer,
       updateRemoteMcpServer,
-      rebuildMcp: async () => undefined,
+      rebuildMcp: async () => {
+        counters.rebuilds += 1;
+      },
+      invalidateCompassPool: () => {
+        invalidations.push(1);
+      },
+      ...projectDeps,
       log: () => undefined,
       warn: () => undefined,
     });
-    assert.equal(round1.created, 3); // sourceA, sourceB, compass-对比
 
-    const afterRound1 = await listRemoteMcpServers(tenantId);
-    const compareAfterRound1 = afterRound1.find((s) => s.name === COMPASS_COMPARE_ENTRY_NAME);
-    assert.equal(compareAfterRound1?.enabled, true);
-    assert.equal(compareAfterRound1?.managed, true);
+    // Round 1: both granted → entry + 2 default projects created.
+    const c1 = { rebuilds: 0 };
+    const round1 = await reconcileCompassIdentity(deps([sourceA, sourceB], c1));
+    assert.equal(round1.created, 1);
+    assert.equal(round1.projectsCreated, 2);
+    assert.equal(c1.rebuilds, 1);
 
-    // Round 2: sourceB's grant is revoked -> only 1 source left -> compass-对比 disables.
-    const round2 = await reconcileCompassIdentity({
-      tenantId,
-      config,
-      fetchSources: async () => ({ ok: true, sources: [sourceA] }),
-      listRemoteMcpServers,
-      createRemoteMcpServer,
-      updateRemoteMcpServer,
-      rebuildMcp: async () => undefined,
-      log: () => undefined,
-      warn: () => undefined,
+    const afterRound1 = await listProjects(tenantId);
+    const rowB = afterRound1.find((p) => p.sources.length === 1 && p.sources[0] === sourceB);
+    assert.equal(rowB?.enabled, true);
+
+    // Round 2: sourceB revoked → its default project disables. The entry is
+    // unchanged, so rebuildMcp must NOT fire — but the pool hook must (a
+    // project change alone still invalidates pooled connections).
+    const c2 = { rebuilds: 0 };
+    const round2 = await reconcileCompassIdentity(deps([sourceA], c2));
+    assert.deepEqual(round2, {
+      ...ZERO_SUMMARY,
+      unchanged: 1,
+      projectsDisabled: 1,
     });
-    assert.equal(round2.disabled, 2); // compass-<sourceB> and compass-对比
+    assert.equal(c2.rebuilds, 0);
+    assert.equal(invalidations.length, 2);
 
-    const afterRound2 = await listRemoteMcpServers(tenantId);
-    const compareAfterRound2 = afterRound2.find((s) => s.name === COMPASS_COMPARE_ENTRY_NAME);
-    assert.equal(compareAfterRound2?.enabled, false);
-    assert.equal(compareAfterRound2?.managed, true); // disabled, never deleted
+    const afterRound2 = await listProjects(tenantId);
+    const rowBDisabled = afterRound2.find((p) => p.id === rowB?.id);
+    assert.equal(rowBDisabled?.enabled, false);
+    assert.equal(rowBDisabled?.managed, true); // disabled, never deleted
+
+    // Round 3: sourceB re-granted → the SAME row re-enables; nothing new created.
+    const c3 = { rebuilds: 0 };
+    const round3 = await reconcileCompassIdentity(deps([sourceA, sourceB], c3));
+    assert.deepEqual(round3, {
+      ...ZERO_SUMMARY,
+      unchanged: 1,
+      projectsEnabled: 1,
+    });
+
+    const afterRound3 = await listProjects(tenantId);
+    const rowsForB = afterRound3.filter((p) => p.sources.length === 1 && p.sources[0] === sourceB);
+    assert.equal(rowsForB.length, 1);
+    assert.equal(rowsForB[0]?.id, rowB?.id);
+    assert.equal(rowsForB[0]?.enabled, true);
   });
 
-  it('does not call rebuildMcp when every entry is already unchanged', async () => {
+  it('steady state: everything already in sync → zero actions, no rebuild, no pool invalidation', async () => {
     const suffix = Date.now();
     const tenantId = `compass-identity-test-steady-${suffix}`;
     const source = `steady-${suffix}`;
-    const config: CompassIdentityConfig = { url: 'http://compass.local:8000', token: 'acct-jwt' };
-    const [entry] = desiredCompassEntries(config, [source]);
+    const [entry] = desiredCompassEntries(CONFIG, [source]);
     await createRemoteMcpServer(tenantId, {
       name: entry!.name,
       transport: entry!.transport,
@@ -562,11 +604,18 @@ describe('reconcileCompassIdentity — integration against the real embedded sto
       group: entry!.group,
       managed: true,
     });
+    await createProject(tenantId, {
+      name: source,
+      sources: [source],
+      managed: true,
+      enabled: true,
+    });
 
     let rebuildCalls = 0;
+    let invalidateCalls = 0;
     const summary = await reconcileCompassIdentity({
       tenantId,
-      config,
+      config: CONFIG,
       fetchSources: async () => ({ ok: true, sources: [source] }),
       listRemoteMcpServers,
       createRemoteMcpServer,
@@ -574,11 +623,56 @@ describe('reconcileCompassIdentity — integration against the real embedded sto
       rebuildMcp: async () => {
         rebuildCalls += 1;
       },
+      invalidateCompassPool: () => {
+        invalidateCalls += 1;
+      },
+      ...projectDeps,
       log: () => undefined,
       warn: () => undefined,
     });
 
-    assert.deepEqual(summary, { created: 0, adopted: 0, disabled: 0, unchanged: 1 });
+    assert.deepEqual(summary, { ...ZERO_SUMMARY, unchanged: 1 });
     assert.equal(rebuildCalls, 0);
+    assert.equal(invalidateCalls, 0);
+  });
+
+  it('a user-composed project overlapping a revoked source survives the reconcile untouched', async () => {
+    const suffix = Date.now();
+    const tenantId = `compass-identity-test-composed-${suffix}`;
+    const sourceA = `gamma-${suffix}`;
+    const sourceB = `delta-${suffix}`;
+
+    // User-composed row spanning both sources (managed:false).
+    const composed = await createProject(tenantId, {
+      name: `对比-${suffix}`,
+      sources: [sourceA, sourceB],
+      managed: false,
+    });
+
+    // Only sourceA is granted — sourceB is effectively revoked.
+    const summary = await reconcileCompassIdentity({
+      tenantId,
+      config: CONFIG,
+      fetchSources: async () => ({ ok: true, sources: [sourceA] }),
+      listRemoteMcpServers,
+      createRemoteMcpServer,
+      updateRemoteMcpServer,
+      rebuildMcp: async () => undefined,
+      ...projectDeps,
+      log: () => undefined,
+      warn: () => undefined,
+    });
+
+    // Only the entry + the sourceA default were materialized; the composed row
+    // was neither disabled nor re-sourced.
+    assert.equal(summary.created, 1);
+    assert.equal(summary.projectsCreated, 1);
+    assert.equal(summary.projectsDisabled, 0);
+
+    const projects = await listProjects(tenantId);
+    const composedAfter = projects.find((p) => p.id === composed.id);
+    assert.equal(composedAfter?.enabled, true);
+    assert.equal(composedAfter?.managed, false);
+    assert.deepEqual(composedAfter?.sources, [sourceA, sourceB]);
   });
 });

@@ -69,7 +69,18 @@
     "emptyProject": "No chats yet",
     "moveToProject": "Move to project…",
     "moveToProjectHint": "History stays with its original project; new messages use the target project",
-    "back": "Back"
+    "back": "Back",
+    "newProject": "New project",
+    "projectSources": "Data sources",
+    "creatingProject": "Creating…",
+    "toggleProject": "Expand or collapse {{name}}"
+  },
+  "projectPage": {
+    "title": "Project overview",
+    "loading": "Loading…",
+    "cardError": "Couldn't load",
+    "threads": "Chats",
+    "notFound": "This project is unavailable or disabled"
   },
   "header": {
     "back": "Back",

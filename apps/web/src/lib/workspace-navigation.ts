@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next';
 
-export type WorkspaceView = 'chat' | 'customize' | 'automate' | 'settings';
+export type WorkspaceView = 'chat' | 'customize' | 'automate' | 'settings' | 'project';
 export type CustomizeTab = 'skills' | 'rules' | 'mcp' | 'hooks' | 'plugins';
 export type SettingsTab = 'general' | 'models' | 'business';
 
@@ -8,7 +8,10 @@ export type WorkspaceLocation =
   | { view: 'chat'; threadId: string; threadTitle?: string }
   | { view: 'customize'; tab: CustomizeTab }
   | { view: 'automate' }
-  | { view: 'settings'; tab: SettingsTab };
+  | { view: 'settings'; tab: SettingsTab }
+  // 项目首页 — projectName is display-only (label for back/forward), the id is
+  // the identity (matches the sidebar's project.id / server project rows).
+  | { view: 'project'; projectId: string; projectName?: string };
 
 export type NavState = {
   entries: WorkspaceLocation[];
@@ -30,6 +33,8 @@ export function locationKey(loc: WorkspaceLocation): string {
       return 'automate';
     case 'settings':
       return `settings:${loc.tab}`;
+    case 'project':
+      return `project:${loc.projectId}`;
   }
 }
 
@@ -96,6 +101,8 @@ export function getLocationLabel(loc: WorkspaceLocation, t: TFunction): string {
       return t('automate.title');
     case 'settings':
       return `${t('settings.navTitle')} · ${t(`settings.${loc.tab}.nav`)}`;
+    case 'project':
+      return loc.projectName?.trim() || t('projectPage.title');
   }
 }
 
@@ -105,6 +112,8 @@ export function buildWorkspaceLocation(input: {
   settingsTab: SettingsTab;
   threadId?: string;
   threadTitle?: string | null;
+  projectId?: string;
+  projectName?: string | null;
 }): WorkspaceLocation | null {
   switch (input.view) {
     case 'chat':
@@ -120,5 +129,12 @@ export function buildWorkspaceLocation(input: {
       return { view: 'automate' };
     case 'settings':
       return { view: 'settings', tab: input.settingsTab };
+    case 'project':
+      if (!input.projectId) return null;
+      return {
+        view: 'project',
+        projectId: input.projectId,
+        projectName: input.projectName?.trim() || undefined,
+      };
   }
 }

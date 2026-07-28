@@ -23,8 +23,29 @@ describe('table sheet source (load provenance) — real DB round-trip', () => {
     await closeDb();
   });
 
-  it('persists a stamped source and reads it back verbatim', async () => {
+  it('persists a stamped source (v3 shape: project id + display server) and reads it back verbatim', async () => {
     const created = createTableSheet(`prov-db-${Date.now()}`);
+    assert.ok(created);
+
+    // v3 stamp shape (Phase B 5c): `project` = the pinned PROJECT id is the
+    // durable identity; `server` = the resolved toolset key, display only.
+    const source = {
+      server: 'compass',
+      project: `proj-guolu-${Date.now()}`,
+      tenant: 'guolu',
+      loadedAt: '2026-07-20T03:04:05.000Z',
+    };
+    const stamped = await stampTableSheetSource(created!.id, source);
+    assert.deepEqual(stamped?.source, source);
+
+    const rows = await listTableSheetsDb();
+    const row = rows.find((r) => r.id === created!.id);
+    assert.ok(row, 'sheet row should exist in the real DB');
+    assert.deepEqual(row!.source, source);
+  });
+
+  it('persists a LEGACY-shaped stamp (server only, no project) verbatim — pre-migration rows keep their shape', async () => {
+    const created = createTableSheet(`prov-db-legacy-shape-${Date.now()}`);
     assert.ok(created);
 
     const source = {
@@ -37,7 +58,6 @@ describe('table sheet source (load provenance) — real DB round-trip', () => {
 
     const rows = await listTableSheetsDb();
     const row = rows.find((r) => r.id === created!.id);
-    assert.ok(row, 'sheet row should exist in the real DB');
     assert.deepEqual(row!.source, source);
   });
 
@@ -53,17 +73,19 @@ describe('table sheet source (load provenance) — real DB round-trip', () => {
     assert.ok(row!.source === null || row!.source === undefined);
   });
 
-  it('re-stamping overwrites the previous source (not merged)', async () => {
+  it('re-stamping overwrites the previous source (not merged) — a reload under another project fully re-keys it', async () => {
     const created = createTableSheet(`prov-db-restamp-${Date.now()}`);
     assert.ok(created);
 
     await stampTableSheetSource(created!.id, {
-      server: 'compass-shangzhong',
+      server: 'compass',
+      project: 'proj-shangzhong-restamp',
       tenant: 'shangzhong',
       loadedAt: '2026-07-19T00:00:00.000Z',
     });
     const second = {
-      server: 'compass-guolu',
+      server: 'compass',
+      project: 'proj-guolu-restamp',
       tenant: 'guolu',
       loadedAt: '2026-07-21T00:00:00.000Z',
     };

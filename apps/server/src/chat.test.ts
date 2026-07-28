@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   buildProjectPinBlock,
   buildWorkspacePanelHintBlock,
+  projectPinLabel,
   textOfMessage,
   toAgentMessages,
 } from './chat.js';
@@ -117,6 +118,26 @@ describe('workspace context blocks', () => {
   });
 });
 
+describe('projectPinLabel (v3: project display name + source labels, never a raw entry name)', () => {
+  it('a single-source default project whose name IS the source label collapses to just the name', () => {
+    assert.equal(projectPinLabel({ name: '锅炉厂', sources: ['guolu'] }), '锅炉厂');
+  });
+
+  it('a composed project lists its source labels after the name', () => {
+    assert.equal(
+      projectPinLabel({ name: '对比分析', sources: ['guolu', 'shangzhong'] }),
+      '对比分析(数据源: 锅炉厂、上重)',
+    );
+  });
+
+  it('an unknown source code falls back to the raw code', () => {
+    assert.equal(
+      projectPinLabel({ name: '锻件试点', sources: ['duanjian'] }),
+      '锻件试点(数据源: duanjian)',
+    );
+  });
+});
+
 describe('buildProjectPinBlock (audit fix #3: thread-move boundary marker; 全项目制: personal-area hint)', () => {
   it('an unpinned thread gets the personal-area hint, not an empty block (no silent auto-pin)', () => {
     const block = buildProjectPinBlock(null);
@@ -126,6 +147,8 @@ describe('buildProjectPinBlock (audit fix #3: thread-move boundary marker; 全�
   });
 
   it('the personal-area hint still carries the move marker when the thread moved OUT of a project', () => {
+    // movedFrom is display-only and printed as-is — legacy entry names from
+    // pre-migration moves keep rendering.
     const block = buildProjectPinBlock(null, {
       movedFrom: 'compass-guolu',
       movedAt: '2026-07-01T00:00:00.000Z',
@@ -134,23 +157,23 @@ describe('buildProjectPinBlock (audit fix #3: thread-move boundary marker; 全�
     assert.match(block, /本会话曾属于项目 compass-guolu\(2026-07-01T00:00:00\.000Z 移动\)/);
   });
 
-  it('plain pin reminder when there is no move', () => {
-    const block = buildProjectPinBlock('compass-guolu');
-    assert.match(block, /当前数据项目: compass-guolu/);
+  it('plain pin reminder when there is no move (label = project display label, not an entry name)', () => {
+    const block = buildProjectPinBlock(projectPinLabel({ name: '锅炉厂', sources: ['guolu'] }));
+    assert.match(block, /当前数据项目: 锅炉厂/);
     assert.doesNotMatch(block, /曾属于项目/);
   });
 
   it('plain pin reminder when move is passed but movedFrom is null', () => {
-    const block = buildProjectPinBlock('compass-guolu', { movedFrom: null, movedAt: null });
+    const block = buildProjectPinBlock('锅炉厂', { movedFrom: null, movedAt: null });
     assert.doesNotMatch(block, /曾属于项目/);
   });
 
   it('appends the boundary marker with movedFrom and movedAt when the thread moved', () => {
-    const block = buildProjectPinBlock('compass-shangzhong', {
+    const block = buildProjectPinBlock('上重', {
       movedFrom: 'compass-guolu',
       movedAt: '2026-07-01T00:00:00.000Z',
     });
-    assert.match(block, /当前数据项目: compass-shangzhong/);
+    assert.match(block, /当前数据项目: 上重/);
     assert.match(block, /本会话曾属于项目 compass-guolu\(2026-07-01T00:00:00\.000Z 移动\)/);
     assert.match(block, /此前的对话内容属于原项目,不可作为当前项目的数据依据/);
   });

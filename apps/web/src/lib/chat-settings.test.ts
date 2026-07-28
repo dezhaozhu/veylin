@@ -40,6 +40,17 @@ test('resolveGroupToggleState: mixed state with several off members heals all of
   assert.deepEqual(result.membersToHeal.sort(), ['compass', 'compass-shangzhong']);
 });
 
+test('resolveGroupToggleState: single member (v3 single compass entry) resolves to its own value, never heals', () => {
+  // Post-cutover reality: the compass-proj group has the single member 'compass'.
+  const on = resolveGroupToggleState([{ name: 'compass', enabled: true }]);
+  assert.equal(on.enabled, true);
+  assert.deepEqual(on.membersToHeal, []);
+
+  const off = resolveGroupToggleState([{ name: 'compass', enabled: false }]);
+  assert.equal(off.enabled, false);
+  assert.deepEqual(off.membersToHeal, []);
+});
+
 test('resolveGroupToggleState: empty group is enabled with nothing to heal', () => {
   const result = resolveGroupToggleState([]);
   assert.equal(result.enabled, true);

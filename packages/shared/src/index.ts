@@ -4,6 +4,7 @@ export * from './skills';
 export * from './skill-frontmatter';
 export * from './rules';
 export * from './mcp';
+export * from './project';
 export * from './automation';
 export * from './webhook';
 export * from './workflow';

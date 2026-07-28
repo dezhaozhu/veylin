@@ -17,6 +17,7 @@ import {
   resolveDispatchTarget,
   runSubagentGenerate,
   scopedMcpServersFromCtx,
+  scopedMcpToolsetsFromCtx,
   subagentTaskEnvelope,
   continueTaskThread,
 } from './agent-task-runner';
@@ -132,7 +133,11 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
       // Captured at enqueue/dispatch time so a subagent dispatched from a
       // pinned thread inherits its project scope instead of an unscoped
       // toolset — see toolsetsForPreset's intersection with this allowlist.
+      // The overlay record carries the parent turn's POOLED compass toolsets
+      // (scene-set-bound); it is the only way a subagent can receive compass
+      // at all (plan risk #2 — compass never exists in deps.mcpToolsets).
       const scopedMcpServers = scopedMcpServersFromCtx(ctx);
+      const overlayToolsets = scopedMcpToolsetsFromCtx(ctx);
 
       const target = resolveDispatchTarget(runtime, parentAgentId, {
         subagent_type: input.subagent_type,
@@ -204,6 +209,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           fork: isFork,
           directive: isFork ? input.prompt : undefined,
           scopedMcpServers,
+          overlayToolsets,
         };
         const jobId = await deps.queue.send(SUBAGENT_QUEUE, job);
         await updateTaskRow(taskId, { jobId: jobId ?? null, workerThreadId: workerThread });
@@ -244,6 +250,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           parentThreadId,
           taskId,
           scopedMcpServers,
+          overlayToolsets,
         });
         await updateTaskRow(taskId, {
           status: 'done',
@@ -305,6 +312,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
       const userId = ctxValue(ctx, 'userId') ?? tenantId;
       const parentThreadId = ctxValue(ctx, 'threadId');
       const scopedMcpServers = scopedMcpServersFromCtx(ctx);
+      const overlayToolsets = scopedMcpToolsetsFromCtx(ctx);
 
       if (input.run_in_background === true) {
         const enveloped = `${row.prompt}\n\n---\nFollow-up:\n${input.message}`;
@@ -328,6 +336,7 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           taskId: row.id,
           subagentType: row.subagentType ?? undefined,
           scopedMcpServers,
+          overlayToolsets,
         };
         const jobId = await deps.queue.send(SUBAGENT_QUEUE, job);
         await updateTaskRow(row.id, { jobId: jobId ?? null, workerThreadId: workerThread });
@@ -357,7 +366,15 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
         };
       }
 
-      const result = await continueTaskThread(row, input.message, runtime, deps, userId, scopedMcpServers);
+      const result = await continueTaskThread(
+        row,
+        input.message,
+        runtime,
+        deps,
+        userId,
+        scopedMcpServers,
+        overlayToolsets,
+      );
       await updateTaskRow(row.id, {
         status: 'done',
         result: result.text,

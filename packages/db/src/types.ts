@@ -162,6 +162,27 @@ export interface McpServerRow {
   createdAt?: string;
 }
 
+export interface ProjectRow {
+  id: string;
+  tenantId: string;
+  name: string;
+  /** Compass source (scene) codes this project scopes to, e.g. ['guolu']. */
+  sources: string[];
+  /** true = reconciler-managed default project (one per granted source). */
+  managed: boolean;
+  /** Disabled-not-deleted: revoked/removed projects stay for pin history. */
+  enabled: boolean;
+  /**
+   * Structural identity marker, set once at creation and never patched: the
+   * legacy entry name this row was materialized FROM by the boot migration
+   * (e.g. 'compass-对比'). Migration/provenance code matches on THIS, never on
+   * the display name — a user-composed project that happens to share the name
+   * can never be mistaken for it (security review C1).
+   */
+  migratedFrom?: string;
+  createdAt?: string;
+}
+
 export interface AutomationRow {
   id: string;
   tenantId: string;
@@ -214,6 +235,13 @@ export interface TableSheetSource {
   server: string;
   tenant?: string;
   loadedAt: string;
+  /**
+   * Project id (v3) the sheet's data belongs to — the durable provenance key
+   * once pins are project ids. `server` is kept for display. Absent on stamps
+   * that predate the Phase B migration and were not mappable at boot; the
+   * comparison-time shim `legacyServerToProjectId` covers those permanently.
+   */
+  project?: string;
 }
 
 export interface TableSheetRow {

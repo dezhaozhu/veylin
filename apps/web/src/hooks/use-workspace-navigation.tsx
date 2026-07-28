@@ -135,7 +135,7 @@ function WorkspaceNavigationRecorder({
   threadIdRef: MutableRefObject<string | undefined>;
   registerThreadSwitcher: (switcher: (threadId: string) => Promise<void>) => void;
 }) {
-  const { view, customizeTab, settingsTab } = useSettingsPanel();
+  const { view, customizeTab, settingsTab, projectPage } = useSettingsPanel();
   const aui = useAui();
   const threadId = useAuiState((s) => s.threadListItem.id);
   const threadTitle = useAuiState((s) => s.threadListItem.title);
@@ -154,6 +154,8 @@ function WorkspaceNavigationRecorder({
     settingsTab,
     threadId,
     threadTitle,
+    projectId: projectPage?.id,
+    projectName: projectPage?.name,
   });
   const snapshotKey = locationSnapshot ? locationKey(locationSnapshot) : null;
 
@@ -164,6 +166,8 @@ function WorkspaceNavigationRecorder({
       settingsTab,
       threadId,
       threadTitle,
+      projectId: projectPage?.id,
+      projectName: projectPage?.name,
     });
     if (!loc || !snapshotKey) return;
 
@@ -191,6 +195,7 @@ function WorkspaceNavigationRecorder({
     customizeTab,
     settingsTab,
     threadId,
+    projectPage,
     snapshotKey,
     setNav,
     suppressRecordRef,

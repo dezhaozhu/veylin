@@ -31,6 +31,7 @@ import {
   LazyAssistantToolUIs,
   LazyAutomateWorkspace,
   LazyCustomizeWorkspace,
+  LazyProjectWorkspace,
   LazySettingsWorkspace,
   LazyThreadRightSidebar,
 } from '@/components/assistant-ui/lazy-assistant-modules';
@@ -112,6 +113,11 @@ function ChatShell() {
               {view === 'settings' && (
                 <WorkspaceViewFrame>
                   <LazySettingsWorkspace />
+                </WorkspaceViewFrame>
+              )}
+              {view === 'project' && (
+                <WorkspaceViewFrame>
+                  <LazyProjectWorkspace />
                 </WorkspaceViewFrame>
               )}
             </div>
