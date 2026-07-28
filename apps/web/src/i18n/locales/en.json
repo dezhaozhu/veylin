@@ -83,10 +83,10 @@
     "notFound": "This project is unavailable or disabled"
   },
   "correctionBridge": {
-    "draft": "In “{{scene}}”, under “{{label}}”: {{current}} — this looks wrong: ",
-    "draftNoScene": "Under “{{label}}”: {{current}} — this looks wrong: ",
-    "draftNoCurrent": "In “{{scene}}”, under “{{label}}” — this looks wrong: ",
-    "draftBare": "Under “{{label}}” — this looks wrong: "
+    "draft": "The card “{{scene}} · {{label}}” currently shows: “{{current}}”\nWhat's wrong with it: ",
+    "draftNoScene": "The card “{{label}}” currently shows: “{{current}}”\nWhat's wrong with it: ",
+    "draftNoCurrent": "The card “{{scene}} · {{label}}” is wrong: ",
+    "draftBare": "The card “{{label}}” is wrong: "
   },
   "header": {
     "back": "Back",

@@ -185,15 +185,22 @@ describe('correctionDraftSpec — draft composition', () => {
     assert.equal(correctionDraftSpec('', p({ current: '' })).key, 'correctionBridge.draftBare');
   });
 
-  it('interpolated against the real zh template, the draft reads as specced', () => {
+  it('interpolated against the real zh template, the draft QUOTES the card', () => {
     // Mirror of zh-CN.json correctionBridge.draft — kept literal here so a
     // template change that breaks the sentence shape fails a test.
-    const template = '在「{{scene}}」的「{{label}}」里:{{current}} —— 这里不对:';
+    // Security review (surface 2): widget-supplied text must read as QUOTED
+    // card content, never as the user's own first-person assertion, so a
+    // hostile widget can't put authoritative-sounding claims in the user's
+    // mouth on the way to the agent.
+    const template = '卡片「{{scene}} · {{label}}」当前显示:「{{current}}」\n以上内容有误:';
     const { vars } = correctionDraftSpec('锅炉厂', p());
     const draft = template
       .replace('{{scene}}', vars.scene)
       .replace('{{label}}', vars.label)
       .replace('{{current}}', vars.current);
-    assert.equal(draft, '在「锅炉厂」的「产能口径」里:上锅 136 吨/月 —— 这里不对:');
+    assert.equal(draft, '卡片「锅炉厂 · 产能口径」当前显示:「上锅 136 吨/月」\n以上内容有误:');
+    // the payload text is inside quotes, and the user's own words start after
+    assert.ok(draft.includes('「上锅 136 吨/月」'));
+    assert.ok(draft.trimEnd().endsWith('以上内容有误:'));
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type FC } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ComponentProps, type FC } from 'react';
 import {
   McpAppRenderer,
   McpAppsRemoteHost,
@@ -29,6 +29,15 @@ import { SCENE_CARD_TOOL, sceneCardArgs } from './scene-card-grid';
  * open (AssistantChat renders the project view conditionally), which gives the
  * task's "refresh on view open; no polling" for free.
  */
+
+/**
+ * One correction at a time, ACROSS all cells on the page: `aui.threads()` is
+ * app-global, so overlapping create→pin sequences would collide (see the
+ * guard's use site). Module scope is the right granularity — a single page
+ * mounts one cell per (source × capability).
+ */
+let correctionInFlight = false;
+
 export const SceneCardCell: FC<{
   hostUrl: string;
   /** ui:// resource declared by this server's get_scene_card (byServer map). */
@@ -98,11 +107,16 @@ export const SceneCardCell: FC<{
   // nothing is auto-sent.
   const aui = useAui();
   const { closeWorkspace } = useSettingsPanel();
-  const creatingRef = useRef(false);
   const handleCorrection = useCallback(
     (p: CorrectionPayload) => {
-      if (creatingRef.current) return;
-      creatingRef.current = true;
+      // MODULE-scoped guard, not per-cell (security review V2): the thread
+      // store is app-global, so two cells firing inside the pin round-trip
+      // would both resolve item('main') to whichever thread was created last
+      // — two pins on one thread, an orphan thread, and a draft naming the
+      // other card's scene. A page renders N cells, so per-mount refs cannot
+      // serialize this.
+      if (correctionInFlight) return;
+      correctionInFlight = true;
       void (async () => {
         try {
           await aui.threads().switchToNewThread();
@@ -122,7 +136,7 @@ export const SceneCardCell: FC<{
         } catch (err) {
           console.error('[scene-card] open-correction failed:', err);
         } finally {
-          creatingRef.current = false;
+          correctionInFlight = false;
         }
       })();
     },

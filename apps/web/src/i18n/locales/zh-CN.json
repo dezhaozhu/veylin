@@ -83,10 +83,10 @@
     "notFound": "项目不存在或已停用"
   },
   "correctionBridge": {
-    "draft": "在「{{scene}}」的「{{label}}」里:{{current}} —— 这里不对:",
-    "draftNoScene": "在「{{label}}」里:{{current}} —— 这里不对:",
-    "draftNoCurrent": "在「{{scene}}」的「{{label}}」里 —— 这里不对:",
-    "draftBare": "在「{{label}}」里 —— 这里不对:"
+    "draft": "卡片「{{scene}} · {{label}}」当前显示:「{{current}}」\n以上内容有误:",
+    "draftNoScene": "卡片「{{label}}」当前显示:「{{current}}」\n以上内容有误:",
+    "draftNoCurrent": "卡片「{{scene}} · {{label}}」有误:",
+    "draftBare": "卡片「{{label}}」有误:"
   },
   "header": {
     "back": "后退",
