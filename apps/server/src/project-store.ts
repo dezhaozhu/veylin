@@ -12,7 +12,9 @@ import {
   listProjectRows,
   updateProjectRow,
 } from '@veylin/db';
-import type { Project } from '@veylin/shared';
+import type { McpServer, Project } from '@veylin/shared';
+import { COMPASS_IDENTITY_GROUP } from './compass-identity.js';
+import { listRemoteMcpServers } from './mcp-store.js';
 
 function rowToProject(row: NonNullable<Awaited<ReturnType<typeof getProjectRow>>>): Project {
   return {
@@ -77,6 +79,70 @@ export async function updateProject(
 export async function disableProject(tenantId: string, id: string): Promise<Project | null> {
   const row = await disableProjectRow(tenantId, id);
   return row ? rowToProject(row) : null;
+}
+
+/**
+ * Result of the shared scoping prelude (`resolvePinnedProjectScope`).
+ *
+ * `entryPin` is what the review-hardened pure scoping functions
+ * (mcp-scoping.ts) consume in place of the raw thread pin; `sources` is what
+ * the compass pool (compass-pool.ts) binds the connection to; `entry` is the
+ * enabled compass MCP row the pool connects with. All-null (`deniedScope`)
+ * means: no grouped MCP access this request, deny-by-default.
+ */
+export type PinnedProjectScope = {
+  /** The resolved, enabled, tenant-owned project — null when the pin denies. */
+  project: Project | null;
+  /**
+   * Entry-level pin for the pure scoping fns: the enabled
+   * `COMPASS_IDENTITY_GROUP` member's name ('compass'), or null (deny).
+   */
+  entryPin: string | null;
+  /** The pinned project's scene set — becomes the pooled connection's key AND `x-compass-source` header (sceneSetKey). */
+  sources: string[];
+  /** The enabled compass entry row backing `entryPin` (the pool's connect target); null iff `entryPin` is null. */
+  entry: McpServer | null;
+};
+
+function deniedScope(): PinnedProjectScope {
+  return { project: null, entryPin: null, sources: [], entry: null };
+}
+
+/**
+ * The shared scoping prelude (project-cognition v3): translate a thread's
+ * PROJECT pin (a project id) into the entry-level pin that the pure scoping
+ * functions (`resolveScopedMcp` / `filterMcpToolIndexToScopedServers` /
+ * `scopeServersToAllowlist`) operate on — ONCE per request, so those
+ * functions and their isolation guarantees survive unchanged.
+ *
+ * Deny-by-default: an unpinned thread and a missing, foreign-tenant, or
+ * disabled project pin all resolve to the all-null shape — the same posture
+ * as the pre-v3 stale-entry-pin path: grouped MCP servers simply never
+ * surface for the request.
+ *
+ * `entryPin` requires EXACTLY ONE enabled `COMPASS_IDENTITY_GROUP` member
+ * (the reconciler maintains exactly one, named 'compass'; legacy per-scene
+ * rows are disabled). Zero enabled members — or more than one, an anomaly —
+ * leaves `entryPin`/`entry` null: refusal over guessing which entry the
+ * scene set would bind to (mirrors `resolveCompassServer`'s
+ * refusal-over-guess posture). The resolved `project` is still returned in
+ * that case so display surfaces (e.g. the chat pin reminder) can name it.
+ */
+export async function resolvePinnedProjectScope(
+  tenantId: string,
+  pin: string | null,
+): Promise<PinnedProjectScope> {
+  if (pin == null || pin === '') return deniedScope();
+  const project = await getProject(tenantId, pin);
+  if (!project || !project.enabled) return deniedScope();
+  const enabledCompassEntries = (await listRemoteMcpServers(tenantId)).filter(
+    (server) => server.group === COMPASS_IDENTITY_GROUP && server.enabled,
+  );
+  if (enabledCompassEntries.length !== 1) {
+    return { project, entryPin: null, sources: project.sources, entry: null };
+  }
+  const entry = enabledCompassEntries[0]!;
+  return { project, entryPin: entry.name, sources: project.sources, entry };
 }
 
 /**

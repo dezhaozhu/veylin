@@ -1,6 +1,23 @@
 /**
  * Pure per-thread project-scoping resolution for grouped MCP servers.
  *
+ * PROJECT-PIN RE-KEY (project-cognition v3, Phase B): a thread's pin is now a
+ * PROJECT id (`thread_state.project` → `project` table row), not an MCP entry
+ * name. The pure functions below still operate on entry-level names — callers
+ * translate the pin EXACTLY ONCE per request through the shared prelude
+ * `resolvePinnedProjectScope` (project-store.ts), which resolves an enabled
+ * tenant-owned project to `entryPin` = the enabled `COMPASS_IDENTITY_GROUP`
+ * member's name ('compass') and denies everything else (missing / foreign /
+ * disabled ⇒ `entryPin: null`, same posture as the old stale-pin path). The
+ * functions and their tests are unchanged by design: the three
+ * review-hardened isolation guarantees (mcpEnabled attack, unpinned deny,
+ * explicit-off subagent suppression) hold byte-equivalently at this level,
+ * while WHICH DATA backs the surviving `compass` key is decided by the
+ * compass client pool (compass-pool.ts) — one connection per (tenant, entry,
+ * scene-set), bound via the `x-compass-source` header composed from the
+ * pinned project's sources. See routes/chat.ts's `resolveChatMcpScope` for
+ * the chat-path composition and its guarantee-preservation notes.
+ *
  * SCOPE NOTE (consciously deferred — not covered by this module or its callers):
  * - `agent-run.ts` (the Automate/Workflow `run_agent` node entry) invokes the agent
  *   directly and never applies a thread pin — Automate/Workflow runs are unscoped.
@@ -20,8 +37,14 @@
  *   (returns `null`, the existing "compass MCP not connected" failure path) rather
  *   than guessing `'compass'` when more than one Compass-prefixed server is connected
  *   and no pin matches. The other call site that is thread-tied —
- *   `scheduleEditGuidanceBlock` from `routes/chat.ts`'s `/api/chat` handler — passes
- *   the thread's real pin and the tenant's real server groups the same way.
+ *   `scheduleEditGuidanceBlock` from `routes/chat.ts`'s `/api/chat` handler — is
+ *   passed the per-request pooled toolsets (`agentMcp`) and the entry-level pin.
+ *   v3 interim (until Phase B 5c re-keys the table/schedule paths onto
+ *   `requestContext.get('scopedMcpToolsets')` + project-id provenance): the
+ *   `projectPin` context value now carries a PROJECT id, which never matches a
+ *   toolset key, and the tenant toolsets contain no compass entry at all — so
+ *   `resolveCompassServer` refuses on those paths. Fail-closed: an honest
+ *   "compass not connected", never a cross-scene guess.
  */
 
 export interface ScopedMcpResult {

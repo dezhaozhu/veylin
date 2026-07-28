@@ -1,6 +1,7 @@
 /** AI SDK v6 UIMessage (minimal shape we receive from assistant-ui). */
 import { convertToModelMessages, type UIMessage } from 'ai';
 import { getCatalogModel } from '@veylin/runtime';
+import { projectSourceLabel } from '@veylin/shared';
 import {
   decodeDataUrlToUtf8,
   isBinaryAttachment,
@@ -340,9 +341,29 @@ export function buildAttachedBrowserBlock(
 }
 
 /**
+ * Display label for a pinned project (v3: pins are project ids, and the
+ * model-facing reminder must name the project, never a raw MCP entry name):
+ * the project's display name plus its source labels (shared
+ * `projectSourceLabel`). A single-source default project whose name IS its
+ * source label collapses to just the name; composed projects list their
+ * sources after the name.
+ */
+export function projectPinLabel(project: { name: string; sources: string[] }): string {
+  const joined = project.sources.map((source) => projectSourceLabel(source)).join('、');
+  if (!joined || joined === project.name) return project.name;
+  return `${project.name}(数据源: ${joined})`;
+}
+
+/**
  * System reminder scoping this turn to the thread's pinned data project.
  *
- * Unpinned (`pin === null`) is not silently unscoped: routes/chat.ts no
+ * `pinLabel` is the resolved project's DISPLAY label (name + source labels,
+ * see `projectPinLabel`), or null when the thread is unpinned / its pin
+ * denied — v3 pins are project ids, which mean nothing to the model, so
+ * routes/chat.ts resolves the pin through `resolvePinnedProjectScope` first
+ * and passes only the human-readable label here.
+ *
+ * Unpinned (`pinLabel === null`) is not silently unscoped: routes/chat.ts no
  * longer auto-pins an unpinned thread to a group's alphabetical-first member
  * (a silent default-tenant guess) — the thread simply has no grouped MCP
  * servers this turn (个人/personal area). This reminder tells the model that
@@ -355,15 +376,16 @@ export function buildAttachedBrowserBlock(
  * scope — without an explicit marker the model has no signal that a fact
  * recalled from history may belong to a project it's no longer pinned to.
  * This still applies when the thread moved back OUT to the personal area
- * (`pin === null`, `move.movedFrom` set).
+ * (`pinLabel === null`, `move.movedFrom` set). `movedFrom` is display-only
+ * and printed as-is (it may be a legacy entry name or a project id).
  */
 export function buildProjectPinBlock(
-  pin: string | null,
+  pinLabel: string | null,
   move?: { movedFrom: string | null; movedAt: string | null } | null,
 ): string {
   const lines = ['<system-reminder>'];
-  if (pin) {
-    lines.push(`当前数据项目: ${pin}(本会话所有数据均来自该项目,勿引用其他项目)`);
+  if (pinLabel) {
+    lines.push(`当前数据项目: ${pinLabel}(本会话所有数据均来自该项目,勿引用其他项目)`);
   } else {
     lines.push(
       '当前会话在「个人」区,未绑定任何项目数据源;需要查看工厂数据时,请在侧边栏选择项目新建会话,或用会话菜单将本会话移动到项目。',

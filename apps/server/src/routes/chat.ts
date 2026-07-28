@@ -36,6 +36,7 @@ import {
   lastUserText,
   modelSupportsImages,
   parseChatBody,
+  projectPinLabel,
   toAgentMessages,
   buildWorkspacePanelHintBlock,
 } from '../chat.js';
@@ -108,7 +109,17 @@ import {
   buildRulesMemoryBlock,
 } from '../rules-store.js';
 import { listActiveMcpServerNames, listMcpServerGroups } from '../mcp-store.js';
-import { resolveScopedMcp, filterMcpToolIndexToScopedServers } from '../mcp-scoping.js';
+import {
+  resolveScopedMcp,
+  filterMcpToolIndexToScopedServers,
+  type McpToolIndexEntry,
+} from '../mcp-scoping.js';
+import { resolvePinnedProjectScope, type PinnedProjectScope } from '../project-store.js';
+import {
+  getCompassToolIndexEntries,
+  getPooledCompassToolsets,
+  type CompassPoolDeps,
+} from '../compass-pool.js';
 import { applyTenantModelSettings } from '../model-settings-store.js';
 import { buildKnowledgeContextBlock } from '../rag-store.js';
 import { getHookBus, reloadHooksForTenant } from '../hooks-service.js';
@@ -125,6 +136,209 @@ import type { ServerDeps } from './types.js';
  * blocked by AI SDK tee backpressure on the resumable capture branch.
  */
 const SSE_KEEPALIVE_INTERVAL_MS = 15_000;
+
+export type ChatMcpScopeResult = {
+  /** Resolved project scope — deny-by-default nulls for unpinned/missing/foreign/disabled pins. */
+  scope: PinnedProjectScope;
+  /** The pinned project's id (provenance/display value), or null when the pin denied. */
+  projectPin: string | null;
+  /** Final per-request server-name list: project-scoped + mcpEnabled-filtered + pool-honest. */
+  activeMcp: string[];
+  /** Tool-search index scoped to `activeMcp`, pooled compass entries included. */
+  mcpToolNames: McpToolIndexEntry[];
+  /** Subagent dispatch allowlist (see the derivation comment inside). */
+  scopedMcpServersForSubagents: string[];
+  /**
+   * The pooled, scene-set-bound compass toolsets (`{ [entryName]: tools }`),
+   * or null when compass is not in scope this request or the pool build
+   * failed. This is the ONLY way compass tools reach a chat turn.
+   */
+  compassOverlay: Record<string, unknown> | null;
+};
+
+/**
+ * Per-request MCP scoping for the chat path (project-cognition v3).
+ *
+ * The thread pin is a PROJECT id. It is translated ONCE — the shared prelude,
+ * `resolvePinnedProjectScope` — into the entry-level pin (`scope.entryPin`:
+ * the enabled compass entry's name, or null) that the review-hardened pure
+ * scoping functions operate on. Those functions (`resolveScopedMcp`,
+ * `filterMcpToolIndexToScopedServers`, and `scopeServersToAllowlist` at
+ * dispatch time) run UNCHANGED below; isolation moves from "which entry name
+ * survives" to "which pooled connection (scene-set header) backs the compass
+ * key for this request" — the overlay at the end.
+ *
+ * GUARANTEE PRESERVATION — the three review-hardened isolation guarantees,
+ * translated but not weakened:
+ * 1. mcpEnabled attack: which group member survives scoping is still decided
+ *    against server-truth `tenantActiveMcp` names (with the translated
+ *    `scope.entryPin`) — client-declared `mcpEnabled` never reaches
+ *    `resolveScopedMcp`, so a client claiming the pinned entry is "disabled"
+ *    still cannot evict it from scoping or force a re-pin. See the attack
+ *    test in mcp-scoping.test.ts and the seam test in
+ *    routes/project-pin-scoping.test.ts.
+ * 2. Unpinned deny: the compass entry is grouped, and an unpinned thread —
+ *    or a missing/foreign/disabled project pin — resolves to
+ *    `entryPin = null`, so the personal-area filter below drops every
+ *    grouped server exactly as before. Deny-by-default; never an auto-pin.
+ * 3. Explicit-off subagent suppression: the subagent allowlist is still
+ *    derived from `scopedActive`, so an explicit `mcpEnabled[member]=false`
+ *    on the pinned grouped member suppresses it for subagents too, while an
+ *    ungrouped member's client toggle keeps being ignored for the allowlist.
+ *
+ * NEW invariant closed here (plan risk #2 — pooled toolset substitution):
+ * compass toolsets NEVER come from the tenant-level cache —
+ * `buildMcpServerConfigs` excludes the compass group, so the tenant cache
+ * cannot even contain them; the failure mode is "no tools", never "another
+ * project's tools". When the compass entry survives scoping, its toolsets
+ * are fetched from the compass pool for EXACTLY `scope.sources` — the pinned
+ * project's scene set, which is byte-identically the connection's
+ * `x-compass-source` header (`sceneSetKey`). Pool failure drops the entry
+ * from `activeMcp`, the tool index, and the subagent allowlist: an honest
+ * refusal, never a fallback to a differently-scoped (or headerless)
+ * connection.
+ */
+export async function resolveChatMcpScope(
+  args: {
+    tenantId: string;
+    /** The thread's raw pin value (a project id post-migration), or null. */
+    threadProjectPin: string | null;
+    /** Server-truth active server names (enabled-in-store ∩ declared-by-agent). */
+    tenantActiveMcp: string[];
+    mcpServerGroups: Record<string, string | undefined>;
+    /** Client-declared, untrusted per-turn toggles. */
+    mcpEnabled: Record<string, boolean> | undefined;
+    /** Tenant-wide tool-search index (compass-less — see overlay below). */
+    mcpToolIndex: McpToolIndexEntry[];
+  },
+  deps: {
+    resolveScope?: typeof resolvePinnedProjectScope;
+    getPooledToolsets?: typeof getPooledCompassToolsets;
+    /** Forwarded to the real pool — lets tests stub the MCPClient factory. */
+    poolDeps?: CompassPoolDeps;
+  } = {},
+): Promise<ChatMcpScopeResult> {
+  const { tenantId, threadProjectPin, tenantActiveMcp, mcpServerGroups, mcpEnabled } = args;
+
+  // The prelude: project id → entry-level pin, once. A datastore failure
+  // reads as a denied scope (no grouped servers this turn) — the same
+  // fail-closed posture as the withDatastoreFallback([]) wrappers the
+  // route applies to the server-truth lists.
+  let scope: PinnedProjectScope;
+  try {
+    scope = await (deps.resolveScope ?? resolvePinnedProjectScope)(tenantId, threadProjectPin);
+  } catch {
+    scope = { project: null, entryPin: null, sources: [], entry: null };
+  }
+
+  const scopedMcp = resolveScopedMcp(tenantActiveMcp, mcpServerGroups, scope.entryPin);
+  // 全项目制 + 个人区 (2026-07-27): a thread whose pin resolved to no entry
+  // pin — unpinned, or pinned to a missing/foreign/disabled project — gets NO
+  // grouped servers, full stop: no silent auto-pin to the group's
+  // alphabetical-first member, and nothing is persisted.
+  // `resolveScopedMcp`'s `autoPin` computation is left untouched
+  // (mcp-apps.ts's resolveScopedServerNames still calls the same pure fn
+  // against a REAL pin), but this path must neither apply nor persist it for
+  // a null entry pin: that's the removed "default-tenant" behavior.
+  // Deny-by-default here matches routes/mcp-apps.ts's unpinned-deny for the
+  // widget proxy — grouped members only ever surface once a thread's pin
+  // resolves to a real, enabled project.
+  const scopedActive =
+    scope.entryPin == null
+      ? scopedMcp.active.filter((server) => mcpServerGroups[server] == null)
+      : scopedMcp.active;
+  // Which scoping happens (the pin winner per group) is decided above, against
+  // server-truth `tenantActiveMcp` only — mcpEnabled never reaches that decision,
+  // so it can never evict the pinned server or force a re-pin (see the attack
+  // test in mcp-scoping.test.ts). Whether the pin winner's tools are actually
+  // exposed *for this request* is a separate question this filter answers, and
+  // here mcpEnabled applies uniformly to grouped and ungrouped servers alike: a
+  // grouped capability's toggle (composer-mcp-flyout.tsx renders one toggle per
+  // group, writing the same mcpEnabled value to every member) is a plain on/off
+  // switch, not a data-source switch — off means no tools from that pin winner
+  // this turn, never a silent re-pin to a different group member.
+  let activeMcp = scopedActive.filter(
+    (server) => mcpEnabled == null || mcpEnabled[server] !== false,
+  );
+  // Subagent dispatch allowlist. Two different mcpEnabled semantics apply here,
+  // and they must not be conflated:
+  //  - Implicit/ungrouped filtering (the old regression): baseline behavior let
+  //    an ordinary ungrouped server's client toggle leak into the subagent
+  //    allowlist, silently stripping a tool from a dispatched subagent's preset
+  //    just because the user hid it from their own toolbar for this chat. That
+  //    stays fixed here — an ungrouped server's mcpEnabled is ignored for this
+  //    allowlist, same as before.
+  //  - Explicit grouped-capability off (deliberate): the flyout's one toggle
+  //    per group is a plain on/off switch for that whole capability (e.g.
+  //    "Compass"). A user turning it off for this turn plausibly means "no
+  //    Compass tools for anything this turn triggers", subagents included —
+  //    so an explicit mcpEnabled[member] === false on the *pinned* grouped
+  //    member also drops it from the subagent allowlist. It never re-pins or
+  //    switches to another group member (that's still decided above, against
+  //    server-truth `tenantActiveMcp`, before mcpEnabled is ever consulted) —
+  //    the group simply contributes nothing to this request or its subagents.
+  //  - Derived from `scopedActive`, not `scopedMcp.active`, so an unpinned
+  //    thread's personal-area deny is inherited here too — a dispatched
+  //    subagent never gets a grouped server the parent turn itself was
+  //    denied.
+  let scopedMcpServersForSubagents = scopedActive.filter(
+    (server) =>
+      mcpServerGroups[server] == null || mcpEnabled == null || mcpEnabled[server] !== false,
+  );
+
+  // Pooled compass overlay: when the compass entry survived scoping AND the
+  // client didn't toggle it off this turn, fetch the toolsets from the pool
+  // for the pinned project's scene set. (Skipped entirely when mcpEnabled
+  // turned the entry off — no pointless connection for a turn that exposes
+  // nothing.)
+  let compassOverlay: Record<string, unknown> | null = null;
+  if (scope.entryPin != null && scope.entry != null && activeMcp.includes(scope.entryPin)) {
+    const pooled = await (deps.getPooledToolsets ?? getPooledCompassToolsets)(
+      tenantId,
+      scope.entry,
+      scope.sources,
+      deps.poolDeps ?? {},
+    );
+    if (pooled != null) {
+      compassOverlay = { [scope.entryPin]: pooled[scope.entryPin] ?? {} };
+    } else {
+      // Honest refusal: the pool could not produce a connection for THIS
+      // scene set, so compass vanishes from the request — active list, tool
+      // index (below), and subagent allowlist. Never a tenant-cache fallback
+      // (there is none for compass) and never another scene-set's toolsets.
+      activeMcp = activeMcp.filter((server) => server !== scope.entryPin);
+      scopedMcpServersForSubagents = scopedMcpServersForSubagents.filter(
+        (server) => server !== scope.entryPin,
+      );
+    }
+  }
+
+  // Scope the tool-search index to this request's active servers — otherwise
+  // tool_search would let the model discover (and name) tools on non-pinned
+  // group members or servers disabled by the client. The tenant index never
+  // contains compass entries (compass is excluded from the generic client),
+  // so the pooled entries are appended from the overlay — and only when the
+  // overlay actually resolved (pool failure ⇒ no compass in the index).
+  const scopedIndex = filterMcpToolIndexToScopedServers(args.mcpToolIndex, activeMcp);
+  const mcpToolNames =
+    compassOverlay == null
+      ? scopedIndex
+      : [
+          ...scopedIndex,
+          ...getCompassToolIndexEntries(scope.entryPin!, compassOverlay).filter(
+            (entry) => !scopedIndex.some((existing) => existing.id === entry.id),
+          ),
+        ];
+
+  return {
+    scope,
+    projectPin: scope.project?.id ?? null,
+    activeMcp,
+    mcpToolNames,
+    scopedMcpServersForSubagents,
+    compassOverlay,
+  };
+}
 
 export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void {
   app.post('/api/resume', async (req) => {
@@ -252,35 +466,23 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       () => listMcpServerGroups(ctx.tenantId),
       {} as Record<string, string | undefined>,
     );
+    // v3: the thread pin is a PROJECT id. `resolveChatMcpScope` (above) is
+    // the shared prelude (pin → entry-level pin, once) + the UNCHANGED pure
+    // scoping functions + the pooled compass overlay — see its docstring for
+    // the guarantee-preservation notes.
     const threadProjectPin = threadRowState?.project ?? null;
-    const scopedMcp = resolveScopedMcp(tenantActiveMcp, mcpServerGroups, threadProjectPin);
-    const projectPin = threadProjectPin;
-    // 全项目制 + 个人区 (2026-07-27): an unpinned thread gets NO grouped
-    // servers, full stop — no silent auto-pin to the group's alphabetical-
-    // first member, and nothing is persisted. `resolveScopedMcp`'s `autoPin`
-    // computation above is left untouched (mcp-apps.ts's
-    // resolveScopedServerNames still calls the same pure fn against a REAL
-    // pin), but this route must neither apply nor persist it for a null pin:
-    // that's the removed "default-tenant" behavior. Deny-by-default here
-    // matches routes/mcp-apps.ts's unpinned-deny for the widget proxy —
-    // grouped members only ever surface once a thread actually has a pin.
-    const scopedActive =
-      threadProjectPin == null
-        ? scopedMcp.active.filter((server) => mcpServerGroups[server] == null)
-        : scopedMcp.active;
-    // Which scoping happens (the pin winner per group) is decided above, against
-    // server-truth `tenantActiveMcp` only — mcpEnabled never reaches that decision,
-    // so it can never evict the pinned server or force a re-pin (see the attack
-    // test in mcp-scoping.test.ts). Whether the pin winner's tools are actually
-    // exposed *for this request* is a separate question this filter answers, and
-    // here mcpEnabled applies uniformly to grouped and ungrouped servers alike: a
-    // grouped capability's toggle (composer-mcp-flyout.tsx renders one toggle per
-    // group, writing the same mcpEnabled value to every member) is a plain on/off
-    // switch, not a data-source switch — off means no tools from that pin winner
-    // this turn, never a silent re-pin to a different group member.
-    const activeMcp = scopedActive.filter(
-      (server) => mcpEnabled == null || mcpEnabled[server] !== false,
-    );
+    const mcpScope = await resolveChatMcpScope({
+      tenantId: ctx.tenantId,
+      threadProjectPin,
+      tenantActiveMcp,
+      mcpServerGroups,
+      mcpEnabled,
+      mcpToolIndex: deps.getMcpToolIndex(),
+    });
+    const { scope, activeMcp, scopedMcpServersForSubagents } = mcpScope;
+    // Provenance/display pin value: the resolved project's id (null when the
+    // pin denied) — NOT an MCP entry name anymore.
+    const projectPin = mcpScope.projectPin;
 
     const mergedSkills = await withDatastoreFallback(
       () => listMergedSkills(deps.runtime, ctx.tenantId, agentId),
@@ -306,40 +508,27 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     requestContext.set('parentAgentId', agentId);
     requestContext.set('publicBaseUrl', `${req.protocol}://${req.headers.host ?? '127.0.0.1:8787'}`);
     requestContext.set('discoveredToolIds', []);
-    // Scope the tool-search index to this request's active servers too — otherwise
-    // tool_search would let the model discover (and name) tools on non-pinned
-    // group members or servers disabled by the client.
-    requestContext.set(
-      'mcpToolNames',
-      filterMcpToolIndexToScopedServers(deps.getMcpToolIndex(), activeMcp),
-    );
-    // Subagent dispatch allowlist. Two different mcpEnabled semantics apply here,
-    // and they must not be conflated:
-    //  - Implicit/ungrouped filtering (the old regression): baseline behavior let
-    //    an ordinary ungrouped server's client toggle leak into the subagent
-    //    allowlist, silently stripping a tool from a dispatched subagent's preset
-    //    just because the user hid it from their own toolbar for this chat. That
-    //    stays fixed here — an ungrouped server's mcpEnabled is ignored for this
-    //    allowlist, same as before.
-    //  - Explicit grouped-capability off (new, deliberate): the flyout's one
-    //    toggle per group is a plain on/off switch for that whole capability
-    //    (e.g. "Compass"). A user turning it off for this turn plausibly means
-    //    "no Compass tools for anything this turn triggers", subagents included —
-    //    so an explicit mcpEnabled[member] === false on the *pinned* grouped
-    //    member also drops it from the subagent allowlist. It never re-pins or
-    //    switches to another group member (that's still decided above, against
-    //    server-truth `tenantActiveMcp`, before mcpEnabled is ever consulted) —
-    //    the group simply contributes nothing to this request or its subagents.
-    //  - Derived from `scopedActive`, not `scopedMcp.active`, so an unpinned
-    //    thread's personal-area deny is inherited here too — a dispatched
-    //    subagent never gets a grouped server the parent turn itself was
-    //    denied.
-    const scopedMcpServersForSubagents = scopedActive.filter(
-      (server) =>
-        mcpServerGroups[server] == null || mcpEnabled == null || mcpEnabled[server] !== false,
-    );
+    // Tool-search index + subagent allowlist: both derived inside
+    // resolveChatMcpScope (see its docstring — the tool index is scoped to
+    // activeMcp with pooled compass entries appended only when the pool
+    // resolved; the allowlist keeps the explicit-off suppression and the
+    // ungrouped-toggle-ignore semantics unchanged).
+    requestContext.set('mcpToolNames', mcpScope.mcpToolNames);
     requestContext.set('scopedMcpServers', scopedMcpServersForSubagents);
     requestContext.set('projectPin', projectPin);
+    // 5b/5c consumers: the resolved project scope (id/name for provenance +
+    // display, sources for pooled lookups, entryPin for toolset resolution).
+    requestContext.set(
+      'pinnedProjectScope',
+      scope.project
+        ? {
+            id: scope.project.id,
+            name: scope.project.name,
+            sources: scope.sources,
+            entryPin: scope.entryPin,
+          }
+        : null,
+    );
     requestContext.set('persistTodos', async (todos: import('@veylin/tools').TodoItem[]) => {
       await ensureThreadState(identity);
       return setThreadTodosDb(threadId, todos);
@@ -502,16 +691,29 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     }
 
     // Per-agent MCP: only expose declared servers; none when undeclared.
-    // Uses the project-scoped + mcpEnabled-filtered list (activeMcp), not the raw
-    // server-truth list.
+    // Uses the project-scoped + mcpEnabled-filtered + pool-honest list
+    // (activeMcp), not the raw server-truth list. Compass toolsets can ONLY
+    // enter through the pooled overlay — the tenant cache never contains them
+    // (buildMcpServerConfigs skips the compass group), so a wrong-scene-set
+    // substitution is structurally impossible here: the overlay either holds
+    // the pinned project's scene-set connection or compass is absent.
     const agentMcp =
       planMode
         ? {}
-        : activeMcp.length > 0
-          ? Object.fromEntries(
-              Object.entries(deps.getMcpToolsets()).filter(([server]) => activeMcp.includes(server)),
-            )
-          : {};
+        : {
+            ...(activeMcp.length > 0
+              ? Object.fromEntries(
+                  Object.entries(deps.getMcpToolsets()).filter(([server]) =>
+                    activeMcp.includes(server),
+                  ),
+                )
+              : {}),
+            ...(mcpScope.compassOverlay ?? {}),
+          };
+    // Final per-request toolsets for 5b/5c consumers (table/schedule tool
+    // resolution, subagent toolset overlay) — the ONE record downstream code
+    // should resolve compass from during this chat turn.
+    requestContext.set('scopedMcpToolsets', agentMcp);
 
     const effectiveModel = body.model ?? deps.runtime.definitions.get(agentId)?.definition.model;
     let agentInputMessages = messages as UiMessage[];
@@ -558,12 +760,14 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const tableBlockBase = planMode ? '' : buildTableContextBlock(threadId, projectPin);
     // Thread-tied (unlike the workspace grid's own schedule-edit HTTP routes,
     // see mcp-scoping.ts's module docstring): this request already resolved
-    // `mcpServerGroups` and `projectPin` above for MCP scoping, so the
-    // guidance text's "is Compass connected" check agrees with the pinned
-    // server rather than whatever `'compass'` would resolve to unpinned.
+    // its final per-request toolsets (`agentMcp`, pooled compass included)
+    // and the entry-level pin above, so the guidance text's "is Compass
+    // connected" check agrees with what THIS turn can actually call — the
+    // tenant cache would always say "not connected" now that compass lives
+    // only in the pool.
     const editGuidance = planMode
       ? ''
-      : scheduleEditGuidanceBlock(deps.getMcpToolsets, mcpServerGroups, projectPin);
+      : scheduleEditGuidanceBlock(() => agentMcp, mcpServerGroups, scope.entryPin);
     const tableBlock = [tableBlockBase, editGuidance].filter(Boolean).join('\n\n');
     const viewer3dBlock = planMode ? '' : buildViewer3dContextBlock();
     const knowledgeBlock = planMode
@@ -574,10 +778,18 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       : buildWorkspacePanelHintBlock(body.workspacePanel);
     const localeBlock = buildLocaleBlock(body.locale);
     const attachedBrowserBlock = buildAttachedBrowserBlock(body.attachedBrowser);
-    const projectPinBlock = buildProjectPinBlock(projectPin, {
-      movedFrom: threadRowState?.movedFrom ?? null,
-      movedAt: threadRowState?.movedAt ?? null,
-    });
+    // v3: the model-facing reminder names the PROJECT (display name + source
+    // labels), never a raw pin value — a project id would be meaningless and
+    // an entry name no longer exists per project. Unpinned/denied pins get
+    // the personal-area hint (null label); `movedFrom` stays the raw stored
+    // value (display-only legacy entry name or project id).
+    const projectPinBlock = buildProjectPinBlock(
+      scope.project ? projectPinLabel(scope.project) : null,
+      {
+        movedFrom: threadRowState?.movedFrom ?? null,
+        movedAt: threadRowState?.movedAt ?? null,
+      },
+    );
     const workingMemoryBlock = buildReadOnlyWorkingMemoryBlock(
       threadRowState?.workingMemory ?? null,
     );
