@@ -16,10 +16,11 @@
  *    toolsets come from ITS scene-set connection (key + `x-compass-source`
  *    header) and can never observe another project's scene set; pool failure
  *    means compass is absent entirely (honest refusal), never a fallback.
- * 3. `isValidProjectPin` (routes/threads.ts) — POST /api/project validation.
- *    Still entry-keyed here; it is re-keyed to project ids in Phase B 5b
- *    (its semantics — null always valid, garbage/foreign rejected — carry
- *    over unchanged).
+ * 3. `isValidProjectPin` (routes/threads.ts) — POST /api/project validation,
+ *    re-keyed to project ids in Phase B 5b: valid ⇔ null OR an enabled
+ *    tenant-owned project id. Its pre-re-key semantics — null always valid,
+ *    garbage rejected, only a real pin target accepted, foreign tenant
+ *    rejected — carry over unchanged; the pin currency is a project id now.
  */
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
@@ -38,7 +39,7 @@ import {
   disableProject,
   resolvePinnedProjectScope,
 } from '../project-store.js';
-import { DEV_TENANT_ID, ensureDevTenant } from '../tenant.js';
+import { ensureDevTenant } from '../tenant.js';
 
 /** Seed one enabled compass-identity entry (the reconciler's single `compass` row). */
 async function seedCompassEntry(tenantId: string, name = 'compass') {
@@ -417,61 +418,62 @@ describe('resolveChatMcpScope (chat path: prelude + pure scoping + pooled compas
 });
 
 /**
- * POST /api/project membership validation — `isValidProjectPin` is the helper
- * the route calls before persisting a thread's project pin. Still entry-keyed
- * until Phase B 5b re-keys it to project ids; asserted here unchanged.
+ * POST /api/project pin validation — `isValidProjectPin` is the helper the
+ * route calls before persisting a thread's project pin. Re-keyed in Phase B
+ * 5b: the pin currency is a PROJECT id (valid ⇔ null OR an enabled
+ * tenant-owned project id). The pre-re-key semantics are preserved
+ * one-for-one: null always valid; garbage rejected; only a real pin target
+ * accepted (a project id now — MCP entry names, the old currency, are
+ * garbage); a target belonging to a DIFFERENT tenant rejected. New with
+ * project keying: a DISABLED project id is rejected (matches the prelude's
+ * deny — persisting it would deny forever).
  */
 describe('isValidProjectPin', () => {
+  const stamp = Date.now();
+  const TENANT = `project-pin-valid-${stamp}`;
+
   it('null (clearing the pin) is always valid', async () => {
-    assert.equal(await isValidProjectPin(DEV_TENANT_ID, null), true);
+    assert.equal(await isValidProjectPin(TENANT, null), true);
   });
 
-  it('a name that is not a configured server at all is rejected', async () => {
-    const bogus = `not-a-server-${Date.now()}`;
-    assert.equal(await isValidProjectPin(DEV_TENANT_ID, bogus), false);
+  it('a value that is not a project id at all is rejected', async () => {
+    const bogus = `not-a-project-${stamp}`;
+    assert.equal(await isValidProjectPin(TENANT, bogus), false);
   });
 
-  it('a configured but UNGROUPED server name is rejected — pinning it would do nothing', async () => {
-    const suffix = Date.now();
-    const ungrouped = `project-pin-ungrouped-${suffix}`;
-    await createRemoteMcpServer(DEV_TENANT_ID, {
-      name: ungrouped,
+  it('an MCP entry name — even the tenant\'s real, grouped compass entry — is rejected (entry names are no longer pins)', async () => {
+    await createRemoteMcpServer(TENANT, {
+      name: 'compass',
       transport: 'http',
-      url: 'https://example.com/mcp',
+      url: 'https://compass.example/mcp/',
       headers: {},
       enabled: true,
+      group: COMPASS_IDENTITY_GROUP,
+      managed: true,
     });
-    assert.equal(await isValidProjectPin(DEV_TENANT_ID, ungrouped), false);
+    assert.equal(await isValidProjectPin(TENANT, 'compass'), false);
+    // …and the legacy per-scene pin values (pre-migration leftovers) with it.
+    assert.equal(await isValidProjectPin(TENANT, 'compass-guolu'), false);
   });
 
-  it('a GROUPED server name is accepted (member of a configured group)', async () => {
-    const suffix = Date.now() + 1;
-    const group = `project-pin-group-${suffix}`;
-    const member = `project-pin-member-${suffix}`;
-    await createRemoteMcpServer(DEV_TENANT_ID, {
-      name: member,
-      transport: 'http',
-      url: 'https://example.com/mcp',
-      headers: {},
-      enabled: true,
-      group,
+  it('an enabled tenant-owned project id is accepted', async () => {
+    const project = await createProject(TENANT, {
+      name: '锅炉厂',
+      sources: ['guolu'],
+      managed: true,
     });
-    assert.equal(await isValidProjectPin(DEV_TENANT_ID, member), true);
+    assert.equal(await isValidProjectPin(TENANT, project.id), true);
   });
 
-  it('a name that is a group member for a DIFFERENT tenant is rejected', async () => {
-    const suffix = Date.now() + 2;
-    const group = `project-pin-cross-tenant-${suffix}`;
-    const member = `project-pin-cross-member-${suffix}`;
-    await createRemoteMcpServer(DEV_TENANT_ID, {
-      name: member,
-      transport: 'http',
-      url: 'https://example.com/mcp',
-      headers: {},
-      enabled: true,
-      group,
-    });
-    const otherTenant = `project-pin-other-tenant-${suffix}`;
-    assert.equal(await isValidProjectPin(otherTenant, member), false);
+  it('a DISABLED project id is rejected — persisting it would deny scoped access forever', async () => {
+    const project = await createProject(TENANT, { name: '停用厂', sources: ['guolu'] });
+    await disableProject(TENANT, project.id);
+    assert.equal(await isValidProjectPin(TENANT, project.id), false);
+  });
+
+  it('a project id owned by a DIFFERENT tenant is rejected', async () => {
+    const otherTenant = `project-pin-other-tenant-${stamp}`;
+    const foreign = await createProject(otherTenant, { name: '上重', sources: ['shangzhong'] });
+    assert.equal(await isValidProjectPin(TENANT, foreign.id), false);
   });
 });

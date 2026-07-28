@@ -37,7 +37,7 @@ import {
   type UiMessage,
 } from '../message-sync.js';
 import { applyTenantModelSettings } from '../model-settings-store.js';
-import { listMcpServerGroups } from '../mcp-store.js';
+import { getProject } from '../project-store.js';
 import { stopChatStream } from '../resumable-chat-stream.js';
 import { cancelSubagentTask } from '../cancel-thread-tasks.js';
 import type { TaskEvent } from '../task-events.js';
@@ -115,24 +115,25 @@ export function createReadTaskSnapshot(runtime: Runtime) {
 
 
 /**
- * True when `project` is `null` (clearing the pin) or names a currently
- * configured GROUPED server for the tenant — the same well-formedness a
- * thread's project pin must satisfy to ever narrow MCP scoping (see
- * `resolveScopedServerNames` in routes/mcp-apps.ts). A pin naming an
- * ungrouped or nonexistent server would either do nothing (ungrouped
- * servers pass every scoping check regardless of pin) or, worse, read as
- * garbage forever — so POST /api/project rejects it up front instead of
- * silently persisting it. Exported for testing at this seam: there is no
- * HTTP harness in this repo (see mcp-apps-scoping.test.ts for the sibling
- * convention).
+ * True when `project` is `null` (clearing the pin) or an ENABLED project id
+ * owned by the tenant — the same well-formedness a thread's project pin must
+ * satisfy to ever grant scoped MCP access (project-cognition v3: the shared
+ * prelude `resolvePinnedProjectScope` denies missing/foreign/disabled ids,
+ * see project-store.ts and `resolveScopedServerNames` in routes/mcp-apps.ts).
+ * A pin naming anything else — an MCP entry name (the pre-v3 pin currency),
+ * a foreign tenant's project, a disabled project — would read as garbage
+ * forever (deny-by-default on every scoped route), so POST /api/project
+ * rejects it up front instead of silently persisting it. Exported for
+ * testing at this seam: there is no HTTP harness in this repo (see
+ * mcp-apps-scoping.test.ts for the sibling convention).
  */
 export async function isValidProjectPin(
   tenantId: string,
   project: string | null,
 ): Promise<boolean> {
   if (project == null) return true;
-  const groups = await listMcpServerGroups(tenantId);
-  return groups[project] != null;
+  const row = await getProject(tenantId, project);
+  return row != null && row.enabled;
 }
 
 export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): void {
@@ -468,7 +469,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
       if (!(await isValidProjectPin(ctx.tenantId, body.project))) {
         return reply
           .status(400)
-          .send({ ok: false, error: 'project is not a configured group member' });
+          .send({ ok: false, error: 'project is not an enabled project for this tenant' });
       }
       const existing = await ensureThreadState({
         threadId: body.threadId,
