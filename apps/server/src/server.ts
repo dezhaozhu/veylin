@@ -53,6 +53,7 @@ import {
   seedMcpServersFromEnvIfMissing,
   updateRemoteMcpServer,
 } from './mcp-store';
+import { invalidateCompassPool } from './compass-pool';
 import { createProject, listProjects, updateProject } from './project-store';
 import { runProjectMigration } from './project-migration';
 import { listAllCronAutomations, sweepInterruptedAutomationRuns } from './automation-store';
@@ -205,6 +206,12 @@ async function main() {
     const previous = mcpCacheByTenant.get(tenantId);
     let listError: string | undefined;
     mcpCacheByTenant.delete(tenantId);
+    // The compass entry's url/token may be what changed (reconnect route,
+    // compass-identity adopt) — pooled compass connections must not outlive a
+    // rebuild. Compass itself never enters the generic client below
+    // (buildMcpServerConfigs skips COMPASS_IDENTITY_GROUP); connections are
+    // re-established lazily by the pool on the next pinned request.
+    await invalidateCompassPool(tenantId);
     try {
       if (mcp) {
         await mcp.disconnect().catch(() => undefined);
@@ -275,8 +282,10 @@ async function main() {
       listProjects,
       createProject,
       updateProject,
-      // TODO(Task 4 — compass client pool): pass invalidateCompassPool here so
-      // grant/token changes drop pooled connections. No-op until the pool exists.
+      // Grant/token changes drop the tenant's pooled compass connections —
+      // covers project-only changes too (entry changes already invalidate via
+      // rebuildMcp above).
+      invalidateCompassPool,
     });
   }
 

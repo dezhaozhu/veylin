@@ -324,10 +324,10 @@ export type CompassIdentityDeps = {
     patch: { enabled?: boolean },
   ) => Promise<Project | null>;
   /**
-   * TODO(Task 4 — compass client pool): invalidate the tenant's pooled compass
-   * connections whenever this pass changed anything (entry OR project), so no
-   * connection outlives a token/grant change. Defaults to a no-op until the
-   * pool exists.
+   * Invalidates the tenant's pooled compass connections (compass-pool.ts)
+   * whenever this pass changed anything (entry OR project), so no connection
+   * outlives a token/grant change — server.ts binds the real
+   * `invalidateCompassPool`. Optional so pure/stubbed tests can omit it.
    */
   invalidateCompassPool?: (tenantId: string) => void | Promise<void>;
   log?: (line: string) => void;
@@ -443,7 +443,8 @@ export async function reconcileCompassIdentity(
     await deps.rebuildMcp(deps.tenantId);
   }
   if (entriesChanged || projectsChanged) {
-    // TODO(Task 4): drops every pooled compass connection; no-op until the pool lands.
+    // Drops every pooled compass connection for the tenant (compass-pool.ts) —
+    // the pool reconnects lazily with fresh entry headers/grants on demand.
     await deps.invalidateCompassPool?.(deps.tenantId);
   }
   log(
