@@ -22,6 +22,7 @@ function rowToProject(row: NonNullable<Awaited<ReturnType<typeof getProjectRow>>
     sources: row.sources,
     managed: row.managed,
     enabled: row.enabled,
+    migratedFrom: row.migratedFrom,
     createdAt: row.createdAt,
   };
 }
@@ -43,6 +44,8 @@ export interface ProjectInput {
   sources: string[];
   managed?: boolean;
   enabled?: boolean;
+  /** Set-once identity marker; only the boot migration passes this. Not patchable. */
+  migratedFrom?: string;
 }
 
 export async function createProject(tenantId: string, input: ProjectInput): Promise<Project> {
@@ -51,6 +54,7 @@ export async function createProject(tenantId: string, input: ProjectInput): Prom
     sources: input.sources,
     managed: input.managed ?? false,
     enabled: input.enabled ?? true,
+    migratedFrom: input.migratedFrom,
   });
   return rowToProject(row);
 }

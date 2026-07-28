@@ -53,6 +53,7 @@ const COMPOSED_COMPARE = project({
   name: COMPARE_PROJECT_NAME,
   sources: ['guolu', 'shangzhong'],
   managed: false,
+  migratedFrom: LEGACY_COMPARE_ENTRY_NAME,
 });
 
 describe('legacyServerToProjectId (comparison-time shim)', () => {
@@ -63,8 +64,46 @@ describe('legacyServerToProjectId (comparison-time shim)', () => {
     assert.equal(legacyServerToProjectId('compass-shangzhong', projects), 'proj-sz');
   });
 
-  it('maps compass-对比 to the composed 对比分析 project id (managed:false + name match)', () => {
+  it('maps compass-对比 to the composed project id (structural migratedFrom marker)', () => {
     assert.equal(legacyServerToProjectId(LEGACY_COMPARE_ENTRY_NAME, projects), 'proj-compare');
+  });
+
+  it('a USER project merely NAMED 对比分析 (no marker) never satisfies the match (C1)', () => {
+    const userLookalike = project({
+      id: 'proj-user-compare',
+      name: COMPARE_PROJECT_NAME,
+      sources: ['guolu'],
+      managed: false,
+    });
+    assert.equal(
+      legacyServerToProjectId(LEGACY_COMPARE_ENTRY_NAME, [GUOLU_DEFAULT, userLookalike]),
+      null,
+    );
+    // ...and with both present, the marker row wins deterministically.
+    assert.equal(
+      legacyServerToProjectId(LEGACY_COMPARE_ENTRY_NAME, [
+        userLookalike,
+        COMPOSED_COMPARE,
+        GUOLU_DEFAULT,
+      ]),
+      'proj-compare',
+    );
+  });
+
+  it('the shim keeps mapping a DISABLED marker row (stamp identity survives disable)', () => {
+    const disabled = { ...COMPOSED_COMPARE, enabled: false };
+    assert.equal(
+      legacyServerToProjectId(LEGACY_COMPARE_ENTRY_NAME, [GUOLU_DEFAULT, disabled]),
+      'proj-compare',
+    );
+  });
+
+  it('a RENAMED marker row keeps its identity (name is display-only)', () => {
+    const renamed = { ...COMPOSED_COMPARE, name: '我的对比' };
+    assert.equal(
+      legacyServerToProjectId(LEGACY_COMPARE_ENTRY_NAME, [GUOLU_DEFAULT, renamed]),
+      'proj-compare',
+    );
   });
 
   it('a MANAGED row named 对比分析 does not satisfy the composed-project match', () => {
@@ -152,7 +191,46 @@ describe('planPinMigration (pure)', () => {
     assert.deepEqual(plan.compare, {
       fromPin: LEGACY_COMPARE_ENTRY_NAME,
       existingProjectId: null,
-      create: { name: COMPARE_PROJECT_NAME, sources: ['guolu', 'shangzhong'], managed: false },
+      create: {
+        name: COMPARE_PROJECT_NAME,
+        sources: ['guolu', 'shangzhong'],
+        managed: false,
+        migratedFrom: LEGACY_COMPARE_ENTRY_NAME,
+      },
+    });
+  });
+
+  it('compare pin with a DISABLED marker row → pins untouched, no create, no repoint (C2)', () => {
+    const disabled = { ...COMPOSED_COMPARE, enabled: false };
+    const plan = planPinMigration(
+      [LEGACY_COMPARE_ENTRY_NAME],
+      [GUOLU_DEFAULT, SHANGZHONG_DEFAULT, disabled],
+    );
+    assert.equal(plan.compare, null);
+  });
+
+  it('compare pin with only a user project NAMED 对比分析 → creates the real marker row (C1)', () => {
+    const userLookalike = project({
+      id: 'proj-user-compare',
+      name: COMPARE_PROJECT_NAME,
+      sources: ['guolu'],
+      managed: false,
+    });
+    const plan = planPinMigration(
+      [LEGACY_COMPARE_ENTRY_NAME],
+      [GUOLU_DEFAULT, SHANGZHONG_DEFAULT, userLookalike],
+    );
+    // NOT re-pointed onto the user's unrelated project — a marker row is
+    // created instead, with the full granted set.
+    assert.deepEqual(plan.compare, {
+      fromPin: LEGACY_COMPARE_ENTRY_NAME,
+      existingProjectId: null,
+      create: {
+        name: COMPARE_PROJECT_NAME,
+        sources: ['guolu', 'shangzhong'],
+        managed: false,
+        migratedFrom: LEGACY_COMPARE_ENTRY_NAME,
+      },
     });
   });
 

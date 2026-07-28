@@ -13,6 +13,13 @@ export interface Project {
   sources: string[];
   managed: boolean;
   enabled: boolean;
+  /**
+   * Structural identity marker (set once at creation, never patched): the
+   * legacy entry name this project was materialized from by the boot
+   * migration (e.g. 'compass-对比'). Identity checks match on this, never on
+   * the display name — user-composed projects can share any name safely.
+   */
+  migratedFrom?: string;
   createdAt?: string;
 }
 

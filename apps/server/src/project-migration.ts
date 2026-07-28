@@ -12,9 +12,11 @@
  * 1. **Pins** (`thread_state.project`): `compass-<src>` for a granted source →
  *    that source's managed default project id. `compass-对比` → ONE
  *    user-composed project `{name: 对比分析, sources: all granted (sorted),
- *    managed: false}`, created on first need and matched by name+managed
- *    thereafter (frozen source set — future grants don't auto-join, per
- *    user-composed semantics). Pins naming unknown entries (foreign MCP
+ *    managed: false, migratedFrom: 'compass-对比'}`, created on first need and
+ *    matched STRUCTURALLY by the set-once `migratedFrom` marker thereafter —
+ *    never by display name (frozen source set — future grants don't
+ *    auto-join, per user-composed semantics). Pins naming unknown entries
+ *    (foreign MCP
  *    servers, revoked sources, already-migrated project ids) are left
  *    untouched — they were already deny-by-default, and a revoked source's pin
  *    gets picked up by a later boot pass if the grant returns. `moved_from`
@@ -59,9 +61,19 @@ export function defaultProjectForSource(source: string, projects: Project[]): Pr
   );
 }
 
-/** The composed 对比 project: matched by name + `managed: false` (idempotency key). */
+/**
+ * The composed 对比 project: matched STRUCTURALLY by its set-once
+ * `migratedFrom === 'compass-对比'` marker (written only by this module's
+ * create path), never by display name — a user-composed project that happens
+ * to be named 对比分析 can never be mistaken for it, and renaming the real
+ * one doesn't break its identity (security review C1). Only the migration
+ * creates marker rows, and only when none exists, so duplicates cannot arise
+ * from this module; `preferEnabled` stays as defense-in-depth.
+ */
 export function composedCompareProject(projects: Project[]): Project | null {
-  return preferEnabled(projects.filter((p) => !p.managed && p.name === COMPARE_PROJECT_NAME));
+  return preferEnabled(
+    projects.filter((p) => !p.managed && p.migratedFrom === LEGACY_COMPARE_ENTRY_NAME),
+  );
 }
 
 /** Granted ⇔ an ENABLED managed default project exists (reconcile ran just before us). */
@@ -110,7 +122,7 @@ export type PinMigrationPlan = {
   compare: {
     fromPin: string;
     existingProjectId: string | null;
-    create: { name: string; sources: string[]; managed: false } | null;
+    create: { name: string; sources: string[]; managed: false; migratedFrom: string } | null;
   } | null;
 };
 
@@ -147,6 +159,12 @@ export function planPinMigration(pins: (string | null)[], projects: Project[]): 
 
   const existing = composedCompareProject(projects);
   if (existing) {
+    // Marker row exists but is DISABLED (user deleted/disabled it via project
+    // CRUD): respect that intent — pins stay on the legacy name (deny) rather
+    // than being re-pointed at a disabled project or a duplicate being
+    // created (security review C2: repoint targets must be enabled, same
+    // invariant as the per-source branch above).
+    if (!existing.enabled) return { repoints, compare: null };
     return {
       repoints,
       compare: { fromPin: LEGACY_COMPARE_ENTRY_NAME, existingProjectId: existing.id, create: null },
@@ -159,7 +177,12 @@ export function planPinMigration(pins: (string | null)[], projects: Project[]): 
     compare: {
       fromPin: LEGACY_COMPARE_ENTRY_NAME,
       existingProjectId: null,
-      create: { name: COMPARE_PROJECT_NAME, sources: granted, managed: false },
+      create: {
+        name: COMPARE_PROJECT_NAME,
+        sources: granted,
+        managed: false,
+        migratedFrom: LEGACY_COMPARE_ENTRY_NAME,
+      },
     },
   };
 }
@@ -202,7 +225,13 @@ export type ProjectMigrationDeps = {
   listProjects: (tenantId: string) => Promise<Project[]>;
   createProject: (
     tenantId: string,
-    input: { name: string; sources: string[]; managed: boolean; enabled?: boolean },
+    input: {
+      name: string;
+      sources: string[];
+      managed: boolean;
+      enabled?: boolean;
+      migratedFrom?: string;
+    },
   ) => Promise<Project>;
   /** Thread pins — server.ts binds @veylin/db's listThreadStatesWithProject. */
   listPinnedThreadStates: (tenantId: string) => Promise<{ project?: string | null }[]>;

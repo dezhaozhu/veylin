@@ -172,6 +172,14 @@ export interface ProjectRow {
   managed: boolean;
   /** Disabled-not-deleted: revoked/removed projects stay for pin history. */
   enabled: boolean;
+  /**
+   * Structural identity marker, set once at creation and never patched: the
+   * legacy entry name this row was materialized FROM by the boot migration
+   * (e.g. 'compass-对比'). Migration/provenance code matches on THIS, never on
+   * the display name — a user-composed project that happens to share the name
+   * can never be mistaken for it (security review C1).
+   */
+  migratedFrom?: string;
   createdAt?: string;
 }
 

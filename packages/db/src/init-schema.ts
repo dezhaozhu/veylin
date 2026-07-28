@@ -156,6 +156,7 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS sources ON project FLEXIBLE TYPE array DEFAULT []`,
   `DEFINE FIELD IF NOT EXISTS managed ON project TYPE bool DEFAULT false`,
   `DEFINE FIELD IF NOT EXISTS enabled ON project TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS migrated_from ON project TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS created_at ON project TYPE datetime DEFAULT time::now()`,
   `DEFINE INDEX IF NOT EXISTS project_tenant_idx ON project FIELDS tenant_id`,
 

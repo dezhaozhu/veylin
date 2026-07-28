@@ -128,6 +128,7 @@ function mapProject(r: Record<string, unknown>): ProjectRow {
     sources: Array.isArray(r.sources) ? (r.sources as unknown[]).map(String) : [],
     managed: Boolean(r.managed ?? false),
     enabled: Boolean(r.enabled ?? true),
+    migratedFrom: r.migrated_from ? String(r.migrated_from) : undefined,
     createdAt: r.created_at ? String(r.created_at) : undefined,
   };
 }
@@ -726,6 +727,8 @@ export async function insertProjectRow(
     sources: input.sources,
     managed: input.managed,
     enabled: input.enabled,
+    // Set-once identity marker (option<string>): only included when present.
+    ...(input.migratedFrom != null ? { migrated_from: input.migratedFrom } : {}),
   });
   return mapProject((await selectById<Record<string, unknown>>(getDb(), 'project', id))!);
 }
