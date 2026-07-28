@@ -1,4 +1,4 @@
-import { useMemo, type FC } from 'react';
+import { useMemo, useState, type FC } from 'react';
 import { useTranslation } from 'react-i18next';
 import { projectSourceLabel } from '@/lib/project-labels';
 import {
@@ -122,6 +122,14 @@ export const SceneCardMergeTable: FC<{
   const { t } = useTranslation();
   const sections = useMemo(() => buildMergedRows(scenes), [scenes]);
   const openCorrection = useOpenCorrection(projectId);
+  // Which sections have their partial rows expanded (see the toggle row below).
+  const [openSections, setOpenSections] = useState<ReadonlySet<string>>(() => new Set());
+  const togglePartial = (section: string) =>
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(section)) next.add(section);
+      return next;
+    });
 
   const colSpan = scenes.length + 1;
 
@@ -178,28 +186,31 @@ export const SceneCardMergeTable: FC<{
                   <Row key={row.key} row={row} onReport={report} />
                 ))}
                 {partial.length > 0 ? (
-                  <tr>
-                    <td colSpan={colSpan} className="px-2 pt-1">
-                      <details className="text-sm">
-                        <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-xs">
+                  <>
+                    {/* ONE table, not a nested one: a nested <table> lays its
+                        columns out independently, and a browser measurement on
+                        the real 对比 project put its last column 151px off the
+                        outer header — in a comparison table a value drifting
+                        under the wrong scene column is a correctness problem,
+                        not a cosmetic one. So the disclosure is a toggle ROW
+                        and the partial rows stay in this table body, where
+                        alignment is structural. */}
+                    <tr>
+                      <td colSpan={colSpan} className="px-2 pt-1">
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-foreground cursor-pointer text-xs"
+                          aria-expanded={openSections.has(section.section)}
+                          onClick={() => togglePartial(section.section)}
+                        >
                           {t('projectPage.partialRows', { count: partial.length })}
-                        </summary>
-                        {/* Same layout inside — the colgroup repeats the outer
-                            table's 1/4 label column so the disclosure reads as
-                            a continuation, not a different table. */}
-                        <table className="w-full border-collapse text-sm">
-                          <colgroup>
-                            <col className="w-1/4" />
-                          </colgroup>
-                          <tbody>
-                            {partial.map((row) => (
-                              <Row key={row.key} row={row} onReport={report} />
-                            ))}
-                          </tbody>
-                        </table>
-                      </details>
-                    </td>
-                  </tr>
+                        </button>
+                      </td>
+                    </tr>
+                    {openSections.has(section.section)
+                      ? partial.map((row) => <Row key={row.key} row={row} onReport={report} />)
+                      : null}
+                  </>
                 ) : null}
               </tbody>
             );
