@@ -1,19 +1,11 @@
 import { useCallback, useMemo, type ComponentProps, type FC } from 'react';
-import {
-  McpAppRenderer,
-  McpAppsRemoteHost,
-  useAui,
-} from '@assistant-ui/react';
+import { McpAppRenderer, McpAppsRemoteHost } from '@assistant-ui/react';
 import { useResource } from '@assistant-ui/tap';
 import { useTranslation } from 'react-i18next';
 import { McpAppActionBridge } from '@/components/assistant-ui/mcp-app-action-bridge';
-import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
-import { placeComposerCaret } from '@/lib/composer-caret';
-import { correctionDraftSpec, type CorrectionPayload } from '@/lib/correction-bridge';
-import { projectSourceLabel } from '@/lib/project-labels';
-import { postThreadProject, writeCachedThreadProject } from '@/lib/project-sync';
-import { invalidateThreadProjects } from '@/lib/thread-projects-sync';
+import type { CorrectionPayload } from '@/lib/correction-bridge';
 import { SCENE_CARD_TOOL } from './scene-card-grid';
+import { useOpenCorrection } from './use-open-correction';
 import type { SceneCardFetch } from './use-scene-card-payloads';
 
 /**
@@ -29,14 +21,6 @@ import type { SceneCardFetch } from './use-scene-card-payloads';
  * table and these side-by-side cells. Still one fetch per view open, no
  * polling — the page is conditionally mounted.
  */
-
-/**
- * One correction at a time, ACROSS all cells on the page: `aui.threads()` is
- * app-global, so overlapping create→pin sequences would collide (see the
- * guard's use site). Module scope is the right granularity — a single page
- * mounts one cell per (source × capability).
- */
-let correctionInFlight = false;
 
 export const SceneCardCell: FC<{
   hostUrl: string;
@@ -71,46 +55,15 @@ export const SceneCardCell: FC<{
 
   // 修正桥, 项目首页 context: the widget's "这里不对?" opens a NEW thread
   // pinned to the page's CURRENT project (this component's props — never the
-  // message payload), navigates to chat and prefills the composer. Same
-  // creation/pin sequence as project-list.tsx's new-chat-in-project. The
-  // scene label is host-derived too: this cell's own `source`. Draft only;
-  // nothing is auto-sent.
-  const aui = useAui();
-  const { closeWorkspace } = useSettingsPanel();
+  // message payload), navigates to chat and prefills the composer. The
+  // sequence itself lives in useOpenCorrection, shared with the 对比合并视图
+  // table so BOTH card shapes offer the same one-click correction path (and
+  // share its single module-scoped in-flight guard). The scene label is
+  // host-derived here too: this cell's own `source`.
+  const openCorrection = useOpenCorrection(projectId);
   const handleCorrection = useCallback(
-    (p: CorrectionPayload) => {
-      // MODULE-scoped guard, not per-cell (security review V2): the thread
-      // store is app-global, so two cells firing inside the pin round-trip
-      // would both resolve item('main') to whichever thread was created last
-      // — two pins on one thread, an orphan thread, and a draft naming the
-      // other card's scene. A page renders N cells, so per-mount refs cannot
-      // serialize this.
-      if (correctionInFlight) return;
-      correctionInFlight = true;
-      void (async () => {
-        try {
-          await aui.threads().switchToNewThread();
-          const item = aui.threads().item('main');
-          const initialized = await item.initialize();
-          // Triple fallback as in project-list.tsx — the local id later
-          // BECOMES the remoteId, so the pin lands under the right key.
-          const rid = initialized.remoteId ?? initialized.externalId ?? item.getState().id;
-          const confirmed = await postThreadProject(rid, projectId);
-          writeCachedThreadProject(rid, confirmed ?? projectId);
-          invalidateThreadProjects();
-          const spec = correctionDraftSpec(projectSourceLabel(source), p);
-          const draft = t(spec.key, spec.vars);
-          aui.composer().setText(draft);
-          closeWorkspace();
-          placeComposerCaret(draft.length);
-        } catch (err) {
-          console.error('[scene-card] open-correction failed:', err);
-        } finally {
-          correctionInFlight = false;
-        }
-      })();
-    },
-    [aui, projectId, source, t, closeWorkspace],
+    (p: CorrectionPayload) => openCorrection(source, p),
+    [openCorrection, source],
   );
 
   if (fetched.status === 'error') {

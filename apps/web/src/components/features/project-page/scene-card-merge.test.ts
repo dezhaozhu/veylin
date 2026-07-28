@@ -5,11 +5,14 @@ import {
   canMergeCards,
   extractDisplayRows,
   extractNarrative,
+  partitionSectionRows,
   readCardPayload,
   rowDiff,
   type DisplayRow,
   type MergedCell,
+  type MergedRow,
 } from './scene-card-merge';
+import { fetchSceneCard, type SceneCardSpec } from './use-scene-card-payloads';
 
 /** Contract rows, written the way a capability server ships them. The keys are
  * opaque strings to this module — the tests use compass-shaped ones only
@@ -56,6 +59,22 @@ describe('scene-card-merge / payload extraction', () => {
   it('an empty display array counts as no display (⇒ fallback)', () => {
     assert.equal(extractDisplayRows({ display: [] }), null);
     assert.equal(extractDisplayRows({ display: [{ nonsense: true }] }), null);
+  });
+
+  it('a row naming no section is dropped (it would render a blank group header)', () => {
+    const rows = extractDisplayRows({
+      display: [
+        { key: 'no.section', section: '', label: 'L', value: 'v' },
+        { key: 'blank.section', section: '   ', label: 'L', value: 'v' },
+        row('ok', 'S', 'L', 'v'),
+      ],
+    });
+    assert.deepEqual(
+      rows?.map((r) => r.key),
+      ['ok'],
+    );
+    // A card whose ONLY rows lack a section carries no display at all.
+    assert.equal(extractDisplayRows({ display: [{ key: 'k', section: '', label: 'L', value: 'v' }] }), null);
   });
 });
 
@@ -218,5 +237,187 @@ describe('scene-card-merge / rowDiff', () => {
     assert.deepEqual(rowDiff([cell('7', 7), null]), { kind: 'none' });
     assert.deepEqual(rowDiff([cell('7', 7)]), { kind: 'none' });
     assert.deepEqual(rowDiff([null, null]), { kind: 'none' });
+  });
+});
+
+describe('scene-card-merge / shared vs partial rows (the dash wall)', () => {
+  const mk = (key: string, cells: MergedCell[]): MergedRow => ({
+    key,
+    label: key,
+    cells,
+    diff: { kind: 'none' },
+  });
+  const v = (value: string): MergedCell => ({ value });
+
+  it('rows every scene has are shared; rows only some have are partial', () => {
+    const { shared, partial } = partitionSectionRows([
+      mk('both', [v('1'), v('2')]),
+      mk('left-only', [v('1'), null]),
+      mk('right-only', [null, v('2')]),
+    ]);
+    assert.deepEqual(shared.map((r) => r.key), ['both']);
+    assert.deepEqual(partial.map((r) => r.key), ['left-only', 'right-only']);
+  });
+
+  it('all-shared ⇒ nothing to collapse (a section with no disclosure)', () => {
+    const { shared, partial } = partitionSectionRows([
+      mk('a', [v('1'), v('2')]),
+      mk('b', [v('3'), v('4')]),
+    ]);
+    assert.equal(shared.length, 2);
+    assert.deepEqual(partial, []);
+  });
+
+  it('all-partial ⇒ everything collapses (a section that is only a disclosure)', () => {
+    const { shared, partial } = partitionSectionRows([
+      mk('a', [v('1'), null]),
+      mk('b', [null, v('2')]),
+    ]);
+    assert.deepEqual(shared, []);
+    assert.equal(partial.length, 2);
+  });
+
+  it('original order is preserved WITHIN each group', () => {
+    const { shared, partial } = partitionSectionRows([
+      mk('s1', [v('1'), v('2')]),
+      mk('p1', [v('1'), null]),
+      mk('s2', [v('3'), v('4')]),
+      mk('p2', [null, v('2')]),
+      mk('s3', [v('5'), v('6')]),
+    ]);
+    assert.deepEqual(shared.map((r) => r.key), ['s1', 's2', 's3']);
+    assert.deepEqual(partial.map((r) => r.key), ['p1', 'p2']);
+  });
+
+  it('presence is the only criterion — no key or section is consulted', () => {
+    // Two rows with identical keys-shapes but different presence land in
+    // different groups; a per-entity key that DOES intersect stays shared.
+    const { shared, partial } = partitionSectionRows([
+      mk('capacity.tonnage.上锅', [v('1,200 吨/月'), v('2,646 吨/月')]),
+      mk('capacity.tonnage.YZ0202-4', [null, v('900 吨/月')]),
+    ]);
+    assert.deepEqual(shared.map((r) => r.key), ['capacity.tonnage.上锅']);
+    assert.deepEqual(partial.map((r) => r.key), ['capacity.tonnage.YZ0202-4']);
+  });
+
+  it('a section straight out of buildMergedRows partitions as rendered', () => {
+    const a = { source: 'a', rows: [row('shared', 'S', 'Shared', '1', 1), row('only-a', 'S', 'A', '2', 2)] };
+    const b = { source: 'b', rows: [row('shared', 'S', 'Shared', '9', 9)] };
+    const [section] = buildMergedRows([a, b]);
+    const { shared, partial } = partitionSectionRows(section!.rows);
+    assert.deepEqual(shared.map((r) => r.key), ['shared']);
+    assert.deepEqual(partial.map((r) => r.key), ['only-a']);
+  });
+});
+
+describe('scene-card-merge / multi-scene × multi-server (4 columns)', () => {
+  // Two sources × two capability servers: the page fetches one card per
+  // (source, server) pair, so the SAME source appears in two columns.
+  const card = (label: string, orders: number, extra?: DisplayRow) => ({
+    rows: [row('problem.orders', '问题结构', '订单', String(orders), orders), ...(extra ? [extra] : [])],
+    label,
+  });
+  const scenes = [
+    { source: 'guolu', ...card('guolu/alpha', 7088) },
+    { source: 'guolu', ...card('guolu/beta', 7088, row('beta.only', '扩展', 'Beta', 'x')) },
+    { source: 'shangzhong', ...card('shangzhong/alpha', 30923) },
+    { source: 'shangzhong', ...card('shangzhong/beta', 30923) },
+  ];
+
+  it('merges into one row per key with one cell per COLUMN, not per source', () => {
+    const sections = buildMergedRows(scenes);
+    const orders = sections[0]?.rows[0];
+    assert.equal(orders?.key, 'problem.orders');
+    assert.deepEqual(orders?.cells, [
+      { value: '7088', num: 7088 },
+      { value: '7088', num: 7088 },
+      { value: '30923', num: 30923 },
+      { value: '30923', num: 30923 },
+    ]);
+  });
+
+  it('the two columns of one source stay distinct — no key collision', () => {
+    const sections = buildMergedRows(scenes);
+    const betaOnly = sections.flatMap((s) => s.rows).find((r) => r.key === 'beta.only');
+    // Present in guolu/beta only: column 1, not column 0, even though both
+    // columns are the SAME source.
+    assert.deepEqual(betaOnly?.cells, [null, { value: 'x' }, null, null]);
+    assert.deepEqual(partitionSectionRows([betaOnly!]).partial.map((r) => r.key), ['beta.only']);
+  });
+
+  it('duplicate sources still count as a comparison (2 distinct scenes)', () => {
+    assert.equal(
+      canMergeCards(scenes.map((s) => ({ source: s.source, rows: s.rows }))),
+      true,
+    );
+  });
+
+  it('a numeric row shades per column, so identical siblings shade identically', () => {
+    const sections = buildMergedRows(scenes);
+    assert.deepEqual(sections[0]?.rows[0]?.diff, {
+      kind: 'numeric',
+      intensity: [0, 0, 1, 1],
+    });
+  });
+});
+
+describe('scene-card-payloads / a stuck card settles as failed', () => {
+  const spec: SceneCardSpec = {
+    source: 'guolu',
+    server: 'compass',
+    resourceUri: 'ui://widget/scene-card.html',
+    args: { scene: 'guolu' },
+    argsKey: '{"scene":"guolu"}',
+  };
+
+  /** A capability server that accepts the request and never answers — the
+   * exact failure the page-level Promise.all cannot survive without a
+   * deadline. It honors abort the way a real fetch does. */
+  const hangingFetch = (() =>
+    (_input: unknown, init?: { signal?: AbortSignal | null }) =>
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) return;
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+          once: true,
+        });
+      }))() as unknown as typeof globalThis.fetch;
+
+  const jsonFetch = (status: number, body: unknown) =>
+    (() => () =>
+      Promise.resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        json: () => Promise.resolve(body),
+      }))() as unknown as typeof globalThis.fetch;
+
+  it('a hung request times out as a FAILED card, keeping its spec', async () => {
+    const entry = await fetchSceneCard('/host', spec, { timeoutMs: 5, fetchImpl: hangingFetch });
+    assert.deepEqual(entry.fetched, { status: 'error' });
+    // Same shape as an HTTP error ⇒ the page proceeds and, being
+    // display-less, degrades to side-by-side per canMergeCards.
+    assert.equal(entry.source, 'guolu');
+    assert.equal(entry.argsKey, '{"scene":"guolu"}');
+    assert.equal(extractDisplayRows(undefined), null);
+  });
+
+  it('the caller aborting (unmount / project change) settles the same way', async () => {
+    const cancel = new AbortController();
+    const pending = fetchSceneCard('/host', spec, {
+      timeoutMs: 60_000,
+      fetchImpl: hangingFetch,
+      signal: cancel.signal,
+    });
+    cancel.abort();
+    assert.deepEqual((await pending).fetched, { status: 'error' });
+  });
+
+  it('an HTTP error is the same failed card; a good response is ready', async () => {
+    const bad = await fetchSceneCard('/host', spec, { fetchImpl: jsonFetch(500, {}) });
+    assert.deepEqual(bad.fetched, { status: 'error' });
+    const ok = await fetchSceneCard('/host', spec, {
+      fetchImpl: jsonFetch(200, { display: [row('k', 'S', 'L', 'v')] }),
+    });
+    assert.deepEqual(ok.fetched, { status: 'ready', result: { display: [row('k', 'S', 'L', 'v')] } });
   });
 });
