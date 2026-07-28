@@ -162,6 +162,19 @@ export interface McpServerRow {
   createdAt?: string;
 }
 
+export interface ProjectRow {
+  id: string;
+  tenantId: string;
+  name: string;
+  /** Compass source (scene) codes this project scopes to, e.g. ['guolu']. */
+  sources: string[];
+  /** true = reconciler-managed default project (one per granted source). */
+  managed: boolean;
+  /** Disabled-not-deleted: revoked/removed projects stay for pin history. */
+  enabled: boolean;
+  createdAt?: string;
+}
+
 export interface AutomationRow {
   id: string;
   tenantId: string;

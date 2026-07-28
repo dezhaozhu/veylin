@@ -9,6 +9,7 @@ import type {
   CustomSkillRow,
   McpServerRow,
   MembershipRow,
+  ProjectRow,
   RuleRow,
   TaskRow,
   TenantRow,
@@ -115,6 +116,18 @@ function mapMcp(r: Record<string, unknown>): McpServerRow {
     enabled: Boolean(r.enabled ?? true),
     group: (r.group as string | null) ?? null,
     managed: (r.managed as boolean | null) ?? null,
+    createdAt: r.created_at ? String(r.created_at) : undefined,
+  };
+}
+
+function mapProject(r: Record<string, unknown>): ProjectRow {
+  return {
+    id: normalizeId(r.id),
+    tenantId: String(r.tenant_id ?? ''),
+    name: String(r.name ?? ''),
+    sources: Array.isArray(r.sources) ? (r.sources as unknown[]).map(String) : [],
+    managed: Boolean(r.managed ?? false),
+    enabled: Boolean(r.enabled ?? true),
     createdAt: r.created_at ? String(r.created_at) : undefined,
   };
 }
@@ -361,6 +374,25 @@ export async function listThreadStatesWithProject(tenantId: string): Promise<Thr
     { tenantId },
   );
   return rows.map(mapThreadState);
+}
+
+/**
+ * Bulk re-point every thread pinned to `oldPin` onto `newPin` for one tenant —
+ * backs the one-time entry-name → project-id pin migration (Phase B Task 3).
+ * Returns the number of re-pointed rows (for migration logging); idempotent —
+ * a second run matches nothing.
+ */
+export async function updateThreadStateProjectBulk(
+  tenantId: string,
+  oldPin: string,
+  newPin: string,
+): Promise<number> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    'UPDATE thread_state SET project = $newPin, updated_at = time::now() WHERE tenant_id = $tenantId AND project = $oldPin',
+    { tenantId, oldPin, newPin },
+  );
+  return rows.length;
 }
 
 export async function deleteThreadStateRow(threadId: string): Promise<void> {
@@ -663,6 +695,74 @@ export async function deleteMcpServerRow(tenantId: string, id: string): Promise<
   if (!before || String(before.tenant_id) !== tenantId) return false;
   await deleteById(getDb(), 'mcp_server', id);
   return true;
+}
+
+// ---- Projects ----
+
+export async function listProjectRows(tenantId: string): Promise<ProjectRow[]> {
+  const rows = await queryRows<Record<string, unknown>>(
+    getDb(),
+    'SELECT * FROM project WHERE tenant_id = $tenantId',
+    { tenantId },
+  );
+  return rows.map(mapProject);
+}
+
+export async function getProjectRow(tenantId: string, id: string): Promise<ProjectRow | null> {
+  const row = await selectById<Record<string, unknown>>(getDb(), 'project', id);
+  if (!row || String(row.tenant_id) !== tenantId) return null;
+  return mapProject(row);
+}
+
+export async function insertProjectRow(
+  tenantId: string,
+  input: Omit<ProjectRow, 'id' | 'tenantId' | 'createdAt'>,
+): Promise<ProjectRow> {
+  const id = newId();
+  await createRecord(getDb(), 'project', {
+    id,
+    tenant_id: tenantId,
+    name: input.name,
+    sources: input.sources,
+    managed: input.managed,
+    enabled: input.enabled,
+  });
+  return mapProject((await selectById<Record<string, unknown>>(getDb(), 'project', id))!);
+}
+
+export async function updateProjectRow(
+  tenantId: string,
+  id: string,
+  patch: Partial<ProjectRow>,
+): Promise<ProjectRow | null> {
+  const sets: string[] = [];
+  const vars: Record<string, unknown> = { id, tenantId };
+  for (const [key, col] of [
+    ['name', 'name'],
+    ['sources', 'sources'],
+    ['managed', 'managed'],
+    ['enabled', 'enabled'],
+  ] as const) {
+    const val = patch[key];
+    if (val !== undefined) {
+      sets.push(`${col} = $${key}`);
+      vars[key] = val;
+    }
+  }
+  if (sets.length === 0) return null;
+  const existing = await selectById<Record<string, unknown>>(getDb(), 'project', id);
+  if (!existing || String(existing.tenant_id) !== tenantId) return null;
+  await getDb().query(`UPDATE type::thing($table, $id) SET ${sets.join(', ')}`, {
+    ...vars,
+    table: 'project',
+  });
+  const row = await selectById<Record<string, unknown>>(getDb(), 'project', id);
+  return row ? mapProject(row) : null;
+}
+
+/** Disabled-not-deleted (mirrors managed mcp_server rows): pins to a disabled project deny, never leak. */
+export async function disableProjectRow(tenantId: string, id: string): Promise<ProjectRow | null> {
+  return updateProjectRow(tenantId, id, { enabled: false });
 }
 
 // ---- Tasks ----
