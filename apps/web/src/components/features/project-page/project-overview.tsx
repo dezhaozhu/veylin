@@ -130,7 +130,10 @@ const ProjectCardsGrid: FC<{
   const entries = useSceneCardPayloads(hostUrl, columns, project.sources);
 
   // One page-level loader for the whole area (the calls settle together), so
-  // the merge decision is made once instead of flickering through it.
+  // the merge decision is made once instead of flickering through it. Bounded:
+  // each call carries its own deadline (SCENE_CARD_FETCH_TIMEOUT_MS), so a
+  // capability server that never answers can no longer hold this loader — it
+  // settles as a failed card and the page degrades to side-by-side.
   if (byServer === null || entries === null) {
     return (
       <div className="text-muted-foreground mb-8 flex min-h-24 items-center justify-center">
@@ -162,6 +165,7 @@ const ProjectCardsGrid: FC<{
           servers.size > 1 ? entries.map((e) => e.server) : undefined
         }
         narratives={narratives}
+        projectId={project.id}
       />
     );
   }

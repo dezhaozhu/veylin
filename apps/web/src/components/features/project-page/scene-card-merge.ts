@@ -18,8 +18,17 @@
  * a partially-populated comparison.
  */
 
-/** One row of the `display` contract. Optional fields stay optional — a card
- * that omits `num` is simply not numerically comparable. */
+/**
+ * One row of the `display` contract. Optional fields stay optional — a card
+ * that omits `num` is simply not numerically comparable.
+ *
+ * `value` is AUTHORITATIVE for display and already carries its unit (e.g.
+ * "2,646 吨/月"). `unit` and `num` are the machine-readable decomposition, for
+ * consumers that COMPUTE — `num` drives this module's numeric diff shading,
+ * `unit` is there for a future consumer that charts or re-formats. Neither is
+ * rendered next to `value`; appending `unit` would print the unit twice, so
+ * please don't "fix" its absence.
+ */
 export type DisplayRow = {
   key: string;
   section: string;
@@ -101,7 +110,11 @@ export function readCardPayload(result: unknown): Record<string, unknown> | null
 function isDisplayRow(v: unknown): v is DisplayRow {
   if (!isRecord(v)) return false;
   if (typeof v.key !== 'string' || v.key === '') return false;
-  if (typeof v.section !== 'string' || typeof v.label !== 'string') return false;
+  // `section` is rendered as a group header, so an empty/whitespace one would
+  // print a blank heading above real rows — same posture as the non-empty key
+  // requirement: a row that cannot say where it belongs is not a valid row.
+  if (typeof v.section !== 'string' || v.section.trim() === '') return false;
+  if (typeof v.label !== 'string') return false;
   if (typeof v.value !== 'string') return false;
   if (v.num !== undefined && !(typeof v.num === 'number' && Number.isFinite(v.num))) return false;
   return true;
@@ -242,4 +255,37 @@ export function buildMergedRows(scenes: readonly SceneDisplay[]): MergedSection[
     }
   }
   return sections;
+}
+
+// ---------------------------------------------------------------------------
+// the dash wall
+// ---------------------------------------------------------------------------
+
+/** A section's rows split for display: everyone has these / only some do. */
+export type SectionPartition = { shared: MergedRow[]; partial: MergedRow[] };
+
+/**
+ * Split a section's rows by CELL PRESENCE: `shared` = every column has a
+ * value, `partial` = at least one column is missing one. Original order is
+ * preserved inside each group.
+ *
+ * Why (measured, not theoretical): on the real guolu+shangzhong 对比 project
+ * the merged table came out 44 rows of which only 12 actually compare — 32
+ * were "value | —", 30 of them stacked in a single section, because
+ * per-entity keys never intersect across factories with disjoint equipment.
+ * A wall of dashes is noise, not comparison: it costs the reader as much
+ * attention as a real row and answers nothing. Collapsing it is 减法 — the
+ * facts are still there, one disclosure away.
+ *
+ * Presence is the ONLY criterion, so this stays as capability-agnostic as the
+ * rest of the module: no key, section or naming convention is consulted, and a
+ * server shipping entirely different keys next month partitions just as well.
+ */
+export function partitionSectionRows(rows: readonly MergedRow[]): SectionPartition {
+  const shared: MergedRow[] = [];
+  const partial: MergedRow[] = [];
+  for (const row of rows) {
+    (row.cells.every((c) => c !== null) ? shared : partial).push(row);
+  }
+  return { shared, partial };
 }

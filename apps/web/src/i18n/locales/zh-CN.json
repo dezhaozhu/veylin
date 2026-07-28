@@ -80,6 +80,8 @@
     "loading": "加载中…",
     "cardError": "无法加载",
     "narrative": "AI 摘要",
+    "partialRows": "仅部分场景有 · {{count}} 行",
+    "reportWrong": "这里不对?",
     "threads": "对话",
     "notFound": "项目不存在或已停用"
   },

@@ -80,6 +80,8 @@
     "loading": "Loading…",
     "cardError": "Couldn't load",
     "narrative": "AI summary",
+    "partialRows": "Only in some scenes · {{count}} row(s)",
+    "reportWrong": "Wrong?",
     "threads": "Chats",
     "notFound": "This project is unavailable or disabled"
   },
