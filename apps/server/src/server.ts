@@ -53,6 +53,7 @@ import {
   seedMcpServersFromEnvIfMissing,
   updateRemoteMcpServer,
 } from './mcp-store';
+import { createProject, listProjects, updateProject } from './project-store';
 import { listAllCronAutomations, sweepInterruptedAutomationRuns } from './automation-store';
 import { runAutomationJob } from './automation-worker';
 import { buildWorkspaceConfigTool } from './workspace-config-tool';
@@ -251,7 +252,15 @@ async function main() {
 
   async function syncCompassIdentity(tenantId: string) {
     if (!compassIdentityConfig) {
-      return { created: 0, adopted: 0, disabled: 0, unchanged: 0 };
+      return {
+        created: 0,
+        adopted: 0,
+        disabled: 0,
+        unchanged: 0,
+        projectsCreated: 0,
+        projectsEnabled: 0,
+        projectsDisabled: 0,
+      };
     }
     return reconcileCompassIdentity({
       tenantId,
@@ -260,6 +269,11 @@ async function main() {
       createRemoteMcpServer,
       updateRemoteMcpServer,
       rebuildMcp,
+      listProjects,
+      createProject,
+      updateProject,
+      // TODO(Task 4 — compass client pool): pass invalidateCompassPool here so
+      // grant/token changes drop pooled connections. No-op until the pool exists.
     });
   }
 
