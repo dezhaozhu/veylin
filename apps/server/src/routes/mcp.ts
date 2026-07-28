@@ -10,6 +10,22 @@ import { loadEnabledPluginMcpConfigs } from '../plugin-store.js';
 import { getDisabledMcpServers, setDisabledMcpServers } from '../skills-store.js';
 import type { ServerDeps } from './types.js';
 
+/**
+ * Managed (reconciler-owned) MCP rows are structurally immutable through this
+ * API — same treatment the project table gives `migratedFrom` (security
+ * review F1). Allowing a user PUT to change a managed compass row's `group`
+ * would move it out of COMPASS_IDENTITY_GROUP, so `buildMcpServerConfigs`
+ * would stop excluding it and the next rebuild would open a HEADERLESS
+ * (scene-less) compass connection on the generic tenant/agent-run clients —
+ * exactly the session shape the pool exists to prevent. The settings UI
+ * already renders managed rows read-only; this makes the server agree.
+ */
+async function findManagedRow(tenantId: string, id: string) {
+  const rows = await listRemoteMcpServers(tenantId);
+  const row = rows.find((r) => r.id === id);
+  return row?.managed ? row : null;
+}
+
 export function registerMcpRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // --- Customize: MCP ---
   app.get('/api/mcp-servers', async (req) => {
@@ -70,6 +86,10 @@ export function registerMcpRoutes(app: FastifyInstance, deps: ServerDeps): void 
       reply.code(400);
       return { ok: false, message: parsed.error.message };
     }
+    if (await findManagedRow(ctx.tenantId, id)) {
+      reply.code(403);
+      return { ok: false, message: '该条目由 Compass 身份自动管理,不可编辑' };
+    }
     const server = await updateRemoteMcpServer(ctx.tenantId, id, parsed.data);
     if (!server) {
       reply.code(404);
@@ -82,6 +102,10 @@ export function registerMcpRoutes(app: FastifyInstance, deps: ServerDeps): void 
   app.delete('/api/mcp-servers/:id', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
     const { id } = req.params as { id: string };
+    if (await findManagedRow(ctx.tenantId, id)) {
+      reply.code(403);
+      return { ok: false, message: '该条目由 Compass 身份自动管理,不可删除' };
+    }
     const ok = await deleteRemoteMcpServer(ctx.tenantId, id);
     if (!ok) {
       reply.code(404);
