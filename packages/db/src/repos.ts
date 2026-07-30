@@ -729,6 +729,10 @@ export async function insertProjectRow(
     enabled: input.enabled,
     // Set-once identity marker (option<string>): only included when present.
     ...(input.migratedFrom != null ? { migrated_from: input.migratedFrom } : {}),
+    // Uniqueness key for project_identity_uniq: the marker when this row IS a
+    // migration-owned identity, the row's own id otherwise (so unmarked rows
+    // never collide with each other). See init-schema's comment.
+    identity_key: input.migratedFrom ?? id,
   });
   return mapProject((await selectById<Record<string, unknown>>(getDb(), 'project', id))!);
 }

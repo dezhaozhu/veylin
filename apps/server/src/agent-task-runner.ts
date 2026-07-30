@@ -341,6 +341,17 @@ export async function runSubagentGenerate(options: {
   scopedMcpServers?: string[];
   /** Dispatching request's per-request toolsets (pooled compass included) — see `toolsetsForPreset`. */
   overlayToolsets?: Record<string, unknown>;
+  /**
+   * Dispatching request's PROJECT pin + the tenant's project rows (audit fix
+   * #2 / review F5). Without these the subagent's `subCtx` reads `projectPin`
+   * as null, `isProjectPinMismatch` goes inert, and a subagent dispatched
+   * from a shangzhong-pinned turn can read a guolu-stamped workspace sheet's
+   * rows and hand them back to the parent — laundering the refusal the
+   * parent turn would have hit. Inherited, never widened: a subagent can
+   * only ever carry the dispatching turn's own pin.
+   */
+  projectPin?: string | null;
+  tenantProjects?: unknown;
 }): Promise<SubagentRunResult> {
   const agent = options.runtime.getAgent(options.agentId);
   if (!agent) throw new Error(`Agent not registered: ${options.agentId}`);
@@ -371,6 +382,14 @@ export async function runSubagentGenerate(options: {
   subCtx.set('planMode', false);
   subCtx.set('discoveredToolIds', []);
   subCtx.set('subagentActive', true);
+  // Inherit the dispatching turn's provenance context (review F5) so table
+  // tools inside the subagent apply the SAME cross-project mismatch refusal
+  // the parent turn would. Absent (unpinned dispatch) stays null — that is
+  // the parent's own posture, not a widening.
+  subCtx.set('projectPin', options.projectPin ?? null);
+  if (options.tenantProjects !== undefined) {
+    subCtx.set('tenantProjects', options.tenantProjects);
+  }
 
   const taskId = options.taskId ?? null;
   const parentThreadId = options.parentThreadId ?? null;
@@ -596,6 +615,8 @@ export async function executeSubagentJob(
       abortSignal: job.abortSignal,
       scopedMcpServers: job.scopedMcpServers,
       overlayToolsets: job.overlayToolsets,
+      projectPin: job.projectPin,
+      tenantProjects: job.tenantProjects,
     });
 
     if (job.abortSignal?.aborted) {
@@ -701,6 +722,23 @@ export function scopedMcpToolsetsFromCtx(
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+/** Dispatching turn's project pin (review F5 — see runSubagentGenerate's
+ * `projectPin`). Null when the turn is unpinned, which is the parent's own
+ * posture. */
+export function projectPinFromCtx(
+  ctx: { requestContext?: { get(key: string): unknown } } | undefined,
+): string | null {
+  const value = ctx?.requestContext?.get('projectPin');
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+/** The tenant's project rows, for the provenance shim's legacy-name mapping. */
+export function tenantProjectsFromCtx(
+  ctx: { requestContext?: { get(key: string): unknown } } | undefined,
+): unknown {
+  return ctx?.requestContext?.get('tenantProjects');
 }
 
 export function devTenantFallback(): string {

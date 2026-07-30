@@ -64,6 +64,7 @@ describe('managed MCP row immutability (F1)', () => {
       name: 'caliper',
       transport: 'http',
       url: 'http://example.invalid/other/',
+      headers: {},
       enabled: true,
     });
     manualId = manual.id;

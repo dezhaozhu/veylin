@@ -209,3 +209,61 @@ describe('runSubagentGenerate overlay toolsets (pooled compass for subagents)', 
     assert.deepEqual(Object.keys(capture.toolsets ?? {}), ['github']);
   });
 });
+
+// Provenance inheritance (security review F5). The parent turn's project pin
+// must reach the subagent's requestContext: table tools read `projectPin` /
+// `tenantProjects` from there, and with a null pin `isProjectPinMismatch`
+// goes inert — a subagent dispatched from a shangzhong-pinned turn could read
+// a guolu-stamped workspace sheet and hand the rows back to the parent,
+// laundering the refusal the parent itself would have hit.
+describe('runSubagentGenerate provenance inheritance (F5)', () => {
+  function captureCtxRuntime(agentId: string, capture: { ctx?: { get(k: string): unknown } }) {
+    return {
+      definitions: new Map([[agentId, { definition: { mcpServers: [] } }]]),
+      getAgent: () => ({
+        generate: async (
+          _prompt: string,
+          opts: { requestContext?: { get(k: string): unknown } },
+        ) => {
+          capture.ctx = opts.requestContext;
+          return { text: 'ok' };
+        },
+      }),
+    } as unknown as Runtime;
+  }
+
+  it("inherits the dispatching turn's projectPin and tenantProjects", async () => {
+    const capture: { ctx?: { get(k: string): unknown } } = {};
+    const projects = [{ id: 'proj-guolu', sources: ['guolu'] }];
+    await runSubagentGenerate({
+      runtime: captureCtxRuntime('researcher', capture),
+      deps: { mcpToolsets: {} },
+      agentId: 'researcher',
+      prompt: 'do the thing',
+      threadId: 'subagent-provenance',
+      resourceId: 'user-1',
+      tenantId: 'tenant-1',
+      projectPin: 'proj-guolu',
+      tenantProjects: projects,
+    });
+    assert.equal(capture.ctx?.get('projectPin'), 'proj-guolu');
+    assert.deepEqual(capture.ctx?.get('tenantProjects'), projects);
+    // and the subagent marker is still set (no regression)
+    assert.equal(capture.ctx?.get('subagentActive'), true);
+  });
+
+  it('an unpinned dispatch yields a null pin — the parent posture, not a widening', async () => {
+    const capture: { ctx?: { get(k: string): unknown } } = {};
+    await runSubagentGenerate({
+      runtime: captureCtxRuntime('researcher', capture),
+      deps: { mcpToolsets: {} },
+      agentId: 'researcher',
+      prompt: 'do the thing',
+      threadId: 'subagent-unpinned',
+      resourceId: 'user-1',
+      tenantId: 'tenant-1',
+    });
+    assert.equal(capture.ctx?.get('projectPin'), null);
+    assert.equal(capture.ctx?.get('tenantProjects'), undefined);
+  });
+});

@@ -159,6 +159,25 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS migrated_from ON project TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS created_at ON project TYPE datetime DEFAULT time::now()`,
   `DEFINE INDEX IF NOT EXISTS project_tenant_idx ON project FIELDS tenant_id`,
+  // Structural identity, enforced by the DB rather than by check-then-insert
+  // (v3 review's "riskiest residual assumption"): the boot migration matches
+  // its composed 对比 project by the set-once `migrated_from` marker. That is
+  // application-level check-then-act, so two processes reconciling one
+  // database could mint duplicate marker rows and split pins/provenance
+  // stamps across two ids permanently. One writer is true today; this makes
+  // it true by construction — the prerequisite for arch-debt #3 (双实例收敛).
+  //
+  // Indexing `migrated_from` directly does NOT work: a SurrealDB unique index
+  // treats NONE as a value, so all the UNMARKED rows (every default and every
+  // user-composed project) would collide with each other. `identity_key` is
+  // therefore the marker when present and the row's own id otherwise —
+  // unmarked rows are unique by construction, marked ones collide as intended.
+  // Backfill runs BEFORE the index so an existing store (which has several
+  // unmarked rows) can adopt it without a boot failure.
+  `DEFINE FIELD IF NOT EXISTS identity_key ON project TYPE option<string>`,
+  `UPDATE project SET identity_key = migrated_from WHERE identity_key = NONE AND migrated_from != NONE`,
+  `UPDATE project SET identity_key = type::string(id) WHERE identity_key = NONE`,
+  `DEFINE INDEX IF NOT EXISTS project_identity_uniq ON project FIELDS tenant_id, identity_key UNIQUE`,
 
   `DEFINE TABLE IF NOT EXISTS automation SCHEMAFULL`,
   `DEFINE FIELD IF NOT EXISTS id ON automation TYPE string`,

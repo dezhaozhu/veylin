@@ -39,6 +39,17 @@ export interface SubagentJob {
    * a differently-scoped connection).
    */
   overlayToolsets?: Record<string, unknown>;
+  /**
+   * The dispatching request's PROJECT pin and the tenant's project rows,
+   * captured at enqueue time so the subagent's table tools apply the SAME
+   * cross-project provenance refusal the parent turn would (review F5 —
+   * without it `isProjectPinMismatch` runs against a null pin and goes
+   * inert, letting a subagent launder a refused sheet back to the parent).
+   * `undefined` = the dispatching turn was unpinned; that is the parent's
+   * own posture, never a widening.
+   */
+  projectPin?: string | null;
+  tenantProjects?: unknown;
   /** Set by the in-proc queue when the job is cancelled mid-run. */
   abortSignal?: AbortSignal;
 }

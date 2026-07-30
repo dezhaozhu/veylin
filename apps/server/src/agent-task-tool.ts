@@ -16,8 +16,10 @@ import {
   devTenantFallback,
   resolveDispatchTarget,
   runSubagentGenerate,
+  projectPinFromCtx,
   scopedMcpServersFromCtx,
   scopedMcpToolsetsFromCtx,
+  tenantProjectsFromCtx,
   subagentTaskEnvelope,
   continueTaskThread,
 } from './agent-task-runner';
@@ -82,6 +84,24 @@ const taskOutputSchema = z.object({
   notification: z.string().nullable(),
 });
 
+/**
+ * Ownership gate for `task_continue` (security review F4). The row used to be
+ * fetched by id alone, so a foreign `task_id` (guessed or leaked) would
+ * prepend THAT row's stored prompt to a run holding the CALLER's scoped
+ * toolsets and write the result back into the foreign row. A cross-tenant id
+ * is treated exactly like a missing one, so the tool is not an existence
+ * oracle either.
+ */
+export function isTaskVisibleToTenant<T extends { tenantId?: string }>(
+  row: T | null | undefined,
+  tenantId: string,
+): row is T {
+  // Both sides must be a real tenant: an empty/absent id on either side is a
+  // malformed caller or row, and "'' === ''" must not read as ownership.
+  if (!row || !tenantId) return false;
+  return typeof row.tenantId === 'string' && row.tenantId !== '' && row.tenantId === tenantId;
+}
+
 export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
   const dispatchInputSchema = z.object({
     description: z
@@ -138,6 +158,9 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
       // at all (plan risk #2 — compass never exists in deps.mcpToolsets).
       const scopedMcpServers = scopedMcpServersFromCtx(ctx);
       const overlayToolsets = scopedMcpToolsetsFromCtx(ctx);
+      // Provenance context inherited by the subagent (review F5) — never widened.
+      const projectPin = projectPinFromCtx(ctx);
+      const tenantProjects = tenantProjectsFromCtx(ctx);
 
       const target = resolveDispatchTarget(runtime, parentAgentId, {
         subagent_type: input.subagent_type,
@@ -210,6 +233,8 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           directive: isFork ? input.prompt : undefined,
           scopedMcpServers,
           overlayToolsets,
+          projectPin,
+          tenantProjects,
         };
         const jobId = await deps.queue.send(SUBAGENT_QUEUE, job);
         await updateTaskRow(taskId, { jobId: jobId ?? null, workerThreadId: workerThread });
@@ -248,6 +273,8 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           abortSignal: resolveToolAbortSignal(ctx),
           fork: isFork,
           parentThreadId,
+          projectPin,
+          tenantProjects,
           taskId,
           scopedMcpServers,
           overlayToolsets,
@@ -296,7 +323,8 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
     outputSchema: taskOutputSchema,
     execute: async (input, ctx?: TaskCtx) => {
       const row = await getTaskRow(input.task_id);
-      if (!row) {
+      const callerTenantId = ctxValue(ctx, 'tenantId') ?? devTenantFallback();
+      if (!isTaskVisibleToTenant(row, callerTenantId)) {
         return {
           subagent_type: null,
           agent_id: null,
@@ -308,11 +336,14 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
         };
       }
 
-      const tenantId = ctxValue(ctx, 'tenantId') ?? devTenantFallback();
+      const tenantId = callerTenantId;
       const userId = ctxValue(ctx, 'userId') ?? tenantId;
       const parentThreadId = ctxValue(ctx, 'threadId');
       const scopedMcpServers = scopedMcpServersFromCtx(ctx);
       const overlayToolsets = scopedMcpToolsetsFromCtx(ctx);
+      // Provenance context inherited by the subagent (review F5) — never widened.
+      const projectPin = projectPinFromCtx(ctx);
+      const tenantProjects = tenantProjectsFromCtx(ctx);
 
       if (input.run_in_background === true) {
         const enveloped = `${row.prompt}\n\n---\nFollow-up:\n${input.message}`;
@@ -337,6 +368,8 @@ export function buildAgentTaskTools(runtime: Runtime, deps: AgentTaskToolDeps) {
           subagentType: row.subagentType ?? undefined,
           scopedMcpServers,
           overlayToolsets,
+          projectPin,
+          tenantProjects,
         };
         const jobId = await deps.queue.send(SUBAGENT_QUEUE, job);
         await updateTaskRow(row.id, { jobId: jobId ?? null, workerThreadId: workerThread });
