@@ -207,6 +207,13 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
   }
 }
 
+/* Brand wordmark — geometric bold sans (square i-dot, open tracking). */
+.veylin-brand-type {
+  font-family: Montserrat, ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 /* Brand loading: Material Evaporation (ai_logo_supreme_animations-v2 concept 8). */
 @keyframes veylin-evaporate {
   0%,

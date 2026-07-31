@@ -94,7 +94,8 @@
   "header": {
     "back": "Back",
     "forward": "Forward",
-    "newChat": "New Chat"
+    "newChat": "New Chat",
+    "brand": "Veylin"
   },
   "window": {
     "minimize": "Minimize",

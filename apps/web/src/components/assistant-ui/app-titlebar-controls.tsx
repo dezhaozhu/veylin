@@ -15,10 +15,10 @@ export function AppTitlebarControls() {
     <>
       {!sidebarOpen ? (
         <div
-          className="pointer-events-none fixed left-0 top-0 z-50 flex h-8 items-center bg-transparent"
+          className="pointer-events-none fixed left-0 top-0 z-50 flex h-9 items-center bg-transparent"
           style={{ paddingLeft: titlebarLeadingInset(false) }}
         >
-          <SidebarTrigger className="pointer-events-auto size-7" />
+          <SidebarTrigger className="pointer-events-auto size-7 text-muted-foreground hover:text-foreground [&_svg]:size-4" />
         </div>
       ) : null}
       <WindowCaptionControls />
