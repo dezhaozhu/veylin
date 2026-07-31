@@ -10,6 +10,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { SidebarTopChrome } from '@/components/assistant-ui/sidebar-brand-toggle';
 import { ThreadList } from '@/components/assistant-ui/thread-list';
 import { SidebarUserMenu } from '@/components/assistant-ui/sidebar-user-menu';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
@@ -22,8 +23,8 @@ export function ThreadListSidebar({ ...props }: React.ComponentProps<typeof Side
 
   return (
     <Sidebar {...props}>
-      {/* Reserve space for AppTitlebarControls (fixed, outside this panel). */}
-      <div className="h-8 shrink-0" aria-hidden />
+      {/* Brand + titlebar drag; New Chat stays in ThreadList (ggshr9 behavior). */}
+      <SidebarTopChrome />
       <SidebarHeader className="aui-sidebar-header mb-2 border-b p-0">
         <div className="aui-sidebar-header-content flex flex-col gap-1 px-2 pb-2">
           <SidebarMenu>

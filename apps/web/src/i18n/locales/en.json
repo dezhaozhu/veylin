@@ -295,7 +295,9 @@
     "resizeLeft": "Resize left sidebar",
     "resizeRight": "Resize right sidebar",
     "customize": "Customize",
-    "automate": "Automate"
+    "automate": "Automate",
+    "openSidebar": "Open sidebar",
+    "closeSidebar": "Close sidebar"
   },
   "userMenu": {
     "settings": "Settings",

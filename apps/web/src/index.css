@@ -39,6 +39,7 @@
   --radius-xl: calc(var(--radius) + 4px);
   --animate-spin: spin 1.75s linear infinite;
   --animate-indeterminate-bar: indeterminate-bar 1.35s ease-in-out infinite;
+  --animate-veylin-evaporate: veylin-evaporate 4s ease-in-out infinite;
 }
 
 :root {
@@ -203,5 +204,27 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
   }
   100% {
     transform: translateX(280%);
+  }
+}
+
+/* Brand loading: Material Evaporation (ai_logo_supreme_animations-v2 concept 8). */
+@keyframes veylin-evaporate {
+  0%,
+  100% {
+    opacity: 0.95;
+    filter: blur(0px);
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    filter: blur(1.5px);
+    transform: scale(0.96) translateY(-1px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-veylin-evaporate {
+    animation: none;
+    opacity: 0.85;
   }
 }
