@@ -33,9 +33,9 @@ describe('titlebar-layout', () => {
   });
 
   it('sizes collapsed overlay from leading inset + trigger', () => {
-    assert.equal(titlebarOverlayWidth(false, 256, 'windows'), 8 + 28);
+    assert.equal(titlebarOverlayWidth(false, 256, 'windows'), 8 + 32);
     assert.equal(titlebarOverlayWidth(true, 256, 'windows'), 256);
-    assert.equal(collapsedSidebarTriggerReservePx('windows'), 8 + 28 + 4);
-    assert.equal(collapsedSidebarTriggerReservePx('mac'), 86 + 28 + 4);
+    assert.equal(collapsedSidebarTriggerReservePx('windows'), 8 + 32 + 4);
+    assert.equal(collapsedSidebarTriggerReservePx('mac'), 86 + 32 + 4);
   });
 });

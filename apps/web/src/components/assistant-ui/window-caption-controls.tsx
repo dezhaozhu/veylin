@@ -46,7 +46,7 @@ export function WindowCaptionControls({ className }: { className?: string }) {
     <div
       data-no-window-drag
       className={cn(
-        'pointer-events-auto fixed top-0 right-0 z-[60] flex h-8 items-stretch',
+        'pointer-events-auto fixed top-0 right-0 z-[60] flex h-9 items-stretch',
         className,
       )}
     >

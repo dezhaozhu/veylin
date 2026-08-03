@@ -1,11 +1,9 @@
-import { useAuiState } from '@assistant-ui/react';
 import { useTranslation } from 'react-i18next';
 import {
   RightSidebarTrigger,
   useRightSidebar,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { cn } from '@/lib/utils';
 import { collapsedSidebarTriggerReservePx, titlebarTrailingInset } from '@/lib/titlebar-layout';
 import { startWindowDrag } from '@/lib/window-drag';
 
@@ -13,22 +11,21 @@ export function ThreadHeaderToolbar() {
   const { t } = useTranslation();
   const { state, open: sidebarOpen } = useSidebar();
   const { state: rightState } = useRightSidebar();
-  const title = useAuiState((s) => s.threadListItem.title);
-  const displayTitle = title?.trim() || t('header.newChat');
+  const brand = t('header.brand');
   const trailingInset = titlebarTrailingInset();
 
   return (
     <header
-      className="flex h-8 shrink-0 items-center gap-0.5 bg-background"
+      className="flex h-9 shrink-0 items-center gap-1 bg-background"
       style={{
-        paddingLeft: sidebarOpen ? 8 : collapsedSidebarTriggerReservePx(),
+        paddingLeft: sidebarOpen ? 16 : collapsedSidebarTriggerReservePx(),
         paddingRight: rightState === 'collapsed' ? trailingInset : 8,
       }}
     >
       {!sidebarOpen && (
         <div
           data-tauri-drag-region
-          className="min-w-8 flex-1 self-stretch"
+          className="min-w-9 flex-1 self-stretch"
           onMouseDown={startWindowDrag}
         />
       )}
@@ -36,18 +33,15 @@ export function ThreadHeaderToolbar() {
         <h1
           data-tauri-drag-region
           onMouseDown={startWindowDrag}
-          className={cn(
-            'min-w-0 flex-1 truncate px-1 text-xs font-medium',
-            !title?.trim() && 'text-muted-foreground',
-          )}
-          title={displayTitle}
+          className="veylin-brand-type text-foreground min-w-0 flex-1 truncate py-1 pr-3 text-[17px] leading-none"
+          title={brand}
         >
-          {displayTitle}
+          {brand}
         </h1>
       )}
       {rightState === 'collapsed' && (
         <RightSidebarTrigger
-          className="fixed top-0.5 z-50 size-7"
+          className="fixed top-1 z-50 size-7 text-muted-foreground hover:text-foreground [&_svg]:size-4"
           style={{ right: trailingInset }}
         />
       )}

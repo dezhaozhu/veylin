@@ -94,7 +94,8 @@
   "header": {
     "back": "Back",
     "forward": "Forward",
-    "newChat": "New Chat"
+    "newChat": "New Chat",
+    "brand": "Veylin"
   },
   "window": {
     "minimize": "Minimize",
@@ -295,7 +296,9 @@
     "resizeLeft": "Resize left sidebar",
     "resizeRight": "Resize right sidebar",
     "customize": "Customize",
-    "automate": "Automate"
+    "automate": "Automate",
+    "openSidebar": "Open sidebar",
+    "closeSidebar": "Close sidebar"
   },
   "userMenu": {
     "settings": "Settings",

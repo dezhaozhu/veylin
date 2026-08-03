@@ -1,0 +1,69 @@
+import { PanelLeftIcon } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { VeylinLogo } from '@/components/brand/veylin-logo';
+import { Button } from '@/components/ui/button';
+import { useSidebar } from '@/components/ui/sidebar';
+import { titlebarLeadingInset } from '@/lib/titlebar-layout';
+import { startWindowDrag } from '@/lib/window-drag';
+import { cn } from '@/lib/utils';
+
+function BrandMark({ className }: { className?: string }) {
+  return <VeylinLogo className={cn('size-5 text-foreground', className)} />;
+}
+
+/**
+ * Left-rail top chrome (style only; New Chat stays in ThreadList):
+ * - collapsed: centered logo (hover → expand icon), click opens
+ * - expanded: logo + drag + collapse on the right (titlebar does not duplicate the trigger)
+ */
+export function SidebarTopChrome() {
+  const { t } = useTranslation();
+  const { open, toggleSidebar } = useSidebar();
+
+  if (!open) {
+    return (
+      <div className="flex h-9 shrink-0 items-center justify-center px-2">
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          title={t('sidebar.openSidebar')}
+          aria-label={t('sidebar.openSidebar')}
+          className={cn(
+            'group/brand text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+            'relative flex size-9 items-center justify-center rounded-md',
+          )}
+        >
+          <BrandMark className="transition-opacity duration-150 group-hover/brand:opacity-0" />
+          <PanelLeftIcon className="absolute size-5 opacity-0 transition-opacity duration-150 group-hover/brand:opacity-100" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex h-9 shrink-0 items-center gap-1.5 pr-2"
+      style={{ paddingLeft: titlebarLeadingInset(true) }}
+    >
+      <span className="flex size-8 shrink-0 items-center justify-center">
+        <BrandMark />
+      </span>
+      <div
+        data-tauri-drag-region
+        className="min-w-0 flex-1 self-stretch"
+        onMouseDown={startWindowDrag}
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="size-7 shrink-0 text-muted-foreground hover:text-foreground [&_svg]:size-4"
+        title={t('sidebar.closeSidebar')}
+        aria-label={t('sidebar.closeSidebar')}
+        onClick={toggleSidebar}
+      >
+        <PanelLeftIcon />
+      </Button>
+    </div>
+  );
+}

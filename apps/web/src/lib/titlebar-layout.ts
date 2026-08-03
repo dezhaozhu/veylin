@@ -12,8 +12,8 @@ export const TITLEBAR_LEADING_INSET_PX = 8;
  */
 export const TITLEBAR_CAPTION_TRAILING_INSET_PX = 138;
 
-/** Sidebar toggle width over the expanded left rail. */
-export const TITLEBAR_CONTROLS_WIDTH_PX = 28;
+/** Sidebar toggle control size in the titlebar row. */
+export const TITLEBAR_CONTROLS_WIDTH_PX = 32;
 
 const PANEL_BASE_PADDING_PX = 8;
 const PANEL_MAXIMIZED_THRESHOLD_PX = 16;
@@ -61,14 +61,14 @@ export function titlebarOverlayWidth(
   platform: TitlebarPlatform = detectTitlebarPlatform(),
 ): number {
   if (sidebarOpen) return sidebarWidth;
-  return titlebarLeadingInset(false, platform) + 28;
+  return titlebarLeadingInset(false, platform) + TITLEBAR_CONTROLS_WIDTH_PX;
 }
 
 /** Space to reserve under the global sidebar trigger when the left rail is collapsed. */
 export function collapsedSidebarTriggerReservePx(
   platform: TitlebarPlatform = detectTitlebarPlatform(),
 ): number {
-  return titlebarLeadingInset(false, platform) + 28 + 4;
+  return titlebarLeadingInset(false, platform) + TITLEBAR_CONTROLS_WIDTH_PX + 4;
 }
 
 export function isRightPanelNearlyMaximized(

@@ -1,6 +1,7 @@
 import { UserMessageChipsRow, userMessageHasDisplayChips } from "@/components/assistant-ui/user-message-chips-row";
 import { UserMessageText } from "@/components/assistant-ui/user-message-text";
 import { AssistantMarkdownText, MarkdownText } from "@/components/assistant-ui/markdown-text";
+import { VeylinLogoThinking } from "@/components/brand/veylin-logo";
 import {
   Reasoning,
   ReasoningGroupBlock,
@@ -604,10 +605,10 @@ const AssistantMessage: FC = () => {
                 return (
                   <span
                     data-slot="aui_assistant-message-indicator"
-                    className="animate-pulse font-sans"
+                    className="inline-flex items-center"
                     aria-label={t("thread.assistantWorking")}
                   >
-                    {"●"}
+                    <VeylinLogoThinking className="size-4" />
                   </span>
                 );
               default:
