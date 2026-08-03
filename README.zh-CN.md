@@ -4,6 +4,8 @@
 
 > 开源、本机自托管的 **通用 AI Agent 桌面平台**。具备 Claude Code 级 agent 循环（工具调用、计划模式、子智能体、Skills、Hooks），以及可 DIY 的统一工作区（表格 / 知识库 / 工作流 / 网页），方便在清晰的 monorepo 架构上二次做成领域应用。双击即用，无需 Docker / Postgres / Redis。
 
+> **本分支(内部)另有一层排产集成**:连接 Compass 排产后端,把多工厂数据、治理规则与排产认知做成一等公民。说明见 [docs/compass-integration.md](./docs/compass-integration.md) —— 内部同事请先读那一份。
+
 <p>
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey">
