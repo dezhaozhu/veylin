@@ -11,6 +11,9 @@ test:
   variables:
     VEYLIN_DATA_DIR: /tmp/veylin-ci
   before_script:
+    # plugin-runtime 的测试要真建一个 Python venv(插件运行时用),
+    # node:22-bookworm 里没有 python3-venv,缺了它那条测试必挂。
+    - apt-get update -qq && apt-get install -y -qq python3-venv >/dev/null
     - npm ci --no-audit --no-fund
   script:
     - cd apps/server && npx tsx --test --test-concurrency=1 "src/**/*.test.ts"
