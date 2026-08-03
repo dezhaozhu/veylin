@@ -1,0 +1,20 @@
+# 内网 CI —— 每次推送和 MR 都跑服务端测试 + 前端类型检查/构建。
+#
+# runner 在工作站(10.84.14.37),与 compass 共用。
+
+stages: [test]
+
+test:
+  stage: test
+  image: node:22-bookworm
+  timeout: 30m
+  variables:
+    VEYLIN_DATA_DIR: /tmp/veylin-ci
+  before_script:
+    - npm ci --no-audit --no-fund
+  script:
+    - cd apps/server && npx tsx --test --test-concurrency=1 "src/**/*.test.ts"
+    - cd ../web && npm test && npm run typecheck && npm run build
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
