@@ -1,0 +1,22 @@
+{
+  "jobs": [
+    {
+      "id": "J1",
+      "operations": [
+        { "id": "J1-O1", "duration": 3, "resources": ["M1", "M2"], "predecessors": [] }
+      ],
+      "release": 0
+    }
+  ],
+  "resources": [
+    { "id": "M1", "capacity": 1 },
+    { "id": "M2", "capacity": 1 }
+  ],
+  "objective": "makespan",
+  "time_limit_sec": 5,
+  "preferences": {
+    "prefer_resource": [
+      { "operation_id": "J1-O1", "resource_id": "M2", "weight": 5 }
+    ]
+  }
+}

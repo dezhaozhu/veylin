@@ -1,0 +1,104 @@
+import type { Memory } from '@mastra/memory';
+import { queryRows, getDb } from '@veylin/db';
+import { getLiveActiveStream } from './resumable-chat-stream.js';
+import { listThreadsForResource } from './thread-state.js';
+
+export type ThreadActivityKind = 'running' | 'finished' | 'interrupted';
+
+export type ThreadActivity = {
+  kind: ThreadActivityKind;
+  at: string;
+};
+
+const TERMINAL_TASK: Record<string, ThreadActivityKind> = {
+  done: 'finished',
+  failed: 'interrupted',
+  cancelled: 'interrupted',
+};
+
+const ACTIVE_TASK = new Set(['queued', 'running']);
+
+/** Main-chat terminal state (in-memory; survives until process restart). */
+const chatActivityByThread = new Map<string, ThreadActivity>();
+
+export function markThreadChatActivity(
+  threadId: string,
+  kind: 'finished' | 'interrupted',
+): void {
+  if (!threadId) return;
+  chatActivityByThread.set(threadId, {
+    kind,
+    at: new Date().toISOString(),
+  });
+}
+
+export function clearThreadChatActivity(threadId: string): void {
+  chatActivityByThread.delete(threadId);
+}
+
+export async function listThreadActivity(
+  tenantId: string,
+  resourceId: string,
+  memory: Memory,
+): Promise<Record<string, ThreadActivity>> {
+  const threads = await listThreadsForResource(tenantId, resourceId, memory);
+  const threadIds = threads.map((t) => t.remoteId);
+  if (threadIds.length === 0) return {};
+
+  const taskRows = await queryRows<{
+    parent_thread_id?: string;
+    status?: string;
+    updated_at?: string;
+  }>(
+    getDb(),
+    'SELECT parent_thread_id, status, updated_at FROM task WHERE tenant_id = $tenantId AND parent_thread_id IN $threadIds ORDER BY updated_at DESC',
+    { tenantId, threadIds },
+  );
+
+  const latestTaskByThread = new Map<string, { status: string; updatedAt: string }>();
+  for (const row of taskRows) {
+    const tid = row.parent_thread_id;
+    if (!tid || latestTaskByThread.has(tid)) continue;
+    latestTaskByThread.set(tid, {
+      status: String(row.status ?? ''),
+      updatedAt: String(row.updated_at ?? new Date().toISOString()),
+    });
+  }
+
+  const out: Record<string, ThreadActivity> = {};
+  await Promise.all(
+    threadIds.map(async (threadId) => {
+      const live = await getLiveActiveStream(threadId);
+      if (live) {
+        // Use stream start time — not Date.now() — so the sidebar does not
+        // forever show "now" while a stale mapping is still within TTL.
+        out[threadId] = {
+          kind: 'running',
+          at: new Date(live.startedAt).toISOString(),
+        };
+        return;
+      }
+
+      const task = latestTaskByThread.get(threadId);
+      if (task && ACTIVE_TASK.has(task.status)) {
+        out[threadId] = { kind: 'running', at: task.updatedAt };
+        return;
+      }
+
+      const chat = chatActivityByThread.get(threadId);
+      if (chat) {
+        out[threadId] = chat;
+        return;
+      }
+
+      if (task) {
+        const kind = TERMINAL_TASK[task.status];
+        if (kind) {
+          out[threadId] = { kind, at: task.updatedAt };
+        }
+      }
+    }),
+  );
+
+  return out;
+}

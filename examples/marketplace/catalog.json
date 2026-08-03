@@ -1,0 +1,22 @@
+{
+  "plugins": [
+    {
+      "name": "scheduling-optimizer",
+      "description": "排产优化：5 个 Skills + 求解 MCP（validate/solve，OR-Tools）；无 Hooks。安装时自动准备 Python 依赖。",
+      "version": "0.1.0",
+      "source": {
+        "type": "path",
+        "url": "examples/marketplace/scheduling-optimizer"
+      }
+    },
+    {
+      "name": "compass-scheduler",
+      "description": "Compass 智能排产：真实多厂数据、治理编辑（propose→preview→commit）、增量重排、鼓点/负荷分析；远程 MCP（需 project token）。",
+      "version": "1.0.0",
+      "source": {
+        "type": "path",
+        "url": "examples/marketplace/compass-scheduler"
+      }
+    }
+  ]
+}

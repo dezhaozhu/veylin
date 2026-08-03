@@ -1,0 +1,62 @@
+{
+  "name": "veylin",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Veylin — open-source, self-hosted general-purpose AI agent desktop platform. Claude Code–class agent loops (tools, plan mode, subagents, skills, hooks) plus DIY workspace panels (table, knowledge, workflow, web). Embedded SurrealDB; no Docker/Postgres/Redis.",
+  "license": "MIT",
+  "author": "Veylin contributors",
+  "homepage": "https://github.com/dezhaozhu/veylin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dezhaozhu/veylin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dezhaozhu/veylin/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "llm",
+    "claude-code",
+    "general-purpose",
+    "self-hosted",
+    "desktop-app",
+    "tauri",
+    "diy",
+    "skills",
+    "hooks",
+    "mcp",
+    "plugins",
+    "automation",
+    "rag",
+    "workflow",
+    "surrealdb",
+    "privacy",
+    "local-first",
+    "agent"
+  ],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:server": "npm run -w @veylin/server dev",
+    "dev:web": "npm run -w @veylin/web dev",
+    "dev:desktop": "npm run -w @veylin/desktop dev",
+    "dev": "node scripts/dev.mjs",
+    "dev:stop": "node scripts/dev-stop.mjs",
+    "build": "npm run build --workspaces --if-present",
+    "build:desktop": "npm run -w @veylin/desktop build",
+    "typecheck": "tsc -b && npm run -w @veylin/web typecheck",
+    "test": "npm run -w @veylin/shared test && npm run -w @veylin/db test && npm run -w @veylin/tools test && npm run -w @veylin/policy test && npm run -w @veylin/agent-package test && npm run -w @veylin/hooks test && npm run -w @veylin/runtime test && npm run -w @veylin/server test && npm run -w @veylin/web test"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}

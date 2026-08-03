@@ -1,0 +1,5 @@
+.venv/
+.pip-tmp/
+.veylin-runtime-ready
+mcp/node_modules/
+__pycache__/

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700&display=swap"
+      rel="stylesheet"
+    />
+    <title>Veylin</title>
+    <style>
+      /* Match apps/web/src/index.css --background (:root / .dark) */
+      html, body {
+        margin: 0;
+        background: oklch(1 0 0);
+      }
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: oklch(1 0 0);
+        color: oklch(0.141 0.005 285.823);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        transition: opacity 0.45s ease;
+      }
+      #splash.is-hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #splash .splash-mark-wrap {
+        width: 168px;
+        height: 148px;
+        display: grid;
+        place-items: center;
+      }
+      #splash .splash-mark {
+        width: 140px;
+        height: 110px;
+        display: block;
+        overflow: visible;
+      }
+      #splash .splash-logo {
+        fill: url(#splash-grad-light);
+        transform-origin: 116px 80px;
+        animation: splash-phys-bounce 2s cubic-bezier(0.25, 1, 0.5, 1) infinite;
+      }
+      #splash .splash-ring {
+        fill: none;
+        stroke: url(#splash-ring-grad);
+        stroke-width: 1.5;
+        stroke-linecap: round;
+        stroke-dasharray: 60 180;
+        transform-origin: 116px 80px;
+        animation: splash-ring-spin 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      }
+      #splash .splash-hint {
+        font-size: 11px;
+        color: oklch(0.552 0.016 285.938);
+        min-height: 1em;
+        text-align: center;
+        max-width: 280px;
+      }
+      #splash .splash-hint:empty {
+        display: none;
+      }
+      @keyframes splash-phys-bounce {
+        0% { transform: scale(1) translateY(0); opacity: 0.85; }
+        12% { transform: scale(1.04, 0.94) translateY(6px); opacity: 1; }
+        30% { transform: scale(0.96, 1.04) translateY(-4px); }
+        50% { transform: scale(1.01, 0.99) translateY(1px); }
+        70%, 100% { transform: scale(1) translateY(0); opacity: 0.85; }
+      }
+      @keyframes splash-ring-spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      /* App theme is class-based (.dark); keep splash in sync when that class appears */
+      html.dark, html.dark body {
+        background: oklch(0.141 0.005 285.823);
+      }
+      html.dark #splash {
+        background: oklch(0.141 0.005 285.823);
+        color: oklch(0.985 0 0);
+      }
+      html.dark #splash .splash-logo {
+        fill: url(#splash-grad-dark);
+      }
+      html.dark #splash .splash-hint { color: oklch(0.705 0.015 286.067); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="splash">
+      <div class="splash-mark-wrap" aria-hidden="true">
+        <svg
+          class="splash-mark"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="-20 -30 270 240"
+          width="140"
+          height="110"
+          overflow="visible"
+        >
+          <defs>
+            <linearGradient id="splash-grad-light" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#1e293b" />
+              <stop offset="60%" stop-color="#334155" />
+              <stop offset="100%" stop-color="#3b82f6" />
+            </linearGradient>
+            <linearGradient id="splash-grad-dark" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#ffffff" />
+              <stop offset="60%" stop-color="#cbd5e1" />
+              <stop offset="100%" stop-color="#3b82f6" />
+            </linearGradient>
+            <linearGradient id="splash-ring-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#3b82f6" />
+              <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0" />
+            </linearGradient>
+          </defs>
+          <circle class="splash-ring" cx="116" cy="80" r="105" />
+          <path
+            class="splash-logo"
+            d="M0 0 C3.98 0.41 6.67 2.78 9.69 5.19 C10.24 5.62 10.8 6.06 11.38 6.51 C13.26 8 15.13 9.5 17 11 C17.68 11.55 18.37 12.1 19.07 12.67 C50.48 38.01 69.82 62.27 77.44 102.5 C80.21 116.98 83.41 130.46 93 142 C93.36 142.47 93.73 142.94 94.1 143.43 C97.13 147.28 100.4 150.07 104.44 152.81 C104.98 153.21 105.53 153.6 106.1 154.01 C109.67 156.47 112.56 157.71 117 158 C129.75 154.25 138.85 143.85 145.51 132.92 C149.49 125.12 151.84 117.31 153.56 108.75 C153.88 107.24 153.88 107.24 154.2 105.7 C155.11 101.41 155.98 97.11 156.84 92.82 C161.04 72.16 170.53 48.66 187.5 34.94 C190 32.86 192.31 30.71 194.59 28.39 C201.13 21.95 208.3 16.31 215.55 10.7 C217.74 9.01 219.88 7.28 221.98 5.48 C222.85 4.75 223.73 4.01 224.62 3.25 C225.38 2.6 226.14 1.94 226.91 1.27 C229 0 229 0 231.27 0.3 C231.84 0.53 232.41 0.76 233 1 C237.72 34.64 226.47 71 206.29 97.88 C194.76 112.62 180.72 125.54 166.52 137.67 C164.94 139.01 164.94 139.01 163.42 140.68 C162 142 162 142 160 142 C160 142.66 160 143.32 160 144 C158.78 145.23 158.78 145.23 156.94 146.75 C152.75 150.31 148.71 154 144.69 157.75 C143.71 158.66 143.71 158.66 142.72 159.59 C138.76 163.3 134.88 167.08 131.06 170.94 C124.41 177.62 124.41 177.62 121.62 180.25 C121.04 180.81 120.45 181.37 119.85 181.95 C118 183 118 183 115.66 182.82 C112.39 181.81 111 180.44 108.64 177.99 C107.43 176.76 107.43 176.76 106.2 175.5 C105.36 174.63 104.52 173.75 103.69 172.88 C98 166.99 92.27 161.27 86 156 C84.5 154.73 83 153.46 81.5 152.19 C80.83 151.62 80.16 151.06 79.47 150.48 C78 149 78 149 78 147 C77.11 146.6 77.11 146.6 76.2 146.2 C73.92 144.96 72.53 143.7 70.75 141.81 C68.41 139.41 66.05 137.12 63.5 134.94 C56.82 129.16 50.41 123.08 44 117 C43.47 116.5 42.95 116.01 42.41 115.5 C25.83 99.79 13.48 80.61 6 59 C5.62 57.96 5.25 56.92 4.86 55.85 C0.13 41.83 -1.28 27.6 -1.25 12.88 C-1.25 12.29 -1.25 11.7 -1.25 11.1 C-1.21 1.21 -1.21 1.21 0 0 Z"
+          />
+        </svg>
+      </div>
+      <div class="splash-hint" id="splash-hint"></div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

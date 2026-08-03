@@ -1,0 +1,62 @@
+import type { RiskLevel } from '@veylin/shared';
+// Disabled: file/shell tools (file_read, file_write, file_edit, list_dir, grep, glob, bash)
+// import { fileRead, fileWrite, fileEdit, listDir, grep, glob } from './fs';
+// import { bash } from './shell';
+import { webFetch } from './web';
+import { todoWrite, askUserQuestion, readOpenPage, request3dSelection } from './interaction';
+import { enterPlanMode, exitPlanMode } from './plan-mode';
+import { loopScheduleWakeup } from './loop-wakeup';
+import { loopSet } from './loop-set';
+
+export const builtinTools = {
+  // file_read: fileRead,
+  // file_write: fileWrite,
+  // file_edit: fileEdit,
+  // list_dir: listDir,
+  // grep,
+  // glob,
+  // bash,
+  web_fetch: webFetch,
+  todo_write: todoWrite,
+  ask_user_question: askUserQuestion,
+  read_open_page: readOpenPage,
+  request_3d_selection: request3dSelection,
+  enter_plan_mode: enterPlanMode,
+  exit_plan_mode: exitPlanMode,
+  loop_set: loopSet,
+  loop_schedule_wakeup: loopScheduleWakeup,
+} as const;
+
+export type BuiltinToolId = keyof typeof builtinTools;
+
+/** Risk classification consumed by @veylin/policy and the tool-search processor. */
+export const toolRisk: Record<BuiltinToolId, RiskLevel> = {
+  web_fetch: 'caution',
+  todo_write: 'safe',
+  ask_user_question: 'safe',
+  read_open_page: 'caution',
+  request_3d_selection: 'safe',
+  enter_plan_mode: 'safe',
+  exit_plan_mode: 'safe',
+  loop_set: 'safe',
+  loop_schedule_wakeup: 'safe',
+};
+
+/** Meta tools not in builtinTools but evaluated by policy. */
+export const metaToolRisk: Record<string, RiskLevel> = {
+  tool_search: 'safe',
+  skill: 'safe',
+};
+
+/** Short keyword hints used by the dynamic tool-search processor. */
+export const toolKeywords: Record<BuiltinToolId, string[]> = {
+  web_fetch: ['web', 'url', 'fetch', 'http', 'download', 'page', 'browse', 'website'],
+  todo_write: ['todo', 'plan', 'task', 'checklist'],
+  ask_user_question: ['ask', 'question', 'clarify', 'choose'],
+  read_open_page: ['page', 'current', 'dom', 'read', 'open', '网页', '当前页', '内网', 'browser'],
+  request_3d_selection: ['3d', 'select', 'face', '选面', '点选'],
+  enter_plan_mode: ['plan', 'planning', 'explore', 'read-only'],
+  exit_plan_mode: ['execute', 'exit plan', 'implement'],
+  loop_set: ['loop', 'interval', 'recurring', 'schedule', 'repeat', '循环'],
+  loop_schedule_wakeup: ['loop', 'schedule', 'wakeup', 'interval', 'recurring'],
+};

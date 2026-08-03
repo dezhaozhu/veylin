@@ -1,0 +1,341 @@
+import type { Surreal } from 'surrealdb';
+
+const SCHEMA_STATEMENTS: string[] = [
+  'DEFINE NAMESPACE IF NOT EXISTS ia',
+  'USE NS ia; DEFINE DATABASE IF NOT EXISTS main',
+  'USE NS ia DB main',
+
+  `DEFINE TABLE IF NOT EXISTS tenant SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON tenant TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON tenant TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON tenant TYPE datetime DEFAULT time::now()`,
+  `DEFINE INDEX IF NOT EXISTS tenant_id_idx ON tenant FIELDS id UNIQUE`,
+
+  `DEFINE TABLE IF NOT EXISTS membership SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON membership TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS user_id ON membership TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON membership TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS role ON membership TYPE string DEFAULT 'member'`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON membership TYPE datetime DEFAULT time::now()`,
+  `DEFINE INDEX IF NOT EXISTS membership_user_idx ON membership FIELDS user_id`,
+  `DEFINE INDEX IF NOT EXISTS membership_tenant_idx ON membership FIELDS tenant_id`,
+
+  `DEFINE TABLE IF NOT EXISTS agent SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON agent TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON agent TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON agent TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS definition ON agent FLEXIBLE TYPE object`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON agent TYPE datetime DEFAULT time::now()`,
+
+  `DEFINE TABLE IF NOT EXISTS audit_log SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON audit_log TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON audit_log TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS user_id ON audit_log TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS thread_id ON audit_log TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS action ON audit_log TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS detail ON audit_log FLEXIBLE TYPE option<object>`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON audit_log TYPE datetime DEFAULT time::now()`,
+
+  `DEFINE TABLE IF NOT EXISTS task SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON task TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON task TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS parent_thread_id ON task TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS agent_id ON task TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS prompt ON task TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS status ON task TYPE string DEFAULT 'queued'`,
+  `DEFINE FIELD IF NOT EXISTS label ON task TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS result ON task TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS job_id ON task TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS worker_thread_id ON task TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS subagent_type ON task TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS total_tokens ON task TYPE option<int>`,
+  `DEFINE FIELD IF NOT EXISTS duration_ms ON task TYPE option<int>`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON task TYPE datetime DEFAULT time::now()`,
+  `DEFINE FIELD IF NOT EXISTS updated_at ON task TYPE datetime DEFAULT time::now()`,
+
+  `DEFINE TABLE IF NOT EXISTS checkpoint SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON checkpoint TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON checkpoint TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS thread_id ON checkpoint TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS label ON checkpoint TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS snapshot ON checkpoint FLEXIBLE TYPE object`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON checkpoint TYPE datetime DEFAULT time::now()`,
+
+  `DEFINE TABLE IF NOT EXISTS thread_state SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS thread_id ON thread_state TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON thread_state TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS resource_id ON thread_state TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS plan_mode ON thread_state TYPE bool DEFAULT false`,
+  `DEFINE FIELD IF NOT EXISTS todos ON thread_state FLEXIBLE TYPE array DEFAULT []`,
+  `DEFINE FIELD IF NOT EXISTS activated_skills ON thread_state FLEXIBLE TYPE object DEFAULT {}`,
+  `DEFINE FIELD IF NOT EXISTS pinned_skills ON thread_state FLEXIBLE TYPE array DEFAULT []`,
+  `DEFINE FIELD IF NOT EXISTS working_memory ON thread_state TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS title ON thread_state TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS goal ON thread_state FLEXIBLE TYPE option<object>`,
+  `DEFINE FIELD IF NOT EXISTS loop ON thread_state FLEXIBLE TYPE option<object>`,
+  `DEFINE FIELD IF NOT EXISTS project ON thread_state TYPE option<string>`,
+  // Move-boundary bookkeeping (audit fix #3): `moved_from`/`moved_at` are plain
+  // identifiers, not the reserved `FROM` keyword — SurrealQL only reserves bare
+  // keywords standing alone in a clause, not as a substring of a longer field
+  // name, so no backticks are needed here.
+  `DEFINE FIELD IF NOT EXISTS moved_from ON thread_state TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS moved_at ON thread_state TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS updated_at ON thread_state TYPE datetime DEFAULT time::now()`,
+  `DEFINE INDEX IF NOT EXISTS thread_state_pk ON thread_state FIELDS thread_id UNIQUE`,
+
+  `DEFINE TABLE IF NOT EXISTS tenant_settings SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON tenant_settings TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS disabled_skills ON tenant_settings FLEXIBLE TYPE array DEFAULT []`,
+  `DEFINE FIELD IF NOT EXISTS disabled_mcp_servers ON tenant_settings FLEXIBLE TYPE array DEFAULT []`,
+  `DEFINE FIELD IF NOT EXISTS disabled_hooks ON tenant_settings FLEXIBLE TYPE array DEFAULT []`,
+  `DEFINE FIELD IF NOT EXISTS model_settings ON tenant_settings FLEXIBLE TYPE option<object>`,
+  `DEFINE FIELD IF NOT EXISTS langfuse_settings ON tenant_settings FLEXIBLE TYPE option<object>`,
+  `DEFINE FIELD IF NOT EXISTS business_source ON tenant_settings FLEXIBLE TYPE option<object>`,
+  `DEFINE FIELD IF NOT EXISTS audit_settings ON tenant_settings FLEXIBLE TYPE option<object>`,
+  `DEFINE FIELD IF NOT EXISTS workspace_root ON tenant_settings TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS import_claude_hooks ON tenant_settings TYPE bool DEFAULT false`,
+  `DEFINE FIELD IF NOT EXISTS updated_at ON tenant_settings TYPE datetime DEFAULT time::now()`,
+  `DEFINE INDEX IF NOT EXISTS tenant_settings_pk ON tenant_settings FIELDS tenant_id UNIQUE`,
+
+  `DEFINE TABLE IF NOT EXISTS plugin_install SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON plugin_install TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON plugin_install TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON plugin_install TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS version ON plugin_install TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS description ON plugin_install TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS source_type ON plugin_install TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS source ON plugin_install TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS install_path ON plugin_install TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS enabled ON plugin_install TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON plugin_install TYPE datetime DEFAULT time::now()`,
+  `DEFINE INDEX IF NOT EXISTS plugin_install_pk ON plugin_install FIELDS id UNIQUE`,
+  `DEFINE INDEX IF NOT EXISTS plugin_install_tenant ON plugin_install FIELDS tenant_id`,
+
+  `DEFINE TABLE IF NOT EXISTS custom_skill SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON custom_skill TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON custom_skill TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON custom_skill TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS description ON custom_skill TYPE string DEFAULT ''`,
+  `DEFINE FIELD IF NOT EXISTS content ON custom_skill TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS enabled ON custom_skill TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON custom_skill TYPE datetime DEFAULT time::now()`,
+
+  `DEFINE TABLE IF NOT EXISTS rule SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON rule TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON rule TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS user_id ON rule TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS agent_id ON rule TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS name ON rule TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS content ON rule TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS trigger ON rule TYPE string DEFAULT 'always'`,
+  `DEFINE FIELD IF NOT EXISTS keywords ON rule FLEXIBLE TYPE array DEFAULT []`,
+  `DEFINE FIELD IF NOT EXISTS enabled ON rule TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON rule TYPE datetime DEFAULT time::now()`,
+
+  `DEFINE TABLE IF NOT EXISTS mcp_server SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON mcp_server TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON mcp_server TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON mcp_server TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS transport ON mcp_server TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS url ON mcp_server TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS headers ON mcp_server FLEXIBLE TYPE object DEFAULT {}`,
+  `DEFINE FIELD IF NOT EXISTS enabled ON mcp_server TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS \`group\` ON mcp_server TYPE option<string>`,
+  // Not a reserved word in SurrealQL (unlike `group`, which collides with GROUP BY) — no backticks needed.
+  `DEFINE FIELD IF NOT EXISTS managed ON mcp_server TYPE option<bool>`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON mcp_server TYPE datetime DEFAULT time::now()`,
+
+  // Project = first-class pin target (v3): a named set of granted Compass
+  // sources ("scene set"). Reconciler-managed default rows carry `managed:
+  // true` (one per granted source, `enabled` tracks the grant); user-composed
+  // rows are `managed: false`. Disabled-not-deleted, like mcp_server rows.
+  `DEFINE TABLE IF NOT EXISTS project SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON project TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON project TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON project TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS sources ON project FLEXIBLE TYPE array DEFAULT []`,
+  `DEFINE FIELD IF NOT EXISTS managed ON project TYPE bool DEFAULT false`,
+  `DEFINE FIELD IF NOT EXISTS enabled ON project TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS migrated_from ON project TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON project TYPE datetime DEFAULT time::now()`,
+  `DEFINE INDEX IF NOT EXISTS project_tenant_idx ON project FIELDS tenant_id`,
+  // Structural identity, enforced by the DB rather than by check-then-insert
+  // (v3 review's "riskiest residual assumption"): the boot migration matches
+  // its composed 对比 project by the set-once `migrated_from` marker. That is
+  // application-level check-then-act, so two processes reconciling one
+  // database could mint duplicate marker rows and split pins/provenance
+  // stamps across two ids permanently. One writer is true today; this makes
+  // it true by construction — the prerequisite for arch-debt #3 (双实例收敛).
+  //
+  // Indexing `migrated_from` directly does NOT work: a SurrealDB unique index
+  // treats NONE as a value, so all the UNMARKED rows (every default and every
+  // user-composed project) would collide with each other. `identity_key` is
+  // therefore the marker when present and the row's own id otherwise —
+  // unmarked rows are unique by construction, marked ones collide as intended.
+  // Backfill runs BEFORE the index so an existing store (which has several
+  // unmarked rows) can adopt it without a boot failure.
+  `DEFINE FIELD IF NOT EXISTS identity_key ON project TYPE option<string>`,
+  `UPDATE project SET identity_key = migrated_from WHERE identity_key = NONE AND migrated_from != NONE`,
+  `UPDATE project SET identity_key = type::string(id) WHERE identity_key = NONE`,
+  `DEFINE INDEX IF NOT EXISTS project_identity_uniq ON project FIELDS tenant_id, identity_key UNIQUE`,
+
+  `DEFINE TABLE IF NOT EXISTS automation SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON automation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON automation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS user_id ON automation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON automation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS kind ON automation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS agent_id ON automation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS prompt ON automation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS enabled ON automation TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS cron ON automation TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS timezone ON automation TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS source_type ON automation TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS event_on ON automation TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS event_filter ON automation TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON automation TYPE datetime DEFAULT time::now()`,
+  `DEFINE FIELD IF NOT EXISTS last_run_at ON automation TYPE option<datetime>`,
+
+  `DEFINE TABLE IF NOT EXISTS automation_run SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON automation_run TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS automation_id ON automation_run TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON automation_run TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS thread_id ON automation_run TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS status ON automation_run TYPE string DEFAULT 'queued'`,
+  `DEFINE FIELD IF NOT EXISTS result ON automation_run TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS event_context ON automation_run FLEXIBLE TYPE object DEFAULT {}`,
+  `DEFINE FIELD IF NOT EXISTS started_at ON automation_run TYPE datetime DEFAULT time::now()`,
+  `DEFINE FIELD IF NOT EXISTS finished_at ON automation_run TYPE option<datetime>`,
+
+  `DEFINE TABLE IF NOT EXISTS webhook_endpoint SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON webhook_endpoint TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON webhook_endpoint TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON webhook_endpoint TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS source ON webhook_endpoint TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS secret ON webhook_endpoint TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS event_key_expr ON webhook_endpoint TYPE string DEFAULT 'type'`,
+  `DEFINE FIELD IF NOT EXISTS signature_header ON webhook_endpoint TYPE string DEFAULT 'X-Signature-256'`,
+  `DEFINE FIELD IF NOT EXISTS enabled ON webhook_endpoint TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON webhook_endpoint TYPE datetime DEFAULT time::now()`,
+  `DEFINE INDEX IF NOT EXISTS webhook_tenant_source_idx ON webhook_endpoint FIELDS tenant_id, source UNIQUE`,
+
+  `DEFINE TABLE IF NOT EXISTS table_sheet SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON table_sheet TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON table_sheet TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS builtin ON table_sheet TYPE bool DEFAULT false`,
+  `DEFINE FIELD IF NOT EXISTS thread_id ON table_sheet TYPE option<string>`,
+  // Load provenance (server/tenant/loadedAt) stamped by Compass load tools; optional —
+  // absent on sheets created before this field existed ("legacy unstamped").
+  `DEFINE FIELD IF NOT EXISTS source ON table_sheet FLEXIBLE TYPE option<object>`,
+
+  `DEFINE TABLE IF NOT EXISTS table_column SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS sheet_id ON table_column TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS key ON table_column TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON table_column TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS width ON table_column TYPE int`,
+  `DEFINE FIELD IF NOT EXISTS type ON table_column TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS frozen ON table_column TYPE option<bool>`,
+  `DEFINE FIELD IF NOT EXISTS deletable ON table_column TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS position ON table_column TYPE int DEFAULT 0`,
+  `DEFINE FIELD IF NOT EXISTS status_options ON table_column TYPE option<array<string>>`,
+
+  `DEFINE TABLE IF NOT EXISTS table_row SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS sheet_id ON table_row TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS row_key ON table_row TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS data ON table_row FLEXIBLE TYPE object`,
+  `DEFINE FIELD IF NOT EXISTS position ON table_row TYPE int DEFAULT 0`,
+
+  `DEFINE TABLE IF NOT EXISTS document SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON document TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON document TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS thread_id ON document TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS filename ON document TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS mime_type ON document TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS size_bytes ON document TYPE option<int>`,
+  `DEFINE FIELD IF NOT EXISTS status ON document TYPE string DEFAULT 'pending'`,
+  `DEFINE FIELD IF NOT EXISTS error ON document TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON document TYPE datetime DEFAULT time::now()`,
+
+  `DEFINE TABLE IF NOT EXISTS chunk SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON chunk TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS document_id ON chunk TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON chunk TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS thread_id ON chunk TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS text ON chunk TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS source ON chunk TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS offset ON chunk TYPE int DEFAULT 0`,
+  `DEFINE FIELD IF NOT EXISTS embedding ON chunk TYPE option<array<float>>`,
+
+  `DEFINE TABLE IF NOT EXISTS entity SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON entity TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON entity TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS thread_id ON entity TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS name ON entity TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name_key ON entity TYPE string DEFAULT ''`,
+  `DEFINE FIELD IF NOT EXISTS type ON entity TYPE string DEFAULT 'concept'`,
+  `DEFINE FIELD IF NOT EXISTS description ON entity TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS document_id ON entity TYPE option<string>`,
+
+  `DEFINE TABLE IF NOT EXISTS chunk_entity SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS chunk_id ON chunk_entity TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS entity_id ON chunk_entity TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON chunk_entity TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS document_id ON chunk_entity TYPE string`,
+
+  `DEFINE TABLE IF NOT EXISTS agent_citation SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON agent_citation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON agent_citation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS thread_id ON agent_citation TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS query ON agent_citation TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS references ON agent_citation FLEXIBLE TYPE array`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON agent_citation TYPE datetime DEFAULT time::now()`,
+
+  `DEFINE TABLE IF NOT EXISTS relates SCHEMAFULL TYPE RELATION`,
+  `DEFINE FIELD IF NOT EXISTS id ON relates TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON relates TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS in ON relates TYPE record<entity>`,
+  `DEFINE FIELD IF NOT EXISTS out ON relates TYPE record<entity>`,
+  `DEFINE FIELD IF NOT EXISTS relation ON relates TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS document_id ON relates TYPE option<string>`,
+  `DEFINE TABLE IF NOT EXISTS workflow SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON workflow TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON workflow TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS user_id ON workflow TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS thread_id ON workflow TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS name ON workflow TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS kind ON workflow TYPE string DEFAULT 'manual'`,
+  `DEFINE FIELD IF NOT EXISTS enabled ON workflow TYPE bool DEFAULT true`,
+  `DEFINE FIELD IF NOT EXISTS cron ON workflow TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS timezone ON workflow TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS source_type ON workflow TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS event_on ON workflow TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS event_filter ON workflow TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS definition ON workflow FLEXIBLE TYPE object DEFAULT {}`,
+  `DEFINE FIELD IF NOT EXISTS created_at ON workflow TYPE datetime DEFAULT time::now()`,
+  `DEFINE FIELD IF NOT EXISTS last_run_at ON workflow TYPE option<datetime>`,
+  `DEFINE TABLE IF NOT EXISTS workflow_run SCHEMAFULL`,
+  `DEFINE FIELD IF NOT EXISTS id ON workflow_run TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS workflow_id ON workflow_run TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS tenant_id ON workflow_run TYPE string`,
+  `DEFINE FIELD IF NOT EXISTS status ON workflow_run TYPE string DEFAULT 'queued'`,
+  `DEFINE FIELD IF NOT EXISTS log ON workflow_run FLEXIBLE TYPE array DEFAULT []`,
+  `DEFINE FIELD IF NOT EXISTS event_context ON workflow_run FLEXIBLE TYPE object DEFAULT {}`,
+  `DEFINE FIELD IF NOT EXISTS started_at ON workflow_run TYPE datetime DEFAULT time::now()`,
+  `DEFINE FIELD IF NOT EXISTS finished_at ON workflow_run TYPE option<datetime>`,
+];
+
+export async function initSchema(db: Surreal): Promise<void> {
+  for (const sql of SCHEMA_STATEMENTS) {
+    try {
+      await db.query(sql);
+    } catch (err) {
+      // Schema statements are idempotent (IF NOT EXISTS). A failure here means
+      // the store is in a bad state; fail loudly instead of booting with a
+      // partially-defined schema that would cause confusing runtime errors.
+      throw new Error(
+        `[db] failed to apply schema statement: ${sql.slice(0, 80)}\n${String(err)}`,
+        { cause: err },
+      );
+    }
+  }
+}

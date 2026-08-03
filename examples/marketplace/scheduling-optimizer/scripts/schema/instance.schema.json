@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://veylin.local/scheduling-optimizer/instance.schema.json",
+  "title": "SchedulingInstance",
+  "type": "object",
+  "required": ["jobs", "resources"],
+  "properties": {
+    "jobs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "operations"],
+        "properties": {
+          "id": { "type": "string" },
+          "release": { "type": "number", "minimum": 0 },
+          "due": { "type": "number" },
+          "weight": { "type": "number", "minimum": 0 },
+          "operations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "duration", "resources"],
+              "properties": {
+                "id": { "type": "string" },
+                "duration": { "type": "number", "exclusiveMinimum": 0 },
+                "resources": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "type": "string" }
+                },
+                "predecessors": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "capacity": { "type": "number", "minimum": 1 }
+        }
+      }
+    },
+    "objective": {
+      "type": "string",
+      "enum": ["makespan", "tardiness", "weighted_tardiness"]
+    },
+    "horizon": { "type": ["number", "null"] },
+    "time_limit_sec": { "type": "number", "minimum": 0 },
+    "frozen": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["operation_id", "start"],
+        "properties": {
+          "operation_id": { "type": "string" },
+          "start": { "type": "number" },
+          "end": { "type": "number" }
+        }
+      }
+    },
+    "replan_window": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "number" },
+        "end": { "type": "number" }
+      }
+    },
+    "baseline_schedule": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["operation_id", "start", "end"],
+        "properties": {
+          "operation_id": { "type": "string" },
+          "start": { "type": "number" },
+          "end": { "type": "number" },
+          "resource_id": { "type": "string" }
+        }
+      }
+    },
+    "preferences": {
+      "type": "object",
+      "properties": {
+        "prefer_resource": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["operation_id", "resource_id"],
+            "properties": {
+              "operation_id": { "type": "string" },
+              "resource_id": { "type": "string" },
+              "weight": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        "prefer_earlier": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["job_id"],
+            "properties": {
+              "job_id": { "type": "string" },
+              "weight": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

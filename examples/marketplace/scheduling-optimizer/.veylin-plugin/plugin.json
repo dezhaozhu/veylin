@@ -1,0 +1,7 @@
+{
+  "name": "scheduling-optimizer",
+  "version": "0.1.0",
+  "description": "排产优化：Skills 编排 + 求解 MCP（OR-Tools CP-SAT）。无 Hooks。",
+  "author": "Veylin",
+  "mcpServers": "./.mcp.json"
+}
