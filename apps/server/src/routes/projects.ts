@@ -5,11 +5,12 @@
  * - `GET /api/projects` lists ENABLED projects only (the sidebar/pin-picker
  *   gate). Disabled rows — revoked defaults, user-deleted compositions — stay
  *   in the store for the reconciler/shim but are invisible to clients.
- * - `POST /api/projects` composes a user project (`managed: false`) from the
- *   granted sources. "Granted" = the sources of the ENABLED reconciler-managed
- *   default projects (`grantedSourcesSorted`) — the same definition the boot
- *   migration uses. `assertSourcesGranted` failures map to 400; this is the
- *   UX boundary, not the security boundary (Compass re-validates per call).
+ * - `POST /api/projects` composes a user project (`managed: false`) from zero
+ *   or more granted sources (empty sources = source-less folder). "Granted" =
+ *   the sources of the ENABLED reconciler-managed default projects
+ *   (`grantedSourcesSorted`) — the same definition the boot migration uses.
+ *   `assertSourcesGranted` failures map to 400; this is the UX boundary, not
+ *   the security boundary (Compass re-validates per call).
  * - `PATCH /api/projects/:id` renames/re-ticks USER-COMPOSED projects only.
  *   Managed rows are reconciler-owned → 403. Only `name`/`sources` are ever
  *   forwarded to the store, so `managed`/`enabled`/`migratedFrom` are
@@ -58,8 +59,7 @@ function toApiProject(project: Project): ApiProject {
  * Validate a client-supplied sources value: must be an array of non-empty
  * strings. Returns the canonical form — de-duped and sorted, matching the
  * migration's composed-project convention and `sceneSetKey`'s semantics — or
- * null when malformed. `[]` is well-formed here; `assertSourcesGranted`
- * rejects emptiness with its own message.
+ * null when malformed. `[]` is well-formed (source-less project folders).
  */
 function parseSources(raw: unknown): string[] | null {
   if (!Array.isArray(raw)) return null;

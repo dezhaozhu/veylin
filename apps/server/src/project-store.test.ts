@@ -185,8 +185,8 @@ describe('project store', () => {
       assertSourcesGranted(['guolu', 'shangzhong'], granted);
     });
 
-    it('throws on empty sources', () => {
-      assert.throws(() => assertSourcesGranted([], granted), /at least one source/);
+    it('accepts empty sources (source-less project folders)', () => {
+      assertSourcesGranted([], granted);
     });
 
     it('throws when any source is ungranted', () => {

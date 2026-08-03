@@ -146,15 +146,13 @@ export async function resolvePinnedProjectScope(
 }
 
 /**
- * Guard for compose/pin time: a project's sources must be a non-empty subset
- * of the tenant's granted Compass sources. Throws otherwise — callers map the
- * error to a 400/deny. (Compass re-validates per call regardless; this is the
+ * Guard for compose/pin time: a project's sources must be a subset of the
+ * tenant's granted Compass sources (empty is allowed — projects can be
+ * source-less folders). Throws otherwise — callers map the error to a
+ * 400/deny. (Compass re-validates per call regardless; this is the
  * server-side UX boundary, not the security boundary.)
  */
 export function assertSourcesGranted(sources: string[], granted: string[]): void {
-  if (sources.length === 0) {
-    throw new Error('project must include at least one source');
-  }
   const grantedSet = new Set(granted);
   const ungranted = sources.filter((s) => !grantedSet.has(s));
   if (ungranted.length > 0) {

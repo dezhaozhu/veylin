@@ -115,16 +115,21 @@ describe('project CRUD routes', () => {
     }
   });
 
-  it('POST rejects empty sources with 400', async () => {
+  it('POST allows empty sources (source-less project folders)', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/projects',
       payload: { name: '空项目', sources: [] },
     });
-    assert.equal(res.statusCode, 400);
-    const body = res.json() as { ok: boolean; error: string };
-    assert.equal(body.ok, false);
-    assert.match(body.error, /at least one source/);
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as {
+      ok: boolean;
+      project: { name: string; sources: string[]; managed: boolean };
+    };
+    assert.equal(body.ok, true);
+    assert.equal(body.project.name, '空项目');
+    assert.deepEqual(body.project.sources, []);
+    assert.equal(body.project.managed, false);
   });
 
   it('POST rejects an ungranted source with 400 naming it (disabled default ⇒ not granted)', async () => {

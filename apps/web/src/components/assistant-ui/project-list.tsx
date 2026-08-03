@@ -26,7 +26,11 @@ import {
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { placeComposerCaret } from '@/lib/composer-caret';
 import { postThreadProject, writeCachedThreadProject } from '@/lib/project-sync';
-import { invalidateThreadProjects } from '@/lib/thread-projects-sync';
+import {
+  invalidateThreadProjects,
+  removeThreadProjectPin,
+  upsertThreadProjectPin,
+} from '@/lib/thread-projects-sync';
 import { createProject, invalidateProjects, type ProjectInfo } from '@/lib/projects-sync';
 import { projectSourceLabel } from '@/lib/project-labels';
 import { cn } from '@/lib/utils';
@@ -130,25 +134,47 @@ const ProjectRow: FC<{ project: ProjectInfo; indices: number[]; threadIds: reado
       e.stopPropagation();
       if (creating) return;
       setCreating(true);
+      // Ids we optimistic-pinned; rolled back if initialize/POST fails.
+      const optimisticIds: string[] = [];
       try {
         // Same creation path as the global new-chat control (ThreadListPrimitive.New):
         // aui.threads().switchToNewThread(); here we additionally force-initialize so
         // we have a real server threadId to pin immediately, instead of waiting for
         // the first message.
         await aui.threads().switchToNewThread();
-        const item = aui.threads().item('main');
-        const initialized = await item.initialize();
+        // React client's item('main') can still resolve the PREVIOUS main after
+        // switchToNewThread (stale useSyncExternalStore snapshot). Read the live
+        // runtime main instead so we pin the new thread, not the one you were on.
+        const threadsRt = aui.threads().__internal_getAssistantRuntime?.().threads;
+        if (!threadsRt) {
+          throw new Error('assistant runtime threads unavailable');
+        }
+        const mainId = threadsRt.getState().mainThreadId;
+        upsertThreadProjectPin(mainId, project.id);
+        optimisticIds.push(mainId);
+
+        const initialized = await threadsRt.mainItem.initialize();
         // Same triple fallback as thread-list.tsx's partitionByProject / the
         // move menu — the local id later BECOMES the remoteId, so this always
         // resolves to the id the pin ends up keyed under.
-        const rid = initialized.remoteId ?? initialized.externalId ?? item.getState().id;
+        const rid = initialized.remoteId ?? initialized.externalId ?? mainId;
+        if (rid !== mainId) {
+          upsertThreadProjectPin(rid, project.id);
+          optimisticIds.push(rid);
+        }
+
         // The pin value is the project id (POST /api/project validates it as
         // an enabled project of this tenant).
         const confirmed = await postThreadProject(rid, project.id);
-        writeCachedThreadProject(rid, confirmed ?? project.id);
+        if (confirmed == null) {
+          for (const id of optimisticIds) removeThreadProjectPin(id);
+          return;
+        }
+        writeCachedThreadProject(rid, confirmed);
         invalidateThreadProjects();
         placeComposerCaret(0);
       } catch (err) {
+        for (const id of optimisticIds) removeThreadProjectPin(id);
         console.error('[project-list] new chat in project failed:', err);
       } finally {
         setCreating(false);
@@ -308,7 +334,7 @@ const NewProjectDialog: FC<{
           autoFocus
         />
       </FormField>
-      <FormField label={t('threadList.projectSources')} required>
+      <FormField label={t('threadList.projectSources')}>
         <div className="flex flex-col gap-1.5">
           {sourceOptions.map((source) => (
             <label key={source} className="flex cursor-pointer items-center gap-2 text-sm">
