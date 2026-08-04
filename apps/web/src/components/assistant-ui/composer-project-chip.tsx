@@ -1,4 +1,4 @@
-import { GemIcon } from 'lucide-react';
+import { FolderIcon } from 'lucide-react';
 import type { FC } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useProjectScope } from '@/lib/use-composer-settings';
@@ -35,7 +35,7 @@ export const ComposerProjectChip: FC = () => {
       className="text-muted-foreground inline-flex h-7 max-w-[10rem] min-w-0 shrink-0 items-center gap-1 rounded-full px-2.5 text-xs font-normal"
       title={t('mention.projectSwitchHint')}
     >
-      <GemIcon className="size-3 shrink-0" />
+      <FolderIcon className="size-3 shrink-0" />
       <span className={cn('truncate', !currentProject && 'italic')}>{label}</span>
     </div>
   );
