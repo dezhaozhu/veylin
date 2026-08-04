@@ -7,13 +7,16 @@ import { titlebarLeadingInset } from '@/lib/titlebar-layout';
  * Expanded: collapse lives in SidebarTopChrome (right of the brand row).
  * Collapsed: keep a global reopen trigger so every workspace can open the rail.
  * On Win/Linux also hosts frameless caption buttons (macOS uses native traffic lights).
+ *
+ * Mobile Sheet visibility is `openMobile`, not desktop `open`.
  */
 export function AppTitlebarControls() {
-  const { open: sidebarOpen } = useSidebar();
+  const { open: sidebarOpen, isMobile, openMobile } = useSidebar();
+  const showReopenTrigger = isMobile ? !openMobile : !sidebarOpen;
 
   return (
     <>
-      {!sidebarOpen ? (
+      {showReopenTrigger ? (
         <div
           className="pointer-events-none fixed left-0 top-0 z-50 flex h-9 items-center bg-transparent"
           style={{ paddingLeft: titlebarLeadingInset(false) }}

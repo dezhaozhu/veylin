@@ -13,14 +13,19 @@ function BrandMark({ className }: { className?: string }) {
 
 /**
  * Left-rail top chrome (style only; New Chat stays in ThreadList):
- * - collapsed: centered logo (hover → expand icon), click opens
- * - expanded: logo + drag + collapse on the right (titlebar does not duplicate the trigger)
+ * - collapsed (desktop icon rail): centered logo (hover → expand icon), click opens
+ * - expanded / mobile sheet: logo + drag + collapse on the right
+ *
+ * Mobile uses `openMobile` for the Sheet, not desktop `open`. The chrome only mounts
+ * when the sheet is open, so always show the expanded row on mobile.
  */
 export function SidebarTopChrome() {
   const { t } = useTranslation();
-  const { open, toggleSidebar } = useSidebar();
+  const { open, isMobile, toggleSidebar } = useSidebar();
+  // Desktop collapsed rail uses centered brand; mobile Sheet is always full-width.
+  const showExpandedChrome = isMobile || open;
 
-  if (!open) {
+  if (!showExpandedChrome) {
     return (
       <div className="flex h-9 shrink-0 items-center justify-center px-2">
         <button
