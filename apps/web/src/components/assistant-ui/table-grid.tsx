@@ -674,7 +674,16 @@ export function TableGrid() {
   }, []);
 
   const applyPayload = useCallback((data: SchedulePayload, initial: boolean) => {
-    if (data.sheets?.length) setSheets(data.sheets);
+    if (data.sheets?.length) {
+      setSheets(data.sheets);
+      // Empty default Sheet 1 may be pruned after Compass import — follow the
+      // sheet the server actually returned / the first remaining tab.
+      setActiveSheetId((current) => {
+        if (data.sheets!.some((s) => s.id === current)) return current;
+        if (data.sheet && data.sheets!.some((s) => s.id === data.sheet)) return data.sheet;
+        return data.sheets![0]!.id;
+      });
+    }
     if (data.columns) setColumnDefs(data.columns);
     const next = data.rows ?? [];
     if (initial) setLoading(false);
@@ -701,8 +710,8 @@ export function TableGrid() {
           }
           if (initial) {
             const message = err instanceof Error ? err.message : t('table.loadFailedGeneric');
+            // Inline banner only — avoid a second solid-red toast for the same failure.
             setLoadError(message);
-            showToast(t('table.loadError', { error: message }), 'error');
             applyPayload(emptySchedulePayload(sheetId), true);
           }
         }
@@ -1712,7 +1721,7 @@ export function TableGrid() {
       {loadError ? (
         <div
           role="alert"
-          className="border-destructive/30 bg-destructive/10 text-destructive shrink-0 border-b px-3 py-2 text-xs"
+          className="border-border bg-muted/60 text-muted-foreground shrink-0 border-b px-3 py-1.5 text-xs"
         >
           {t('table.loadError', { error: loadError })}
         </div>
@@ -1721,10 +1730,9 @@ export function TableGrid() {
         <div
           role="status"
           className={cn(
-            'absolute bottom-3 left-1/2 z-50 max-w-[min(90vw,28rem)] -translate-x-1/2 rounded-md px-3 py-2 text-center text-xs shadow-md',
-            toast.variant === 'success'
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-destructive text-white',
+            'absolute bottom-3 left-1/2 z-50 max-w-[min(90vw,24rem)] -translate-x-1/2 rounded-lg border px-3 py-2 text-center text-xs shadow-sm backdrop-blur-sm',
+            'border-border bg-background/95 text-foreground',
+            toast.variant === 'error' && 'text-muted-foreground',
           )}
         >
           {toast.message}
@@ -1793,7 +1801,7 @@ export function TableGrid() {
             size="sm"
             className={cn(
               'h-7 gap-1 px-2 text-xs',
-              rowActionDelete && 'text-destructive hover:text-destructive',
+              rowActionDelete && 'text-muted-foreground hover:text-foreground',
             )}
             onClick={handleRowAction}
           >
@@ -1808,7 +1816,7 @@ export function TableGrid() {
             size="sm"
             className={cn(
               'h-7 gap-1 px-2 text-xs',
-              columnSelected && 'text-destructive hover:text-destructive',
+              columnSelected && 'text-muted-foreground hover:text-foreground',
             )}
             onClick={handleColumnAction}
           >
@@ -1909,7 +1917,7 @@ export function TableGrid() {
             <Button type="button" size="sm" className="h-6 px-2 text-xs" disabled={committing} onClick={() => void commitDraft()}>
               {t('table.draftCommit')}
             </Button>
-            <Button type="button" variant="outline" size="sm" className="text-destructive hover:text-destructive h-6 px-2 text-xs" onClick={() => void discardDraft()}>
+            <Button type="button" variant="outline" size="sm" className="text-muted-foreground hover:text-foreground h-6 px-2 text-xs" onClick={() => void discardDraft()}>
               {t('table.draftDiscard')}
             </Button>
           </div>
@@ -2022,7 +2030,7 @@ export function TableGrid() {
             }}
             placeholder={t('table.newSheetName')}
           />
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"
@@ -2067,7 +2075,7 @@ export function TableGrid() {
             }}
             placeholder={t('table.newColumnName')}
           />
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"
@@ -2105,7 +2113,7 @@ export function TableGrid() {
             </DialogTitle>
             <DialogDescription>{t('table.confirmDeleteSheet')}</DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"
@@ -2137,7 +2145,7 @@ export function TableGrid() {
             <DialogTitle>{t('table.import')}</DialogTitle>
             <DialogDescription>{t('table.confirmImport')}</DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter>
             <Button type="button" variant="outline" onClick={cancelImport}>
               {t('common.cancel')}
             </Button>

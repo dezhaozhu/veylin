@@ -266,17 +266,14 @@ export async function initTableStore(): Promise<void> {
       });
     }
     sheetStore = next;
-    if (!sheetStore.has(DEFAULT_TABLE_SHEET)) {
-      const initial = buildInitialStore();
-      const main = initial.get(DEFAULT_TABLE_SHEET)!;
-      sheetStore.set(DEFAULT_TABLE_SHEET, main);
-      await persistSheet(DEFAULT_TABLE_SHEET);
-    }
+    // Do NOT force-reseed empty Sheet 1 when other sheets already exist —
+    // Compass imports (orders/resources) should not leave a blank default tab.
     let migrated = false;
     for (const sheet of sheetStore.values()) {
       if (migrateLegacyEmptySheet(sheet)) migrated = true;
     }
     if (migrated) await persistAll();
+    pruneEmptyDefaultSheet();
   }
   tableHydrated = true;
 }
@@ -385,7 +382,10 @@ export function sanitizePatch(
 
 export function resolveTableSheetId(value: string | undefined): string {
   if (value && sheetStore.has(value)) return value;
-  return DEFAULT_TABLE_SHEET;
+  if (sheetStore.has(DEFAULT_TABLE_SHEET)) return DEFAULT_TABLE_SHEET;
+  // Sheet 1 may have been pruned after a Compass import — fall back to any sheet.
+  const first = sheetStore.keys().next().value;
+  return typeof first === 'string' ? first : DEFAULT_TABLE_SHEET;
 }
 
 /**
@@ -868,6 +868,7 @@ export function createTableSheet(
   });
   tablePersist(id);
   emitTable({ type: 'sheetsChange' });
+  pruneEmptyDefaultSheet();
   return { ...meta };
 }
 
@@ -920,6 +921,38 @@ async function ensureAtLeastOneSheet(): Promise<void> {
   const main = initial.get(DEFAULT_TABLE_SHEET)!;
   sheetStore.set(DEFAULT_TABLE_SHEET, main);
   await persistSheet(DEFAULT_TABLE_SHEET);
+}
+
+/** True when the builtin Sheet 1 is still an unused blank canvas. */
+function isPrunableEmptyDefaultSheet(sheet: SheetState): boolean {
+  if (sheet.meta.id !== DEFAULT_TABLE_SHEET) return false;
+  if (sheet.columns.length > 0 && !isLegacyDefaultColumns(sheet.columns)) return false;
+  return sheetHasNoCellData(sheet);
+}
+
+function otherSheetHasContent(): boolean {
+  for (const [id, sheet] of sheetStore) {
+    if (id === DEFAULT_TABLE_SHEET) continue;
+    if (sheet.columns.length > 0 || !sheetHasNoCellData(sheet)) return true;
+  }
+  return false;
+}
+
+/**
+ * Drop empty builtin Sheet 1 once another sheet has real content (e.g. after a
+ * Compass orders/resources import). Keeps Sheet 1 when the user only added
+ * more blank tabs.
+ */
+function pruneEmptyDefaultSheet(): void {
+  const main = sheetStore.get(DEFAULT_TABLE_SHEET);
+  if (!main || sheetStore.size <= 1) return;
+  if (!isPrunableEmptyDefaultSheet(main)) return;
+  if (!otherSheetHasContent()) return;
+  sheetStore.delete(DEFAULT_TABLE_SHEET);
+  void deleteTableSheetDb(DEFAULT_TABLE_SHEET).catch((e) => {
+    console.error('[table] prune empty default sheet failed:', e);
+  });
+  emitTable({ type: 'sheetsChange' });
 }
 
 export function addTableRow(sheetId: string): TableRowData | null {
@@ -1110,6 +1143,7 @@ export function importTableSheet(
 
   tablePersist(resolved);
   emitTable({ type: 'sheetReplace', sheet: resolved });
+  pruneEmptyDefaultSheet();
 
   return {
     columns: fresh.columns.map((c) => ({ ...c })),
@@ -1120,4 +1154,10 @@ export function importTableSheet(
 export async function resetTableStore(): Promise<void> {
   sheetStore = buildInitialStore();
   await persistAll();
+}
+
+/** In-memory only reset for unit tests (no DB). */
+export function resetTableStoreMemory(): void {
+  sheetStore = buildInitialStore();
+  tableHydrated = false;
 }
