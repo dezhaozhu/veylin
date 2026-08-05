@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuiState } from '@assistant-ui/react';
-import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X, Loader2, Search } from 'lucide-react';
+import { Plus, Minus, Redo2, Undo2, Upload, Download, X, Loader2, Search } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   type ColDef,
@@ -10,10 +10,10 @@ import {
   type CellClassParams,
   type CellValueChangedEvent,
   type CellKeyDownEvent,
-  type SelectionChangedEvent,
   type IHeaderParams,
   type GridApi,
   type GridReadyEvent,
+  type FirstDataRenderedEvent,
   themeQuartz,
 } from 'ag-grid-community';
 import './ag-grid-modules';
@@ -67,25 +67,29 @@ const ORDER_SHEET_ID = 'orders';
 // header fill), and the app's neutral accent for selection/focus.
 const veylinGridTheme = themeQuartz.withParams({
   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-  fontSize: 13,
-  spacing: 6,
-  rowHeight: 34,
-  headerHeight: 38,
+  fontSize: 12.5,
+  spacing: 7,
+  rowHeight: 36,
+  headerHeight: 40,
   backgroundColor: 'var(--background)',
   foregroundColor: 'var(--foreground)',
-  borderColor: 'var(--border)',
+  borderColor: 'color-mix(in oklab, var(--border) 80%, transparent)',
   chromeBackgroundColor: 'var(--muted)',
-  headerBackgroundColor: 'var(--background)',
+  // Soft header band so the grid reads less like a raw spreadsheet dump.
+  headerBackgroundColor: 'color-mix(in oklab, var(--muted) 45%, var(--background))',
   headerTextColor: 'var(--muted-foreground)',
   headerFontWeight: 600,
-  headerFontSize: 12,
-  oddRowBackgroundColor: 'transparent',
-  rowHoverColor: 'var(--muted)',
-  selectedRowBackgroundColor: 'var(--accent)',
-  accentColor: 'var(--ring)',
-  wrapperBorderRadius: 8,
-  wrapperBorder: false,
+  headerFontSize: 11.5,
+  // Flat rows — no zebra; separators + hover carry hierarchy.
+  oddRowBackgroundColor: 'var(--background)',
+  rowHoverColor: 'color-mix(in oklab, var(--muted) 65%, transparent)',
+  selectedRowBackgroundColor: 'color-mix(in oklab, var(--accent) 75%, transparent)',
+  accentColor: 'var(--primary)',
+  cellTextColor: 'var(--foreground)',
+  wrapperBorderRadius: 10,
+  wrapperBorder: true,
   columnBorder: false,
+  borderRadius: 6,
 });
 
 // Columns worth showing in the B2 preview dialog (filtered by presence in the payload)
@@ -180,7 +184,6 @@ interface TableSheet {
 
 interface TableGridTotals {
   rowCount: number;
-  selectedCount: number;
 }
 
 type FilterState = { query: string };
@@ -217,6 +220,14 @@ const FALLBACK_TONE: Record<string, StatusTone> = {
   normal: 'positive',
   tight: 'warning',
   overdue: 'negative',
+  // Scheduling vocabulary (used when Compass omits column semantics)
+  solved: 'positive',
+  derived: 'info',
+  unscheduled: 'neutral',
+  scheduled: 'positive',
+  feasible: 'positive',
+  infeasible: 'negative',
+  not_scheduled: 'neutral',
 };
 
 function statusClass(value: string, semantics?: Record<string, string>): string {
@@ -226,6 +237,20 @@ function statusClass(value: string, semantics?: Record<string, string>): string 
 
 function humanizeStatus(value: string): string {
   return value.replace(/_/g, ' ');
+}
+
+/** Date-like column keys — give them room and show YYYY-MM-DD instead of ISO spam. */
+function isDateishColumn(key: string): boolean {
+  return /(^|_)(at|date|end|start|due|time)(_|$)/i.test(key) || /完工|交期|日期/.test(key);
+}
+
+function formatTableCellValue(key: string, value: unknown): string {
+  if (value === undefined || value === null || value === '') return '';
+  const s = String(value);
+  if (isDateishColumn(key) || /^\d{4}-\d{2}-\d{2}T/.test(s)) {
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  }
+  return s;
 }
 
 function resolveStatusOptions(def: TableColumnDef, rows: TableRow[]): string[] {
@@ -370,9 +395,6 @@ function TableGridFooter({ totals }: { totals: TableGridTotals }) {
       <span className="text-foreground font-medium">
         {t('table.footerTotal', { count: totals.rowCount })}
       </span>
-      {totals.selectedCount > 0 ? (
-        <span>{t('table.footerSelected', { count: totals.selectedCount })}</span>
-      ) : null}
     </div>
   );
 }
@@ -389,7 +411,7 @@ function StatusBadge({
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+        'inline-flex max-w-full items-center truncate rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 ring-1 ring-inset ring-black/5 dark:ring-white/10',
         statusClass(status, semantics),
       )}
     >
@@ -426,40 +448,55 @@ function ScheduleDetailPanel(params: { data?: Record<string, unknown> }) {
   }, [params.data, threadId]);
   const day = (v: unknown) => (typeof v === 'string' && v.length >= 10 ? v.slice(0, 10) : '');
 
+  // Empty / loading: one quiet line — never a big empty card.
+  if (rows === null) {
+    return (
+      <div className="text-muted-foreground py-1 pl-12 pr-3 text-[11px]">加载中…</div>
+    );
+  }
+  if (rows.length === 0) {
+    return (
+      <div className="text-muted-foreground py-1 pl-12 pr-3 text-[11px]">暂无三级工艺明细</div>
+    );
+  }
+
   return (
-    <div className="border-l-2 border-primary/25 bg-muted/25 py-1.5 pl-9 pr-3">
-      {rows === null ? (
-        <div className="py-1.5 text-xs text-muted-foreground">加载三级工艺路线…</div>
-      ) : rows.length === 0 ? (
-        <div className="py-1.5 text-xs text-muted-foreground">该订单暂无三级工艺明细</div>
-      ) : (
-        <div className="flex flex-col">
-          {rows.map((op, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3 rounded px-2 py-1 text-xs hover:bg-muted/60"
-            >
-              <span className="w-8 shrink-0 tabular-nums text-muted-foreground">
-                {String(op['op_seq'] ?? '')}
-              </span>
-              <span className="min-w-[7rem] shrink-0 font-medium">{String(op['op_name'] ?? '-')}</span>
-              <span className="min-w-[6rem] shrink-0 text-muted-foreground">
-                {String(op['resource_id'] ?? '')}
-              </span>
-              <StatusBadge status={String(op['status'] ?? '')} semantics={semantics} />
-              <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
-                {day(op['planned_start'])}
-                {day(op['planned_end']) ? ` → ${day(op['planned_end'])}` : ''}
-              </span>
-            </div>
-          ))}
+    <div className="veylin-schedule-detail border-border/50 ml-10 mr-2 border-l-2 py-0.5 pl-3">
+      <div className="text-muted-foreground mb-0.5 flex items-center gap-3 px-1 text-[10px]">
+        <span className="w-7 shrink-0">#</span>
+        <span className="min-w-[7rem] shrink-0">工序</span>
+        <span className="min-w-[6rem] shrink-0">资源</span>
+        <span className="w-20 shrink-0">状态</span>
+        <span className="ml-auto shrink-0">计划</span>
+      </div>
+      {rows.map((op, i) => (
+        <div
+          key={i}
+          className="hover:bg-muted/50 flex items-center gap-3 rounded-sm px-1 py-0.5 text-xs"
+        >
+          <span className="text-muted-foreground w-7 shrink-0 tabular-nums">
+            {String(op['op_seq'] ?? '')}
+          </span>
+          <span className="min-w-[7rem] shrink-0 font-medium">{String(op['op_name'] ?? '-')}</span>
+          <span className="text-muted-foreground min-w-[6rem] shrink-0">
+            {String(op['resource_id'] ?? '')}
+          </span>
+          <span className="w-20 shrink-0">
+            <StatusBadge status={String(op['status'] ?? '')} semantics={semantics} />
+          </span>
+          <span className="text-muted-foreground ml-auto shrink-0 tabular-nums">
+            {day(op['planned_start'])}
+            {day(op['planned_end']) ? ` → ${day(op['planned_end'])}` : ''}
+          </span>
         </div>
-      )}
+      ))}
     </div>
   );
 }
 
-// AG-Grid v36 custom header: name click → column selection, chevron → native sort
+// AG-Grid v36 custom header: name click → column selection.
+// Sort chevrons are omitted — browsing / filtering is the primary job here;
+// column filters stay on the native header menu button.
 interface AgColumnHeaderParams extends IHeaderParams<TableRow> {
   columnKey: string;
   onSelect: (key: string | null) => void;
@@ -467,17 +504,6 @@ interface AgColumnHeaderParams extends IHeaderParams<TableRow> {
 }
 
 function AgColumnHeader(params: AgColumnHeaderParams) {
-  const { t } = useTranslation();
-  const [sort, setSort] = useState<string | null | undefined>(
-    () => params.column.getSort(),
-  );
-
-  useEffect(() => {
-    const handler = () => setSort(params.column.getSort());
-    params.column.addEventListener('sortChanged', handler);
-    return () => params.column.removeEventListener('sortChanged', handler);
-  }, [params.column]);
-
   const isSelected = params.selectedKeyRef.current === params.columnKey;
 
   return (
@@ -495,25 +521,6 @@ function AgColumnHeader(params: AgColumnHeaderParams) {
         }}
       >
         {params.displayName}
-      </button>
-      <button
-        type="button"
-        tabIndex={-1}
-        aria-label={t('table.sortBy', { name: params.displayName })}
-        className="text-muted-foreground hover:text-foreground shrink-0 rounded p-0.5"
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          params.progressSort(e.shiftKey);
-        }}
-      >
-        {sort === 'asc' ? (
-          <ChevronUp className="size-3.5" />
-        ) : sort === 'desc' ? (
-          <ChevronDown className="size-3.5" />
-        ) : (
-          <ChevronUp className="size-3.5 opacity-25" />
-        )}
       </button>
     </div>
   );
@@ -544,7 +551,6 @@ export function TableGrid() {
   // rowData; column filters narrow further inside the grid). null until first render.
   const [displayedCount, setDisplayedCount] = useState<number | null>(null);
   const [columnFilterActive, setColumnFilterActive] = useState(false);
-  const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
   const [undoStack, setUndoStack] = useState<HistoryBatch[]>([]);
   const [redoStack, setRedoStack] = useState<HistoryBatch[]>([]);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
@@ -555,6 +561,8 @@ export function TableGrid() {
   const importInputRef = useRef<HTMLInputElement>(null);
   // AG-Grid API ref — populated in onGridReady
   const gridApiRef = useRef<GridApi<TableRow> | null>(null);
+  // Per-sheet column widths after first autosize — revisit applies immediately (no jump).
+  const columnWidthCacheRef = useRef<Map<string, Record<string, number>>>(new Map());
   // Ref mirror of selectedColumnKey — read by AgColumnHeader on refreshHeader()
   const selectedColumnKeyRef = useRef<string | null>(null);
   // Ref mirror of rows — used in async paste handler to avoid stale closure
@@ -646,10 +654,6 @@ export function TableGrid() {
   const selectColumn = useCallback((key: string | null) => {
     setSelectedColumnKey(key);
     selectedColumnKeyRef.current = key;
-    if (key) {
-      setSelectedRows(new Set());
-      gridApiRef.current?.deselectAll();
-    }
     gridApiRef.current?.refreshHeader();
   }, []);
 
@@ -662,7 +666,6 @@ export function TableGrid() {
   const resetSheetUiState = useCallback(() => {
     setFilters(EMPTY_FILTERS);
     gridApiRef.current?.setFilterModel(null);   // drop the previous sheet's column filters
-    setSelectedRows(new Set());
     setUndoStack([]);
     setRedoStack([]);
     setSelectedColumnKey(null);
@@ -724,6 +727,12 @@ export function TableGrid() {
     (sheetId: string) => {
       if (sheetId === activeSheetId) return;
       resetSheetUiState();
+      // Drop previous sheet immediately — same AgGrid instance would otherwise
+      // keep painting old rows until fetch returns, then autosize jumps again.
+      lastSerialized.current = '';
+      setRows([]);
+      setColumnDefs([]);
+      setDisplayedCount(null);
       setActiveSheetId(sheetId);
       setLoading(true);
     },
@@ -915,15 +924,14 @@ export function TableGrid() {
     }
   }, [rows, activeSheetId, drawPendingChart]);
 
-  // Pre-filter rows in React; AG-Grid handles sort natively via comparator
+  // Pre-filter rows in React (search box); column filters stay inside AG-Grid.
   const filteredRows = useMemo(() => applyFilters(rows, filters), [rows, filters]);
 
   const totals = useMemo<TableGridTotals>(
     () => ({
       rowCount: displayedCount ?? filteredRows.length,
-      selectedCount: selectedRows.size,
     }),
-    [displayedCount, filteredRows.length, selectedRows.size],
+    [displayedCount, filteredRows.length],
   );
 
   const commitRows = useCallback(
@@ -1219,22 +1227,38 @@ export function TableGrid() {
     [columnDefs, commitRows, editableKeys, handleRedo, handleUndo, pushHistory],
   );
 
-  // AG-Grid selection changed → sync React selectedRows (used by toolbar + totals)
-  const onSelectionChanged = useCallback(
-    (event: SelectionChangedEvent<TableRow>) => {
-      const selected = event.api
-        .getSelectedNodes()
-        .filter((n) => n.data != null)
-        .map((n) => rowKey(n.data!));
-      setSelectedRows(new Set(selected));
-      if (selected.length > 0) clearColumnSelection();
-    },
-    [clearColumnSelection],
-  );
-
   const onGridReady = useCallback((event: GridReadyEvent<TableRow>) => {
     gridApiRef.current = event.api;
   }, []);
+
+  const persistColumnWidths = useCallback((sheetId: string) => {
+    const api = gridApiRef.current;
+    if (!api) return;
+    const widths: Record<string, number> = {};
+    for (const s of api.getColumnState()) {
+      if (!s.colId || s.colId.startsWith('__') || s.width == null) continue;
+      widths[s.colId] = s.width;
+    }
+    if (Object.keys(widths).length > 0) {
+      columnWidthCacheRef.current.set(sheetId, widths);
+    }
+  }, []);
+
+  // After first paint / autosize strategy: remember widths so the next visit
+  // to this sheet applies them on ColDef (no second layout pass).
+  const onFirstDataRendered = useCallback(
+    (_event: FirstDataRenderedEvent<TableRow>) => {
+      persistColumnWidths(activeSheetId);
+    },
+    [activeSheetId, persistColumnWidths],
+  );
+
+  const onColumnResized = useCallback(
+    (event: { finished?: boolean }) => {
+      if (event.finished) persistColumnWidths(activeSheetId);
+    },
+    [activeSheetId, persistColumnWidths],
+  );
 
   // Keep the footer count honest under column filters. onModelUpdated fires on
   // rowData (search) AND column-filter/sort/group changes → single source of truth.
@@ -1304,14 +1328,16 @@ export function TableGrid() {
   const proGridProps = useMemo(() => {
     if (!proEnterprise) return {};
     return {
-      rowGroupPanelShow: 'always' as const,
+      // Only show the drop zone once the user is actually grouping — permanent
+      // empty strip made the toolbar feel like three stacked chrome bands.
+      rowGroupPanelShow: 'onlyWhenGrouping' as const,
       cellSelection: true,
       enableCharts: true,
-      // allow any data column to be dragged into the group panel / aggregated
       defaultColDef: { enableRowGroup: true, enableValue: true, enablePivot: true },
       sideBar: {
         toolPanels: ['columns', 'filters'],
-        hiddenByDefault: false,
+        // Collapsed by default; open via the edge tabs when needed.
+        hiddenByDefault: true,
         defaultToolPanel: '',
       },
       statusBar: {
@@ -1326,7 +1352,8 @@ export function TableGrid() {
   const agColDefs = useMemo<ColDef<TableRow>[]>(() => {
     const defs: ColDef<TableRow>[] = [];
 
-    // Pinned row-number column (read-only, no sort)
+    // Pinned row-number column (read-only, no sort). Skip master-detail child
+    // rows so expanding a order doesn't steal numbers (4 → 6 / duplicate 6).
     defs.push({
       colId: '__rowNum__',
       headerName: '',
@@ -1344,7 +1371,23 @@ export function TableGrid() {
       enableValue: false,
       enablePivot: false,
       suppressHeaderFilterButton: true,
-      valueGetter: (p) => (p.node?.rowIndex ?? 0) + 1,
+      suppressAutoSize: true,
+      valueGetter: (p) => {
+        const target = p.node;
+        if (!target || target.detail) return '';
+        const api = p.api;
+        if (!api) return (target.rowIndex ?? 0) + 1;
+        const first = api.getFirstDisplayedRowIndex();
+        const last = api.getLastDisplayedRowIndex();
+        let n = 0;
+        for (let i = first; i <= last; i++) {
+          const node = api.getDisplayedRowAtIndex(i);
+          if (!node || node.detail) continue;
+          n += 1;
+          if (node === target) return n;
+        }
+        return '';
+      },
       cellStyle: {
         textAlign: 'center',
         color: 'var(--muted-foreground)',
@@ -1374,21 +1417,30 @@ export function TableGrid() {
         enablePivot: false,
         suppressHeaderFilterButton: true,
         suppressHeaderMenuButton: true,
+        suppressAutoSize: true,
         cellRenderer: 'agGroupCellRenderer',
       });
     }
+
+    // Cached widths (after first autosize) paint correctly on sheet revisit.
+    const widthCache = columnWidthCacheRef.current.get(activeSheetId);
 
     // Data columns
     for (const def of columnDefs) {
       const isEditable =
         activeSheetId === SCHEDULE_SHEET_ID ? GOVERNED_EDIT_FIELDS.has(def.key) : true;
+      const cachedWidth = widthCache?.[def.key];
       const baseColDef: ColDef<TableRow> = {
         field: def.key,
         colId: def.key,
         headerName: def.name,
-        width: def.width,
+        // Cache hit → fixed width on first paint (no autosize jump). Miss → hint only.
+        ...(cachedWidth != null
+          ? { width: cachedWidth, suppressAutoSize: true }
+          : { initialWidth: def.width }),
         resizable: true,
-        sortable: true,
+        // Browse + filter first; no per-column sort chevrons in this UI.
+        sortable: false,
         pinned: def.frozen ? ('left' as const) : undefined,
         editable: isEditable,
         // Hover cue on the schedule sheet's governed-edit cells (改资源/日期→propose).
@@ -1397,24 +1449,15 @@ export function TableGrid() {
         tooltipValueGetter: (p) => (p.value == null || p.value === '' ? null : String(p.value)),
         cellDataType: false,
         suppressHeaderFilterButton: true,
-        // Per-column filtering. Text filter by default; number/status branches
-        // override with the right filter type. A floating filter row under the
-        // header makes it usable without depending on the custom header component,
-        // and the Filters side panel auto-populates from these.
+        // Column filters stay available via the Filters tool panel / header menu.
+        // Floating filter row under every header made the grid look like three
+        // chrome bands stacked on the data — opt out for a calmer default.
         filter: 'agTextColumnFilter',
-        floatingFilter: true,
-        valueFormatter: (params: ValueFormatterParams<TableRow>) => {
-          const v = params.value;
-          return v === undefined || v === null ? '' : String(v);
-        },
-        // zh-CN numeric comparator — reuses compareScheduleValues
-        comparator: (valueA, valueB) =>
-          compareScheduleValues(
-            valueA as string | number | undefined,
-            valueB as string | number | undefined,
-            def.type,
-          ),
-        // Custom header: name click selects column, chevron cycles sort
+        floatingFilter: false,
+        minWidth: isDateishColumn(def.key) ? 112 : 72,
+        valueFormatter: (params: ValueFormatterParams<TableRow>) =>
+          formatTableCellValue(def.key, params.value),
+        // Custom header: name click selects column (filter via menu button)
         headerComponent: AgColumnHeader,
         headerComponentParams: {
           columnKey: def.key,
@@ -1438,7 +1481,8 @@ export function TableGrid() {
             const v = Number(params.value);
             if (!Number.isFinite(v) || v <= 0) return base;
             const t = Math.min(1, v / heatMax);   // 0..1
-            return { ...base, backgroundColor: `rgba(37, 99, 235, ${(0.05 + t * 0.22).toFixed(3)})` };
+            // Whisper tint — readable without washing out zebra / selection.
+            return { ...base, backgroundColor: `rgba(37, 99, 235, ${(0.035 + t * 0.14).toFixed(3)})` };
           },
         });
       } else if (def.type === 'sparkline' && proEnterprise) {
@@ -1506,18 +1550,20 @@ export function TableGrid() {
     return defs;
   }, [activeSheetId, columnDefs, statusOptionsByKey, numberColMax, selectColumn, proMasterDetail]);
 
-  // AG-Grid v36 row selection config (object form)
-  const rowSelection = useMemo(
-    () => ({
-      mode: 'multiRow' as const,
-      checkboxes: true,
-      headerCheckbox: true,
-      // checkbox-only selection: clicking a cell (to edit) must NOT select the row.
-      // shift-range still works natively via the checkboxes.
-      enableClickSelection: false,
-    }),
-    [],
-  );
+  // First visit (or schema changed) — cached complete sheets skip strategy.
+  const autoSizeStrategy = useMemo(() => {
+    const cached = columnWidthCacheRef.current.get(activeSheetId);
+    const cacheComplete =
+      !!cached &&
+      columnDefs.length > 0 &&
+      columnDefs.every((c) => cached[c.key] != null);
+    if (cacheComplete) return undefined;
+    if (cached && !cacheComplete) columnWidthCacheRef.current.delete(activeSheetId);
+    return {
+      type: 'fitCellContents' as const,
+      defaultMaxWidth: 360,
+    };
+  }, [activeSheetId, columnDefs]);
 
   // (三级 detail is now the ScheduleDetailPanel custom renderer, which fetches on
   // expand — no detailGridOptions/getDetailRowData needed.)
@@ -1534,21 +1580,6 @@ export function TableGrid() {
       lastSerialized.current = JSON.stringify(data.rows);
       setRows(data.rows);
     }
-  };
-
-  const handleDeleteRows = async () => {
-    if (selectedRows.size === 0) return;
-    const res = await fetch('/api/table/rows', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: activeSheetId, row_keys: [...selectedRows] }),
-    });
-    const data = (await res.json()) as { ok?: boolean; rows?: TableRow[] };
-    if (!data.ok || !data.rows) return;
-    resetSheetUiState();
-    editingUntil.current = Date.now() + 3000;
-    lastSerialized.current = JSON.stringify(data.rows);
-    setRows(data.rows);
   };
 
   const openAddColumnDialog = useCallback(() => {
@@ -1613,14 +1644,8 @@ export function TableGrid() {
     selectedColumnKeyRef.current = null;
   };
 
-  const rowActionDelete = selectedRows.size > 0;
   const selectedColumn = columnDefs.find((c) => c.key === selectedColumnKey);
   const columnSelected = Boolean(selectedColumnKey && selectedColumn);
-
-  const handleRowAction = () => {
-    if (rowActionDelete) void handleDeleteRows();
-    else void handleAddRow();
-  };
 
   const handleColumnAction = () => {
     if (columnSelected) void handleDeleteColumn();
@@ -1708,7 +1733,9 @@ export function TableGrid() {
 
   const hasActiveFilters = filters.query.trim() !== '' || columnFilterActive;
 
-  if ((compassLoading || loading) && rows.length === 0 && columnDefs.length === 0) {
+  // Full-page spinner only before any sheet chrome exists. Sheet switches clear
+  // rows/cols but keep tabs visible and load inside the grid area.
+  if ((compassLoading || loading) && rows.length === 0 && columnDefs.length === 0 && sheets.length === 0) {
     return (
       <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
         {compassLoading ? t('table.loadingCompass') : t('table.loading')}
@@ -1799,16 +1826,11 @@ export function TableGrid() {
             type="button"
             variant="outline"
             size="sm"
-            className={cn(
-              'h-7 gap-1 px-2 text-xs',
-              rowActionDelete && 'text-muted-foreground hover:text-foreground',
-            )}
-            onClick={handleRowAction}
+            className="h-7 gap-1 px-2 text-xs"
+            onClick={() => void handleAddRow()}
           >
-            {rowActionDelete ? <Minus className="size-3" /> : <Plus className="size-3" />}
-            {rowActionDelete && selectedRows.size > 1
-              ? t('table.rowsN', { count: selectedRows.size })
-              : t('table.rows')}
+            <Plus className="size-3" />
+            {t('table.rows')}
           </Button>
           <Button
             type="button"
@@ -1861,22 +1883,27 @@ export function TableGrid() {
           <div className="relative min-w-[8rem] flex-1">
             <Search className="text-muted-foreground pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2" />
             <input
-              type="search"
+              type="text"
               placeholder={t('table.filterPlaceholder')}
               value={filters.query}
               onChange={(e) => setFilters({ query: e.target.value })}
-              className="bg-background border-input h-7 w-full rounded-md border pl-7 pr-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+              className={cn(
+                'bg-background border-input h-7 w-full rounded-md border pl-7 text-xs outline-none focus:ring-1 focus:ring-ring',
+                hasActiveFilters ? 'pr-7' : 'pr-2',
+              )}
             />
+            {hasActiveFilters ? (
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5"
+                aria-label={t('table.clear')}
+                title={t('table.clear')}
+                onClick={clearAllFilters}
+              >
+                <X className="size-3.5" />
+              </button>
+            ) : null}
           </div>
-          {hasActiveFilters ? (
-            <button
-              type="button"
-              className="text-muted-foreground hover:text-foreground text-xs underline"
-              onClick={clearAllFilters}
-            >
-              {t('table.clear')}
-            </button>
-          ) : null}
           <div className="ml-auto flex items-center gap-1">
             <Button
               type="button"
@@ -1952,11 +1979,12 @@ export function TableGrid() {
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="min-h-0 flex-1 text-sm" style={{ height: '100%' }}>
             <AgGridReact<TableRow>
-              key={proMasterDetail ? 'grid-md' : 'grid-plain'}
+              // Remount per sheet so orders/resources/schedule never share one
+              // half-updated grid instance across tab switches.
+              key={`grid-${activeSheetId}`}
               theme={veylinGridTheme}
-              // Size columns to fit header + visible content on load — no more
-              // truncated headers (订.../产.../期...). Virtualized, so it's cheap.
-              autoSizeStrategy={{ type: 'fitCellContents' }}
+              // First visit: fit contents. Revisit: ColDef.width from cache (no jump).
+              autoSizeStrategy={autoSizeStrategy}
               rowData={filteredRows}
               columnDefs={agColDefs}
               // All rows load into the grid (no 500 cap); paginate so large sheets
@@ -1967,28 +1995,23 @@ export function TableGrid() {
               // Left accent stripe: red = past due (end > due_at), amber = at-risk
               // (within the buffer). No-op on rows/sheets without both fields.
               rowClassRules={{
-                'sched-late': (p) => scheduleLateness(p.data) === 'late',
-                'sched-atrisk': (p) => scheduleLateness(p.data) === 'atrisk',
+                // Detail rows reuse master data in some AG-Grid versions — never
+                // paint lateness stripes on the nested panel.
+                'sched-late': (p) =>
+                  !p.node?.detail && scheduleLateness(p.data) === 'late',
+                'sched-atrisk': (p) =>
+                  !p.node?.detail && scheduleLateness(p.data) === 'atrisk',
               }}
               getRowId={(params: GetRowIdParams<TableRow>) => rowKey(params.data)}
-              rowSelection={rowSelection}
-              selectionColumnDef={{
-                suppressHeaderMenuButton: true,
-                suppressMovable: true,
-                lockPinned: true,
-                width: 48,
-                minWidth: 44,
-                maxWidth: 64,
-              }}
               masterDetail={proMasterDetail || undefined}
-              // Expander only on rows whose order has 三级 ops (_wo_count > 0). FAIL-OPEN
-              // when _wo_count is absent (sheet loaded before the field existed / other
-              // sheets) so the affordance isn't silently lost — reload to get true gating.
+              // orders 表：有 _wo_count 时按计数决定能否展开；schedule 二级行没有
+              // 这个字段，必须 fail-open，否则会整表关掉「二级→三级」展开。
               isRowMaster={
                 proMasterDetail
                   ? (data: TableRow) => {
                       const c = (data as Record<string, unknown>)?.['_wo_count'];
-                      return c === undefined ? true : Number(c) > 0;
+                      if (c === undefined || c === null || c === '') return true;
+                      return Number(c) > 0;
                     }
                   : undefined
               }
@@ -1997,10 +2020,11 @@ export function TableGrid() {
               // 300px box that fills with empty space — AG-Grid master-detail-height guidance.
               detailRowAutoHeight={proMasterDetail || undefined}
               onGridReady={onGridReady}
+              onFirstDataRendered={onFirstDataRendered}
+              onColumnResized={onColumnResized}
               onModelUpdated={onModelUpdated}
               onCellValueChanged={onCellValueChanged}
               onCellKeyDown={onGridCellKeyDown}
-              onSelectionChanged={onSelectionChanged}
               {...proGridProps}
             />
           </div>

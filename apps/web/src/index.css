@@ -173,13 +173,30 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
   transition: none !important;
 }
 
-/* Schedule grid (AG-Grid) cell overrides — Task 3 will do these via the Theming API params */
+/* Schedule grid polish — pairs with themeQuartz params in table-grid.tsx */
 
-/* Master-detail: inset the 三级 detail panel so it reads as a child of its 二级
-   row (left indent aligns it under the expander chevron). Pairs with
-   detailRowAutoHeight so the panel hugs its content instead of a fixed box. */
-.ag-details-row {
+/* Master-detail: no second “card” chrome — detail sits flush under the row. */
+.ag-details-row,
+.ag-details-row:hover {
   padding: 0;
+  background-color: transparent;
+  box-shadow: none !important;
+}
+
+.ag-details-row .ag-details-grid,
+.ag-details-row .ag-cell {
+  border: none !important;
+  background: transparent !important;
+}
+
+/* Floating filter row: quieter than body text so headers stay primary. */
+.ag-floating-filter input,
+.ag-floating-filter .ag-input-field-input {
+  font-size: 11px !important;
+}
+
+.ag-header-cell-text {
+  letter-spacing: 0.01em;
 }
 
 /* Governed-edit cells: a quiet affordance on hover so planners see what's editable
