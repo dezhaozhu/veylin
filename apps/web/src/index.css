@@ -122,6 +122,17 @@
   -webkit-app-region: drag;
 }
 
+/*
+ * WebView2 maps app-region:drag to OS non-client hit-testing. Fixed titlebar
+ * controls (caption buttons, "+") sit outside drag nodes, so they must opt out
+ * globally — the descendant-only rule below is not enough for them.
+ */
+[data-no-window-drag],
+[data-no-window-drag] * {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
 [data-tauri-drag-region] :is(a, button, input, select, textarea, [role="button"], [data-no-window-drag]) {
   app-region: no-drag;
   -webkit-app-region: no-drag;

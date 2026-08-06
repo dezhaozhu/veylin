@@ -1,5 +1,13 @@
 import { Plus, X } from 'lucide-react';
-import { useCallback, useLayoutEffect, useRef, useState, type FC } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FC,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -11,7 +19,7 @@ import { RightSidebarTrigger, useRightSidebar, useSidebar } from '@/components/u
 import { readChatWorkspaceWidth, rightPanelWidthMax } from '@/lib/chat-panel-ratio';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 import { subscribeLayoutSync } from '@/lib/overlay-bounds';
-import { isTauri } from '@/lib/tauri-web-view';
+import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import {
   collapsedSidebarTriggerReservePx,
   isRightPanelNearlyMaximized,
@@ -21,9 +29,11 @@ import {
 import { cn } from '@/lib/utils';
 import { startWindowDrag } from '@/lib/window-drag';
 import { PANEL_KINDS, getPanelKindDef } from './panel-registry';
+import { PANEL_TAB_MENU_CLOSED_EVENT } from './panel-events';
 import type { PanelKind, PanelTab } from './panel-types';
 
 const MENU_WIDTH = 220;
+const NO_DRAG_STYLE = { WebkitAppRegion: 'no-drag' } as CSSProperties;
 
 interface PanelTabBarProps {
   tabs: PanelTab[];
@@ -55,6 +65,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   const tabBarPaddingRight = titlebarTrailingInset();
   const [menuOpen, setMenuOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement>(null);
+  const menuWasOpen = useRef(false);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
@@ -69,6 +80,17 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   }, []);
 
   useOverlayDismiss(close);
+
+  // HTML menu (browser, or Tauri fallback): hide docked webview while open.
+  useEffect(() => {
+    if (!isTauri()) return;
+    if (menuOpen) {
+      void hideWebView(undefined, { force: true });
+    } else if (menuWasOpen.current) {
+      window.dispatchEvent(new CustomEvent(PANEL_TAB_MENU_CLOSED_EVENT));
+    }
+    menuWasOpen.current = menuOpen;
+  }, [menuOpen]);
 
   const updateMenuPos = useCallback(() => {
     const el = addBtnRef.current;
@@ -87,8 +109,8 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   }, []);
 
   useLayoutEffect(() => {
-    if (!menuOpen || isTauri()) {
-      if (!menuOpen) setMenuPos(null);
+    if (!menuOpen) {
+      setMenuPos(null);
       return;
     }
     updateMenuPos();
@@ -102,7 +124,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
 
   /**
    * Desktop: OS context menu paints above the docked native webview.
-   * Avoids the fragile always-on-top child window (focus races → instant close).
+   * On failure, fall back to the HTML portal so "+" is never a no-op.
    */
   const openNativePlusMenu = useCallback(async () => {
     if (openingNativeRef.current) return;
@@ -132,16 +154,15 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
       // or the "+" stays visually selected after the OS menu dismisses.
       await menu.popup(new LogicalPosition(x, y));
     } catch (err) {
-      console.error('[panel-tab-bar] native Menu.popup failed', err);
+      console.error('[panel-tab-bar] native Menu.popup failed; using HTML menu', err);
+      setMenuOpen(true);
     } finally {
       openingNativeRef.current = false;
-      setMenuOpen(false);
     }
   }, [t]);
 
-  // Browser / non-Tauri fallback: HTML portal is fine (no native webview layer).
   const htmlMenu =
-    !isTauri() && menuOpen && menuPos
+    menuOpen && menuPos
       ? createPortal(
           <>
             <DismissibleBackdrop
@@ -150,8 +171,9 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
               className="fixed inset-0 z-[300] cursor-default bg-transparent"
             />
             <div
+              data-no-window-drag
               className="fixed z-[301]"
-              style={{ top: menuPos.top, right: menuPos.right }}
+              style={{ top: menuPos.top, right: menuPos.right, ...NO_DRAG_STYLE }}
               onClick={(e) => e.stopPropagation()}
             >
               <ComposerMenuPanel className="w-[220px] p-1 shadow-lg">
@@ -222,18 +244,21 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
               </div>
             );
           })}
-          <div
-            data-tauri-drag-region
-            className="min-w-8 flex-1 self-stretch"
-            onMouseDown={startWindowDrag}
-          />
+          {/*
+            JS-only drag (no data-tauri-drag-region): CSS app-region is geometric
+            and can steal clicks from neighboring "+" / caption controls.
+          */}
+          <div className="min-w-8 flex-1 self-stretch" onMouseDown={startWindowDrag} />
         </div>
 
         <button
           ref={addBtnRef}
           type="button"
+          data-no-window-drag
+          style={NO_DRAG_STYLE}
           aria-label={t('panelTab.new')}
           aria-expanded={menuOpen}
+          onMouseDown={(e) => e.stopPropagation()}
           onClick={() => {
             if (isTauri()) {
               void openNativePlusMenu();
@@ -248,7 +273,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
         >
           <Plus className="size-3.5" />
         </button>
-        <RightSidebarTrigger className="ml-1 size-7" />
+        <RightSidebarTrigger data-no-window-drag className="ml-1 size-7" style={NO_DRAG_STYLE} />
       </div>
       {htmlMenu}
     </>
