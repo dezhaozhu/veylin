@@ -28,7 +28,7 @@ const cellValueSchema = z.union([z.string(), z.number()]);
 
 import { unwrapMcpPayload } from './mcp-payload.js';
 import { resolveCompassServer } from './mcp-scoping.js';
-import type { CompassRestScope } from './compass-rest.js';
+import { fetchCompassData, type CompassRestScope } from './compass-rest.js';
 
 export { unwrapMcpPayload } from './mcp-payload.js';
 
@@ -123,7 +123,7 @@ function tenantFromPayload(payload: Record<string, unknown>): string | undefined
  */
 async function stampCompassLoadSource(
   sheetId: string,
-  compass: ResolvedCompass,
+  serverName: string,
   payload: Record<string, unknown>,
   projectId: string | null,
 ): Promise<void> {
@@ -131,8 +131,10 @@ async function stampCompassLoadSource(
     // Display only. The durable cross-project identity is `project` below —
     // NEVER this key (plan risk #1: post-v3 every project resolves the same
     // 'compass' toolset key, so keying provenance on it would collapse every
-    // project's stamp into one value and blind isProjectPinMismatch).
-    server: compass.serverName,
+    // project's stamp into one value and blind isProjectPinMismatch). Also
+    // the REST data-plane path's stand-in for a toolset key — the pin's
+    // `entryPin` — since REST loads never resolve one.
+    server: serverName,
     // The pinned PROJECT id at load time. Absent only for loads with no
     // project scope at all (legacy ungrouped deployments) — those stamps stay
     // server-only and hard-refuse under any project pin via the legacy shim.
@@ -245,32 +247,57 @@ export async function importCompassScheduleSheet(
   input: { limit?: number; workshop?: string; status?: string; order_id?: string },
   getMcpGroups?: GroupsGetter,
   scope?: CompassLoadScope,
+  seams: { fetchImpl?: typeof fetch } = {},
 ): Promise<
   | { ok: true; sheet: string; imported: number; total: number; columns: number }
   | { ok: false; error: string }
 > {
-  // Resolve live toolsets via the getter (not a snapshot — rebuildMcp re-assigns the var)
-  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
-  const tool = compass?.toolset['get_schedule_rows'];
-  if (!compass || !tool) {
-    return {
-      ok: false as const,
-      error: 'compass MCP server not connected (no get_schedule_rows)',
-    };
-  }
-
   // Load the FULL result set into the grid sheet (not just 500). This is safe for
   // the agent's context: importCompassScheduleSheet returns only a summary
   // (imported/total counts), never the rows — the rows go straight into the grid.
   // The grid paginates them client-side. An explicit input.limit still wins.
-  const res: unknown = await tool.execute({
-    limit: input.limit ?? 1_000_000,
-    workshop: input.workshop,
-    status: input.status,
-    order_id: input.order_id,
-  });
-
-  const payload = unwrapMcpPayload(res);
+  let payload: Record<string, unknown> | undefined;
+  let sourceName: string | undefined;
+  if (scope?.rest) {
+    // Data-plane first (spec 2026-08-06 ①): bulk rows come over plain REST —
+    // no MCP framing, no double serialization, no tool-channel timeout class.
+    const r = await fetchCompassData(
+      scope.rest,
+      '/data/schedule-rows',
+      {
+        limit: input.limit ?? 1_000_000,
+        workshop: input.workshop,
+        status: input.status,
+        order_id: input.order_id,
+      },
+      seams,
+    );
+    if (r.ok) {
+      payload = r.payload;
+      sourceName = scope.entryPin ?? 'compass';
+    } else {
+      console.warn('[table-tools] compass data-plane fetch failed, falling back to MCP:', r.error);
+    }
+  }
+  if (!payload) {
+    // Resolve live toolsets via the getter (not a snapshot — rebuildMcp re-assigns the var)
+    const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
+    const tool = compass?.toolset['get_schedule_rows'];
+    if (!compass || !tool) {
+      return {
+        ok: false as const,
+        error: 'compass MCP server not connected (no get_schedule_rows)',
+      };
+    }
+    const res: unknown = await tool.execute({
+      limit: input.limit ?? 1_000_000,
+      workshop: input.workshop,
+      status: input.status,
+      order_id: input.order_id,
+    });
+    payload = unwrapMcpPayload(res);
+    sourceName = compass.serverName;
+  }
 
   const columns = (payload['columns'] as Array<Record<string, unknown>> | undefined) ?? [];
   const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
@@ -313,7 +340,7 @@ export async function importCompassScheduleSheet(
     undefined,
     descriptors,
   );
-  await stampCompassLoadSource(SCHEDULE_SHEET_ID, compass, payload, scope?.projectId ?? null);
+  await stampCompassLoadSource(SCHEDULE_SHEET_ID, sourceName!, payload, scope?.projectId ?? null);
 
   return {
     ok: true as const,
@@ -371,7 +398,7 @@ export async function importCompassResourceSheet(
     { key: 'source', name: '来源', type: 'text' as const },
   ];
   importTableSheet(RESOURCES_SHEET_ID, [], rows, undefined, descriptors);
-  await stampCompassLoadSource(RESOURCES_SHEET_ID, compass, payload, scope?.projectId ?? null);
+  await stampCompassLoadSource(RESOURCES_SHEET_ID, compass.serverName, payload, scope?.projectId ?? null);
   return { ok: true as const, sheet: RESOURCES_SHEET_ID, imported: rows.length };
 }
 
@@ -384,17 +411,34 @@ export async function importCompassOrderSheet(
   getMcpToolsets: ToolsetsGetter | undefined,
   getMcpGroups?: GroupsGetter,
   scope?: CompassLoadScope,
+  seams: { fetchImpl?: typeof fetch } = {},
 ): Promise<
   | { ok: true; sheet: string; imported: number; total: number; columns: number }
   | { ok: false; error: string }
 > {
-  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
-  const tool = compass?.toolset['get_schedule_rows'];
-  if (!compass || !tool) {
-    return { ok: false as const, error: 'compass MCP server not connected (no get_schedule_rows)' };
+  let payload: Record<string, unknown> | undefined;
+  let sourceName: string | undefined;
+  if (scope?.rest) {
+    // Data-plane first (spec 2026-08-06 ①) — same endpoint as the schedule
+    // sheet, just aggregated client-side below; only `limit` is meaningful here.
+    const r = await fetchCompassData(scope.rest, '/data/schedule-rows', { limit: 1_000_000 }, seams);
+    if (r.ok) {
+      payload = r.payload;
+      sourceName = scope.entryPin ?? 'compass';
+    } else {
+      console.warn('[table-tools] compass data-plane fetch failed, falling back to MCP:', r.error);
+    }
   }
-  const res: unknown = await tool.execute({ limit: 1_000_000 });
-  const payload = unwrapMcpPayload(res);
+  if (!payload) {
+    const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
+    const tool = compass?.toolset['get_schedule_rows'];
+    if (!compass || !tool) {
+      return { ok: false as const, error: 'compass MCP server not connected (no get_schedule_rows)' };
+    }
+    const res: unknown = await tool.execute({ limit: 1_000_000 });
+    payload = unwrapMcpPayload(res);
+    sourceName = compass.serverName;
+  }
   const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
 
   // Aggregate the per-工序 rows into one row per order.
@@ -447,7 +491,7 @@ export async function importCompassOrderSheet(
   ];
   if (!listTableSheets().find((s) => s.id === ORDERS_SHEET_ID)) createTableSheet(ORDERS_SHEET_ID);
   importTableSheet(ORDERS_SHEET_ID, [], orderRows as Array<Record<string, string | number>>, undefined, descriptors);
-  await stampCompassLoadSource(ORDERS_SHEET_ID, compass, payload, scope?.projectId ?? null);
+  await stampCompassLoadSource(ORDERS_SHEET_ID, sourceName!, payload, scope?.projectId ?? null);
   return {
     ok: true as const, sheet: ORDERS_SHEET_ID,
     imported: orderRows.length, total: orderRows.length, columns: descriptors.length,
