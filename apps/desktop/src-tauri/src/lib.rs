@@ -48,12 +48,14 @@ pub fn run() {
             // mounting business UI, so the app feels responsive on launch.
             app.state::<Sidecar>().spawn(&handle);
             if let Some(window) = app.get_webview_window("main") {
-                // macOS keeps Overlay + native traffic lights (tauri.conf).
-                // Windows/Linux: frameless so the web UI can own the titlebar
-                // (VS Code–style custom chrome with HTML caption buttons).
+                // macOS: Overlay + native traffic lights (tauri.conf).
+                // Win/Linux: frameless from tauri.windows/linux.conf.json; reinforce
+                // at runtime so the web UI owns caption chrome.
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
                 {
-                    let _ = window.set_decorations(false);
+                    if let Err(err) = window.set_decorations(false) {
+                        eprintln!("[veylin] set_decorations(false) failed: {err}");
+                    }
                 }
                 let _ = window.show();
                 let _ = window.set_focus();
