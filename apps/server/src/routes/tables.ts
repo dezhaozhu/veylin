@@ -31,7 +31,7 @@ import { resolveCompassServer } from '../mcp-scoping.js';
 import { resolveThreadPin } from '../thread-state.js';
 import { resolvePinnedProjectScope } from '../project-store.js';
 import { getPooledCompassToolsets, sceneSetKey, type CompassPoolDeps } from '../compass-pool.js';
-import { compassRestBase, type CompassRestScope } from '../compass-rest.js';
+import { compassRestBase, fetchCompassData, type CompassRestScope } from '../compass-rest.js';
 import {
   proposeScheduleEdit,
   previewScheduleEdit,
@@ -244,6 +244,24 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     // missing/foreign threadId falls back to the tenant toolsets with a null
     // pin — resolveCompassServer then refuses rather than guessing.
     const scope = await resolveCompassRequestScope(threadId, ctx, deps);
+    if (scope.rest) {
+      const r = await fetchCompassData(scope.rest, '/data/workorder-rows', {
+        order_id,
+        wbs,
+        stage_code,
+        material,
+        limit: limit ? Math.max(1, parseInt(limit, 10)) : 500,
+      });
+      if (r.ok) {
+        return {
+          ok: true,
+          columns: r.payload['columns'] ?? [],
+          rows: r.payload['rows'] ?? [],
+          total: r.payload['total'] ?? 0,
+        };
+      }
+      console.warn('[tables] schedule-detail data-plane fetch failed, falling back to MCP:', r.error);
+    }
     const scopedToolsets = scope.getToolsets();
     const serverName = resolveCompassServer(scopedToolsets, deps.getMcpGroups(), scope.entryPin);
     const compass = serverName
