@@ -28,6 +28,7 @@ const cellValueSchema = z.union([z.string(), z.number()]);
 
 import { unwrapMcpPayload } from './mcp-payload.js';
 import { resolveCompassServer } from './mcp-scoping.js';
+import type { CompassRestScope } from './compass-rest.js';
 
 export { unwrapMcpPayload } from './mcp-payload.js';
 
@@ -59,11 +60,15 @@ export type GroupsGetter = () => McpServerGroups;
  *   resolved toolset key — every project resolves the same `'compass'` key,
  *   so stamping the key would make all projects' stamps identical and blind
  *   `isProjectPinMismatch` completely.
+ * - `rest` — the REST data-plane scope (spec 2026-08-06 三形态 §2 ①) for the
+ *   same pin: `undefined` whenever `toolsets`/`entryPin`/`projectId` fall
+ *   back (no pin, no entry) — there is no scene set to bind a REST call to.
  */
 export type CompassLoadScope = {
   toolsets?: Record<string, unknown>;
   entryPin: string | null;
   projectId: string | null;
+  rest?: CompassRestScope;
 };
 
 /**
@@ -204,18 +209,18 @@ function readTenantProjects(ctx?: TableToolCtx): Project[] {
  * Compose the per-request Compass scope for the load_compass_* AGENT tools
  * from the chat turn's requestContext (all three set by routes/chat.ts):
  * `scopedMcpToolsets` (the final per-request toolsets, pooled compass
- * included) + `pinnedProjectScope` (`{id, entryPin}` — the provenance project
- * id and the entry-level resolution pin). No requestContext at all (a tool
- * invoked outside a chat turn) → `undefined`, i.e. tenant-getter fallback
- * with a null pin — today's no-thread-context refusal behavior under
- * ambiguity.
+ * included) + `pinnedProjectScope` (`{id, entryPin, rest}` — the provenance
+ * project id, the entry-level resolution pin, and the REST data-plane scope
+ * for the same pin). No requestContext at all (a tool invoked outside a chat
+ * turn) → `undefined`, i.e. tenant-getter fallback with a null pin — today's
+ * no-thread-context refusal behavior under ambiguity.
  */
 function compassScopeFromCtx(ctx?: TableToolCtx): CompassLoadScope | undefined {
   const rc = ctx?.requestContext;
   if (!rc) return undefined;
   const scoped = rc.get('scopedMcpToolsets');
   const pinScope = rc.get('pinnedProjectScope') as
-    | { id: string; entryPin: string | null }
+    | { id: string; entryPin: string | null; rest?: CompassRestScope | null }
     | null
     | undefined;
   return {
@@ -223,6 +228,7 @@ function compassScopeFromCtx(ctx?: TableToolCtx): CompassLoadScope | undefined {
       scoped && typeof scoped === 'object' ? (scoped as Record<string, unknown>) : undefined,
     entryPin: pinScope?.entryPin ?? null,
     projectId: pinScope?.id ?? null,
+    rest: pinScope?.rest ?? undefined,
   };
 }
 

@@ -30,7 +30,8 @@ import {
 import { resolveCompassServer } from '../mcp-scoping.js';
 import { resolveThreadPin } from '../thread-state.js';
 import { resolvePinnedProjectScope } from '../project-store.js';
-import { getPooledCompassToolsets, type CompassPoolDeps } from '../compass-pool.js';
+import { getPooledCompassToolsets, sceneSetKey, type CompassPoolDeps } from '../compass-pool.js';
+import { compassRestBase, type CompassRestScope } from '../compass-rest.js';
 import {
   proposeScheduleEdit,
   previewScheduleEdit,
@@ -94,6 +95,12 @@ function threadIdFromRequest(req: {
  * loaded through these routes (plan risk #1: the PROJECT id, never the
  * resolved toolset key).
  *
+ * `rest` is the REST data-plane scope (spec 2026-08-06 三形态 §2 ①) for the
+ * SAME pin: `baseUrl` from the entry's `/mcp/` url, headers carrying the
+ * entry's Authorization plus `x-compass-source` composed by `sceneSetKey` —
+ * the identical scene-set identity the pooled MCP connection above uses.
+ * `null` whenever the pin denies (no entry to bind a REST call to).
+ *
  * Exported (with injectable seams, compass-pool deps style) as the testable
  * seam — no HTTP harness exists in this repo (see tables-thread-pin.test.ts).
  */
@@ -101,6 +108,7 @@ export type CompassRequestScope = {
   getToolsets: () => Record<string, unknown>;
   entryPin: string | null;
   projectId: string | null;
+  rest: CompassRestScope | null;
   /** Scope for importCompassScheduleSheet; undefined = tenant-getter fallback (no pin). */
   loadScope: CompassLoadScope | undefined;
 };
@@ -122,6 +130,7 @@ export async function resolveCompassRequestScope(
       getToolsets: deps.getMcpToolsets,
       entryPin: null,
       projectId: null,
+      rest: null,
       loadScope: undefined,
     };
   }
@@ -133,11 +142,21 @@ export async function resolveCompassRequestScope(
   );
   const record: Record<string, unknown> =
     pooled == null ? {} : { [scope.entryPin]: pooled[scope.entryPin] ?? {} };
+  const rest: CompassRestScope = {
+    baseUrl: compassRestBase(scope.entry.url),
+    headers: { ...scope.entry.headers, 'x-compass-source': sceneSetKey(scope.sources) },
+  };
   return {
     getToolsets: () => record,
     entryPin: scope.entryPin,
     projectId: scope.project.id,
-    loadScope: { toolsets: record, entryPin: scope.entryPin, projectId: scope.project.id },
+    rest,
+    loadScope: {
+      toolsets: record,
+      entryPin: scope.entryPin,
+      projectId: scope.project.id,
+      rest,
+    },
   };
 }
 
