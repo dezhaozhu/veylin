@@ -1,6 +1,10 @@
-# Veylin
+<p align="center">
+  <img src="docs/images/veylin-logo-black.png" alt="Veylin" width="96" />
+</p>
 
-[English](./README.md) · 简体中文
+<h1 align="center">Veylin</h1>
+
+<p align="center"><a href="./README.md">English</a> · 简体中文</p>
 
 > 开源、本机自托管的 **通用 AI Agent 桌面平台**。具备 Claude Code 级 agent 循环（工具调用、计划模式、子智能体、Skills、Hooks），以及可 DIY 的统一工作区（表格 / 知识库 / 工作流 / 网页），方便在清晰的 monorepo 架构上二次做成领域应用。双击即用，无需 Docker / Postgres / Redis。
 

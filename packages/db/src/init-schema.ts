@@ -80,6 +80,7 @@ const SCHEMA_STATEMENTS: string[] = [
   // name, so no backticks are needed here.
   `DEFINE FIELD IF NOT EXISTS moved_from ON thread_state TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS moved_at ON thread_state TYPE option<string>`,
+  `DEFINE FIELD IF NOT EXISTS suspended_run ON thread_state FLEXIBLE TYPE option<object>`,
   `DEFINE FIELD IF NOT EXISTS updated_at ON thread_state TYPE datetime DEFAULT time::now()`,
   `DEFINE INDEX IF NOT EXISTS thread_state_pk ON thread_state FIELDS thread_id UNIQUE`,
 

@@ -12,6 +12,7 @@ import {
   watchdogPidPath,
   writePidFile,
 } from './server-dev-singleton.mjs';
+import { rotateServerDevLogIfNeeded } from './server-dev-log.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const serverRoot = resolve(repoRoot, 'apps/server');
@@ -31,6 +32,7 @@ const logPath = resolve(logDir, 'server-dev.log');
 const pidFile = watchdogPidPath(dataDir);
 
 mkdirSync(logDir, { recursive: true });
+rotateServerDevLogIfNeeded(logPath);
 writePidFile(pidFile, process.pid);
 
 const serverEnv = {
@@ -47,8 +49,17 @@ const serverEnv = {
 let shuttingDown = false;
 let child = null;
 let restartTimer = null;
+let lastLogRotateCheckAt = 0;
+let childStartedAt = 0;
+let consecutiveHealthFailures = 0;
 
 function writeLog(chunk) {
+  const now = Date.now();
+  // Cheap throttle: size-check at most every 5s (startup already rotated once).
+  if (now - lastLogRotateCheckAt > 5_000) {
+    lastLogRotateCheckAt = now;
+    rotateServerDevLogIfNeeded(logPath);
+  }
   appendFileSync(logPath, chunk);
 }
 
@@ -75,6 +86,8 @@ function tsxCommand(repoRootPath) {
 function spawnServer() {
   if (shuttingDown) return;
   logLine(`starting tsx watch server on :${port} (log: ${logPath})`);
+  childStartedAt = Date.now();
+  consecutiveHealthFailures = 0;
   child = spawn(tsxCommand(repoRoot), ['watch', 'src/server.ts'], {
     cwd: serverRoot,
     env: serverEnv,
@@ -116,8 +129,18 @@ async function watchHealth() {
   while (!shuttingDown) {
     await new Promise((r) => setTimeout(r, 5_000));
     if (shuttingDown || child == null) continue;
-    if (!(await probe())) {
-      logLine('health probe failed while child alive; waiting for restart loop');
+    if (await probe()) {
+      consecutiveHealthFailures = 0;
+      continue;
+    }
+    consecutiveHealthFailures += 1;
+    const startupGraceElapsed = Date.now() - childStartedAt >= 60_000;
+    if (startupGraceElapsed && consecutiveHealthFailures >= 3) {
+      logLine('health probe failed repeatedly; restarting tsx watch process');
+      child.kill('SIGTERM');
+      consecutiveHealthFailures = 0;
+    } else {
+      logLine('health probe failed while child alive; waiting for startup grace');
     }
   }
 }

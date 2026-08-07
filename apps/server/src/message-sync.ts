@@ -12,18 +12,44 @@ import {
   normalizeAssistantMessageParts,
 } from '@veylin/shared';
 import type { TodoItem } from '@veylin/tools';
-import type { ThreadIdentity, ThreadSnapshot, UiMessage } from '@veylin/shared';
+import type {
+  PersistedAssistantTurnTiming,
+  ThreadIdentity,
+  ThreadSnapshot,
+  UiMessage,
+} from '@veylin/shared';
 
 export type { UiMessage, ThreadSnapshot, ThreadIdentity };
 
 function metadataFromTranscriptMeta(
-  meta: { sentAt?: number; interrupted?: boolean } | undefined,
-): { metadata: { custom: { sentAt?: number; interrupted?: boolean } } } | undefined {
+  meta:
+    | {
+        sentAt?: number;
+        interrupted?: boolean;
+        turnTiming?: PersistedAssistantTurnTiming;
+      }
+    | undefined,
+):
+  | {
+      metadata: {
+        custom: {
+          sentAt?: number;
+          interrupted?: boolean;
+          turnTiming?: PersistedAssistantTurnTiming;
+        };
+      };
+    }
+  | undefined {
   if (!meta) return undefined;
-  const custom: { sentAt?: number; interrupted?: boolean } = {};
+  const custom: {
+    sentAt?: number;
+    interrupted?: boolean;
+    turnTiming?: PersistedAssistantTurnTiming;
+  } = {};
   if (typeof meta.sentAt === 'number') custom.sentAt = meta.sentAt;
   if (meta.interrupted) custom.interrupted = true;
-  if (custom.sentAt == null && !custom.interrupted) return undefined;
+  if (meta.turnTiming) custom.turnTiming = meta.turnTiming;
+  if (custom.sentAt == null && !custom.interrupted && !custom.turnTiming) return undefined;
   return { metadata: { custom } };
 }
 

@@ -7,10 +7,15 @@ import {
   textOfMessage,
   toAgentMessages,
 } from './chat.js';
+import {
+  clearSuspendedRunsForTest,
+  consumeSuspendedRun,
+  observeSuspensionChunk,
+} from './chat-suspension-registry.js';
 import { formatTableContextBlock } from './table-store.js';
 
 describe('chat message conversion', () => {
-  it('turns answered ask_user_question into continuation text', async () => {
+  it('keeps answered ask_user_question as native tool protocol', async () => {
     const assistantWithAnswer = {
       role: 'assistant',
       parts: [
@@ -18,7 +23,7 @@ describe('chat message conversion', () => {
           type: 'tool-ask_user_question',
           toolCallId: 'ask-1',
           state: 'output-available',
-          providerExecuted: true,
+          input: { questions: [] },
           output: {
             answers: {
               '你今天想聊什么？': '工作相关',
@@ -28,10 +33,7 @@ describe('chat message conversion', () => {
       ],
     };
 
-    assert.match(
-      textOfMessage(assistantWithAnswer),
-      /User has answered your questions/,
-    );
+    assert.equal(textOfMessage(assistantWithAnswer), '');
 
     const converted = await toAgentMessages([
       {
@@ -41,14 +43,71 @@ describe('chat message conversion', () => {
       assistantWithAnswer,
     ]);
 
-    assert.deepEqual(converted, [
-      { role: 'user', content: '调用工具问我问题' },
+    assert.deepEqual(converted.map((message) => message.role), ['user', 'assistant', 'tool']);
+    assert.equal(
+      (converted[1]?.content as Array<{ type?: string }>)[0]?.type,
+      'tool-call',
+    );
+    assert.equal(
+      (converted[2]?.content as Array<{ type?: string }>)[0]?.type,
+      'tool-result',
+    );
+  });
+
+  it('preserves ordinary user text and text attachments', async () => {
+    const converted = await toAgentMessages([
       {
         role: 'user',
-        content:
-          'User has answered your questions: "你今天想聊什么？"="工作相关". You can now continue with the user\'s answers in mind.',
+        parts: [
+          { type: 'text', text: '请读取附件' },
+          {
+            type: 'file',
+            mediaType: 'text/plain',
+            filename: 'note.txt',
+            url: `data:text/plain;base64,${Buffer.from('hello attachment').toString('base64')}`,
+          },
+        ],
       },
     ]);
+
+    assert.equal(converted[0]?.role, 'user');
+    const content = converted[0]?.content as Array<{ type: string; text: string }>;
+    assert.deepEqual(content[0], { type: 'text', text: '请读取附件' });
+    assert.equal(content[1]?.type, 'text');
+    assert.match(content[1]?.text ?? '', /note\.txt/);
+    assert.match(content[1]?.text ?? '', /hello attachment/);
+  });
+});
+
+describe('native suspension registry', () => {
+  it('passes through suspension data and atomically authorizes one resume', () => {
+    clearSuspendedRunsForTest();
+    const owner = {
+      threadId: 'thread-1',
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      agentId: 'agent-1',
+    };
+    const chunk = {
+      type: 'data-tool-call-suspended',
+      id: 'call-1',
+      data: {
+        state: 'data-tool-call-suspended',
+        runId: 'run-1',
+        toolCallId: 'call-1',
+        toolName: 'ask_user_question',
+        suspendPayload: { questions: [{ question: 'Pick?' }] },
+      },
+    };
+
+    assert.strictEqual(observeSuspensionChunk(chunk, owner), chunk);
+    assert.equal(
+      consumeSuspendedRun({ ...owner, userId: 'other-user' }, 'run-1', 'call-1'),
+      null,
+    );
+    const record = consumeSuspendedRun(owner, 'run-1', 'call-1');
+    assert.deepEqual(record?.suspendPayload, chunk.data.suspendPayload);
+    assert.equal(consumeSuspendedRun(owner, 'run-1', 'call-1'), null);
   });
 });
 

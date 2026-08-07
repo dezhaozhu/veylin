@@ -81,20 +81,15 @@ export function ComposerAskPanel() {
         return;
       }
 
-      const { toolCallId, addResult } = active;
+      const { toolCallId } = active;
       setSubmitting(true);
       setSubmitError(null);
 
       void (async () => {
         try {
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-          let delivered = false;
-          try {
-            delivered = await submitAskUserResult(threadId, toolCallId, result);
-          } catch (err) {
-            console.warn('[ask] submitter failed, using session fallback', err);
-          }
-          if (!delivered) addResult(result);
+          const delivered = await submitAskUserResult(threadId, toolCallId, result);
+          if (!delivered) throw new Error('Native resume submitter is unavailable');
           clearAskUserSession(threadId, toolCallId);
         } catch (err) {
           console.error('[ask] submit failed', err);

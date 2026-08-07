@@ -35,6 +35,11 @@ type ChatBody = {
   messages?: UiMessage[];
   threadId?: string;
   agentId?: string;
+  resume?: {
+    runId: string;
+    toolCallId?: string;
+    resumeData: unknown;
+  };
   model?: string;
   toolQuery?: string;
   planMode?: boolean;
@@ -61,40 +66,6 @@ export function textOfMessage(msg: UiMessage | undefined): string {
     msg.parts
       ?.flatMap((p) => {
         if (p.type === 'text' && p.text) return [p.text];
-        if (p.type === 'tool-ask_user_question') {
-          const output = (p as { output?: { answers?: Record<string, string> } }).output;
-          const answers = output?.answers;
-          if (!answers || Object.keys(answers).length === 0) return [];
-          const answersText = Object.entries(answers)
-            .map(([question, answer]) => `"${question}"="${answer}"`)
-            .join(', ');
-          return [
-            `User has answered your questions: ${answersText}. You can now continue with the user's answers in mind.`,
-          ];
-        }
-        if (p.type === 'tool-read_open_page') {
-          const output = (p as {
-            output?: { url?: string; title?: string; content?: string; error?: string };
-          }).output;
-          if (!output) return [];
-          if (output.error) return [`read_open_page failed: ${output.error}`];
-          const header = [output.title, output.url].filter(Boolean).join(' — ');
-          const body = output.content?.trim();
-          if (!header && !body) return [];
-          return [[header, body].filter(Boolean).join('\n')];
-        }
-        if (p.type === 'tool-request_3d_selection') {
-          const output = (p as { output?: { face_ids?: number[]; cancelled?: boolean } }).output;
-          if (!output) return [];
-          if (output.cancelled) {
-            return ["User cancelled the 3D face selection. You can now continue accordingly."];
-          }
-          const ids = output.face_ids ?? [];
-          if (ids.length === 0) return [];
-          return [
-            `User selected these faces on the 3D panel: ${ids.join(', ')}. You can now continue with this selection in mind.`,
-          ];
-        }
         return [];
       })
       .join('\n') ?? ''
@@ -238,30 +209,11 @@ async function fileParts(msg: UiMessage, vision: boolean): Promise<ContentPart[]
   return out;
 }
 
-const FRONTEND_SUSPEND_TOOL_PART_TYPES = new Set([
-  'tool-ask_user_question',
-  'tool-read_open_page',
-  'tool-request_3d_selection',
-]);
-
 function messageHasModelToolParts(messages: UiMessage[]): boolean {
   return messages.some((m) =>
     m.parts?.some((p) => {
       const type = (p as { type?: string }).type;
-      return (
-        typeof type === 'string' &&
-        type.startsWith('tool-') &&
-        !FRONTEND_SUSPEND_TOOL_PART_TYPES.has(type)
-      );
-    }),
-  );
-}
-
-function messageHasFrontendSuspendToolParts(message: UiMessage): boolean {
-  return Boolean(
-    message.parts?.some((p) => {
-      const type = (p as { type?: string }).type;
-      return typeof type === 'string' && FRONTEND_SUSPEND_TOOL_PART_TYPES.has(type);
+      return typeof type === 'string' && type.startsWith('tool-');
     }),
   );
 }
@@ -269,11 +221,8 @@ function messageHasFrontendSuspendToolParts(message: UiMessage): boolean {
 /**
  * Convert UIMessages to Mastra agent.stream input. Text-only messages stay as a
  * string; messages carrying images/PDFs become a multimodal content array.
- * When model-executed tool UI parts are present, use AI SDK conversion so tool
- * results reach the model on client-completed tool continuations. Frontend
- * suspend tools (ask_user_question/read_open_page) are user-side context, so
- * convert them to plain text via textOfMessage instead of emitting provider
- * tool protocol blocks.
+ * When tool UI parts are present, use AI SDK conversion so calls/results keep
+ * their native provider protocol instead of becoming synthetic user text.
  */
 export async function toAgentMessages(
   messages: UiMessage[],
@@ -298,12 +247,12 @@ export async function toAgentMessages(
         if (text) parts.push({ type: 'text', text });
         parts.push(...files);
         return {
-          role: messageHasFrontendSuspendToolParts(m) ? 'user' : m.role,
+          role: m.role,
           content: parts as string | ContentPart[],
         };
       }
       return {
-        role: messageHasFrontendSuspendToolParts(m) ? 'user' : m.role,
+        role: m.role,
         content: text as string | ContentPart[],
       };
     }),
