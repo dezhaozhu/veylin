@@ -122,8 +122,10 @@ import {
 import {
   getCompassToolIndexEntries,
   getPooledCompassToolsets,
+  sceneSetKey,
   type CompassPoolDeps,
 } from '../compass-pool.js';
+import { compassRestBase } from '../compass-rest.js';
 import { applyTenantModelSettings } from '../model-settings-store.js';
 import { buildKnowledgeContextBlock } from '../rag-store.js';
 import { getHookBus, reloadHooksForTenant } from '../hooks-service.js';
@@ -541,6 +543,18 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
             name: scope.project.name,
             sources: scope.sources,
             entryPin: scope.entryPin,
+            // REST data-plane scope for the SAME pin (Task 6) — null when the
+            // pin resolved to a project but no enabled compass entry (no
+            // scene set to bind a REST call to, mirrors entryPin === null).
+            rest: scope.entry
+              ? {
+                  baseUrl: compassRestBase(scope.entry.url),
+                  headers: {
+                    ...scope.entry.headers,
+                    'x-compass-source': sceneSetKey(scope.sources),
+                  },
+                }
+              : null,
           }
         : null,
     );

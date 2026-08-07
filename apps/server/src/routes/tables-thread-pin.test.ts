@@ -24,7 +24,11 @@ import { ensureThreadState, setProject } from '../thread-state.js';
 import { COMPASS_IDENTITY_GROUP } from '../compass-identity.js';
 import { createRemoteMcpServer } from '../mcp-store.js';
 import { createProject } from '../project-store.js';
-import { invalidateCompassPool, type CompassPoolClientFactory } from '../compass-pool.js';
+import {
+  invalidateCompassPool,
+  sceneSetKey,
+  type CompassPoolClientFactory,
+} from '../compass-pool.js';
 import { resolveCompassRequestScope } from './tables.js';
 
 // Dedicated tenants (NOT the dev tenant) so this file's compass entry /
@@ -114,11 +118,37 @@ describe('routes/tables.ts scope resolution: threadId → project pin → pooled
     assert.equal(scope.loadScope?.entryPin, 'compass');
   });
 
+  it('rest scope: baseUrl strips /mcp/ off the entry url, headers carry entry headers + x-compass-source = sceneSetKey(sources)', async () => {
+    const scope = await resolveCompassRequestScope(undefined, CTX, DEPS, {
+      resolveScope: async () => ({
+        project: guoluProject,
+        entryPin: 'compass',
+        sources: ['guolu', 'shangzhong'],
+        entry: {
+          id: 'entry-rest-stub',
+          tenantId: TENANT_ID,
+          name: 'compass',
+          transport: 'http',
+          url: 'http://h:8000/mcp/',
+          headers: { Authorization: 'Bearer t' },
+          enabled: true,
+        },
+      }),
+      getPooledToolsets: async () => ({ compass: {} }),
+    });
+    assert.deepEqual(scope.rest, {
+      baseUrl: 'http://h:8000',
+      headers: { Authorization: 'Bearer t', 'x-compass-source': sceneSetKey(['guolu', 'shangzhong']) },
+    });
+    assert.deepEqual(scope.loadScope?.rest, scope.rest);
+  });
+
   it('no threadId at all: tenant fallback with a null pin — no compass in the cache means refusal', async () => {
     const scope = await resolveCompassRequestScope(undefined, CTX, DEPS);
     assert.equal(scope.entryPin, null);
     assert.equal(scope.projectId, null);
     assert.equal(scope.loadScope, undefined);
+    assert.equal(scope.rest, null);
     assert.equal(resolveCompassServer(scope.getToolsets(), GROUPS, scope.entryPin), null);
   });
 
