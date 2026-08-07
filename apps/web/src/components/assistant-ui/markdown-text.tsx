@@ -284,18 +284,21 @@ const defaultComponents = memoizeMarkdownComponents({
     />
   ),
   table: ({ className, ...props }) => (
-    <table
-      className={cn(
-        "aui-md-table my-3 w-full border-separate border-spacing-0 overflow-y-auto",
-        className,
-      )}
-      {...props}
-    />
+    <div className="aui-md-table-wrap my-3 w-full max-w-full overflow-x-auto">
+      <table
+        className={cn(
+          // Grow with content (not squeeze into the bubble); scroll the wrap instead.
+          "aui-md-table w-max min-w-full border-separate border-spacing-0",
+          className,
+        )}
+        {...props}
+      />
+    </div>
   ),
   th: ({ className, ...props }) => (
     <th
       className={cn(
-        "aui-md-th bg-muted px-3 py-1.5 text-start font-medium first:rounded-ss-lg last:rounded-se-lg [[align=center]]:text-center [[align=right]]:text-right",
+        "aui-md-th bg-muted whitespace-nowrap px-3 py-1.5 text-start font-medium first:rounded-ss-lg last:rounded-se-lg [[align=center]]:text-center [[align=right]]:text-right",
         className,
       )}
       {...props}
@@ -304,7 +307,7 @@ const defaultComponents = memoizeMarkdownComponents({
   td: ({ className, ...props }) => (
     <td
       className={cn(
-        "aui-md-td border-muted-foreground/20 border-s border-b px-3 py-1.5 text-start last:border-e [[align=center]]:text-center [[align=right]]:text-right",
+        "aui-md-td border-muted-foreground/20 whitespace-nowrap border-s border-b px-3 py-1.5 text-start last:border-e [[align=center]]:text-center [[align=right]]:text-right",
         className,
       )}
       {...props}

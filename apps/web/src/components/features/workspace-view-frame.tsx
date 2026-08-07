@@ -12,8 +12,11 @@ export function useWorkspaceCollapsedInset(): number {
 
 /** Shell for settings / customize / automate — no full-height left gutter when the rail collapses. */
 export function WorkspaceViewFrame({ children }: { children: ReactNode }) {
-  const { open: sidebarOpen } = useSidebar();
-  const collapsedInset = sidebarOpen ? 0 : collapsedSidebarTriggerReservePx();
+  const { open: sidebarOpen, isMobile, openMobile } = useSidebar();
+  // Mobile Sheet is independent of desktop `open` — reserve space when the
+  // rail/sheet is closed so titles clear the fixed reopen trigger.
+  const railHidden = isMobile ? !openMobile : !sidebarOpen;
+  const collapsedInset = railHidden ? collapsedSidebarTriggerReservePx() : 0;
 
   return (
     <WorkspaceCollapsedInsetContext.Provider value={collapsedInset}>

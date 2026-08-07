@@ -100,12 +100,15 @@ const ProjectOverview: FC = () => {
     );
   }
 
+  // Single-scene defaults are named after the source label (e.g. 锅炉厂 /
+  // guolu) — repeating that same string as the subtitle is noise.
+  const sourceDescription = project.sources.map(projectSourceLabel).join(' · ');
+  const description =
+    sourceDescription && sourceDescription !== project.name ? sourceDescription : undefined;
+
   return (
     <div className="mx-auto flex max-w-4xl flex-col">
-      <PageHeader
-        title={project.name}
-        description={project.sources.map(projectSourceLabel).join(' · ')}
-      />
+      <PageHeader title={project.name} description={description} />
       <ProjectCardsGrid project={project} byServer={byServer} />
       <ProjectThreads projectId={project.id} />
     </div>

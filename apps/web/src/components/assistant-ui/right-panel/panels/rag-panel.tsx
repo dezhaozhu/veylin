@@ -12,7 +12,6 @@ import {
   Network,
   RefreshCw,
   Search,
-  Sparkles,
   Trash2,
   UploadCloud,
 } from 'lucide-react';
@@ -521,7 +520,7 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <div className="bg-primary/10 text-primary flex size-8 items-center justify-center rounded-lg">
-                <Sparkles className="size-4" />
+                <BookOpen className="size-4" />
               </div>
               <div>
                 <div className="text-sm font-semibold">{t('rag.title')}</div>

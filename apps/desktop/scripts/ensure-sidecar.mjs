@@ -22,7 +22,12 @@ const nodePath =
   process.platform === 'win32'
     ? resolve(sidecarRoot, 'node-runtime/node.exe')
     : resolve(sidecarRoot, 'node-runtime/bin/node');
-const launcherPath = resolve(repoRoot, `apps/desktop/src-tauri/binaries/veylin-server-${hostTriple}`);
+const launcherBase = resolve(repoRoot, `apps/desktop/src-tauri/binaries/veylin-server-${hostTriple}`);
+// Windows cargo/tauri emit `veylin-server-<triple>.exe`; bare path is used on unix.
+const launcherPath =
+  process.platform === 'win32' && existsSync(`${launcherBase}.exe`)
+    ? `${launcherBase}.exe`
+    : launcherBase;
 
 function nodeRuns(path) {
   if (!existsSync(path)) return false;

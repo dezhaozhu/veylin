@@ -49,8 +49,11 @@ export const SceneCardCell: FC<{
       {t('projectPage.cardError')}
     </div>
   );
+  // Project homepage cards need room for multi-section scene content; chat
+  // inline widgets stay compact. Floor the iframe even when the widget's size
+  // notification is late/small (common when compass MCP is slow).
   const { render: Render } = useResource(
-    McpAppRenderer({ host: mcpHost, fallback: errorLine }),
+    McpAppRenderer({ host: mcpHost, fallback: errorLine, maxHeight: 1200 }),
   );
 
   // 修正桥, 项目首页 context: the widget's "这里不对?" opens a NEW thread
@@ -86,7 +89,9 @@ export const SceneCardCell: FC<{
 
   return (
     <McpAppActionBridge onCorrection={handleCorrection}>
-      <Render {...part} />
+      <div className="min-h-[320px] w-full [&_iframe]:min-h-[320px]">
+        <Render {...part} />
+      </div>
     </McpAppActionBridge>
   );
 };
