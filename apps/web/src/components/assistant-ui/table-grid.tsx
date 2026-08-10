@@ -34,6 +34,8 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { exportTableToExcel, parseTableExcelFile } from '@/lib/table-excel';
 import { buildGovernedEditBody, GOVERNED_EDIT_FIELDS } from '@/lib/schedule-edit';
+import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
+import { isLateOnlyGridFilter, type OpenGridFilter } from '@/lib/correction-bridge';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 
 type TableColumnType = 'text' | 'number' | 'status' | 'sparkline';
@@ -531,6 +533,9 @@ export function TableGrid() {
   const localThreadId = useAuiState((s) => s.threadListItem.id);
   const remoteThreadId = useAuiState((s) => s.threadListItem.remoteId ?? s.threadListItem.externalId);
   const threadId = remoteThreadId ?? localThreadId ?? undefined;
+  // 排产即导航: a cockpit drill (focusScheduleFilter) stashes an OpenGridFilter
+  // here; we position the already-loaded grid via an AG-Grid external filter.
+  const { scheduleFilter, clearScheduleFilter } = usePanelTabs();
   const [sheets, setSheets] = useState<TableSheet[]>([]);
   const [activeSheetId, setActiveSheetId] = useState('main');
   const [columnDefs, setColumnDefs] = useState<TableColumnDef[]>([]);
@@ -567,6 +572,12 @@ export function TableGrid() {
     chartType: string;
     aggFunc?: string;
   } | null>(null);
+  // A drill filter waiting for the grid to be live with rows (same apply-when-
+  // ready idiom as pendingChartRef). activeGridFilterRef holds the filter AG-Grid
+  // is currently positioned to — read by isExternalFilterPresent/doesExternalFilterPass
+  // (props, so they must read a ref, not state — cf. selectedColumnKeyRef).
+  const pendingScheduleFilterRef = useRef<OpenGridFilter | null>(null);
+  const activeGridFilterRef = useRef<OpenGridFilter | null>(null);
 
   const drawPendingChart = useCallback((attempt = 0) => {
     const pending = pendingChartRef.current;
@@ -595,6 +606,25 @@ export function TableGrid() {
     } catch {
       /* Enterprise/charts unavailable — ignore */
     }
+  }, []);
+
+  // Position the grid to a pending drill filter once it's live with rows. Same
+  // remount-safe retry as drawPendingChart: re-read gridApiRef each attempt.
+  // "late" is a computed predicate (scheduleLateness), not a column value, so we
+  // drive an AG-Grid EXTERNAL filter — set activeGridFilterRef, then onFilterChanged().
+  const applyPendingScheduleFilter = useCallback((attempt = 0) => {
+    const pending = pendingScheduleFilterRef.current;
+    if (!pending) return;
+    const api = gridApiRef.current;
+    const ready =
+      api && !api.isDestroyed?.() && (api.getDisplayedRowCount?.() ?? 0) > 0;
+    if (!ready) {
+      if (attempt < 20) setTimeout(() => applyPendingScheduleFilter(attempt + 1), 150);
+      return;
+    }
+    pendingScheduleFilterRef.current = null;
+    activeGridFilterRef.current = pending;
+    api.onFilterChanged();
   }, []);
 
   useEffect(() => {
@@ -662,6 +692,10 @@ export function TableGrid() {
   const resetSheetUiState = useCallback(() => {
     setFilters(EMPTY_FILTERS);
     gridApiRef.current?.setFilterModel(null);   // drop the previous sheet's column filters
+    // Drop any positioned drill filter too, so it never leaks across sheets.
+    pendingScheduleFilterRef.current = null;
+    activeGridFilterRef.current = null;
+    gridApiRef.current?.onFilterChanged();
     setSelectedRows(new Set());
     setUndoStack([]);
     setRedoStack([]);
@@ -905,6 +939,38 @@ export function TableGrid() {
       drawPendingChart();
     }
   }, [rows, activeSheetId, drawPendingChart]);
+
+  // A cockpit drill arrives via the panel store → position the grid. Only "late"
+  // activates the external filter (the sole field compass emits); anything else
+  // just leaves the grid open, unpositioned. Never throws. `scheduleFilter.at`
+  // makes repeat drills of the same filter re-fire.
+  useEffect(() => {
+    if (!scheduleFilter) return;
+    if (isLateOnlyGridFilter(scheduleFilter.filter)) {
+      pendingScheduleFilterRef.current = scheduleFilter.filter;
+      // Position on the schedule sheet: other sheets (e.g. orders) lack the
+      // end/due_at fields scheduleLateness reads, so a late filter there would
+      // blank the grid. Mirror the pending-chart path's raw setActiveSheetId —
+      // switching remounts + reloads, and the apply-when-ready retry / rows
+      // fallback then applies the filter. If the schedule sheet isn't
+      // bootstrapped yet, the bootstrap load makes it active and the same
+      // fallback fires (no throw when the id isn't present yet).
+      if (activeSheetId === SCHEDULE_SHEET_ID) {
+        applyPendingScheduleFilter();
+      } else {
+        setActiveSheetId(SCHEDULE_SHEET_ID);
+      }
+    }
+    clearScheduleFilter();
+  }, [scheduleFilter, activeSheetId, applyPendingScheduleFilter, clearScheduleFilter]);
+
+  // Fallback for a drill that landed before rows finished loading (mirrors the
+  // pending-chart rows effect): apply once rows are on screen.
+  useEffect(() => {
+    if (pendingScheduleFilterRef.current && rows.length > 0) {
+      applyPendingScheduleFilter();
+    }
+  }, [rows, applyPendingScheduleFilter]);
 
   // Pre-filter rows in React; AG-Grid handles sort natively via comparator
   const filteredRows = useMemo(() => applyFilters(rows, filters), [rows, filters]);
@@ -1244,10 +1310,14 @@ export function TableGrid() {
     setColumnFilterActive((prev) => (prev === active ? prev : active));
   }, []);
 
-  // Clear BOTH the global search and every AG-Grid column filter.
+  // Clear BOTH the global search and every AG-Grid column filter (incl. the
+  // positioned drill's external filter, which isAnyFilterPresent() counts).
   const clearAllFilters = useCallback(() => {
     setFilters(EMPTY_FILTERS);
+    pendingScheduleFilterRef.current = null;
+    activeGridFilterRef.current = null;
     gridApiRef.current?.setFilterModel(null);
+    gridApiRef.current?.onFilterChanged();
   }, []);
 
   // Status options per column — includes values already present in rows
@@ -1962,6 +2032,11 @@ export function TableGrid() {
                 'sched-late': (p) => scheduleLateness(p.data) === 'late',
                 'sched-atrisk': (p) => scheduleLateness(p.data) === 'atrisk',
               }}
+              // External filter for the cockpit drill: "late" is a computed
+              // predicate (scheduleLateness), not a column value, so it can't be a
+              // setFilterModel entry. Present only while positioned to a late drill.
+              isExternalFilterPresent={() => isLateOnlyGridFilter(activeGridFilterRef.current)}
+              doesExternalFilterPass={(node) => scheduleLateness(node.data) === 'late'}
               getRowId={(params: GetRowIdParams<TableRow>) => rowKey(params.data)}
               rowSelection={rowSelection}
               selectionColumnDef={{

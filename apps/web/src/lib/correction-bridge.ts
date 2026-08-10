@@ -117,6 +117,18 @@ export function parseOpenGridMessage(data: unknown): OpenGridFilter | null {
   return out;
 }
 
+/**
+ * Does this drill mean "show late orders only"? `status:"late"` is the sole
+ * positioning compass emits today (workshop/order_id live on OpenGridFilter for
+ * forward-compat but are never sent). Lateness is a COMPUTED predicate (a row's
+ * planned end vs its due date), not a column value — so the grid expresses it as
+ * an AG-Grid external filter, gated on this decision. Anything else (another
+ * status, or none) means "no positioning": the grid just opens.
+ */
+export function isLateOnlyGridFilter(filter: OpenGridFilter | null | undefined): boolean {
+  return filter?.status === 'late';
+}
+
 export type CorrectionDraftSpec = {
   /** i18n key under `correctionBridge.` — variant depends on which optional
    * pieces (scene label, current snapshot) actually exist; no template ever

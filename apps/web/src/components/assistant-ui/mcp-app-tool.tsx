@@ -105,16 +105,16 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
   );
 
   // 约束驾驶舱 → 排产表 (排产即导航): the cockpit widget's "展开排产表" drill opens
-  // the schedule grid — the "open the map" step. Same host-context rule as the
-  // correction bridge: the grid is THIS thread's schedule (from panel context),
-  // never selected by the message. (v1: open; the filter's positioned view is a
-  // follow-up that threads OpenGridFilter into the grid load.)
-  const { open: openPanel } = usePanelTabs();
+  // the schedule grid AND positions it — the "open the map, positioned" step.
+  // Same host-context rule as the correction bridge: the grid is THIS thread's
+  // schedule (from panel context), never selected by the message. focusScheduleFilter
+  // opens the panel and stashes the OpenGridFilter for the grid to apply client-side.
+  const { focusScheduleFilter } = usePanelTabs();
   const handleOpenGrid = useCallback(
-    (_filter: OpenGridFilter) => {
-      void openPanel('table');
+    (filter: OpenGridFilter) => {
+      void focusScheduleFilter(filter);
     },
-    [openPanel],
+    [focusScheduleFilter],
   );
 
   return (

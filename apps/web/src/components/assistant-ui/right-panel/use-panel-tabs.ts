@@ -10,6 +10,7 @@ import {
   type PanelTabsStoredState,
 } from '@/lib/panel-tabs-storage';
 import { isPanelTabsRemoteUpgrade } from '@/lib/panel-tabs-remote-upgrade';
+import type { OpenGridFilter } from '@/lib/correction-bridge';
 import { createNextThreadSheet } from '@/lib/table-sheets';
 import { getPanelKindDef } from './panel-registry';
 import type { PanelKind, PanelTab } from './panel-types';
@@ -44,6 +45,14 @@ function closeWebTabs(tabs: PanelTab[]): void {
   void hideWebView(undefined, { force: true });
 }
 
+/** A schedule-grid drill waiting for the grid to position itself. `at` makes
+ * each drill distinct so a repeat of the same filter still re-notifies (cf.
+ * ragFocus.at). Consumed by TableGrid once its rows are on screen. */
+export interface PendingScheduleFilter {
+  filter: OpenGridFilter;
+  at: number;
+}
+
 export interface PanelTabsApi {
   tabs: PanelTab[];
   activeId: string | null;
@@ -56,6 +65,14 @@ export interface PanelTabsApi {
   focusWebTab: (id: string) => Promise<void>;
   /** Open/focus the knowledge panel and highlight a citation excerpt. */
   focusRagCitation: (focus: { refIndex?: number; chunkId?: string }) => void;
+  /** Open/focus the schedule grid AND position it to a drill filter (排产即导航).
+   * Opens the 'table' panel exactly like open('table'), then stashes the filter
+   * for the grid to apply client-side once its rows are loaded. */
+  focusScheduleFilter: (filter: OpenGridFilter) => void | Promise<void>;
+  /** The pending schedule-grid drill (null when none), read by TableGrid. */
+  scheduleFilter: PendingScheduleFilter | null;
+  /** Drop the pending drill once TableGrid has consumed it. */
+  clearScheduleFilter: () => void;
 }
 
 /** Right-panel tab store. Use via PanelTabsProvider / usePanelTabs(). */
@@ -69,6 +86,11 @@ export function usePanelTabsState(): PanelTabsApi {
   const [state, setState] = useState<PanelTabsStoredState>(() =>
     loadThreadPanelTabs(threadId),
   );
+  // Pending schedule-grid drill (排产即导航). The grid is a workspace-wide
+  // singleton bootstrapped once on mount, so a drill that arrives while it's
+  // already open can't re-fetch to position it — it stashes here and TableGrid
+  // applies it client-side once rows are on screen.
+  const [scheduleFilter, setScheduleFilter] = useState<PendingScheduleFilter | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const threadIdRef = useRef(threadId);
@@ -265,6 +287,20 @@ export function usePanelTabsState(): PanelTabsApi {
     [commit],
   );
 
+  const focusScheduleFilter = useCallback(
+    (filter: OpenGridFilter) => {
+      // Open/activate the table panel through the SAME singleton + sheet-create
+      // path as the (+) action — no duplicate logic here.
+      void open('table');
+      // Stash for TableGrid to apply once its rows are live; `at` distinguishes
+      // repeat drills so an identical filter still re-notifies.
+      setScheduleFilter({ filter, at: Date.now() });
+    },
+    [open],
+  );
+
+  const clearScheduleFilter = useCallback(() => setScheduleFilter(null), []);
+
   return {
     tabs: state.tabs,
     activeId: state.activeId,
@@ -275,5 +311,8 @@ export function usePanelTabsState(): PanelTabsApi {
     updateState,
     focusWebTab,
     focusRagCitation,
+    focusScheduleFilter,
+    scheduleFilter,
+    clearScheduleFilter,
   };
 }

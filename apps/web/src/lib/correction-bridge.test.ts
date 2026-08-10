@@ -4,6 +4,7 @@ import {
   CORRECTION_CURRENT_MAX,
   CORRECTION_FIELD_MAX,
   correctionDraftSpec,
+  isLateOnlyGridFilter,
   parseCorrectionMessage,
   parseOpenGridMessage,
   type CorrectionPayload,
@@ -241,5 +242,24 @@ describe('parseOpenGridMessage — 展开排产表 drill', () => {
     assert.deepEqual(parseOpenGridMessage(grid({ status: 'late', threadId: 'evil', tenant: 'evil' })), {
       status: 'late',
     });
+  });
+});
+
+describe('isLateOnlyGridFilter — the late-only decision', () => {
+  it('is true only when status is exactly "late"', () => {
+    assert.equal(isLateOnlyGridFilter({ status: 'late' }), true);
+  });
+
+  it('is false for any other/absent status', () => {
+    assert.equal(isLateOnlyGridFilter({}), false);
+    assert.equal(isLateOnlyGridFilter({ status: 'atrisk' }), false);
+    assert.equal(isLateOnlyGridFilter({ status: 'Late' }), false);
+    assert.equal(isLateOnlyGridFilter({ workshop: '金工分厂' }), false);
+    assert.equal(isLateOnlyGridFilter(null), false);
+    assert.equal(isLateOnlyGridFilter(undefined), false);
+  });
+
+  it('ignores non-status fields on a late filter (still late-only)', () => {
+    assert.equal(isLateOnlyGridFilter({ status: 'late', workshop: '金工分厂' }), true);
   });
 });
