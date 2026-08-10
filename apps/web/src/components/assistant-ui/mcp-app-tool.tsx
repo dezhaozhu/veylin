@@ -11,7 +11,8 @@ import { useTranslation } from 'react-i18next';
 import { McpAppActionBridge } from '@/components/assistant-ui/mcp-app-action-bridge';
 import { ToolFallback } from '@/components/assistant-ui/tool-fallback';
 import { placeComposerCaret } from '@/lib/composer-caret';
-import { correctionDraftSpec, type CorrectionPayload } from '@/lib/correction-bridge';
+import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
+import { correctionDraftSpec, type CorrectionPayload, type OpenGridFilter } from '@/lib/correction-bridge';
 
 // Data plane for MCP Apps: the sandboxed widget's loadResource/callTool/
 // readResource requests are POSTed to the Veylin host route, which proxies to
@@ -103,8 +104,21 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
     [aui, t],
   );
 
+  // 约束驾驶舱 → 排产表 (排产即导航): the cockpit widget's "展开排产表" drill opens
+  // the schedule grid — the "open the map" step. Same host-context rule as the
+  // correction bridge: the grid is THIS thread's schedule (from panel context),
+  // never selected by the message. (v1: open; the filter's positioned view is a
+  // follow-up that threads OpenGridFilter into the grid load.)
+  const { open: openPanel } = usePanelTabs();
+  const handleOpenGrid = useCallback(
+    (_filter: OpenGridFilter) => {
+      void openPanel('table');
+    },
+    [openPanel],
+  );
+
   return (
-    <McpAppActionBridge onCorrection={handleCorrection}>
+    <McpAppActionBridge onCorrection={handleCorrection} onOpenGrid={handleOpenGrid}>
       <Render {...part} />
     </McpAppActionBridge>
   );

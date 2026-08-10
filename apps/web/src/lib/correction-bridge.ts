@@ -80,6 +80,43 @@ export function parseCorrectionMessage(data: unknown): CorrectionPayload | null 
   return { scene, section, label, current };
 }
 
+/**
+ * Optional filters for the schedule-grid drill. Each is an untrusted display
+ * string (sanitized + capped like correction fields). They only NARROW which
+ * rows load into the CURRENT thread's schedule grid — thread/tenant are always
+ * host-derived, so a filter can never select a different thread or tenant.
+ */
+export type OpenGridFilter = {
+  status?: string;
+  workshop?: string;
+  order_id?: string;
+};
+
+/**
+ * Validate + sanitize a `veylin:action` / `open-schedule-grid` message (the
+ * constraint-cockpit widget's "展开排产表" drill — "open the map, positioned").
+ * Returns an OpenGridFilter (possibly empty) for the exact shape, else null.
+ * Same security model as parseCorrectionMessage: fixed type+action, sanitized
+ * capped string fields, silent drop of anything else. Opening/target is host
+ * context (current thread's grid); the payload only carries display filters.
+ */
+export function parseOpenGridMessage(data: unknown): OpenGridFilter | null {
+  if (typeof data !== 'object' || data === null) return null;
+  const d = data as Record<string, unknown>;
+  if (d.type !== 'veylin:action' || d.action !== 'open-schedule-grid') return null;
+  const p =
+    typeof d.payload === 'object' && d.payload !== null ? (d.payload as Record<string, unknown>) : {};
+  const status = sanitizeField(p.status, CORRECTION_FIELD_MAX);
+  const workshop = sanitizeField(p.workshop, CORRECTION_FIELD_MAX);
+  const orderId = sanitizeField(p.order_id, CORRECTION_FIELD_MAX);
+  if (status === null || workshop === null || orderId === null) return null;
+  const out: OpenGridFilter = {};
+  if (status) out.status = status;
+  if (workshop) out.workshop = workshop;
+  if (orderId) out.order_id = orderId;
+  return out;
+}
+
 export type CorrectionDraftSpec = {
   /** i18n key under `correctionBridge.` — variant depends on which optional
    * pieces (scene label, current snapshot) actually exist; no template ever
