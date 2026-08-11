@@ -39,6 +39,10 @@ describe('compassGroundingBlock', () => {
 
   it('resolves through the project pin, not a hardcoded compass key', () => {
     const getToolsets = () => ({
+      // Decoy: an ungrouped `compass` key WITHOUT get_health. If pin-threading
+      // were dropped, resolveCompassServer's ungrouped-`compass` fallback would
+      // pick this decoy and the block would come back empty, failing the test.
+      compass: {},
       'compass-guolu': { get_health: { execute: async () => ({}) } },
     });
     const groups = { 'compass-guolu': 'compass' };
@@ -46,7 +50,13 @@ describe('compassGroundingBlock', () => {
   });
 
   it('does not inject when the pinned server lacks compass tools', () => {
-    const getToolsets = () => ({ 'compass-guolu': {} });
+    const getToolsets = () => ({
+      // Decoy: an ungrouped `compass` key that DOES have get_health. If
+      // pin-threading were dropped, resolution would fall back to this decoy
+      // and wrongly return a non-empty block instead of respecting the pin.
+      compass: { get_health: { execute: async () => ({}) } },
+      'compass-guolu': {},
+    });
     const groups = { 'compass-guolu': 'compass' };
     assert.equal(compassGroundingBlock(getToolsets, groups, 'compass-guolu'), '');
   });
