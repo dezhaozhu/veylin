@@ -1,18 +1,26 @@
 import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { startWindowDrag } from '@/lib/window-drag';
 
 export function PageHeader({
   title,
   description,
   action,
+  className,
 }: {
   title: string;
   description?: string;
   action?: ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <div
+      className={cn(
+        'mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between',
+        className,
+      )}
+    >
       <div className="min-w-0 flex-1">
         <h1
           className="text-2xl font-semibold tracking-tight"

@@ -25,6 +25,7 @@ import {
   type SceneNarrative,
 } from './scene-card-merge';
 import { SceneCardMergeTable } from './scene-card-merge-table';
+import { SceneCardSummaryPanel } from './scene-card-summary-panel';
 import { useSceneCardPayloads, type SceneCardEntry } from './use-scene-card-payloads';
 
 /** Workspace shell for the 项目首页 view — same frame pattern as
@@ -93,7 +94,7 @@ const ProjectOverview: FC = () => {
     // Deleted/disabled while (or before) the view was open — header keeps the
     // snapshot name, body states the fact once.
     return (
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto w-full max-w-[80rem]">
         <PageHeader title={projectPage.name ?? t('projectPage.title')} />
         <p className="text-muted-foreground text-sm">{t('projectPage.notFound')}</p>
       </div>
@@ -107,8 +108,12 @@ const ProjectOverview: FC = () => {
     sourceDescription && sourceDescription !== project.name ? sourceDescription : undefined;
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col">
-      <PageHeader title={project.name} description={description} />
+    <div className="mx-auto flex w-full max-w-[80rem] flex-col">
+      <PageHeader
+        title={project.name}
+        description={description}
+        className="mb-3 gap-2"
+      />
       <ProjectCardsGrid project={project} byServer={byServer} />
       <ProjectThreads projectId={project.id} />
     </div>
@@ -173,24 +178,48 @@ const ProjectCardsGrid: FC<{
     );
   }
 
+  // Host chart-first summary when `display` exists; Compass widget only as
+  // fallback when the card ships no display contract.
   return (
     <div
-      className="mb-8 grid gap-4"
+      className="mb-6 grid gap-4"
       style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
     >
-      {entries.map((entry: SceneCardEntry) => (
-        <SceneCardCell
-          key={`${entry.source}::${entry.server}`}
-          hostUrl={hostUrl}
-          resourceUri={entry.resourceUri}
-          server={entry.server}
-          source={entry.source}
-          projectId={project.id}
-          fetched={entry.fetched}
-          args={entry.args}
-          argsKey={entry.argsKey}
-        />
-      ))}
+      {entries.map((entry: SceneCardEntry) => {
+        const key = `${entry.source}::${entry.server}`;
+        if (entry.fetched.status === 'ready') {
+          const rows = extractDisplayRows(entry.fetched.result);
+          if (rows) {
+            const narrative = extractNarrative(entry.source, entry.fetched.result);
+            return (
+              <SceneCardSummaryPanel
+                key={key}
+                rows={rows}
+                source={entry.source}
+                projectId={project.id}
+                narrative={
+                  narrative
+                    ? { text: narrative.text, generatedAt: narrative.generatedAt }
+                    : null
+                }
+              />
+            );
+          }
+        }
+        return (
+          <SceneCardCell
+            key={key}
+            hostUrl={hostUrl}
+            resourceUri={entry.resourceUri}
+            server={entry.server}
+            source={entry.source}
+            projectId={project.id}
+            fetched={entry.fetched}
+            args={entry.args}
+            argsKey={entry.argsKey}
+          />
+        );
+      })}
     </div>
   );
 };
@@ -201,6 +230,8 @@ const ProjectCardsGrid: FC<{
  * Clicking a thread switches to it as usual; the wrapper's closeWorkspace
  * returns the main area to the chat view (same idiom as the sidebar's
  * SidebarContent onClick). */
+const THREADS_PREVIEW = 3;
+
 const ProjectThreads: FC<{ projectId: string }> = ({ projectId }) => {
   const { t } = useTranslation();
   const { closeWorkspace } = useSettingsPanel();
@@ -208,6 +239,7 @@ const ProjectThreads: FC<{ projectId: string }> = ({ projectId }) => {
   const threadItems = useAuiState((s) => s.threads.threadItems);
   const threadProjects = useThreadProjects();
   const activity = useThreadActivityMap();
+  const [showAllThreads, setShowAllThreads] = useState(false);
 
   const indices = useMemo(() => {
     const itemsById = new Map(threadItems.map((item) => [item.id, item]));
@@ -226,6 +258,11 @@ const ProjectThreads: FC<{ projectId: string }> = ({ projectId }) => {
     return result;
   }, [threadIds, threadItems, threadProjects, projectId]);
 
+  const visibleIndices =
+    showAllThreads || indices.length <= THREADS_PREVIEW
+      ? indices
+      : indices.slice(0, THREADS_PREVIEW);
+
   return (
     <section>
       <SectionHeading title={t('projectPage.threads')} count={indices.length} />
@@ -239,7 +276,7 @@ const ProjectThreads: FC<{ projectId: string }> = ({ projectId }) => {
               {t('threadList.emptyProject')}
             </p>
           ) : (
-            indices.map((index) => (
+            visibleIndices.map((index) => (
               <ThreadListPrimitive.ItemByIndex
                 key={threadIds[index]}
                 index={index}
@@ -249,6 +286,17 @@ const ProjectThreads: FC<{ projectId: string }> = ({ projectId }) => {
           )}
         </ThreadListPrimitive.Root>
       </ThreadActivityContext.Provider>
+      {indices.length > THREADS_PREVIEW ? (
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground mt-2 text-xs underline-offset-2 hover:underline"
+          onClick={() => setShowAllThreads((v) => !v)}
+        >
+          {showAllThreads
+            ? t('projectPage.collapse')
+            : t('projectPage.showAllThreads', { count: indices.length })}
+        </button>
+      ) : null}
     </section>
   );
 };

@@ -50,10 +50,11 @@ export const SceneCardCell: FC<{
     </div>
   );
   // Project homepage cards need room for multi-section scene content; chat
-  // inline widgets stay compact. Floor the iframe even when the widget's size
-  // notification is late/small (common when compass MCP is slow).
+  // inline widgets stay compact. Floor the iframe tall enough that the common
+  // scene-card sections fit without an inner scrollbar; grow with the widget
+  // up to the viewport.
   const { render: Render } = useResource(
-    McpAppRenderer({ host: mcpHost, fallback: errorLine, maxHeight: 1200 }),
+    McpAppRenderer({ host: mcpHost, fallback: errorLine, maxHeight: 2400 }),
   );
 
   // 修正桥, 项目首页 context: the widget's "这里不对?" opens a NEW thread
@@ -89,7 +90,7 @@ export const SceneCardCell: FC<{
 
   return (
     <McpAppActionBridge onCorrection={handleCorrection}>
-      <div className="min-h-[320px] w-full [&_iframe]:min-h-[320px]">
+      <div className="min-h-[min(72vh,720px)] w-full [&_iframe]:min-h-[min(72vh,720px)]">
         <Render {...part} />
       </div>
     </McpAppActionBridge>
