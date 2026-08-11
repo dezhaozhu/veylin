@@ -75,6 +75,48 @@ describe('chat-system-blocks', () => {
     assert.match(blocks, /Active focus: scheduling/);
   });
 
+  it('injects the compass grounding section when provided', async () => {
+    const blocks = await buildChatSystemBlocks({
+      skillsCatalog: '',
+      skillBlock: '',
+      rulesBlock: '',
+      planModeBlock: '',
+      goalBlock: '',
+      loopBlock: '',
+      tableBlock: '',
+      viewer3dBlock: '',
+      knowledgeBlock: '',
+      workspacePanelBlock: '',
+      reminderBlock: '',
+      orchestrationBlock: '',
+      localeBlock: '',
+      attachedBrowserBlock: '',
+      compassGroundingBlock: '## 排产结果转述（Compass）\n只依据事实',
+    });
+    assert.match(blocks, /## 排产结果转述（Compass）/);
+  });
+
+  it('omits the compass grounding section when empty', async () => {
+    const blocks = await buildChatSystemBlocks({
+      skillsCatalog: '',
+      skillBlock: '',
+      rulesBlock: '',
+      planModeBlock: '',
+      goalBlock: '',
+      loopBlock: '',
+      tableBlock: '',
+      viewer3dBlock: '',
+      knowledgeBlock: '',
+      workspacePanelBlock: '',
+      reminderBlock: '',
+      orchestrationBlock: '',
+      localeBlock: '',
+      attachedBrowserBlock: '',
+      compassGroundingBlock: '',
+    });
+    assert.doesNotMatch(blocks, /排产结果转述/);
+  });
+
   it('builds lighter agent-run blocks', async () => {
     const blocks = await buildAgentRunSystemBlocks({
       skillsCatalog: 'catalog',
