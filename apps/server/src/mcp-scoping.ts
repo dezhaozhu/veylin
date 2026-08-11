@@ -1,3 +1,5 @@
+import type { ToolsetsGetter } from './table-tools.js';
+
 /**
  * Pure per-thread project-scoping resolution for grouped MCP servers.
  *
@@ -177,4 +179,32 @@ export function resolveCompassServer(
     return compassKeys[0]!;
   }
   return null;
+}
+
+/** Server-name → project-group map, e.g. `{ compass: undefined, 'compass-guolu': 'compass' }`. */
+export type McpServerGroups = Record<string, string | undefined>;
+
+export type CompassTool = { execute: (args: unknown) => Promise<unknown> };
+
+/**
+ * Look up a Compass MCP tool by name, resolved through `resolveCompassServer`
+ * (never a hardcoded `toolsets['compass']`) so a grouped deployment can't leak
+ * a call across the thread's project pin. `groups`/`pin` default to `{}`/`null`
+ * for callers with no thread context.
+ *
+ * Shared by schedule-edit.ts (governed writes) and compass-grounding.ts (the
+ * read-only grounding block's "is compass connected" probe) — ONE copy on
+ * purpose: a second copy would drift from the pin-resolution rules above.
+ */
+export function compassTool(
+  getToolsets: ToolsetsGetter | undefined,
+  name: string,
+  groups: McpServerGroups = {},
+  pin: string | null = null,
+): CompassTool | null {
+  const toolsets = getToolsets?.() ?? {};
+  const serverName = resolveCompassServer(toolsets, groups, pin);
+  if (!serverName) return null;
+  const server = toolsets[serverName] as Record<string, CompassTool> | undefined;
+  return server?.[name] ?? null;
 }

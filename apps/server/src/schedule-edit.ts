@@ -1,42 +1,7 @@
 import type { ToolsetsGetter } from './table-tools.js';
-import { resolveCompassServer } from './mcp-scoping.js';
+import { compassTool, type McpServerGroups } from './mcp-scoping.js';
 
-type CompassTool = { execute: (args: unknown) => Promise<unknown> };
-
-/** Server-name → project-group map, e.g. `{ compass: undefined, 'compass-guolu': 'compass' }'. */
-export type McpServerGroups = Record<string, string | undefined>;
-
-/**
- * Look up a Compass MCP tool by name, resolved through `resolveCompassServer`
- * (never a hardcoded `toolsets['compass']`) so a grouped deployment can't leak
- * a call across the thread's project pin. `groups`/`pin` default to `{}`/`null`
- * for callers with no thread context — see the call-site notes on each exported
- * function below and mcp-scoping.ts's module docstring.
- *
- * PROJECT-PIN RE-KEY (v3, Phase B 5c): both callers now inject the
- * PER-REQUEST toolset record through `getToolsets` and pass the entry-level
- * pin (`scope.entryPin`, i.e. `'compass'`) as `pin` — routes/tables.ts's
- * governed schedule-edit routes via `resolveCompassRequestScope` (threadId →
- * project pin → POOLED scene-set toolsets; pool failure = `{}` = the honest
- * "not connected" refusal below), and routes/chat.ts's guidance-block call
- * via the turn's final `agentMcp` (`scopedMcpToolsets`). This module's logic
- * is deliberately unchanged: it already resolves from whatever record the
- * caller injects, and the tenant cache can never satisfy a compass lookup
- * post-Task-4 (plan risk #2 — a miss means "no compass", never a
- * wrong-scene connection for these governed WRITES).
- */
-function compassTool(
-  getToolsets: ToolsetsGetter | undefined,
-  name: string,
-  groups: McpServerGroups = {},
-  pin: string | null = null,
-): CompassTool | null {
-  const toolsets = getToolsets?.() ?? {};
-  const serverName = resolveCompassServer(toolsets, groups, pin);
-  if (!serverName) return null;
-  const server = toolsets[serverName] as Record<string, CompassTool> | undefined;
-  return server?.[name] ?? null;
-}
+export type { McpServerGroups };
 
 /**
  * Like table-tools.unwrapMcpPayload but for payloads WITHOUT a `columns` key:
