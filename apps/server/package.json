@@ -10,7 +10,8 @@
     "build:bundle": "esbuild src/server.ts --bundle --platform=node --format=esm --outfile=dist/server.mjs --packages=external",
     "build:sidecar": "node scripts/build-sidecar.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test \"src/**/*.test.ts\""
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "gen:compass-refs": "node --import tsx src/compass-refs.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",

@@ -46,6 +46,7 @@ import { cancelThreadSubagentTasks } from '../cancel-thread-tasks.js';
 import { buildTableContextBlock } from '../table-store.js';
 import { buildViewer3dContextBlock } from '../viewer3d-store.js';
 import { scheduleEditGuidanceBlock } from '../schedule-edit.js';
+import { compassGroundingBlock as buildCompassGroundingBlock } from '../compass-grounding.js';
 import {
   activateSkill,
   activateAndPinSkill,
@@ -844,6 +845,11 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const editGuidance = planMode
       ? ''
       : scheduleEditGuidanceBlock(() => agentMcp, mcpServerGroups, scope.entryPin);
+    // 与 editGuidance 同源同参:本轮真实的 agentMcp + entry pin,所以"是否连上
+    // compass"的判断与本轮真正能调的工具一致。planMode 下同样跳过。
+    const compassGrounding = planMode
+      ? ''
+      : buildCompassGroundingBlock(() => agentMcp, mcpServerGroups, scope.entryPin);
     const tableBlock = [tableBlockBase, editGuidance].filter(Boolean).join('\n\n');
     const viewer3dBlock = planMode ? '' : buildViewer3dContextBlock();
     const knowledgeBlock = planMode
@@ -895,6 +901,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       attachedBrowserBlock,
       workingMemoryBlock,
       projectPinBlock,
+      compassGroundingBlock: compassGrounding,
     });
     if (systemBlocks) {
       agentMessages = [{ role: 'system', content: systemBlocks } as never, ...agentMessages];

@@ -29,3 +29,6 @@ playwright/.cache/
 apps/server/.cache/
 apps/server/dist/sidecar/
 apps/desktop/src-tauri/binaries/veylin-server*
+
+# grounding-eval: real-LLM collector output, non-deterministic, costs money
+apps/server/eval-runs/
