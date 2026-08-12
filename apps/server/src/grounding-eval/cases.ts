@@ -56,7 +56,7 @@ export const GROUNDING_CASES: GroundingCase[] = [
     lane: 'grounding',
     tenants: ['shangzhong'],
     question: '把订单 Z-221524A0760111 的交期推迟 7 天，影响多大？',
-    why: '规矩 4 的主靶,也是这刀的起因:preview_schedule_edit 根本不返回 before→after,agent 想说"迟到 X→Y"就只能编。订单号取自已验证存在 三级 工序的 shangzhong 真实单(见 veylin master-detail 实测记录),按编码钉定不按名字。订单号已核实为真:真实 smoke 语料(apps/server/eval-runs/grounding-smoke.json,样本 grounding:G5:shangzhong:1)里 preview_schedule_edit 对这个单号返回了真实行 —— product_class 曲轴,workshop 金工分厂/锻件分厂,stage_code CJ1/DZ,exec_status READY,不是空结果。',
+    why: '规矩 4 的主靶,也是这刀的起因:preview_schedule_edit 根本不返回 before→after,agent 想说"迟到 X→Y"就只能编。订单号取自已验证存在 三级 工序的 shangzhong 真实单(见 veylin master-detail 实测记录),按编码钉定不按名字。订单号已核实为真:真实 smoke 语料(原始来源 apps/server/eval-runs/grounding-smoke.json,gitignored、早已不在盘上;裁剪后的真实值以 checks.test.ts 的 REAL_PREVIEW_FEASIBLE 常量永久留存,样本 grounding:G5:shangzhong:1)里 preview_schedule_edit 对这个单号返回了真实行 —— product_class 曲轴,workshop 金工分厂/锻件分厂,stage_code CJ1/DZ,exec_status READY,不是空结果。',
     needsCentralRole: true,
   },
   {

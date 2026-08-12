@@ -13,16 +13,21 @@ const names = (t: Turn, opts?: { forbidSolve?: boolean }) =>
   runChecks(t, opts).violations.map((v) => v.check);
 
 /**
- * 修复轮 1 fixtures ——从真实 smoke 抓取(apps/server/eval-runs/grounding-
- * smoke.json,gitignored,14 条真实 agent turn,tenant=guolu/shangzhong)裁剪
- * 而来,保留真实结构和真实 key 路径。逐条标注取自哪个 sampleId/工具/路径,
- * 以及哪些字段值是为了触发某个判据而手工替换的(真实语料 14+6 条样本里一条
- * `partial`/`overloaded`(取 metrics.status 或 diagnosis.honest_status 路径)、
- * `timeout`、`error` 都没出现过——已用
- *   grep -c '"partial"' apps/server/eval-runs/grounding-smoke*.json
- * 核实为 0。路径本身(diagnosis.honest_status / metrics.status /
- * metrics.orders_unscheduled / get_cockpit.evidence.drum_resource /
+ * 修复轮 1 fixtures ——从真实 smoke 抓取(原文件 apps/server/eval-runs/grounding-
+ * smoke.json,14 条真实 agent turn,tenant=guolu/shangzhong)裁剪而来,保留真实
+ * 结构和真实 key 路径。逐条标注取自哪个 sampleId/工具/路径,以及哪些字段值是
+ * 为了触发某个判据而手工替换的(真实语料 14+6 条样本里一条 `partial`/
+ * `overloaded`(取 metrics.status 或 diagnosis.honest_status 路径)、`timeout`、
+ * `error` 都没出现过——核实为 0 的时点见下)。路径本身(diagnosis.honest_status /
+ * metrics.status / metrics.orders_unscheduled / get_cockpit.evidence.drum_resource /
  * history[].status)在真实语料里都出现过,只是触发值需要替换。
+ *
+ * 该 smoke 文件是 gitignored 的临时采集产物,早已不在盘上,下面这条 grep
+ * 已经无法重跑:
+ *   grep -c '"partial"' apps/server/eval-runs/grounding-smoke*.json
+ * 但结论不因此失效——这些 `REAL_*` 常量就是那次核实结果的**永久留存形态**
+ * (硬编码进这份已提交的测试文件里),不是指向一个易失文件的转述;要复核就
+ * 直接读下面这些常量本身,不需要也不能重新生成那个源文件。
  */
 
 /**

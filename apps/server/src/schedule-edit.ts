@@ -1,8 +1,6 @@
 import type { ToolsetsGetter } from './table-tools.js';
 import { compassTool, type McpServerGroups } from './mcp-scoping.js';
 
-export type { McpServerGroups };
-
 /**
  * Like table-tools.unwrapMcpPayload but for payloads WITHOUT a `columns` key:
  * a direct typed object (no content/text wrapper) passes through as-is; a

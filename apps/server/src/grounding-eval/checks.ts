@@ -9,8 +9,10 @@
  *
  * 修复轮 1:第一版按 key 名对整棵返回树做无差别扫描(“看到叫 honest_status /
  * unscheduled / overloaded_resources 的 key 就收”),字段名是从 spec 文档臆造
- * 的,不是从真实 payload 来的 —— 拿真实 compass smoke 数据(见
- * apps/server/eval-runs/grounding-smoke.json)一跑,三条判据结构性失活:
+ * 的,不是从真实 payload 来的 —— 拿真实 compass smoke 数据一跑,三条判据结构性
+ * 失活(该 smoke 文件本身是 gitignored 的临时采集产物,早已不在盘上;裁剪后的
+ * 真实结构和真实取值现在以 `checks.test.ts` 里的 `REAL_*` fixtures 的形式留存,
+ * 那才是这份证据现在的可复现形态):
  * `get_health` 从不吐顶层 `honest_status`,也没有任何工具吐 `overloaded_resources`。
  * 现在改成按路径读——只认真实工具真实吐出的两个位置,不再做“任意深度按 key 名扫”,
  * 因为真实数据里恰好有同名诱饵(`get_cockpit.status` 是交付风险色,
@@ -20,6 +22,12 @@
  * 修复轮 2(纯文档订正,判据逻辑不变):`currentRunStatuses` 里关于
  * `metrics.status` 的注释此前写错了 —— 对照 compass-v2 源码
  * (`run_report_service.py:223`/`:236`)后订正,见下方函数注释。
+ *
+ * 覆盖范围(这七条判据 + `numbersToReview` 分别测了接地块九条指令里的哪几条、
+ * 哪几条完全没测):见同目录 README.md「判据覆盖 —— 块说了什么，判据测了什么」
+ * 一节。读任何一次跑的"N 个成功(0 个有硬违规)"之前先看那张表 —— 四条指令
+ * (含规矩 3 的 `scopedDisclosed`,一个已知盲区)当前完全没有判据能测到,不代表
+ * 已验证。
  */
 
 export type ToolCall = { name: string; result: unknown };

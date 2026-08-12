@@ -3,6 +3,67 @@
 打真网关、有成本、结果带随机性 —— 所以**不进 `npm test`**（glob 只收 `*.test.ts`）。
 判据本身是纯函数，`checks.test.ts` 在常规套件里。
 
+## 判据覆盖 —— 块说了什么，判据测了什么
+
+**接地块（`COMPASS_GROUNDING_TEXT`）声明九条指令：三条前言 + 六条编号规矩。判据
+（`checks.ts`）只硬编了其中五条指令的部分或全部行为，另外两条（前言"不用 emoji／
+不惊叹／数字带单位"、规矩 1 的绝大部分）完全没有判据覆盖。任何人读到某次跑的
+"N 个成功（0 个有硬违规）"或一次干净的 `--compare`，都必须先看这张表，再决定这句话
+能不能读成"块被验证了"——四条指令当前没有任何判据能测到它，不测到不代表模型没违反,
+只代表这次跑对它保持沉默。**
+
+| 块指令 | 判据 | 覆盖程度 |
+|---|---|---|
+| 前言：只依据本轮工具实际返回的事实 | `numbersToReview` | 部分——只列出回答里、工具返回中找不到的数字，**不判红**（advisory，见 `checks.ts` 顶部"为什么不用 LLM 裁判"），要看有没有编造数字仍要人工翻这份清单 |
+| 前言：不替用户决定 | `noUnconsentedSolve` | 部分——只在 `forbidSolve` 的 case（目前只有 G4）上检查是否调了 `show_shadow`/`reschedule`/`commit_schedule_edit`；非 `forbidSolve` case 完全不检查这条 |
+| 前言：不用 emoji／不惊叹／数字带单位 | — | **未测量**。仓库里唯一的 emoji 正则（`compass-grounding.test.ts:83`）扫的是提示词文本 `COMPASS_GROUNDING_TEXT` 本身，不是模型答案；答案里出不出现 emoji，没有任何判据检查 |
+| 规矩 1：驾驶舱字段直接转述、审计字段不外泄、rung 不当徽章贴、status 不当置信度 | `noBareConfidence`（极小一部分） | **基本未测量**——只有规矩 1 里"换算成'可信度'"这一句字面意思被 `noBareConfidence` 的裸浮点正则间接覆盖；"不得念 `evidence` 审计字段""rung 不当徽章贴出来""`status` 不是系统置信度"三件事都没有判据 |
+| 规矩 2：`overloaded` 必须点名超载资源、`partial` 必须给出 `unscheduled` 数、禁止粉饰、`infeasible` 必须说明卡在哪 | `partialGivesCount`、`noWhitewash` | `partial` 给数 + 粉饰用语两支有覆盖；`overloaded` 点名超载资源、`infeasible` 说明原因两支**未测量**——`drumNamedWhenCapacityBinding` 测的是 `get_cockpit.binding==='capacity'` 时点名 `drum_resource`，是另一条独立路径，跟这里"`honest_status==='overloaded'` 时点名超载资源"字面相似但代码和触发条件都不同 |
+| 规矩 3：影子对比必须披露 scoped | `scopedDisclosed` | 名义覆盖，**实际是已知盲区**——见下方「已知盲区」第一条 |
+| 规矩 4：编辑预览不得编前后箭头 | `noFabricatedTransition` | 覆盖，但只认 `数字→数字`/`数字->数字`/`数字至数字` 这种箭头形式，不认无箭头的软性夸大——见下方「已知盲区」第二条的真实案例 |
+| 规矩 5：出处四级措辞（guessed 必须明说"基于假设"） | `noBareConfidence`（一半） | **基本未测量**——只有"不输出裸可信度浮点"这一半被覆盖；`guessed` 时答案是否真的用了"推断/估/假设/未实测/待核实"这类措辞，没有判据检查 |
+| 规矩 6：不擅自求解 | `noUnconsentedSolve` | 覆盖（和前言"不替用户决定"是同一个判据、同一段代码） |
+
+### 已知盲区
+
+1. **`scopedDisclosed` 只能在模型已经犯规时触发。** 它要求样本里出现过 `show_shadow`
+   调用，但唯一可能产生这个调用的 case 是 G4，而 G4 恰好设了 `forbidSolve: true`——
+   一旦真的调了 `show_shadow`，那本身已经是一条 `noUnconsentedSolve` 违规。两次已跑的
+   基线（`grounding-before.json`/`grounding-after.json`，各 14 个样本，共 28 个）里
+   `show_shadow` 被调用 0 次，规矩 3 的回归目前不可见。**跟进**：需要新增一个"合法授权了
+   影子求解"的 case（不是修改现有 8 条现有 case），再跑一次新基线——不在本轮改动范围内，
+   因为改判据检测语义或增删 case 会让已提交的两臂基线失效。
+2. **规矩 4 的软性夸大不被 `noFabricatedTransition` 捕获。** 2026-08-11 基线的
+   grounding-OFF 臂里，样本 `grounding:G5:shangzhong:1` 只调了 `propose_schedule_edit` +
+   `preview_schedule_edit`（没调 `show_shadow`），回答却写"...并做了**影子求解**"、"其他
+   订单也没有受影响"——`preview_schedule_edit` 既不是影子求解，也没有能力支撑"其他订单
+   没受影响"这个断言。判据没有报违规，因为文本里没有出现 `数字→数字` 这种箭头。详见
+   `compass-v2` 侧写作（`docs/superpowers/notes/2026-08-11-grounding-baseline.md`）新增的
+   人工发现小节。
+
+### 记在案、刻意推迟的两个便宜后续
+
+会改变判据的检测语义，因此**不在本轮做**——做了必须重新跑一次基线，不能追加进已提交的
+`grounding-before.json`/`grounding-after.json` 对照结果里，否则那份对照就失去了"同一套
+判据前后对比"的意义：
+
+1. 一个指向**模型答案**（而不是提示词文本）的 emoji 检查——`compass-grounding.test.ts:83`
+   已经有现成的正则 `/\p{Extended_Pictographic}/u`，目前只用来测 `COMPASS_GROUNDING_TEXT`
+   本身，还没有对着 `Turn.text` 用过。
+2. 一个跟 `drumNamedWhenCapacityBinding` 同形状的出处判据：当
+   `evidence.capacity_rung === 'guessed'` 时，答案里必须出现"推断/估/假设/未实测/待核实"
+   之一（对应规矩 5 的"guessed 必须明说是基于假设"）。
+
+### `noBareConfidence` 的已知假阴性面（不放宽正则，只记录）
+
+正则 `/(?:可信度|置信度|confidence)\s*[:：]?\s*0?\.\d+/i` 要求数字紧跟在标签（+可选冒号）
+后面，下列写法都会漏判，抓的时候要靠人工读，判据本身抓不到：
+
+- 「可信度（0.35）」——括号把数字和标签隔开
+- 「可信度为 0.35」——"为"插在标签和数字之间
+- 「可信度 35%」——百分数没有正则要求的小数点形式
+- 「置信度大约 0.4」——"大约"插在标签和数字之间
+
 ## 前置条件
 
 1. 本地 compass 在跑：`docker ps | grep compass-v2-app`（`compass-v2` 仓库根目录
@@ -101,14 +162,20 @@ data: {"type":"tool-output-available","toolCallId":"functions.table_get:0","outp
 
 ### 顺带发现，不是这一刀要修的，但下一个人应该知道
 
+**下面这条是 Step 1 探针（早于正式采集器、早于 2026-08-11 两臂基线）单次观察到的现象，
+不是当前行为的描述**——正式基线跑出来之后模型已经改走 `get_cockpit` 等接地工具（before/
+after 两臂分别调了 9 次、11 次 `get_cockpit`，`table_get` 只剩 2 次、1 次，见
+`compass-v2/docs/superpowers/notes/2026-08-11-grounding-baseline.md`），下面这段只作为
+探针阶段的历史记录保留，**不能当成"agent 现在还会这样"来读**：
+
 - 探针那一轮里，模型（kimi-k2.7-code）面对“现在能不能按期交？”**没有调用任何 compass
   接地工具**（`get_cockpit`/`run_report` 之类），而是直接 `table_get` 拉 `schedule` 表原始
   行，然后打算自己分页扫完 30,923 行去算平均，还派发了两个子 agent（`task`）去帮忙统计——
   子 agent 汇报说“看不到 table 工具”，等于白跑。这条 case 一轮真实跑了 2 分钟以上都没跑
   完（被 curl 的 `-m 120` 掐断，服务端那边应该还在继续，`maxSteps=25` 会兜底但不保证快）。
-  这不是本刀（采集器）的问题——只是提醒下一个看接地判据结果的人：如果发现
+  这不是本刀（采集器）的问题——只是提醒下一个看接地判据结果的人：探针阶段如果发现
   `toolCalls` 里全是 `table_get` 而不是诊断类工具，那可能是接地提示词没把模型引导到位，
-  是一个真实的产品信号，不是采集器的 bug。
+  是一个真实的产品信号，不是采集器的 bug；但截至 2026-08-11 基线，这个信号已经不复现了。
 - `sendReasoning: true` 在 chat.ts 里开着，但这个模型/网关组合**没有产出独立的
   `reasoning-*` 事件**——它的 `<think>...</think>` 内容直接混在 `text-delta` 里（探针里能
   看到裸的 `"</think>"` 字面量出现在文本流中）。也就是说 `Sample.text` 里可能包含模型的
@@ -266,6 +333,13 @@ shell 没有继承 server 那份 `.env`，补上 `import '../env.js'` 之后才�
 处理：报错退出、不打印"0 个样本，0 个有硬违规"这种看起来干净实际上什么都没跑的汇总行，也
 不写结果文件。`cases.ts` 改过 case id/租户声明之后、真的要跑一次昂贵的基线之前，先用一个
 小 `VEYLIN_EVAL_CASES` 子集空跑一次，确认过滤器还对得上。
+
+同一道 `validateFilters()` 现在也校验三个数字旋钮
+（`VEYLIN_EVAL_ATTEMPTS`/`VEYLIN_EVAL_TIMEOUT_MS`/`VEYLIN_EVAL_DISCARD_TIMEOUT_MS`）：
+拼错单位（比如把 `VEYLIN_EVAL_TIMEOUT_MS` 写成 `8min` 而不是 `480000`）会解析成 `NaN`，
+`setTimeout` 拿到 `NaN` 会立刻触发，导致每一轮 chat 瞬间被 abort、整个 sweep 全变成失败
+样本却退出码为 0——这类拼写错误现在会在打第一个网络请求之前就报错退出，跟 id 类过滤器
+同一等级。
 
 ## 硬性要求
 

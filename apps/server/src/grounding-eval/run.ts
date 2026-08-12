@@ -149,6 +149,23 @@ function validateFilters(): void {
         `(已知: ${[...KNOWN_TENANTS].join(',')})`,
     );
   }
+  // 数字旋钮同样要在花一分钱之前校验:字符串→数字用 Number() 硬转,拼错单位
+  // (比如把 VEYLIN_EVAL_TIMEOUT_MS 写成 "8min")解析成 NaN 时,setTimeout 会
+  // 立刻触发,每一轮 chat 都会瞬间 abort——一整个 sweep 全部跑成失败样本,但
+  // 退出码是 0、看起来"跑完了"。id 类过滤器已经在上面 fail loud,数字类旋钮
+  // 之前没有,这里补齐同一等级的校验。
+  for (const [name, value] of [
+    ['VEYLIN_EVAL_ATTEMPTS', ATTEMPTS],
+    ['VEYLIN_EVAL_TIMEOUT_MS', TIMEOUT_MS],
+    ['VEYLIN_EVAL_DISCARD_TIMEOUT_MS', DISCARD_TIMEOUT_MS],
+  ] as const) {
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error(
+        `${name} 必须解析成一个正数,读到的原始值是 ${JSON.stringify(process.env[name])}` +
+          `,解析结果是 ${value}——多半是打错了单位或格式(比如写成 "8min" 而不是毫秒数)`,
+      );
+    }
+  }
 }
 
 /**
@@ -540,8 +557,14 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((err) => {
-  const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
-  console.error(`[eval] 采集器异常退出:\n${message}`);
-  process.exitCode = 1;
-});
+// 只在直接跑这个文件时才启动(仿 compass-refs.ts 同款守卫)——目前没有任何地方
+// import run.ts,但下一步显而易见的动作(比如给对比逻辑写单测,从 `./run.js`
+// import compare()/validateFilters() 之类的纯函数)一旦发生,没有这道守卫就会让
+// `npm test` 顺带跑起一整轮打真网关、花真钱的采集 sweep。
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    console.error(`[eval] 采集器异常退出:\n${message}`);
+    process.exitCode = 1;
+  });
+}
