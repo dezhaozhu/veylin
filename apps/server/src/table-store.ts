@@ -454,6 +454,33 @@ export function isProjectPinMismatch(
 }
 
 /**
+ * G1 predicate (2026-08-12): a sheet carrying ANY load stamp is PROJECT data —
+ * it came out of a Compass server under some project. A turn with no project
+ * pin (the「个人」area, or a tool call outside a chat turn) has no project in
+ * scope at all, so that data is out of scope here exactly as the grouped MCP
+ * servers and the widget channel already are (`resolveScopedServerNames` denies
+ * grouped members without an active pin).
+ *
+ * This is the structural half of G1: the system-prompt line telling the model
+ * it is unpinned has existed since 全项目制 (chat.ts `buildProjectPinBlock`),
+ * and the grounding experiment measured prose to have no effect — the model
+ * read the stale project sheet anyway and narrated a whole analysis off it.
+ * Withholding the rows is not advice the model can decline.
+ *
+ * Deliberately NOT symmetric with `isProjectPinMismatch`: unstamped sheets stay
+ * readable (they are the user's own uploads — the personal area's whole point),
+ * and under a pin this returns false so the mismatch predicate keeps owning
+ * that decision. One fact, one owner.
+ */
+export function isUnscopedProjectData(
+  source: TableSheetSource | null | undefined,
+  projectPin: string | null | undefined,
+): boolean {
+  if (projectPin) return false;
+  return Boolean(source?.project || source?.server);
+}
+
+/**
  * Stamp (or refresh) a sheet's load provenance. Called by the Compass load tools
  * on every (re)load — sheetId must already exist (callers create the sheet first).
  * Awaits the persist (unlike the fire-and-forget row/column mutators) so a caller
@@ -532,6 +559,11 @@ export type TableSheetSnapshot = {
    * its data (name only, one-line note) instead of leaking cross-project rows
    * into the system prompt. */
   pinMismatch?: boolean;
+  /** True when `isUnscopedProjectData` fired (G1): stamped project data in a
+   * turn with no project pin. Same withholding as `pinMismatch`, different
+   * reason and different fix, so it gets its own note. Mutually exclusive with
+   * `pinMismatch` by construction (that one requires a pin). */
+  unscopedProjectData?: boolean;
 };
 
 /** Format live table snapshots for the agent system prompt (right-panel 表格). */
@@ -548,6 +580,13 @@ export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string
     if (sheet.pinMismatch) {
       lines.push(
         `## Sheet "${sheet.name}" (id: \`${sheet.id}\`) — 跳过: 数据来源与当前项目不一致, 请在当前项目下重新加载`,
+      );
+      continue;
+    }
+    if (sheet.unscopedProjectData) {
+      lines.push(
+        `## Sheet "${sheet.name}" (id: \`${sheet.id}\`) — 跳过: 本表是项目数据, 当前会话未绑定项目, ` +
+          `不能作为依据; 请将会话移动到该项目, 或在该项目下新建会话`,
       );
       continue;
     }
@@ -596,8 +635,11 @@ export function buildTableContextBlock(
 ): string {
   const snapshots = listTableSheets(threadId).map((meta) => {
     const pinMismatch = isProjectPinMismatch(meta.source, projectPin, projects);
-    const columns = pinMismatch ? [] : listTableColumns(meta.id);
-    const rows = pinMismatch ? [] : listTableRows(meta.id);
+    // G1: withheld for the other reason — project data, no project pinned.
+    const unscopedProjectData = isUnscopedProjectData(meta.source, projectPin);
+    const withheld = pinMismatch || unscopedProjectData;
+    const columns = withheld ? [] : listTableColumns(meta.id);
+    const rows = withheld ? [] : listTableRows(meta.id);
     return {
       id: meta.id,
       name: meta.name,
@@ -605,6 +647,7 @@ export function buildTableContextBlock(
       rowCount: rows.length,
       sampleRows: rows.slice(0, 3),
       pinMismatch,
+      unscopedProjectData,
     };
   });
   return formatTableContextBlock(snapshots);

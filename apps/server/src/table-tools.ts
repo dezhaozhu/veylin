@@ -14,6 +14,7 @@ import {
   getTableSheetMeta,
   importTableSheet,
   isProjectPinMismatch,
+  isUnscopedProjectData,
   listTableColumns,
   listTableRowsPage,
   listTableSheets,
@@ -180,6 +181,20 @@ function buildProvenanceWarning(
   return (
     `注意: 本表数据来自项目 ${source.project ?? source.server}(租户 ${source.tenant ?? '未知'}, ${source.loadedAt} 加载), ` +
     `与当前会话项目 ${projectPin} 不一致 — 勿与当前项目的实时数据混用`
+  );
+}
+
+/**
+ * G1 refusal text: says what the sheet IS (project data, whose, when loaded),
+ * that it cannot ground this turn, and the one gesture that fixes it. No
+ * hedging and no advice the model can read as optional — the rows are already
+ * gone by the time it reads this.
+ */
+function buildUnscopedProjectDataWarning(source: TableSheetSource): string {
+  return (
+    `本表是项目数据(来自项目 ${source.project ?? source.server}, 租户 ${source.tenant ?? '未知'}, ` +
+    `${source.loadedAt} 加载);当前会话未绑定任何项目,这些数据不能作为依据 — ` +
+    `请将本会话移动到该项目,或在该项目下新建会话`
   );
 }
 
@@ -578,6 +593,16 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
           refused: true,
           warning: `${buildProvenanceWarning(source, projectPin, tenantProjects)} — 请在当前项目下重新加载`,
         };
+      }
+
+      // G1: no project pin at all (个人 area, or a call outside a chat turn) +
+      // a STAMPED sheet = project data with no project in scope. Withheld for
+      // the same reason the grouped MCP servers are: the alternative — which is
+      // what shipped until now — is the agent quietly narrating an analysis off
+      // a project's stale sheet with nothing telling the user it had no
+      // Compass basis. Unstamped (personal) sheets fall through untouched.
+      if (isUnscopedProjectData(source, projectPin)) {
+        return { sheet, refused: true, warning: buildUnscopedProjectDataWarning(source!) };
       }
 
       // z.coerce.number() already validated string→number; Number() re-narrows the
