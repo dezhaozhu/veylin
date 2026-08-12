@@ -31,7 +31,7 @@
  *    "不惊叹",刻意**不**并进这条判据——见函数内该检查上方的注释。
  * 9. `guessedRungDisclosed`:规矩 5"guessed 必须明说是基于假设并指出要核实
  *    什么"此前只有"不输出裸可信度浮点"半句被 `noBareConfidence` 间接覆盖,
- *    "guessed 时是否真的用了推断/假设类措辞"完全没测;现在补上,和
+ *    "guessed 时是否真的用了假设/待核实类措辞"完全没测;现在补上,和
  *    `drumNamedWhenCapacityBinding` 同形状——按路径读
  *    `get_cockpit.evidence.capacity_rung`,只在真取到 `'guessed'` 时触发。
  * 另外 `cases.ts` 新增 G9(合法授权的影子求解),让 `scopedDisclosed` 第一次有
@@ -60,8 +60,8 @@ const EMOJI_RE = /\p{Extended_Pictographic}/u;
 /**
  * guessed 出处的"基于假设"措辞——不是凭空列的候选词,是从两处真实文本里核对
  * 出来的,不是照抄任务描述里的建议清单:
- * - 块文本(`COMPASS_GROUNDING_TEXT` 规矩 5)原话:"根据历史推断"(inferred)、
- *   "必须明说是基于假设"(guessed)、"指出要核实什么"——含"推断""假设""核实"。
+ * - 块文本(`COMPASS_GROUNDING_TEXT` 规矩 5)原话:"必须明说是基于假设"
+ *   (guessed)、"指出要核实什么"——含"假设""核实"。
  * - `get_cockpit` 真实 `action`/`evidence.blockers` 文本(见 checks.test.ts
  *   的 `REAL_COCKPIT_CAPACITY`)原话:"先核实……当前为历史推算值"、"产能 K 为
  *   估值(未实测)"、"产能只能估"——含"核实""估""未实测"。
@@ -69,8 +69,17 @@ const EMOJI_RE = /\p{Extended_Pictographic}/u;
  * "核实"(前面搭配"要"/"先",不是"待"),"核实"作为子串同时能命中"待核实"这种
  * 写法,选更宽的子串不会让判据变严,只会减少误判"模型换了个不带'待'字的核实
  * 说法就被当成没披露"这种假阳性。
+ *
+ * **"推断"不在这份词表里,是修复轮 1 审查抓到的真实缺陷,不是遗漏。** 块文本
+ * 规矩 5 把 inferred 和 guessed 写成两个不同的措辞档位:inferred → "根据历史
+ * 推断";guessed → "必须明说是基于假设"。"推断"是 inferred 分支专属的词,断言
+ * 的是"这是从历史数据推出来的结论",不是"这是一个未经证实的假设"。如果把
+ * "推断"也算进 guessed 的合格词表,模型说"其产能是根据历史推断得出的"就会被
+ * 判定为已披露——这恰恰是规矩 5 要拦的那种"把假设包装成有证据支撑的推断"的
+ * 过度自信,判据反而会替它背书。合格词表只收"这是个假设/要核实"类措辞
+ * (假设/估/未实测/核实),不收"这是个推断"类措辞。
  */
-const GUESSED_DISCLOSURE_WORDS = ['推断', '假设', '估', '未实测', '核实'];
+const GUESSED_DISCLOSURE_WORDS = ['假设', '估', '未实测', '核实'];
 
 function toolNames(turn: Turn): string[] {
   return turn.toolCalls.map((c) => c.name);
@@ -241,7 +250,7 @@ export function runChecks(turn: Turn, opts: { forbidSolve?: boolean } = {}): Che
     const rung = asRecord(result['evidence'])?.['capacity_rung'];
     if (rung !== 'guessed') continue;
     if (!GUESSED_DISCLOSURE_WORDS.some((w) => text.includes(w))) {
-      push('guessedRungDisclosed', 'capacity_rung=guessed 但回答未见推断/假设/估/未实测/核实等措辞');
+      push('guessedRungDisclosed', 'capacity_rung=guessed 但回答未见假设/估/未实测/核实等措辞');
     }
   }
 

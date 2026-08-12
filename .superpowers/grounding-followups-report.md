@@ -118,3 +118,69 @@
   本轮范围。
 - "不惊叹""数字带单位"两个前言子句、规矩 1 的大部分,仍然完全没有判据覆盖 —— README
   表格如实标注,不在本轮"便宜后续"范围内。
+- `guessedRungDisclosed` 只读 `evidence.capacity_rung`,从不读 `evidence.due_rung`——
+  两份真实 fixture 的 `due_rung` 都是 `'inferred'`,`due_rung === 'guessed'` 分支目前
+  完全没有判据覆盖。这是 fix round 1 review 指出的 Minor,已如实记进 README 覆盖表,
+  不是本轮要修的缺陷(范围就是 capacity_rung)。
+
+## Fix round 1(审查发现,已修)
+
+审查复现了三次 mutation test、核对了 upsert 结论、确认 `compass-grounding.ts` 字节不变、
+确认没有改动任何既有判据的检测逻辑,但抓到一个 Important:**`GUESSED_DISCLOSURE_WORDS`
+里的"推断"让 `guessed` 能被当成 `inferred` 来披露。**
+
+块文本规矩 5 把 inferred 和 guessed 写成两个不同措辞档位:inferred → "根据历史推断";
+guessed → "必须明说是基于假设"。"推断"是 inferred 分支专属的词,断言的是"这是从历史数据
+推出来的结论",不是"这是一个未经证实的假设"。第一版词表把"推断"也算进 guessed 的合格词
+表,于是 `capacity_rung: 'guessed'` 配上"瓶颈是 YZ0202-4，其产能是根据历史推断得出的。"
+会被判定为已披露——审查直接复现了这个假阴性。这恰好是规矩 5 要拦的那种"把假设包装成有
+证据支撑的推断"的过度自信,判据反而在替它背书。
+
+而且我提交的正面用例(`checks.test.ts:418-424`,fixture 文本"……历史推断值，建议先核实")
+本身就同时含"推断"和"核实"两个词,那个测试的通过不能证明"推断"这个词本身有没有问题——
+审查点明了这一点。
+
+**修复(两半都做了)**:
+
+1. `GUESSED_DISCLOSURE_WORDS` 从 `['推断', '假设', '估', '未实测', '核实']` 改成
+   `['假设', '估', '未实测', '核实']`——去掉"推断",其余四个逐一对照块文本规矩 5 原话
+   ("必须明说是基于假设"/"核实什么")和 `get_cockpit` 真实 `action`/`blockers` 文本
+   ("估值"/"未实测")重新核实过,都属于"这是个假设/要核实"类措辞,不是"这是个推断"类。
+2. `checks.test.ts` 改了正面用例的 fixture 文本,去掉"推断",只留"估……核实"两个真正
+   该测的词;新增一条用例:文本只含"推断"(不含假设/估/未实测/核实),对着 guessed
+   fixture,断言判据**触发**——这正是审查复现的那条假阴性,现在是一条会失败的回归测试
+   (在修复前的词表下会失败,验证方式见下方 mutation transcript)。
+
+### Mutation test transcript(把"推断"临时加回词表,复现原缺陷)
+
+```
+$ GUESSED_DISCLOSURE_WORDS = ['假设', '估', '未实测', '核实', '推断']   # 临时改动
+$ npx tsx --test src/grounding-eval/checks.test.ts
+▶ guessedRungDisclosed
+  ✔ flags a capacity answer when capacity_rung is guessed and the answer carries no assumption wording
+  ✔ passes when the answer uses assumption wording (假设/估/未实测/核实)
+  ✖ flags a guessed answer that only says 推断 (fix round 1: ...)
+    assert.ok(names(t).includes('guessedRungDisclosed'))
+      at checks.test.ts:430
+✖ guessedRungDisclosed
+```
+
+新增的回归用例精确复现了审查报告的例子并失败,证明它测的就是审查描述的那个洞。改回
+`['假设', '估', '未实测', '核实']` 后重新跑,73 个测试(六个目标文件全量)全绿;
+`git diff` 确认改动只剩词表本身 + 测试 + 注释 + README,没有遗留的临时改动。
+
+### README 同步(Minor)
+
+`README.md` 规矩 5 那一行原来标"覆盖",没有限定范围。`guessedRungDisclosed` 只读
+`get_cockpit.evidence.capacity_rung`,从不读 `evidence.due_rung`(两份真实 fixture 的
+`due_rung` 都是 `'inferred'`)——按审查的要求把这行改成"部分",并加上和 emoji 行同款的
+诚实限定:`due_rung === 'guessed'` 分支目前未测,是刻意留白不是疏漏。范围本身(只测
+capacity)是对的,不用改代码,只补文档措辞。
+
+### 验证记录(fix round 1)
+
+- `cd apps/server && npm run typecheck` —— 通过,零错误。
+- `npx tsx --test src/grounding-eval/checks.test.ts src/grounding-eval/cases.test.ts
+  src/compass-grounding.test.ts src/chat-system-blocks.test.ts src/compass-refs.test.ts
+  src/schedule-edit.test.ts` —— 73 个测试(新增 1 条回归用例),73 通过,0 失败。
+- 未跑 collector 任何一臂,基线重跑仍然是调用方的工作。

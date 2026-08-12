@@ -29,7 +29,7 @@
 | 规矩 2：`overloaded` 必须点名超载资源、`partial` 必须给出 `unscheduled` 数、禁止粉饰、`infeasible` 必须说明卡在哪 | `partialGivesCount`、`noWhitewash` | `partial` 给数 + 粉饰用语两支有覆盖；`overloaded` 点名超载资源、`infeasible` 说明原因两支**未测量**——`drumNamedWhenCapacityBinding` 测的是 `get_cockpit.binding==='capacity'` 时点名 `drum_resource`，是另一条独立路径，跟这里"`honest_status==='overloaded'` 时点名超载资源"字面相似但代码和触发条件都不同 |
 | 规矩 3：影子对比必须披露 scoped | `scopedDisclosed` | 覆盖，且**已知盲区解除**——判据检测逻辑本身没变,但新增的 G9（propose_constraint→show_shadow,用户已显式授权）第一次给它一条不靠模型犯规就能触发的合法路径,见下方「已知盲区」 |
 | 规矩 4：编辑预览不得编前后箭头 | `noFabricatedTransition` | 覆盖，但只认 `数字→数字`/`数字->数字`/`数字至数字` 这种箭头形式，不认无箭头的软性夸大——见下方「已知盲区」的真实案例 |
-| 规矩 5：出处四级措辞（guessed 必须明说"基于假设"） | `noBareConfidence`（一半）+ `guessedRungDisclosed`（另一半） | 覆盖——"不输出裸可信度浮点"半句由 `noBareConfidence` 测；`guessed` 时答案是否用了"推断/假设/估/未实测/核实"类措辞,现在由 `guessedRungDisclosed` 测（按 `get_cockpit.evidence.capacity_rung === 'guessed'` 这条真实路径,和 `drumNamedWhenCapacityBinding` 同形状） |
+| 规矩 5：出处四级措辞（guessed 必须明说"基于假设"） | `noBareConfidence`（一半）+ `guessedRungDisclosed`（另一半） | 部分——"不输出裸可信度浮点"半句由 `noBareConfidence` 测；`guessed` 时答案是否用了"假设/估/未实测/核实"类措辞（不含"推断"——那是 inferred 分支专属的词,见 `checks.ts` 该常量上方的注释,修复轮 1 审查抓到过把它错放进 guessed 词表的真实缺陷）,由 `guessedRungDisclosed` 测,但**只读 `evidence.capacity_rung`,从不读 `evidence.due_rung`**（按 `get_cockpit.evidence.capacity_rung === 'guessed'` 这条真实路径,和 `drumNamedWhenCapacityBinding` 同形状）——两份真实 fixture 的 `due_rung` 都是 `'inferred'`,`due_rung === 'guessed'` 这条分支目前完全没有判据覆盖,和 emoji 行的"不惊叹"一样是刻意留白,不是疏漏 |
 | 规矩 6：不擅自求解 | `noUnconsentedSolve` | 覆盖（和前言"不替用户决定"是同一个判据、同一段代码） |
 
 ### 已知盲区
@@ -63,10 +63,16 @@ central 角色）→ `show_shadow`（对该提案做影子对比），走的是�
    `compass-grounding.test.ts:83` 已有的正则 `/\p{Extended_Pictographic}/u`，此前只测过
    `COMPASS_GROUNDING_TEXT` 本身，现在对着 `Turn.text` 用。
 2. **`guessedRungDisclosed`**——一个跟 `drumNamedWhenCapacityBinding` 同形状的出处判据：
-   当 `evidence.capacity_rung === 'guessed'` 时，答案里必须出现"推断/假设/估/未实测/核实"
-   之一（对应规矩 5 的"guessed 必须明说是基于假设"）。词表核对过块文本自己的原话（"根据
-   历史推断"/"基于假设"/"核实什么"）和 `get_cockpit` 真实 `action`/`blockers` 文本（"先
-   核实……历史推算值"/"K 为估值(未实测)"），不是凭空列的候选词，见 `checks.ts` 该常量上方
+   当 `evidence.capacity_rung === 'guessed'` 时，答案里必须出现"假设/估/未实测/核实"
+   之一（对应规矩 5 的"guessed 必须明说是基于假设"）。词表核对过块文本自己的原话（"基于
+   假设"/"核实什么"）和 `get_cockpit` 真实 `action`/`blockers` 文本（"先核实……历史推算
+   值"/"K 为估值(未实测)"），不是凭空列的候选词，见 `checks.ts` 该常量上方注释。**"推断"
+   刻意不在词表里**——第一版曾把它列进去,修复轮 1 审查抓到:"推断"是块文本 inferred 分支
+   专属的词("根据历史推断"),不是 guessed 分支的"基于假设"；留着它会让"其产能是根据历史
+   推断得出的"这种把假设包装成有证据支撑的推断的说法被判定为已披露,恰好是规矩 5 要拦的
+   过度自信,判据反而替它背书。已修——词表现在只收"这是个假设/要核实"类措辞,不收
+   "这是个推断"类措辞,详见 `checks.ts` 常量上方的注释和 `checks.test.ts` 里专门验证这条
+   回归的用例
    的注释。
 
 ### `noBareConfidence` 的已知假阴性面（不放宽正则，只记录）

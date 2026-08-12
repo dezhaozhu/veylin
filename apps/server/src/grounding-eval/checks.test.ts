@@ -415,12 +415,19 @@ describe('guessedRungDisclosed', () => {
     });
     assert.ok(names(t).includes('guessedRungDisclosed'));
   });
-  it('passes when the answer uses assumption wording (推断/假设/估/未实测/核实)', () => {
+  it('passes when the answer uses assumption wording (假设/估/未实测/核实)', () => {
     const t = turn({
-      text: '瓶颈最可能是 YZ0202-4，其并行台数 K 目前是历史推断值，建议先核实。',
+      text: '瓶颈最可能是 YZ0202-4，其并行台数 K 目前是估值，建议先核实。',
       toolCalls: [{ name: 'get_cockpit', result: REAL_COCKPIT_CAPACITY }],
     });
     assert.ok(!names(t).includes('guessedRungDisclosed'));
+  });
+  it('flags a guessed answer that only says 推断 (fix round 1: 推断 is the inferred-branch word, not an admission that this is an assumption — 「根据历史推断得出的」 describes a guessed capacity as if it were an evidence-backed inference, which is exactly the overstatement rule 5 forbids)', () => {
+    const t = turn({
+      text: '瓶颈是 YZ0202-4，其产能是根据历史推断得出的。',
+      toolCalls: [{ name: 'get_cockpit', result: REAL_COCKPIT_CAPACITY }],
+    });
+    assert.ok(names(t).includes('guessedRungDisclosed'));
   });
   it('does not fire when capacity_rung is not guessed', () => {
     const t = turn({
