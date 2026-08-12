@@ -152,6 +152,53 @@ POST /api/project  { threadId, project: <projectId> }
   警告**，不会在结果文件里编一个从没打到过的 `tenant` 字段——这是计划原文明确要求的
   底线（“不要伪造一个跑不到的租户维度”）。
 
+## 失败怎么记（第一轮审查修的两个 Important）
+
+结果文件里每个样本现在多一个字段：
+
+```ts
+error: string | null;   // null = 真的跑完一轮对话并被判据评过;非 null = 采集本身出了问题
+```
+
+`error` 非 null 的两种来源：
+
+1. `pinThreadToProject`/`askOnce` 失败(pin 打不到项目、chat 超时、网络错误)——这种情况下
+   `askOnce` 根本没跑起来，`text`/`toolCalls`/`violations` 都是空的占位,`text` 会带一个
+   `[collector error] ...` 前缀方便人眼扫,但**不要**依赖这个自由文本前缀做判断——机器判断
+   一律看 `error` 字段。
+2. G5 攒好的答案是真的,但事后 `discardDraft`(`POST /api/schedule-edit/discard`)失败——
+   这种情况下 `text`/`toolCalls`/`violations` 仍然是这轮真实收集到的数据,只是清理草稿
+   这一步没做成,`error` 里会带 `discard failed: ...`,和上面第一种失败共用同一个字段/同一套
+   下游处理,不单独开一条通道。
+
+**每个消费者都必须认这个字段**,而不是只看 `violations`:
+
+- `main()` 结尾的汇总行把 `error !== null` 的样本单独算成"采集失败",不计入"成功"和"有硬
+  违规"的分母——一次 pin 失败(`violations: []`)不会被算成"零违规的干净通过"。
+- `--compare` 里,只要两侧任意一侧 `error !== null`,这条 sampleId 直接打印成"采集失败,
+  不比较",不会走到 violations 的 diff 逻辑——两个都是空 `violations` 数组时,老代码会把
+  "一个真的跑完零违规"和"一个压根没跑起来"都判成"没变化",这正是审查抓到的坏味道。
+
+`--compare` 还有一个**已知的范围限制,不是遗漏**:它只对比 `violations`(硬判据),完全不看
+`numbersToReview`(半自动、不判红的数字线索——理由见 `checks.ts` 顶部注释)。一次干净的
+`--compare`(没有任何行打印出来)只保证"硬判据没变化",**不保证"数字线索也没变化"**——如果
+要确认改动前后模型给的数字有没有漂移,仍然要人工翻两份结果文件里的 `numbersToReview`。
+
+## 中断怎么办
+
+- **增量落盘**:`main()` 每跑完一个 case×tenant 就把当前已收集到的全部样本重写一次到
+  `grounding-<label>.json`,并把顶层 `partial` 标成 `true`;整个 sweep 跑完后再重写一次,
+  `partial: false`。也就是说进程随时被杀掉,磁盘上那份文件永远是**合法 JSON**,`partial`
+  字段诚实地说明它是不是跑完了——不会出现"写了一半的 JSON 打不开"或者"看起来跑完了其实
+  半途而废"这两种情况。
+- **SIGINT/SIGTERM**:采集器装了信号处理器。如果收到信号时正好卡在一个 `needsCentralRole`
+  (目前只有 G5)的 attempt 中途——已经 pin 了线程、可能已经开出草稿、但还没来得及跑到
+  `discardDraft` 那一步——处理器会先补打一次 discard 再退出,把这次中断可能留下的草稿清掉。
+  这不是万能的:如果信号来的时候连 pin 都还没打(草稿肯定还没开),或者已经过了 discard 那一
+  步(已经清过了),这次补discard只是个空操作,无害。**手动清理仍然是最终兜底**——如果采集器
+  进程被 `kill -9`(SIGKILL,信号处理器拦不住)或者机器直接断电,唯一的办法还是人工对着残留
+  的 threadId 打一次 `POST /api/schedule-edit/discard`。
+
 ## 跑法
 
     VEYLIN_COMPASS_GROUNDING=0 node --import tsx src/grounding-eval/run.ts --label before
@@ -175,6 +222,9 @@ shell 没有继承 server 那份 `.env`，补上 `import '../env.js'` 之后才�
   工具引导时自己分页扫全表，单轮可能拖很久；裸 `fetch` 不设超时会让一次跑坏的 case
   卡住整个采集器。
 - `VEYLIN_EVAL_TENANT`（可选）——只跑这一个租户，见上「租户怎么选」。
+- `VEYLIN_EVAL_CASES`（可选，逗号分隔的 case id，如 `G3,G5`）——只跑这几条 case，给便宜的
+  手动验证/调试用（比如只想单独确认某条 case 的行为，不用把 8 条全跑一遍）。不影响正式
+  基线跑法，正式跑不传这个变量即可覆盖 `GROUNDING_CASES` 全集。
 
 ## 硬性要求
 

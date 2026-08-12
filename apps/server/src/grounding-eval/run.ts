@@ -7,8 +7,8 @@
  *   node --import tsx src/grounding-eval/run.ts --compare before after
  *
  * 前置条件、SSE 事件结构、租户怎么选 —— 见同目录 README.md，全部是探针
- * (2026-08-11)的**实测**结果，不是照抄计划里的猜测。三处偏离计划骨架，
- * 全部由探针逼出来，理由写在各自的注释里：
+ * (2026-08-11)的**实测**结果，不是照抄计划里的猜测。偏离计划骨架的地方，
+ * 全部由探针或第一轮审查逼出来，理由写在各自的注释里：
  *
  * 1. `tool-output-available` 不带 `toolName`（计划的骨架假设它有）——
  *    工具名只在 `tool-input-start`/`tool-input-available` 里出现，必须靠
@@ -24,11 +24,13 @@
  *    诊断工具），单轮可能非常久（后续正式跑里模型改走了 get_cockpit 等接地
  *    工具，见 task-7-report.md）。加了 VEYLIN_EVAL_TIMEOUT_MS 兜底，默认
  *    8 分钟，而不是裸 fetch 不设超时。
+ * 4.（第一轮审查, Finding 1）单次 `discardDraft` 失败/`pinThreadToProject`+
+ *    `askOnce` 之外的任何异常，都不该把已经花真钱采到的样本全部丢掉：
+ *    `main()` 有 `.catch()`，结果文件按 case 增量落盘（带 `partial` 标记），
+ *    `discardDraft` 的失败被记进样本的 `error` 字段而不是让异常往上传。
+ * 5.（第一轮审查, Finding 2）一次 `pinThreadToProject`/`askOnce` 失败产出的
+ *    样本，结构上必须和"真的跑完且零违规"区分得开——见下面 `Sample.error`。
  */
-// 复用 server.ts 同一条 .env 加载路径(仓库根目录 .env),否则 `model` 字段会
-// 读到采集器自己 shell 里的空 VEYLIN_MODEL,而不是 server 实际在用的值 ——
-// 冒烟跑时踩到过这个坑(见 README.md「跑法」)。dotenv 默认不覆盖已经在环境
-// 里的变量,所以命令行前缀的 VEYLIN_EVAL_* 依然优先。
 import '../env.js';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -41,6 +43,11 @@ const ATTEMPTS = Number(process.env['VEYLIN_EVAL_ATTEMPTS'] ?? '3');
 const TIMEOUT_MS = Number(process.env['VEYLIN_EVAL_TIMEOUT_MS'] ?? '480000');
 /** 可选:只跑一个厂(窄化,不是必需 —— 见文件头注释 2)。 */
 const ONLY_TENANT = process.env['VEYLIN_EVAL_TENANT'];
+/** 可选:只跑指定的 case id(逗号分隔),给便宜的手动验证/调试用,不改变全量跑法。 */
+const ONLY_CASES = process.env['VEYLIN_EVAL_CASES']
+  ?.split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 const OUT_DIR = resolve(process.cwd(), 'eval-runs');
 
 type Sample = {
@@ -52,6 +59,27 @@ type Sample = {
   toolCalls: ToolCall[];
   violations: Array<{ check: string; detail: string }>;
   numbersToReview: string[];
+  /**
+   * null = 这次 attempt 真的跑完了一轮对话并被判据评过(text/toolCalls/
+   * violations 可信)。非 null = 采集本身出了问题(pin 失败/chat 超时或报错/
+   * 草稿 discard 失败)—— text/violations 不代表模型的真实回答,不能算进
+   * "零违规"的统计,也不该在 --compare 里被当成"和上次一样"。
+   *
+   * 第一轮审查 Finding 2:此前用 `text` 里的 `[collector error]` 前缀当唯一
+   * 标记,是自由文本,汇总时的 `violations.length > 0` 判红逻辑和
+   * `compare()` 的 diff 都不认它,一次 pin 失败的样本会被算成"零违规的
+   * 干净通过"。这个字段就是让每个消费者都能机械地把两者分开。
+   */
+  error: string | null;
+};
+
+type RunFile = {
+  label: string;
+  model: string | null;
+  groundingEnabled: boolean;
+  /** true = 这次 sweep 还没跑完(增量落盘中途)。见文件头注释 4。 */
+  partial: boolean;
+  samples: Sample[];
 };
 
 type ProjectRow = { id: string; sources: string[]; managed: boolean };
@@ -172,6 +200,27 @@ async function askOnce(question: string, threadId: string): Promise<{ text: stri
   return { text: text.join(''), toolCalls };
 }
 
+/**
+ * G5 唯一会产生编辑草稿的 threadId,在"这一 attempt 需要 discard"到"已经
+ * discard 过"之间的窗口里保持非空 —— SIGINT/SIGTERM 处理器靠它判断退出前
+ * 要不要补一次 discard(第一轮审查 Minor 1)。
+ */
+let pendingDiscardThreadId: string | null = null;
+
+function installSignalHandlers(): void {
+  const onSignal = (signal: NodeJS.Signals) => {
+    void (async () => {
+      if (pendingDiscardThreadId) {
+        console.warn(`[eval] 收到 ${signal},退出前补一次 discard(threadId=${pendingDiscardThreadId})`);
+        await discardDraft(pendingDiscardThreadId).catch(() => undefined);
+      }
+      process.exit(1);
+    })();
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+}
+
 async function runCase(
   c: GroundingCase,
   tenant: string,
@@ -182,11 +231,14 @@ async function runCase(
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     const threadId = `eval-${label}-${c.id}-${tenant}-${attempt}-${Date.now()}`;
     const sampleId = `${c.lane}:${c.id}:${tenant}:${attempt}`;
+    if (c.needsCentralRole) pendingDiscardThreadId = threadId;
+
+    let sample: Sample;
     try {
       await pinThreadToProject(threadId, projectId);
       const turn = await askOnce(c.question, threadId);
       const report = runChecks({ ...turn, caseId: c.id }, { forbidSolve: c.forbidSolve === true });
-      out.push({
+      sample = {
         sampleId,
         caseId: c.id,
         tenant,
@@ -195,17 +247,17 @@ async function runCase(
         toolCalls: turn.toolCalls,
         violations: report.violations,
         numbersToReview: report.numbersToReview,
-      });
+        error: null,
+      };
     } catch (err) {
       // 探针实测到模型可能在没有接地工具引导时自己分页扫全表,单轮可能拖到
       // VEYLIN_EVAL_TIMEOUT_MS 触发 AbortController —— 一次超时/网络错误不该
       // 掐死整个 sweep(8 个 case × 最多 2 个租户 × N attempts),记一条可见的
-      // 失败样本,继续跑剩下的。空 toolCalls/violations 不会被误判成"过了判据"
-      // ——runChecks 对空 text 本来就不会命中任何硬判据,人工看 text 里的
-      // `[collector error]` 前缀就知道这条不是真实答案。
+      // 失败样本,继续跑剩下的。`error` 非 null 这一点本身就是判据,不依赖
+      // text 里的自由文本前缀(第一轮审查 Finding 2)。
       const message = err instanceof Error ? err.message : String(err);
       console.warn(`[eval] ${sampleId} 失败: ${message}`);
-      out.push({
+      sample = {
         sampleId,
         caseId: c.id,
         tenant,
@@ -214,37 +266,101 @@ async function runCase(
         toolCalls: [],
         violations: [],
         numbersToReview: [],
-      });
+        error: message,
+      };
     }
-    if (c.needsCentralRole) await discardDraft(threadId);
+
+    if (c.needsCentralRole) {
+      // 不管上面成功还是失败都尝试 discard——即使 pin/ask 失败,也可能是在
+      // 草稿已经开出之后才失败的(比如 discard 之前那一步网络抖动),宁可多
+      // 打一次没有草稿可清的 discard,也不要漏清。
+      const discardError = await discardDraft(threadId);
+      pendingDiscardThreadId = null;
+      if (discardError) {
+        // 第一轮审查 Finding 1:discardDraft 失败不能让异常往上传把整个 sweep
+        // 炸掉,但也不能被 console.warn 悄悄吞掉——记进同一个 error 字段
+        // (finding 2 建的那条通道),让这条样本在汇总/对比里都显式地不算"干净"。
+        sample.error = sample.error ? `${sample.error}; discard failed: ${discardError}` : `discard failed: ${discardError}`;
+      }
+    }
+    out.push(sample);
   }
   return out;
 }
 
-/** G5 会产生草稿。不 discard 就会污染下一次跑,也污染真人的工作区。 */
-async function discardDraft(threadId: string): Promise<void> {
-  const res = await fetch(`${BASE}/api/schedule-edit/discard`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ threadId }),
-  });
-  if (!res.ok) console.warn(`[eval] discard 失败 ${res.status} —— 草稿可能残留,手动清理 (threadId=${threadId})`);
+/**
+ * G5 会产生草稿。不 discard 就会污染下一次跑,也污染真人的工作区。
+ * 返回失败原因(string)而不是抛异常 —— 调用方(runCase)决定怎么记录,housekeeping
+ * 失败绝不能把整个 sweep 炸掉(第一轮审查 Finding 1)。
+ */
+async function discardDraft(threadId: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${BASE}/api/schedule-edit/discard`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ threadId }),
+    });
+    if (!res.ok) {
+      const message = `discard ${res.status} (threadId=${threadId})`;
+      console.warn(`[eval] discard 失败 ${message} —— 草稿可能残留,手动清理`);
+      return message;
+    }
+    return null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[eval] discard 抛异常 ${message} (threadId=${threadId}) —— 草稿可能残留,手动清理`);
+    return message;
+  }
 }
 
+/**
+ * `numbersToReview` 是软信号(半自动线索,不判红——见 checks.ts 的文档注释),
+ * 这里的对比刻意只看 `violations`。这是一个已知的范围限制,不是遗漏:一次干净
+ * 的 `--compare` 只保证"硬判据没变化",不保证"数字线索也没变化",人工复核
+ * `numbersToReview` 仍然是必要的一步(README.md 同步记了这条)。
+ */
 function compare(aLabel: string, bLabel: string): void {
   const load = (l: string) =>
     JSON.parse(readFileSync(resolve(OUT_DIR, `grounding-${l}.json`), 'utf8')) as { samples: Sample[] };
   const a = new Map(load(aLabel).samples.map((s) => [s.sampleId, s]));
   const b = new Map(load(bLabel).samples.map((s) => [s.sampleId, s]));
   for (const id of new Set([...a.keys(), ...b.keys()])) {
-    const av = a.get(id)?.violations.map((v) => v.check).sort() ?? null;
-    const bv = b.get(id)?.violations.map((v) => v.check).sort() ?? null;
-    if (av === null || bv === null) {
-      console.log(`${id}: 只在 ${av === null ? bLabel : aLabel} 出现(样本集改了?)`);
-    } else if (JSON.stringify(av) !== JSON.stringify(bv)) {
+    const sa = a.get(id);
+    const sb = b.get(id);
+    if (!sa || !sb) {
+      console.log(`${id}: 只在 ${!sa ? bLabel : aLabel} 出现(样本集改了?)`);
+      continue;
+    }
+    // 第一轮审查 Finding 2:采集失败的样本(error !== null)违规列表是空的
+    // ([]),和"真的跑完且零违规"在这里如果只比 violations 会显示成
+    // "没变化"——必须先把它单独摘出来,不能悄悄折进"unchanged"。
+    if (sa.error != null || sb.error != null) {
+      console.log(
+        `${id}: 采集失败,不比较 —— ${aLabel}.error=${sa.error ?? '(无)'} ${bLabel}.error=${sb.error ?? '(无)'}`,
+      );
+      continue;
+    }
+    const av = sa.violations.map((v) => v.check).sort();
+    const bv = sb.violations.map((v) => v.check).sort();
+    if (JSON.stringify(av) !== JSON.stringify(bv)) {
       console.log(`${id}: ${aLabel}=[${av.join(',')}] → ${bLabel}=[${bv.join(',')}]`);
     }
   }
+}
+
+/** 落盘助手 —— main() 在每个 case×tenant 跑完后都调一次,不只在最后调一次。 */
+function writeResults(label: string, samples: Sample[], partial: boolean): string {
+  mkdirSync(OUT_DIR, { recursive: true });
+  const file = resolve(OUT_DIR, `grounding-${label}.json`);
+  const body: RunFile = {
+    label,
+    model: process.env['VEYLIN_MODEL'] ?? null,
+    groundingEnabled: process.env['VEYLIN_COMPASS_GROUNDING'] !== '0',
+    partial,
+    samples,
+  };
+  writeFileSync(file, `${JSON.stringify(body, null, 2)}\n`);
+  return file;
 }
 
 async function main(): Promise<void> {
@@ -261,10 +377,13 @@ async function main(): Promise<void> {
   const label = labelIdx >= 0 ? argv[labelIdx + 1] : undefined;
   if (!label) throw new Error('需要 --label <name>');
 
+  installSignalHandlers();
+
   const tenantProjects = await resolveTenantProjects();
 
   const samples: Sample[] = [];
   for (const c of GROUNDING_CASES) {
+    if (ONLY_CASES && !ONLY_CASES.includes(c.id)) continue;
     const tenants = ONLY_TENANT ? c.tenants.filter((t) => t === ONLY_TENANT) : c.tenants;
     for (const tenant of tenants) {
       const projectId = tenantProjects.get(tenant);
@@ -275,25 +394,24 @@ async function main(): Promise<void> {
       }
       console.log(`[eval] ${c.id} @ ${tenant} ×${ATTEMPTS}`);
       samples.push(...(await runCase(c, tenant, projectId, label)));
+      // 第一轮审查 Finding 1:增量落盘。一次崩溃(不管是不是 discard 那个
+      // bug)不该让已经花真钱采到的样本全部丢掉——每个 case×tenant 跑完就
+      // 重写一次文件,标 partial:true,让中途中断也留一份可用的部分结果。
+      writeResults(label, samples, true);
     }
   }
-  mkdirSync(OUT_DIR, { recursive: true });
-  const file = resolve(OUT_DIR, `grounding-${label}.json`);
-  writeFileSync(
-    file,
-    `${JSON.stringify(
-      {
-        label,
-        model: process.env['VEYLIN_MODEL'] ?? null,
-        groundingEnabled: process.env['VEYLIN_COMPASS_GROUNDING'] !== '0',
-        samples,
-      },
-      null,
-      2,
-    )}\n`,
+  const file = writeResults(label, samples, false);
+  const errored = samples.filter((s) => s.error !== null);
+  const ok = samples.filter((s) => s.error === null);
+  const red = ok.filter((s) => s.violations.length > 0).length;
+  console.log(
+    `[eval] ${samples.length} 个样本 —— ${ok.length} 个成功(${red} 个有硬违规),` +
+      `${errored.length} 个采集失败(不计入违规统计) → ${file}`,
   );
-  const red = samples.filter((s) => s.violations.length > 0).length;
-  console.log(`[eval] ${samples.length} 个样本,${red} 个有硬违规 → ${file}`);
 }
 
-void main();
+main().catch((err) => {
+  const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  console.error(`[eval] 采集器异常退出:\n${message}`);
+  process.exitCode = 1;
+});
