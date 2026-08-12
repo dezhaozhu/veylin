@@ -33,6 +33,7 @@ import {
   formatTableContextBlock,
   getTableSheetMeta,
   isProjectPinMismatch,
+  isUnscopedProjectData,
   stampTableSheetSource,
 } from './table-store.js';
 
@@ -169,17 +170,6 @@ describe('table provenance: stamping on Compass (re)load', () => {
 });
 
 describe('table_get: source + project-pin mismatch refusal (project-id keyed)', () => {
-  it('surfaces source verbatim and no warning when the thread has no project pin', async () => {
-    const tools = await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
-
-    const out = await callTableGet(tools, { sheet: 'schedule' });
-    assert.ok(out.source);
-    assert.equal(out.source!.server, 'compass');
-    assert.equal(out.source!.project, PROJ_GUOLU.id);
-    assert.equal(out.source!.tenant, 'guolu');
-    assert.equal('warning' in out, false, 'no pin → no warning');
-  });
-
   it('refuses the rows (no row data) when the sheet source.project differs from the current project pin', async () => {
     const tools = await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
 
@@ -247,6 +237,116 @@ describe('table_get: source + project-pin mismatch refusal (project-id keyed)', 
     const out = await callTableGet(tools, { sheet: created!.id });
     assert.equal('source' in out, false);
     assert.equal('warning' in out, false);
+  });
+});
+
+/**
+ * G1 (2026-08-12 端到端验证): 工具是 fail-closed 的,自信是 fail-open 的。
+ *
+ * 未钉项目的「个人」会话拿不到任何 compass MCP 工具(`resolveChatMcpScope` 的
+ * fail-closed 设计),但 agent 不会因此说"我没有数据"——它转头读工作区里**上次
+ * 在某个项目下加载的排产表**,把陈旧的工厂数据当依据编出整套分析,用户无从知道
+ * 这个回答与 Compass 无关。系统提示块里那句"当前会话在「个人」区"早就在了
+ * (chat.ts buildProjectPinBlock),实测证明**散文拦不住**(见
+ * grounding-eval 两臂实测:提示块在可测维度上零效果)。
+ *
+ * 所以这里走结构:**带 compass 来源戳的表 = 项目数据**,会话不在任何项目里就
+ * 不供给它——与 widget/MCP 通道早已生效的"个人会话一律拒绝"对齐
+ * (`resolveScopedServerNames`)。没戳的表(用户自己传的 CSV/Excel)是个人数据,
+ * 行为逐字不变。
+ */
+describe('G1: 未钉项目的会话不得读取项目数据(带来源戳的表)', () => {
+  it('refuses a project-stamped sheet when the turn has no project pin', async () => {
+    const tools = await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
+
+    const out = await callTableGet(tools, { sheet: 'schedule' }, ctxFor({ pin: null }));
+
+    assert.equal(out.refused, true, '个人会话读项目数据必须被拒绝,而不是拿到行');
+    assert.equal('rows' in out, false, 'refused response must carry no row data');
+    assert.equal('source' in out, false);
+    assert.match(out.warning ?? '', /项目数据/);
+    assert.match(out.warning ?? '', new RegExp(PROJ_GUOLU.id));
+    assert.match(out.warning ?? '', /不能作为依据/);
+    assert.match(out.warning ?? '', /移动|新建/);
+  });
+
+  it('refuses with no requestContext at all (tool invoked outside a chat turn — same ambiguity, same fail-closed)', async () => {
+    const tools = await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
+
+    const out = await callTableGet(tools, { sheet: 'schedule' });
+
+    assert.equal(out.refused, true);
+    assert.equal('rows' in out, false);
+  });
+
+  it('refuses a LEGACY entry-name stamp too (project data is project data, mapped or not)', async () => {
+    const created = createTableSheet(`g1-legacy-${Date.now()}`);
+    assert.ok(created);
+    await stampTableSheetSource(created!.id, {
+      server: 'compass-guolu',
+      tenant: 'guolu',
+      loadedAt: '2026-07-20T00:00:00.000Z',
+    }).catch(() => undefined);
+    const tools = buildTableTools();
+
+    const out = await callTableGet(tools, { sheet: created!.id }, ctxFor({ pin: null }));
+
+    assert.equal(out.refused, true);
+    assert.equal('rows' in out, false);
+    assert.match(out.warning ?? '', /compass-guolu/);
+  });
+
+  it('UNSTAMPED sheets (the user\'s own upload) stay fully readable in the personal area — byte-identical to before', async () => {
+    const created = createTableSheet(`g1-personal-${Date.now()}`);
+    assert.ok(created);
+    const tools = buildTableTools();
+
+    const out = await callTableGet(tools, { sheet: created!.id }, ctxFor({ pin: null }));
+
+    assert.equal(out.refused ?? false, false, '个人数据不受影响');
+    assert.ok(Array.isArray(out.rows));
+    assert.equal('warning' in out, false);
+    assert.equal('source' in out, false);
+  });
+
+  it('buildTableContextBlock withholds a project-stamped sheet from the unpinned system prompt (no sample rows)', async () => {
+    await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
+
+    const block = buildTableContextBlock(null, null, TENANT_PROJECTS);
+
+    const scheduleLine = block.split('\n').find((l) => l.includes('(id: `schedule`)')) ?? '';
+    assert.match(scheduleLine, /跳过: 本表是项目数据/);
+    assert.doesNotMatch(block, /O1/, '未钉项目时不得把项目数据样本喂进提示词');
+  });
+
+  it('formatTableContextBlock renders the unscoped-project-data note with no columns or rows', () => {
+    const block = formatTableContextBlock([
+      {
+        id: 'sheet-unscoped',
+        name: 'Unscoped Sheet',
+        columns: [{ key: 'secret', name: 'Secret' }],
+        rowCount: 5,
+        sampleRows: [{ row_id: 'r1', secret: 'do-not-leak' }],
+        unscopedProjectData: true,
+      },
+    ]);
+
+    assert.match(block, /跳过: 本表是项目数据/);
+    assert.match(block, /移动|新建/);
+    assert.doesNotMatch(block, /do-not-leak/);
+    assert.doesNotMatch(block, /Secret/);
+  });
+});
+
+describe('isUnscopedProjectData (G1 predicate)', () => {
+  it('true only for a stamped source with no project pin', () => {
+    const stamped = { server: 'compass', project: PROJ_GUOLU.id, loadedAt: 'x' };
+    assert.equal(isUnscopedProjectData(stamped, null), true);
+    assert.equal(isUnscopedProjectData(stamped, undefined), true);
+    assert.equal(isUnscopedProjectData({ server: 'compass-guolu', loadedAt: 'x' }, null), true);
+    assert.equal(isUnscopedProjectData(stamped, PROJ_GUOLU.id), false, '有钉定 → 交给 mismatch 判据');
+    assert.equal(isUnscopedProjectData(undefined, null), false, '无戳 = 个人数据');
+    assert.equal(isUnscopedProjectData(null, null), false);
   });
 });
 
