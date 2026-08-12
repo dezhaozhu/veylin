@@ -16,6 +16,10 @@
  * 因为真实数据里恰好有同名诱饵(`get_cockpit.status` 是交付风险色,
  * `get_health.history[].status`/`unscheduled` 是过往版本的旧值),按 key 名扫会
  * 把诱饵当成本轮事实。
+ *
+ * 修复轮 2(纯文档订正,判据逻辑不变):`currentRunStatuses` 里关于
+ * `metrics.status` 的注释此前写错了 —— 对照 compass-v2 源码
+ * (`run_report_service.py:223`/`:236`)后订正,见下方函数注释。
  */
 
 export type ToolCall = { name: string; result: unknown };
@@ -45,19 +49,29 @@ function asRecord(v: unknown): Record<string, unknown> | undefined {
  * - `diagnosis.honest_status`(仅 `preview_schedule_edit` 会吐;四态
  *   feasible/partial/overloaded/infeasible,源自 compass 的
  *   `compass_domain.diagnosis.RunDiagnosis.honest_status`)。
- * - `metrics.status`(仅 `get_health` 会吐;`SolveStatus` 五态
- *   feasible/infeasible/partial/timeout/error,源自
- *   `compass_app.validate.classify_status` —— 没有 overloaded 这个态,
- *   已对照 compass-v2 源码
- *   `src/compass_domain/records.py:12` 核实)。
+ * - `metrics.status`(仅 `get_health` 会吐)。已对照 compass-v2 源码逐行核实
+ *   真实推导 —— `compass_api/run_report_service.py:236`:
+ *   `status = diag.honest_status if diag else cur.status`。也就是说
+ *   `metrics.status` 优先取的就是这一轮的 `honest_status`,跟上面
+ *   `diagnosis.honest_status` 是同一套四态、同一个字段来源,合法取值里就有
+ *   `overloaded`;只有这一行运行没有存下 diagnosis(老/降级行)时才退到
+ *   `cur.status`(持久化时由 `compass_app.validate.classify_status` 写入,
+ *   该函数目前只会产出 feasible/infeasible,partial/timeout/error 是类型上
+ *   预留但当前推不出的取值)。上一版这里写反了,说 `metrics.status` 是
+ *   `classify_status` 的 `SolveStatus`、没有 overloaded 这个态——那是任务
+ *   协调者转述时的错误,一读源码就能证伪,已订正。
  *
  * 两个诱饵、路径之外一律不采:
- * - `get_cockpit.status` 是交付风险色(red/amber/green),不是运行状态。
- * - `get_health.history[].status` 是过往版本的状态,不是这一轮的。真实数据里
- *   history[].status 甚至会出现 "overloaded"(它记的是提交时的
- *   honest_status,跟 metrics.status 是两套不同来源、只是恰好同名的字段 ——
- *   已用 compass-v2 `run_history.py` 的 `row.status` 取值链核实,见任务报告)。
- *   这正说明只认 key 名不认路径不可靠。
+ * - `get_cockpit.status` 是交付风险色(red/amber/green),跟运行状态压根不
+ *   是一套词表,肉眼就能分辨。
+ * - `get_health.history[].status` 才是真正危险的诱饵:
+ *   `run_report_service.py:223` 显示它是跟 `metrics.status` 完全相同的推导
+ *   (`hd.honest_status if hd else run.status`),只是套在每一条历史记录上
+ *   而不是这一轮 —— 跟本轮状态共享同一套四态词表,真实数据里就见过
+ *   history[] 条目取值 "overloaded"。光看取值本身分不出这是本轮还是十条以
+ *   前的某次跑,唯一能分辨的是它出现在 `history[]` 数组里、不在 `metrics`
+ *   下——所以必须按路径认,不能按 key 名认,也不能靠"这个词表看起来像不像
+ *   本轮"这种直觉认。
  *
  * 不在这里把 timeout/error 折算成四态之一 —— 那是编造对应关系,判据宁可对这两
  * 个值不触发,也不要猜。
