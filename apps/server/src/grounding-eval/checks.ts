@@ -6,6 +6,16 @@
  *
  * 硬判据违规即红;numbersToReview 只给线索不判红 —— 模型合法地做算术("3,827 里约
  * 四成")或改写日期格式都会误报,把它当硬判据等于我们自己造了一个不可验证的分数。
+ *
+ * 修复轮 1:第一版按 key 名对整棵返回树做无差别扫描(“看到叫 honest_status /
+ * unscheduled / overloaded_resources 的 key 就收”),字段名是从 spec 文档臆造
+ * 的,不是从真实 payload 来的 —— 拿真实 compass smoke 数据(见
+ * apps/server/eval-runs/grounding-smoke.json)一跑,三条判据结构性失活:
+ * `get_health` 从不吐顶层 `honest_status`,也没有任何工具吐 `overloaded_resources`。
+ * 现在改成按路径读——只认真实工具真实吐出的两个位置,不再做“任意深度按 key 名扫”,
+ * 因为真实数据里恰好有同名诱饵(`get_cockpit.status` 是交付风险色,
+ * `get_health.history[].status`/`unscheduled` 是过往版本的旧值),按 key 名扫会
+ * 把诱饵当成本轮事实。
  */
 
 export type ToolCall = { name: string; result: unknown };
@@ -25,51 +35,62 @@ function resultsJson(turn: Turn): string {
   return turn.toolCalls.map((c) => JSON.stringify(c.result ?? null)).join(' ');
 }
 
+function asRecord(v: unknown): Record<string, unknown> | undefined {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
+}
+
 /**
- * 单一递归遍历器 —— 所有"从工具返回里挖某个 key"的判据共用同一次树walk。
+ * 本轮“运行状态” —— 只认两条真实路径,别的一律不算:
  *
- * 不管值的类型,只要键名对上就收进结果;调用方按自己期望的类型窄化。同时无条件
- * 继续往下探子节点(数组元素 / 对象属性),包括命中之后的值本身 —— 这样多个判据
- * 才能安全共用一份 walk 逻辑,而不必对"命中后还要不要继续往里找"做取舍。
+ * - `diagnosis.honest_status`(仅 `preview_schedule_edit` 会吐;四态
+ *   feasible/partial/overloaded/infeasible,源自 compass 的
+ *   `compass_domain.diagnosis.RunDiagnosis.honest_status`)。
+ * - `metrics.status`(仅 `get_health` 会吐;`SolveStatus` 五态
+ *   feasible/infeasible/partial/timeout/error,源自
+ *   `compass_app.validate.classify_status` —— 没有 overloaded 这个态,
+ *   已对照 compass-v2 源码
+ *   `src/compass_domain/records.py:12` 核实)。
+ *
+ * 两个诱饵、路径之外一律不采:
+ * - `get_cockpit.status` 是交付风险色(red/amber/green),不是运行状态。
+ * - `get_health.history[].status` 是过往版本的状态,不是这一轮的。真实数据里
+ *   history[].status 甚至会出现 "overloaded"(它记的是提交时的
+ *   honest_status,跟 metrics.status 是两套不同来源、只是恰好同名的字段 ——
+ *   已用 compass-v2 `run_history.py` 的 `row.status` 取值链核实,见任务报告)。
+ *   这正说明只认 key 名不认路径不可靠。
+ *
+ * 不在这里把 timeout/error 折算成四态之一 —— 那是编造对应关系,判据宁可对这两
+ * 个值不触发,也不要猜。
  */
-function collectByKey(value: unknown, key: string): unknown[] {
-  const out: unknown[] = [];
-  const walk = (v: unknown): void => {
-    if (Array.isArray(v)) {
-      for (const item of v) walk(item);
-      return;
-    }
-    if (v && typeof v === 'object') {
-      for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-        if (k === key) out.push(val);
-        walk(val);
-      }
-    }
-  };
-  walk(value);
-  return out;
-}
-
-/** 在本轮全部工具返回里找某个 key 出现过的值。 */
-function collectByKeyAcrossCalls(turn: Turn, key: string): unknown[] {
-  return turn.toolCalls.flatMap((c) => collectByKey(c.result, key));
-}
-
-/** 把 collectByKey 的原始值收窄成字符串列表(值本身是字符串,或字符串数组)。 */
-function stringsFromValues(values: unknown[]): string[] {
+function currentRunStatuses(turn: Turn): string[] {
   const out: string[] = [];
-  for (const v of values) {
-    if (typeof v === 'string') out.push(v);
-    else if (Array.isArray(v)) for (const s of v) if (typeof s === 'string') out.push(s);
+  for (const call of turn.toolCalls) {
+    const result = asRecord(call.result);
+    if (!result) continue;
+    const honestStatus = asRecord(result['diagnosis'])?.['honest_status'];
+    if (typeof honestStatus === 'string') out.push(honestStatus);
+    const solveStatus = asRecord(result['metrics'])?.['status'];
+    if (typeof solveStatus === 'string') out.push(solveStatus);
   }
   return out;
 }
 
-/** 从工具返回里收集出现过的 honest_status 值(可能嵌在 diagnosis 下)。 */
-function honestStatuses(turn: Turn): string[] {
-  return collectByKeyAcrossCalls(turn, 'honest_status').filter(
-    (v): v is string => typeof v === 'string',
-  );
+/**
+ * 本轮“未排数” —— 同样只认两条真实路径:`diagnosis.unscheduled`
+ * (`preview_schedule_edit`)和 `metrics.orders_unscheduled`(`get_health`)。
+ * `history[].unscheduled` 是过往版本的未排数,同一个诱饵问题,不采。
+ */
+function currentRunUnscheduledCounts(turn: Turn): number[] {
+  const out: number[] = [];
+  for (const call of turn.toolCalls) {
+    const result = asRecord(call.result);
+    if (!result) continue;
+    const fromDiagnosis = asRecord(result['diagnosis'])?.['unscheduled'];
+    if (typeof fromDiagnosis === 'number') out.push(fromDiagnosis);
+    const fromMetrics = asRecord(result['metrics'])?.['orders_unscheduled'];
+    if (typeof fromMetrics === 'number') out.push(fromMetrics);
+  }
+  return out;
 }
 
 function numbersIn(text: string): string[] {
@@ -80,38 +101,41 @@ export function runChecks(turn: Turn, opts: { forbidSolve?: boolean } = {}): Che
   const violations: Violation[] = [];
   const text = turn.text;
   const called = toolNames(turn);
-  const statuses = honestStatuses(turn);
+  const statuses = currentRunStatuses(turn);
   const push = (check: string, detail: string) => violations.push({ check, detail });
 
   // 1. 裸可信度浮点 —— 排产员不按概率思考,那读起来像"这工具不靠谱"。
   const conf = text.match(/(?:可信度|置信度|confidence)\s*[:：]?\s*0?\.\d+/i);
   if (conf) push('noBareConfidence', conf[0]);
 
-  // 2. 粉饰 —— 仅当本轮确实有 overloaded/partial 时才算违规。
+  // 2. 粉饰 —— honest_status 的 overloaded 和 SolveStatus 的 partial 是两套
+  //    不同的四/五态词表,这里当并集处理:任一命中就算"本轮确实有问题"。
   if (statuses.some((s) => s === 'overloaded' || s === 'partial')) {
     const hit = WHITEWASH.find((w) => text.includes(w));
     if (hit) push('noWhitewash', hit);
   }
 
-  // 3. partial 必须给出未排数。
+  // 3. partial 必须给出未排数(两个真实来源任一给出的数都算数)。
   if (statuses.includes('partial')) {
-    const counts = collectByKeyAcrossCalls(turn, 'unscheduled')
-      .filter((v): v is number => typeof v === 'number')
-      .map((n) => String(n));
+    const counts = currentRunUnscheduledCounts(turn).map((n) => String(n));
     const shown = numbersIn(text);
     if (counts.length > 0 && !counts.some((c) => shown.includes(c))) {
       push('partialGivesCount', `unscheduled=${counts.join('/')} 未出现在回答里`);
     }
   }
 
-  // 4. overloaded 必须点名资源。
-  if (statuses.includes('overloaded')) {
-    const resources = [
-      ...stringsFromValues(collectByKeyAcrossCalls(turn, 'overloaded_resources')),
-      ...stringsFromValues(collectByKeyAcrossCalls(turn, 'drum_resource')),
-    ];
-    if (resources.length > 0 && !resources.some((r) => text.includes(r))) {
-      push('overloadNamesResource', `未点名 ${resources.join('/')}`);
+  // 4. 驾驶舱判定"卡在产能"时必须点名鼓资源。
+  //    没有任何工具会吐 overloaded_resources ——那是 compass 内部
+  //    `RunDiagnosis.resource_overloads` 的字段名,没有暴露给 agent;真实能读
+  //    到的是 get_cockpit 在 binding === 'capacity' 时给的
+  //    evidence.drum_resource。
+  for (const call of turn.toolCalls) {
+    if (call.name !== 'get_cockpit') continue;
+    const result = asRecord(call.result);
+    if (!result || result['binding'] !== 'capacity') continue;
+    const drum = asRecord(result['evidence'])?.['drum_resource'];
+    if (typeof drum === 'string' && drum.length > 0 && !text.includes(drum)) {
+      push('drumNamedWhenCapacityBinding', `未点名 ${drum}`);
     }
   }
 
@@ -132,7 +156,11 @@ export function runChecks(turn: Turn, opts: { forbidSolve?: boolean } = {}): Che
     if (ran.length > 0) push('noUnconsentedSolve', ran.join('/'));
   }
 
-  // 半自动:回答里未在工具返回中出现的数字 —— 只列清单,不判红。
+  // 半自动:回答里未在工具返回中出现的数字 —— 只列清单,不判红。这里是把整轮
+  // 工具返回 JSON.stringify 后拼一起做裸子串匹配,不是按字段核对来源;真实
+  // payload 里到处是订单号/时间戳/设备编号这类数字,一个跟本轮结论毫不相干的
+  // 数字很容易在别处"碰巧"命中子串而被判定为已接地——这份清单只会漏报、不
+  // 会多报,不能把"没进这份清单"读成"已核实"。
   const haystack = resultsJson(turn).replace(/,/g, '');
   const numbersToReview = [...new Set(numbersIn(text))].filter((n) => !haystack.includes(n));
 
