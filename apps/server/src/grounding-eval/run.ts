@@ -30,6 +30,17 @@
  *    `discardDraft` 的失败被记进样本的 `error` 字段而不是让异常往上传。
  * 5.（第一轮审查, Finding 2）一次 `pinThreadToProject`/`askOnce` 失败产出的
  *    样本，结构上必须和"真的跑完且零违规"区分得开——见下面 `Sample.error`。
+ * 6.（第二轮审查, Finding A）`VEYLIN_EVAL_CASES`/`VEYLIN_EVAL_TENANT` 传一个不
+ *    存在的 case id / 租户名，不该悄悄跑出 0 个样本还退出码 0——那和"跑完了
+ *    什么问题都没有"从输出上分不清。两个过滤器的值都在跑之前校验，未知值直接
+ *    报错退出；即使过滤器都合法，sweep 最终 0 个样本也当失败处理，不当成
+ *    "干净"结果打印或落盘。
+ * 7.（第二轮审查, Finding B）`discardDraft` 原来的 `fetch` 没有超时——如果
+ *    server 是"挂起没响应"而不是"直接拒连"(正是有人会去按 Ctrl-C 的场景)，
+ *    SIGINT/SIGTERM 处理器会卡在 `await discardDraft(...)` 上永远退不出去，
+ *    比修复前(Node 默认处理器,Ctrl-C 立即退)还糟。现在 `discardDraft` 自己有
+ *    超时(`AbortController`)，信号处理器额外传一个更短的超时；连按两次
+ *    Ctrl-C 会跳过等待直接退出。
  */
 import '../env.js';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -48,6 +59,15 @@ const ONLY_CASES = process.env['VEYLIN_EVAL_CASES']
   ?.split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+/** discardDraft 的默认超时(正常路径,runCase 里每次 G5 attempt 后都会调一次)。 */
+const DISCARD_TIMEOUT_MS = Number(process.env['VEYLIN_EVAL_DISCARD_TIMEOUT_MS'] ?? '30000');
+/**
+ * SIGINT/SIGTERM 处理器里补一次 discard 时用的超时——刻意比 DISCARD_TIMEOUT_MS
+ * 短很多:这是"尽力而为"的清理,不是保证,不能让用户等太久按不动第二次 Ctrl-C
+ * (第二轮审查 Finding B)。不做成环境变量:就是给"人正在等着退出"这个场景用的,
+ * 不是需要按跑法调的旋钮。
+ */
+const SIGNAL_DISCARD_TIMEOUT_MS = 5_000;
 const OUT_DIR = resolve(process.cwd(), 'eval-runs');
 
 type Sample = {
@@ -83,6 +103,35 @@ type RunFile = {
 };
 
 type ProjectRow = { id: string; sources: string[]; managed: boolean };
+
+const KNOWN_CASE_IDS = new Set(GROUNDING_CASES.map((c) => c.id));
+const KNOWN_TENANTS = new Set(GROUNDING_CASES.flatMap((c) => c.tenants));
+
+/**
+ * 第二轮审查 Finding A:`VEYLIN_EVAL_CASES`/`VEYLIN_EVAL_TENANT` 传一个不存在的
+ * case id / 租户名,在过滤逻辑里就是"这条 case 没匹配上,跳过"——静默产出 0 个
+ * 样本,退出码却是 0,和"跑完了,啥问题都没有"从命令行输出上分不清。这在
+ * `cases.ts` 改名/删 case 之后、真跑一次昂贵的基线之前尤其危险:一个手滑的
+ * case id 会让人以为跑过了。未知值在跑之前就报错退出,不当成"合法但恰好匹配
+ * 不到东西"的空选择。
+ */
+function validateFilters(): void {
+  if (ONLY_CASES) {
+    const unknown = ONLY_CASES.filter((id) => !KNOWN_CASE_IDS.has(id));
+    if (unknown.length > 0) {
+      throw new Error(
+        `VEYLIN_EVAL_CASES 里有未知的 case id: ${unknown.join(',')}` +
+          `(已知: ${[...KNOWN_CASE_IDS].join(',')})`,
+      );
+    }
+  }
+  if (ONLY_TENANT && !KNOWN_TENANTS.has(ONLY_TENANT)) {
+    throw new Error(
+      `VEYLIN_EVAL_TENANT=${ONLY_TENANT} 不是任何 case 声明过的租户` +
+        `(已知: ${[...KNOWN_TENANTS].join(',')})`,
+    );
+  }
+}
 
 /**
  * 租户怎么选(README.md「租户怎么选」章节的实测结论):会话钉定到的是一个
@@ -207,12 +256,29 @@ async function askOnce(question: string, threadId: string): Promise<{ text: stri
  */
 let pendingDiscardThreadId: string | null = null;
 
+/**
+ * 第二轮审查 Finding B:第一次信号"尽力而为"补一次 discard(有
+ * SIGNAL_DISCARD_TIMEOUT_MS 兜底,不会永远卡住),但如果用户等不及、再按一次
+ * Ctrl-C(或再发一次 SIGTERM),必须立刻退出,不管补 discard 有没有做完——
+ * "退不出程序"永远不该是这个采集器能造成的后果，最坏情况只是草稿没清干净，
+ * 手动清理还在(见 README「中断怎么办」)。
+ */
+let signalHandled = false;
+
 function installSignalHandlers(): void {
   const onSignal = (signal: NodeJS.Signals) => {
+    if (signalHandled) {
+      console.warn(`[eval] 再次收到 ${signal},不再等 discard,立刻退出`);
+      process.exit(1);
+    }
+    signalHandled = true;
     void (async () => {
       if (pendingDiscardThreadId) {
-        console.warn(`[eval] 收到 ${signal},退出前补一次 discard(threadId=${pendingDiscardThreadId})`);
-        await discardDraft(pendingDiscardThreadId).catch(() => undefined);
+        console.warn(
+          `[eval] 收到 ${signal},最多等 ${SIGNAL_DISCARD_TIMEOUT_MS}ms 尝试补一次 discard` +
+            `(threadId=${pendingDiscardThreadId};再按一次可立刻退出)`,
+        );
+        await discardDraft(pendingDiscardThreadId, SIGNAL_DISCARD_TIMEOUT_MS).catch(() => undefined);
       }
       process.exit(1);
     })();
@@ -293,12 +359,19 @@ async function runCase(
  * 返回失败原因(string)而不是抛异常 —— 调用方(runCase)决定怎么记录,housekeeping
  * 失败绝不能把整个 sweep 炸掉(第一轮审查 Finding 1)。
  */
-async function discardDraft(threadId: string): Promise<string | null> {
+async function discardDraft(threadId: string, timeoutMs = DISCARD_TIMEOUT_MS): Promise<string | null> {
+  // 第二轮审查 Finding B:这个 fetch 原来没有超时——如果 server 是"挂起没
+  // 响应"(不是直接拒连,拒连 fetch 会很快抛异常),这个 await 永远不返回。
+  // 正常路径(runCase 里每次 G5 attempt 后)用 DISCARD_TIMEOUT_MS;
+  // SIGINT/SIGTERM 路径传一个短得多的 SIGNAL_DISCARD_TIMEOUT_MS。
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${BASE}/api/schedule-edit/discard`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ threadId }),
+      signal: controller.signal,
     });
     if (!res.ok) {
       const message = `discard ${res.status} (threadId=${threadId})`;
@@ -310,6 +383,8 @@ async function discardDraft(threadId: string): Promise<string | null> {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[eval] discard 抛异常 ${message} (threadId=${threadId}) —— 草稿可能残留,手动清理`);
     return message;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -377,6 +452,10 @@ async function main(): Promise<void> {
   const label = labelIdx >= 0 ? argv[labelIdx + 1] : undefined;
   if (!label) throw new Error('需要 --label <name>');
 
+  // 第二轮审查 Finding A:零网络请求的快速失败,在花任何钱之前先确认过滤器
+  // 拼对了。
+  validateFilters();
+
   installSignalHandlers();
 
   const tenantProjects = await resolveTenantProjects();
@@ -400,6 +479,21 @@ async function main(): Promise<void> {
       writeResults(label, samples, true);
     }
   }
+
+  if (samples.length === 0) {
+    // 第二轮审查 Finding A:即使过滤器本身合法(比如 case 和 tenant 都存在,
+    // 但这条 case 没声明这个租户,交集是空的;或者本地环境这几个租户的托管
+    // 项目都没建出来),0 个样本也不能当"干净"结果打印或落盘——不写 samples:
+    // [] 的"看似正常"的文件,直接报错退出,退出码非零,消息里给出下一步该查
+    // 什么。
+    throw new Error(
+      '这次 sweep 产出了 0 个样本 —— 不当成干净结果处理。' +
+        '检查 VEYLIN_EVAL_CASES/VEYLIN_EVAL_TENANT 的组合是否互相排除了' +
+        '(某条 case 没声明这个租户),或者本地 /api/projects 是否缺对应租户的' +
+        '托管默认项目(见上面每条 case 的 [eval] 警告)。',
+    );
+  }
+
   const file = writeResults(label, samples, false);
   const errored = samples.filter((s) => s.error !== null);
   const ok = samples.filter((s) => s.error === null);

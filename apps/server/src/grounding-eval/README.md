@@ -179,6 +179,15 @@ error: string | null;   // null = 真的跑完一轮对话并被判据评过;非
   不比较",不会走到 violations 的 diff 逻辑——两个都是空 `violations` 数组时,老代码会把
   "一个真的跑完零违规"和"一个压根没跑起来"都判成"没变化",这正是审查抓到的坏味道。
 
+**已知的取舍,刻意不改**:G5 的 attempt 如果聊天真的成功、判据也真的评过了,但事后
+`discardDraft` 失败,这条样本仍然被算进"采集失败"、排除在成功/违规分母之外——即便它的
+`violations` 是真实、可信的判据结果。这是字面意义上满足"error 非 null 就统一处理"这条
+要求的直接后果,没有为"discard 失败但判据真实"单开一条例外路径。**在真实基线跑里这会
+悄悄缩小有效样本量**:如果 G5 那条 case 因为网络抖动反复触发 `discard failed`,汇总行
+里的"成功"计数会比实际跑过的 attempts 少——读基线结果时如果发现 G5 的成功样本数明显
+低于 `VEYLIN_EVAL_ATTEMPTS`,先去看 `error` 字段是不是一堆 `discard failed: ...`,不要
+直接当成"这条 case 本来就没跑那么多次"。
+
 `--compare` 还有一个**已知的范围限制,不是遗漏**:它只对比 `violations`(硬判据),完全不看
 `numbersToReview`(半自动、不判红的数字线索——理由见 `checks.ts` 顶部注释)。一次干净的
 `--compare`(没有任何行打印出来)只保证"硬判据没变化",**不保证"数字线索也没变化"**——如果
@@ -198,6 +207,15 @@ error: string | null;   // null = 真的跑完一轮对话并被判据评过;非
   步(已经清过了),这次补discard只是个空操作,无害。**手动清理仍然是最终兜底**——如果采集器
   进程被 `kill -9`(SIGKILL,信号处理器拦不住)或者机器直接断电,唯一的办法还是人工对着残留
   的 threadId 打一次 `POST /api/schedule-edit/discard`。
+- **补 discard 有超时,连按两次信号必退**(第二轮审查 Finding B):`discardDraft` 原来的
+  `fetch` 没有超时——如果 server 是"挂起没响应"而不是"直接拒连"(正是有人会去按 Ctrl-C
+  的场景),旧代码会让 `await discardDraft(...)` 永远不返回,SIGINT/SIGTERM 处理器卡死,
+  比"完全不处理信号"(Node 默认行为,Ctrl-C 立即退)还糟——这是本地拿一个只accept连接、
+  从不回响应的监听器复现过的真实 bug,不是猜的。现在信号路径上的补 discard 最多等
+  `SIGNAL_DISCARD_TIMEOUT_MS`(硬编码 5 秒,不是环境变量——这是"人正在等退出"这个场景专用
+  的短超时,不是要按跑法调的旋钮);如果这 5 秒还没等完又收到第二次信号,直接立刻退出,不
+  管补 discard 做没做完。正常路径(`runCase` 里每次 G5 attempt 后)的 `discardDraft` 用
+  `VEYLIN_EVAL_DISCARD_TIMEOUT_MS`(默认 30 秒)。
 
 ## 跑法
 
@@ -225,6 +243,18 @@ shell 没有继承 server 那份 `.env`，补上 `import '../env.js'` 之后才�
 - `VEYLIN_EVAL_CASES`（可选，逗号分隔的 case id，如 `G3,G5`）——只跑这几条 case，给便宜的
   手动验证/调试用（比如只想单独确认某条 case 的行为，不用把 8 条全跑一遍）。不影响正式
   基线跑法，正式跑不传这个变量即可覆盖 `GROUNDING_CASES` 全集。
+- `VEYLIN_EVAL_DISCARD_TIMEOUT_MS`（默认 `30000` = 30 秒）——`discardDraft` 正常路径
+  （每次 G5 attempt 后）的超时；信号路径另有更短的固定超时，见上「中断怎么办」。
+
+**过滤器写错会立刻报错，不会悄悄跑出一个空结果**（第二轮审查 Finding A）：`VEYLIN_EVAL_CASES`
+里任何一个 id 不在 `GROUNDING_CASES` 里，或者 `VEYLIN_EVAL_TENANT` 不是任何 case 声明过的
+租户，采集器在打第一个网络请求之前就抛异常退出（退出码非零），不落盘任何文件——未知的过滤
+器值是操作失误，不是"合法但恰好选中空集合"。即使两个过滤器单独看都合法，但组合起来交集是
+空的（比如 `VEYLIN_EVAL_CASES=G3 VEYLIN_EVAL_TENANT=guolu`，G3 只声明了 `shangzhong`），
+或者本地环境确实缺对应租户的托管项目导致每条 case 都被跳过，最终 0 个样本同样会被当成失败
+处理：报错退出、不打印"0 个样本，0 个有硬违规"这种看起来干净实际上什么都没跑的汇总行，也
+不写结果文件。`cases.ts` 改过 case id/租户声明之后、真的要跑一次昂贵的基线之前，先用一个
+小 `VEYLIN_EVAL_CASES` 子集空跑一次，确认过滤器还对得上。
 
 ## 硬性要求
 
