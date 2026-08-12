@@ -7,9 +7,9 @@ import assert from 'node:assert/strict';
 import { GROUNDING_CASES } from './cases.js';
 
 describe('grounding cases', () => {
-  it('has 8 cases with unique ids', () => {
-    assert.equal(GROUNDING_CASES.length, 8);
-    assert.equal(new Set(GROUNDING_CASES.map((c) => c.id)).size, 8);
+  it('has 9 cases with unique ids', () => {
+    assert.equal(GROUNDING_CASES.length, 9);
+    assert.equal(new Set(GROUNDING_CASES.map((c) => c.id)).size, 9);
   });
 
   it('every case declares a non-trivial why', () => {
@@ -39,5 +39,14 @@ describe('grounding cases', () => {
   it('G3 runs only where the K is actually guessed', () => {
     const g3 = GROUNDING_CASES.find((c) => c.id === 'G3');
     assert.deepEqual(g3?.tenants, ['shangzhong']);
+  });
+
+  it('G9 explicitly authorises the shadow solve it asks for, so it is not forbidSolve', () => {
+    const g9 = GROUNDING_CASES.find((c) => c.id === 'G9');
+    assert.ok(g9);
+    assert.notEqual(g9?.forbidSolve, true);
+    // The point of G9 is to give scopedDisclosed a legitimate trigger path —
+    // that only works if the question actually names the order it targets.
+    assert.ok(g9?.question.includes('Z-221524A0760111'));
   });
 });

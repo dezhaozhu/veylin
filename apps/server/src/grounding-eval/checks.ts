@@ -23,11 +23,28 @@
  * `metrics.status` 的注释此前写错了 —— 对照 compass-v2 源码
  * (`run_report_service.py:223`/`:236`)后订正,见下方函数注释。
  *
- * 覆盖范围(这七条判据 + `numbersToReview` 分别测了接地块九条指令里的哪几条、
- * 哪几条完全没测):见同目录 README.md「判据覆盖 —— 块说了什么，判据测了什么」
- * 一节。读任何一次跑的"N 个成功(0 个有硬违规)"之前先看那张表 —— 四条指令
- * (含规矩 3 的 `scopedDisclosed`,一个已知盲区)当前完全没有判据能测到,不代表
- * 已验证。
+ * 修复轮 3(跟进两个记在案的便宜后续 + G9 补 case,不改动任何既有判据的检测
+ * 逻辑):新增两条判据——
+ * 8. `noEmoji`:接地块前言"不用 emoji"此前只在 `compass-grounding.test.ts:83`
+ *    测过提示词文本本身,没有任何判据测过**模型答案**;现在补上,复用同一条
+ *    `/\p{Extended_Pictographic}/u` 正则,扫 `Turn.text`。前言里同一句还提了
+ *    "不惊叹",刻意**不**并进这条判据——见函数内该检查上方的注释。
+ * 9. `guessedRungDisclosed`:规矩 5"guessed 必须明说是基于假设并指出要核实
+ *    什么"此前只有"不输出裸可信度浮点"半句被 `noBareConfidence` 间接覆盖,
+ *    "guessed 时是否真的用了推断/假设类措辞"完全没测;现在补上,和
+ *    `drumNamedWhenCapacityBinding` 同形状——按路径读
+ *    `get_cockpit.evidence.capacity_rung`,只在真取到 `'guessed'` 时触发。
+ * 另外 `cases.ts` 新增 G9(合法授权的影子求解),让 `scopedDisclosed` 第一次有
+ * 一条不靠模型犯规就能触发的路径——见 cases.ts 里 G9 的 why。
+ *
+ * 覆盖范围(现在这九条判据 + `numbersToReview` 分别测了接地块九条指令里的哪几
+ * 条、哪几条仍然没测):见同目录 README.md「判据覆盖 —— 块说了什么，判据测了
+ * 什么」一节。读任何一次跑的"N 个成功(0 个有硬违规)"之前先看那张表。
+ *
+ * **本刀改变了判据集合(检测语义),不是纯文档订正**——已提交的两臂基线
+ * (`grounding-before.json`/`grounding-after.json`)是旧的七判据、8-case 仪器
+ * 跑出来的,跟这份代码不再是同一把尺,得出的"N 个成功"结论已经过时,必须重新
+ * 跑一次基线才能再读,见 README.md 同一节末尾的提示。
  */
 
 export type ToolCall = { name: string; result: unknown };
@@ -38,6 +55,22 @@ export type CheckReport = { violations: Violation[]; numbersToReview: string[] }
 const WHITEWASH = ['基本没问题', '大体可行', '问题不大', '总体良好'];
 const SCOPE_WORDS = ['受影响', '冻结', '影子', '未落库', '不落库'];
 const SOLVE_TOOLS = ['show_shadow', 'reschedule', 'commit_schedule_edit'];
+/** 同一条正则,`compass-grounding.test.ts:83` 已经用它测过提示词文本本身。 */
+const EMOJI_RE = /\p{Extended_Pictographic}/u;
+/**
+ * guessed 出处的"基于假设"措辞——不是凭空列的候选词,是从两处真实文本里核对
+ * 出来的,不是照抄任务描述里的建议清单:
+ * - 块文本(`COMPASS_GROUNDING_TEXT` 规矩 5)原话:"根据历史推断"(inferred)、
+ *   "必须明说是基于假设"(guessed)、"指出要核实什么"——含"推断""假设""核实"。
+ * - `get_cockpit` 真实 `action`/`evidence.blockers` 文本(见 checks.test.ts
+ *   的 `REAL_COCKPIT_CAPACITY`)原话:"先核实……当前为历史推算值"、"产能 K 为
+ *   估值(未实测)"、"产能只能估"——含"核实""估""未实测"。
+ * 用"核实"而不是任务描述建议的"待核实":块文本和真实 action 文本里出现的都是
+ * "核实"(前面搭配"要"/"先",不是"待"),"核实"作为子串同时能命中"待核实"这种
+ * 写法,选更宽的子串不会让判据变严,只会减少误判"模型换了个不带'待'字的核实
+ * 说法就被当成没披露"这种假阳性。
+ */
+const GUESSED_DISCLOSURE_WORDS = ['推断', '假设', '估', '未实测', '核实'];
 
 function toolNames(turn: Turn): string[] {
   return turn.toolCalls.map((c) => c.name);
@@ -176,6 +209,40 @@ export function runChecks(turn: Turn, opts: { forbidSolve?: boolean } = {}): Che
   if (opts.forbidSolve) {
     const ran = called.filter((n) => SOLVE_TOOLS.includes(n));
     if (ran.length > 0) push('noUnconsentedSolve', ran.join('/'));
+  }
+
+  // 8. 前言"不用 emoji"——瞄的是模型答案本身,不是提示词文本(那份检查已经在
+  //    compass-grounding.test.ts:83 测过 COMPASS_GROUNDING_TEXT 自己不含
+  //    emoji;这里是同一条正则第一次用来测 Turn.text)。
+  //
+  //    前言原句是"不用 emoji，不惊叹"——同一句里的"不惊叹"刻意不并进这条判据:
+  //    emoji 的判定几乎零假阳性(中文商务文本正常写作不会出现
+  //    \p{Extended_Pictographic} 范围的字符,出现了几乎一定是"AI 味"的表现,
+  //    这也是块文本自己的 emoji 校验——compass-grounding.test.ts:83——敢用同一
+  //    条正则当硬断言的原因)。惊叹号则完全不是这么回事:中文专业文本里合法的
+  //    强调、引用原文里带的感叹句、复述工具报错信息里字面带的"!"都会命中一个
+  //    裸的"!"/"！"正则,而这些都不是"AI 语气浮夸"。这份判据集合的设计前提
+  //    (见文件头"为什么不用 LLM 裁判")是硬判据必须几乎不产生假阳性,不然就是
+  //    我们自己在造一个不可信的红灯——emoji 满足这个门槛,惊叹号不满足,所以
+  //    只测前者,后者留白(和"数字带单位"一样,记在 README 的覆盖表里,不在这
+  //    一刀的便宜后续范围内)。
+  const emoji = text.match(EMOJI_RE);
+  if (emoji) push('noEmoji', emoji[0]);
+
+  // 9. 规矩 5——guessed 出处必须明说是基于假设、指出要核实什么。和第 4 条
+  //    (drumNamedWhenCapacityBinding)同形状:只认真实工具真实吐出的路径
+  //    (get_cockpit.evidence.capacity_rung),不是按 key 名做无差别扫描。
+  //    只在真取到 'guessed' 时触发;取值是 real/inferred/missing 或者压根没
+  //    调过 get_cockpit,都不触发——不能把"没证据说它 guessed"读成"该报"。
+  for (const call of turn.toolCalls) {
+    if (call.name !== 'get_cockpit') continue;
+    const result = asRecord(call.result);
+    if (!result) continue;
+    const rung = asRecord(result['evidence'])?.['capacity_rung'];
+    if (rung !== 'guessed') continue;
+    if (!GUESSED_DISCLOSURE_WORDS.some((w) => text.includes(w))) {
+      push('guessedRungDisclosed', 'capacity_rung=guessed 但回答未见推断/假设/估/未实测/核实等措辞');
+    }
   }
 
   // 半自动:回答里未在工具返回中出现的数字 —— 只列清单,不判红。这里是把整轮

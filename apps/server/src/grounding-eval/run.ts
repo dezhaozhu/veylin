@@ -48,6 +48,12 @@
  *    比修复前(Node 默认处理器,Ctrl-C 立即退)还糟。现在 `discardDraft` 自己有
  *    超时(`AbortController`)，信号处理器额外传一个更短的超时；连按两次
  *    Ctrl-C 会跳过等待直接退出。
+ * 8.（跟进,补 G9 的收尾)cases.ts 新增的 G9 会合法调用 `propose_constraint`，
+ *    产生一个治理提案——不是 G5 那种编辑草稿，没有 agent-facing 的撤销 API，
+ *    采集器不碰数据库去清它。改成在 `main()` 结尾扫一遍这次 sweep 里的
+ *    `propose_constraint` 结果，把 `proposal_id` 收集起来打印，交给操作员
+ *    手动清理——见 `proposalIdsFrom` 和它调用处的注释(含对 compass 源码核实
+ *    过的"重复跑不累积"结论)。
  */
 import '../env.js';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -458,6 +464,28 @@ function compare(aLabel: string, bLabel: string): void {
   }
 }
 
+/**
+ * G9(约束提案的合法影子求解,见 cases.ts)走 `propose_constraint` →
+ * `show_shadow`,这是治理提案通道,不是 G5 那条编辑草稿通道——没有
+ * agent-facing 的撤销 API,`propose_constraint` 生成的提案是治理产物,活着的
+ * (`status='proposed'`),采集器不碰数据库去删它。这里只是把这次 sweep 里真的
+ * 生成过的 `proposal_id` 收集起来,跑完在 main() 结尾打印,交给操作员人工清理
+ * ——见调用处的清理命令。
+ */
+function proposalIdsFrom(samples: Sample[]): string[] {
+  const ids = new Set<string>();
+  for (const s of samples) {
+    for (const call of s.toolCalls) {
+      if (call.name !== 'propose_constraint') continue;
+      const result = call.result;
+      if (!result || typeof result !== 'object' || Array.isArray(result)) continue;
+      const id = (result as Record<string, unknown>)['proposal_id'];
+      if (typeof id === 'string') ids.add(id);
+    }
+  }
+  return [...ids];
+}
+
 /** 落盘助手 —— main() 在每个 case×tenant 跑完后都调一次,不只在最后调一次。 */
 function writeResults(
   label: string,
@@ -555,6 +583,36 @@ async function main(): Promise<void> {
     `[eval] ${samples.length} 个样本 —— ${ok.length} 个成功(${red} 个有硬违规),` +
       `${errored.length} 个采集失败(不计入违规统计) → ${file}`,
   );
+
+  // G9 会生成约束提案(治理产物,没有 agent-facing 的撤销 API,采集器不碰数据
+  // 库)——报出这次 sweep 里真的生成过的 proposal_id,交给操作员人工清理。
+  //
+  // 污染面对着 compass 源码核实过,不是猜的:`constraint_proposer.py:61`
+  // `proposal_id = f"constraint-{case_id}-{target}-{reason}"`,其中
+  // `case_id = "agent-" + target_order_id`、`target = target_order_id`、
+  // `reason` 固定是 `"order_due_change"`——三段都不含 due_at/attempt 序号/
+  // label/时间戳,同一个订单号在任意多次 attempt、任意多次 label、甚至任意
+  // 多次完整基线重跑之间算出来的都是**同一个** proposal_id。
+  // `save_or_update_proposal`(`repositories.py:1002`)对已存在且仍是
+  // `'proposed'` 状态的行是原地更新、不是新插一行(只有已经 approved/rejected
+  // 才会报错,那种情况下这条 case 本来也跑不下去)。也就是说:只要没人手动
+  // 批准/驳回这条提案,数据库里最多留下一行,不会随着重跑次数累积——这不是
+  // 传说,是读源码核实过的结论。
+  const proposalIds = proposalIdsFrom(samples);
+  if (proposalIds.length > 0) {
+    console.log(
+      `[eval] G9 这次 sweep 生成/更新了 ${proposalIds.length} 个约束提案` +
+        `(同一订单号跨 attempt/跨基线重跑是同一行,不会累积,见上方注释)。` +
+        `清理(本地 compass Postgres,proposals 表):\n` +
+        proposalIds
+          .map(
+            (id) =>
+              `  docker exec compass-v2-db-1 psql -U postgres -d compass ` +
+              `-c "DELETE FROM proposals WHERE proposal_id = '${id}';"`,
+          )
+          .join('\n'),
+    );
+  }
 }
 
 // 只在直接跑这个文件时才启动(仿 compass-refs.ts 同款守卫)——目前没有任何地方

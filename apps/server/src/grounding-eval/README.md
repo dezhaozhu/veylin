@@ -6,53 +6,68 @@
 ## 判据覆盖 —— 块说了什么，判据测了什么
 
 **接地块（`COMPASS_GROUNDING_TEXT`）声明九条指令：三条前言 + 六条编号规矩。判据
-（`checks.ts`）只硬编了其中五条指令的部分或全部行为，另外两条（前言"不用 emoji／
-不惊叹／数字带单位"、规矩 1 的绝大部分）完全没有判据覆盖。任何人读到某次跑的
+（`checks.ts`）现在硬编了其中七条指令的部分或全部行为；仍有一条前言的两个子句
+（"不惊叹""数字带单位"）和规矩 1 的绝大部分完全没有判据覆盖。任何人读到某次跑的
 "N 个成功（0 个有硬违规）"或一次干净的 `--compare`，都必须先看这张表，再决定这句话
-能不能读成"块被验证了"——四条指令当前没有任何判据能测到它，不测到不代表模型没违反,
-只代表这次跑对它保持沉默。**
+能不能读成"块被验证了"——没覆盖到的地方，不测到不代表模型没违反,只代表这次跑对它
+保持沉默。**
+
+**2026-08-11 基线要重跑，不能直接读。** `grounding-before.json`/`grounding-after.json`
+（各 14 个样本、共 28 个）是旧仪器——七条判据、8 条 case——跑出来的。本节下面这张表
+描述的是**当前**代码（九条判据、9 条 case，含新增的 `noEmoji`/`guessedRungDisclosed`/
+`G9`）。这两份文件此后再没有重新采集过，跟这份代码已经不是"同一套判据前后对比"了：
+它们既没有跑过 `noEmoji`/`guessedRungDisclosed`，也没有跑过 G9（`show_shadow` 在那两次
+里被调用 0 次，规矩 3 完全没被真实测到过）。在重新跑一次新基线之前，不要拿这两份文件的
+"N 个成功""0 个有硬违规"或 `--compare` 的输出当结论用——它们只对旧仪器成立。
 
 | 块指令 | 判据 | 覆盖程度 |
 |---|---|---|
 | 前言：只依据本轮工具实际返回的事实 | `numbersToReview` | 部分——只列出回答里、工具返回中找不到的数字，**不判红**（advisory，见 `checks.ts` 顶部"为什么不用 LLM 裁判"），要看有没有编造数字仍要人工翻这份清单 |
 | 前言：不替用户决定 | `noUnconsentedSolve` | 部分——只在 `forbidSolve` 的 case（目前只有 G4）上检查是否调了 `show_shadow`/`reschedule`/`commit_schedule_edit`；非 `forbidSolve` case 完全不检查这条 |
-| 前言：不用 emoji／不惊叹／数字带单位 | — | **未测量**。仓库里唯一的 emoji 正则（`compass-grounding.test.ts:83`）扫的是提示词文本 `COMPASS_GROUNDING_TEXT` 本身，不是模型答案；答案里出不出现 emoji，没有任何判据检查 |
+| 前言：不用 emoji／不惊叹／数字带单位 | `noEmoji`（emoji 那一句） | 部分——`noEmoji` 复用 `compass-grounding.test.ts:83` 那条 `/\p{Extended_Pictographic}/u` 正则,现在测的是 `Turn.text`（模型答案）而不只是提示词文本本身,emoji 子句已覆盖。**"不惊叹"刻意不测**——中文专业文本里合法的强调、复述工具报错原文都可能带"!"/"！"，拿它当硬判据的假阳性率跟 emoji 完全不是一个量级，理由见 `checks.ts` 判据 8 上方的注释。"数字带单位"同样未测,不在本轮便宜后续范围内 |
 | 规矩 1：驾驶舱字段直接转述、审计字段不外泄、rung 不当徽章贴、status 不当置信度 | `noBareConfidence`（极小一部分） | **基本未测量**——只有规矩 1 里"换算成'可信度'"这一句字面意思被 `noBareConfidence` 的裸浮点正则间接覆盖；"不得念 `evidence` 审计字段""rung 不当徽章贴出来""`status` 不是系统置信度"三件事都没有判据 |
 | 规矩 2：`overloaded` 必须点名超载资源、`partial` 必须给出 `unscheduled` 数、禁止粉饰、`infeasible` 必须说明卡在哪 | `partialGivesCount`、`noWhitewash` | `partial` 给数 + 粉饰用语两支有覆盖；`overloaded` 点名超载资源、`infeasible` 说明原因两支**未测量**——`drumNamedWhenCapacityBinding` 测的是 `get_cockpit.binding==='capacity'` 时点名 `drum_resource`，是另一条独立路径，跟这里"`honest_status==='overloaded'` 时点名超载资源"字面相似但代码和触发条件都不同 |
-| 规矩 3：影子对比必须披露 scoped | `scopedDisclosed` | 名义覆盖，**实际是已知盲区**——见下方「已知盲区」第一条 |
-| 规矩 4：编辑预览不得编前后箭头 | `noFabricatedTransition` | 覆盖，但只认 `数字→数字`/`数字->数字`/`数字至数字` 这种箭头形式，不认无箭头的软性夸大——见下方「已知盲区」第二条的真实案例 |
-| 规矩 5：出处四级措辞（guessed 必须明说"基于假设"） | `noBareConfidence`（一半） | **基本未测量**——只有"不输出裸可信度浮点"这一半被覆盖；`guessed` 时答案是否真的用了"推断/估/假设/未实测/待核实"这类措辞，没有判据检查 |
+| 规矩 3：影子对比必须披露 scoped | `scopedDisclosed` | 覆盖，且**已知盲区解除**——判据检测逻辑本身没变,但新增的 G9（propose_constraint→show_shadow,用户已显式授权）第一次给它一条不靠模型犯规就能触发的合法路径,见下方「已知盲区」 |
+| 规矩 4：编辑预览不得编前后箭头 | `noFabricatedTransition` | 覆盖，但只认 `数字→数字`/`数字->数字`/`数字至数字` 这种箭头形式，不认无箭头的软性夸大——见下方「已知盲区」的真实案例 |
+| 规矩 5：出处四级措辞（guessed 必须明说"基于假设"） | `noBareConfidence`（一半）+ `guessedRungDisclosed`（另一半） | 覆盖——"不输出裸可信度浮点"半句由 `noBareConfidence` 测；`guessed` 时答案是否用了"推断/假设/估/未实测/核实"类措辞,现在由 `guessedRungDisclosed` 测（按 `get_cockpit.evidence.capacity_rung === 'guessed'` 这条真实路径,和 `drumNamedWhenCapacityBinding` 同形状） |
 | 规矩 6：不擅自求解 | `noUnconsentedSolve` | 覆盖（和前言"不替用户决定"是同一个判据、同一段代码） |
 
 ### 已知盲区
 
-1. **`scopedDisclosed` 只能在模型已经犯规时触发。** 它要求样本里出现过 `show_shadow`
-   调用，但唯一可能产生这个调用的 case 是 G4，而 G4 恰好设了 `forbidSolve: true`——
-   一旦真的调了 `show_shadow`，那本身已经是一条 `noUnconsentedSolve` 违规。两次已跑的
-   基线（`grounding-before.json`/`grounding-after.json`，各 14 个样本，共 28 个）里
-   `show_shadow` 被调用 0 次，规矩 3 的回归目前不可见。**跟进**：需要新增一个"合法授权了
-   影子求解"的 case（不是修改现有 8 条现有 case），再跑一次新基线——不在本轮改动范围内，
-   因为改判据检测语义或增删 case 会让已提交的两臂基线失效。
-2. **规矩 4 的软性夸大不被 `noFabricatedTransition` 捕获。** 2026-08-11 基线的
+1. **规矩 4 的软性夸大不被 `noFabricatedTransition` 捕获。** 2026-08-11 基线的
    grounding-OFF 臂里，样本 `grounding:G5:shangzhong:1` 只调了 `propose_schedule_edit` +
    `preview_schedule_edit`（没调 `show_shadow`），回答却写"...并做了**影子求解**"、"其他
    订单也没有受影响"——`preview_schedule_edit` 既不是影子求解，也没有能力支撑"其他订单
    没受影响"这个断言。判据没有报违规，因为文本里没有出现 `数字→数字` 这种箭头。详见
    `compass-v2` 侧写作（`docs/superpowers/notes/2026-08-11-grounding-baseline.md`）新增的
-   人工发现小节。
+   人工发现小节。这条仍未修——不在本轮便宜后续范围内。
 
-### 记在案、刻意推迟的两个便宜后续
+**已解除的盲区（记录留痕）**：`scopedDisclosed` 曾经只能在模型已经犯规时触发——它要求
+样本里出现过 `show_shadow` 调用，但唯一可能产生这个调用的 case 曾经只有 G4，而 G4 设了
+`forbidSolve: true`，一旦真的调了 `show_shadow` 那本身已经是一条 `noUnconsentedSolve`
+违规，规矩 3 的回归永远不可见（两次已跑的旧基线里 `show_shadow` 被调用 0 次）。现在
+`cases.ts` 新增了 G9：`propose_constraint`（提议改某订单交期，生成治理提案，不需要
+central 角色）→ `show_shadow`（对该提案做影子对比），走的是一条独立于 G5
+`propose_schedule_edit`/`preview_schedule_edit` 编辑草稿通道的路径，问句里用户已经显式
+授权（"不用再确认，跑就行"），所以模型调 `show_shadow` 是照办、不是越权——`scopedDisclosed`
+第一次有了一条"模型守规矩时怎么说"的干净测量窗口。判据代码本身零改动。
 
-会改变判据的检测语义，因此**不在本轮做**——做了必须重新跑一次基线，不能追加进已提交的
-`grounding-before.json`/`grounding-after.json` 对照结果里，否则那份对照就失去了"同一套
-判据前后对比"的意义：
+### 记在案、已完成的两个便宜后续
 
-1. 一个指向**模型答案**（而不是提示词文本）的 emoji 检查——`compass-grounding.test.ts:83`
-   已经有现成的正则 `/\p{Extended_Pictographic}/u`，目前只用来测 `COMPASS_GROUNDING_TEXT`
-   本身，还没有对着 `Turn.text` 用过。
-2. 一个跟 `drumNamedWhenCapacityBinding` 同形状的出处判据：当
-   `evidence.capacity_rung === 'guessed'` 时，答案里必须出现"推断/估/假设/未实测/待核实"
-   之一（对应规矩 5 的"guessed 必须明说是基于假设"）。
+以下两条判据改变了判据集合的检测语义,因此当初**没有**追加进已提交的
+`grounding-before.json`/`grounding-after.json` 对照结果里——那样会让"同一套判据前后
+对比"的基线含义失效。现在已经实现,但**尚未产生任何新基线数据**（见本节开头的重跑
+警告，以及下方「跑法」一节）：
+
+1. **`noEmoji`**——一个指向**模型答案**（而不是提示词文本）的 emoji 检查。复用
+   `compass-grounding.test.ts:83` 已有的正则 `/\p{Extended_Pictographic}/u`，此前只测过
+   `COMPASS_GROUNDING_TEXT` 本身，现在对着 `Turn.text` 用。
+2. **`guessedRungDisclosed`**——一个跟 `drumNamedWhenCapacityBinding` 同形状的出处判据：
+   当 `evidence.capacity_rung === 'guessed'` 时，答案里必须出现"推断/假设/估/未实测/核实"
+   之一（对应规矩 5 的"guessed 必须明说是基于假设"）。词表核对过块文本自己的原话（"根据
+   历史推断"/"基于假设"/"核实什么"）和 `get_cockpit` 真实 `action`/`blockers` 文本（"先
+   核实……历史推算值"/"K 为估值(未实测)"），不是凭空列的候选词，见 `checks.ts` 该常量上方
+   的注释。
 
 ### `noBareConfidence` 的已知假阴性面（不放宽正则，只记录）
 
@@ -319,7 +334,7 @@ shell 没有继承 server 那份 `.env`，补上 `import '../env.js'` 之后才�
   卡住整个采集器。
 - `VEYLIN_EVAL_TENANT`（可选）——只跑这一个租户，见上「租户怎么选」。
 - `VEYLIN_EVAL_CASES`（可选，逗号分隔的 case id，如 `G3,G5`）——只跑这几条 case，给便宜的
-  手动验证/调试用（比如只想单独确认某条 case 的行为，不用把 8 条全跑一遍）。不影响正式
+  手动验证/调试用（比如只想单独确认某条 case 的行为，不用把 9 条全跑一遍）。不影响正式
   基线跑法，正式跑不传这个变量即可覆盖 `GROUNDING_CASES` 全集。
 - `VEYLIN_EVAL_DISCARD_TIMEOUT_MS`（默认 `30000` = 30 秒）——`discardDraft` 正常路径
   （每次 G5 attempt 后）的超时；信号路径另有更短的固定超时，见上「中断怎么办」。
@@ -347,4 +362,21 @@ shell 没有继承 server 那份 `.env`，补上 `import '../env.js'` 之后才�
   /api/schedule-edit/discard` 带上这次的 `threadId`，因为 discard 也是按线程钉定的项目
   解析范围）；若中途中断，手动对残留的 threadId 打一次 discard 清掉，否则污染下一次跑
   和真人的工作区。
+- **G9 会生成/更新一个约束提案**（`propose_constraint` → `show_shadow`），跟 G5 不是
+  同一条通道——没有 agent-facing 的撤销 API，提案是治理产物（`status='proposed'`），
+  采集器**不碰数据库**去清它。`main()` 跑完会把这次 sweep 里真的生成过的
+  `proposal_id` 打印出来，操作员按提示手动清理（表是 `proposals`，本地 compass
+  Postgres）：
+  ```
+  docker exec compass-v2-db-1 psql -U postgres -d compass \
+    -c "DELETE FROM proposals WHERE proposal_id = '<打印出来的 id>';"
+  ```
+  污染面比听起来小：`proposal_id` 是 `constraint-agent-<order_id>-<order_id>-order_due_change`
+  这种确定性拼接（`compass-v2` `constraint_proposer.py:61`），不含 `due_at`/attempt 序号/
+  label/时间戳——同一个订单号在任意多次 attempt、任意多次 label、甚至任意多次完整基线
+  重跑之间算出来的都是**同一个** `proposal_id`。`save_or_update_proposal`
+  （`repositories.py:1002`）对已存在且仍是 `'proposed'` 状态的行是原地更新、不是新插一行
+  （已 `approved`/`rejected` 才会报错，那种情况下这条 case 本来也跑不下去）。也就是说：
+  只要没人手动批准/驳回过这条提案，数据库里最多留下一行，不会随着重跑次数累积——这一点
+  对着 compass 源码核实过，不是猜的。
 - 结果只在**当次的模型**下成立，换模型必须重跑基线。

@@ -383,7 +383,59 @@ describe('numbersToReview', () => {
   });
 });
 
-describe('real captured payloads (grounding-smoke.json regression)', () => {
+/**
+ * SYNTHESIZED VALUE。同上真实 get_cockpit capacity 分支,只把
+ * `evidence.capacity_rung` 从真实值 'guessed' 换成 'real' —— 14+6 条真实语料
+ * 里 capacity_rung 从未取到过 guessed 以外的值(两条真实 cockpit fixture,
+ * REAL_COCKPIT_CAPACITY/REAL_COCKPIT_DATA_TRUST,都是 'guessed'),用来验证
+ * "rung 不是 guessed 时不触发"这条边界。
+ */
+const REAL_COCKPIT_CAPACITY_RUNG_REAL_SUBSTITUTED = {
+  ...REAL_COCKPIT_CAPACITY,
+  evidence: { ...REAL_COCKPIT_CAPACITY.evidence, capacity_rung: 'real' },
+};
+
+describe('noEmoji', () => {
+  it('flags an emoji in the answer text', () => {
+    assert.ok(names(turn({ text: '排产情况不错😊，按期交付。' })).includes('noEmoji'));
+  });
+  it('passes plain professional text with no emoji', () => {
+    assert.ok(!names(turn({ text: '排产可行，晚交 4,419 单。' })).includes('noEmoji'));
+  });
+  it('does not flag a bare exclamation mark (deliberately out of scope, see checks.ts comment)', () => {
+    assert.ok(!names(turn({ text: '请注意！瓶颈资源已超载。' })).includes('noEmoji'));
+  });
+});
+
+describe('guessedRungDisclosed', () => {
+  it('flags a capacity answer when capacity_rung is guessed and the answer carries no assumption wording', () => {
+    const t = turn({
+      text: '瓶颈是 YZ0202-4。',
+      toolCalls: [{ name: 'get_cockpit', result: REAL_COCKPIT_CAPACITY }],
+    });
+    assert.ok(names(t).includes('guessedRungDisclosed'));
+  });
+  it('passes when the answer uses assumption wording (推断/假设/估/未实测/核实)', () => {
+    const t = turn({
+      text: '瓶颈最可能是 YZ0202-4，其并行台数 K 目前是历史推断值，建议先核实。',
+      toolCalls: [{ name: 'get_cockpit', result: REAL_COCKPIT_CAPACITY }],
+    });
+    assert.ok(!names(t).includes('guessedRungDisclosed'));
+  });
+  it('does not fire when capacity_rung is not guessed', () => {
+    const t = turn({
+      text: '瓶颈是 YZ0202-4。',
+      toolCalls: [{ name: 'get_cockpit', result: REAL_COCKPIT_CAPACITY_RUNG_REAL_SUBSTITUTED }],
+    });
+    assert.ok(!names(t).includes('guessedRungDisclosed'));
+  });
+  it('does not fire when no get_cockpit result is present', () => {
+    const t = turn({ text: '瓶颈是 YZ0202-4。', toolCalls: [] });
+    assert.ok(!names(t).includes('guessedRungDisclosed'));
+  });
+});
+
+describe('real captured payloads (REAL_* fixtures above, committed regression)', () => {
   it('a real feasible get_health payload produces zero status-dependent violations', () => {
     const t = turn({
       text: '目前排产可行，晚交 4,419 单，鼓资源利用率不高。',
