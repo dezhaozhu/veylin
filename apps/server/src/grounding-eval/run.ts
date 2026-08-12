@@ -2,9 +2,16 @@
  * 接地评测采集器 —— 手动跑,不进测试套件(打真网关、有成本、结果带随机性;
  * 混进 229 个确定性测试里就是随机红灯,这是 compass_eval 的第二条设计约束)。
  *
- *   node --import tsx src/grounding-eval/run.ts --label after
- *   VEYLIN_COMPASS_GROUNDING=0 node --import tsx src/grounding-eval/run.ts --label before
+ *   node --import tsx src/grounding-eval/run.ts --label after --grounding on
+ *   VEYLIN_COMPASS_GROUNDING=0 node --import tsx src/grounding-eval/run.ts --label before --grounding off
  *   node --import tsx src/grounding-eval/run.ts --compare before after
+ *
+ * `--grounding on|off` 是必填的操作员断言(哪臂),不是采集器测出来的——见
+ * `RunFile.groundingArmAsserted` 的注释:采集器读不到 server 进程的
+ * `VEYLIN_COMPASS_GROUNDING`(两边是不同进程,值可以不一致——2026-08-11 基线跑
+ * 踩过这个真实反例,忘在采集器命令行也加这个变量,结果文件里旧的
+ * `groundingEnabled` 字段就静默撒了谎),必须由人在命令行上明确声明,真正的
+ * 核实要靠独立证据(server 侧日志之类),不能靠这个字段自证。
  *
  * 前置条件、SSE 事件结构、租户怎么选 —— 见同目录 README.md，全部是探针
  * (2026-08-11)的**实测**结果，不是照抄计划里的猜测。偏离计划骨架的地方，
@@ -96,7 +103,18 @@ type Sample = {
 type RunFile = {
   label: string;
   model: string | null;
-  groundingEnabled: boolean;
+  /**
+   * 操作员断言,不是测量值。这个字段过去叫 `groundingEnabled`,值取自采集器
+   * 自己进程的 `process.env['VEYLIN_COMPASS_GROUNDING']`——但接地开关是
+   * SERVER 进程读的,采集器是另一个进程,两边环境可以不一致(采集器命令行忘
+   * 加这个变量、只在启 server 时加了,是本刀实测踩到的真实反例)。采集器
+   * 没有任何办法从外部观测另一个进程的环境变量,继续假装能读就是在结果文件
+   * 里撒谎。现在改成 `--grounding on|off` 必填命令行参数,字段改名成
+   * `groundingArmAsserted` 读起来就是"操作员声称这次是哪臂",不是"采集器测出
+   * 来的"——真正的verification 必须靠独立证据(比如 server 侧日志),见
+   * task-8-report.md。
+   */
+  groundingArmAsserted: 'on' | 'off';
   /** true = 这次 sweep 还没跑完(增量落盘中途)。见文件头注释 4。 */
   partial: boolean;
   samples: Sample[];
@@ -424,13 +442,18 @@ function compare(aLabel: string, bLabel: string): void {
 }
 
 /** 落盘助手 —— main() 在每个 case×tenant 跑完后都调一次,不只在最后调一次。 */
-function writeResults(label: string, samples: Sample[], partial: boolean): string {
+function writeResults(
+  label: string,
+  groundingArm: 'on' | 'off',
+  samples: Sample[],
+  partial: boolean,
+): string {
   mkdirSync(OUT_DIR, { recursive: true });
   const file = resolve(OUT_DIR, `grounding-${label}.json`);
   const body: RunFile = {
     label,
     model: process.env['VEYLIN_MODEL'] ?? null,
-    groundingEnabled: process.env['VEYLIN_COMPASS_GROUNDING'] !== '0',
+    groundingArmAsserted: groundingArm,
     partial,
     samples,
   };
@@ -451,6 +474,19 @@ async function main(): Promise<void> {
   const labelIdx = argv.indexOf('--label');
   const label = labelIdx >= 0 ? argv[labelIdx + 1] : undefined;
   if (!label) throw new Error('需要 --label <name>');
+
+  // 操作员断言,不是从环境变量猜的——采集器读不到 server 进程的环境,不该假装
+  // 能读(见 RunFile.groundingArmAsserted 的注释)。必填,值只接受 on/off,
+  // 拼错(比如传成 0/1/true/false)直接报错退出,不落盘任何文件。
+  const groundingIdx = argv.indexOf('--grounding');
+  const groundingArg = groundingIdx >= 0 ? argv[groundingIdx + 1] : undefined;
+  if (groundingArg !== 'on' && groundingArg !== 'off') {
+    throw new Error(
+      `需要 --grounding on|off(操作员断言这次 server 是哪臂,采集器读不到 server 进程的环境变量,` +
+        `不能替你猜;实际是哪臂必须靠独立证据核实,见 grounding-eval/README.md)。得到: ${groundingArg ?? '(未传)'}`,
+    );
+  }
+  const groundingArm: 'on' | 'off' = groundingArg;
 
   // 第二轮审查 Finding A:零网络请求的快速失败,在花任何钱之前先确认过滤器
   // 拼对了。
@@ -476,7 +512,7 @@ async function main(): Promise<void> {
       // 第一轮审查 Finding 1:增量落盘。一次崩溃(不管是不是 discard 那个
       // bug)不该让已经花真钱采到的样本全部丢掉——每个 case×tenant 跑完就
       // 重写一次文件,标 partial:true,让中途中断也留一份可用的部分结果。
-      writeResults(label, samples, true);
+      writeResults(label, groundingArm, samples, true);
     }
   }
 
@@ -494,7 +530,7 @@ async function main(): Promise<void> {
     );
   }
 
-  const file = writeResults(label, samples, false);
+  const file = writeResults(label, groundingArm, samples, false);
   const errored = samples.filter((s) => s.error !== null);
   const ok = samples.filter((s) => s.error === null);
   const red = ok.filter((s) => s.violations.length > 0).length;

@@ -219,11 +219,22 @@ error: string | null;   // null = 真的跑完一轮对话并被判据评过;非
 
 ## 跑法
 
-    VEYLIN_COMPASS_GROUNDING=0 node --import tsx src/grounding-eval/run.ts --label before
-    node --import tsx src/grounding-eval/run.ts --label after      # 改 env 后需重启 server
+    VEYLIN_COMPASS_GROUNDING=0 node --import tsx src/grounding-eval/run.ts --label before --grounding off
+    node --import tsx src/grounding-eval/run.ts --label after --grounding on      # 改 env 后需重启 server
     node --import tsx src/grounding-eval/run.ts --compare before after
 
-单独重跑一个厂：`VEYLIN_EVAL_TENANT=shangzhong node --import tsx src/grounding-eval/run.ts --label smoke`
+`--grounding on|off` 是**必填的操作员断言**，不是采集器测出来的：接地开关
+（`VEYLIN_COMPASS_GROUNDING`）是 server 进程读的，采集器是另一个进程，两边环境
+可以不一致——2026-08-11 基线跑踩过真实反例（`VEYLIN_COMPASS_GROUNDING=0` 只
+加在了启 server 的命令上，忘了也加到采集器命令行；旧版本把这个字段叫
+`groundingEnabled` 且值取自采集器自己的 `process.env`，结果文件里就静默声称
+`groundingEnabled: true`，而 server 其实真的是关的）。现在这个字段改名成
+`groundingArmAsserted`，读起来就是"人声称的是哪臂"，不是"测出来的"——**真正核实
+是哪臂，必须靠独立证据**（比如临时给 `compassGroundingBlock` 加一行调试日志，
+在 server 侧打印它这一轮实际读到的 `VEYLIN_COMPASS_GROUNDING` 和是否真的注入了
+接地块，见 task-8-report.md 的做法），不能只信这个字段。
+
+单独重跑一个厂：`VEYLIN_EVAL_TENANT=shangzhong node --import tsx src/grounding-eval/run.ts --label smoke --grounding on`
 
 结果落 `apps/server/eval-runs/grounding-<label>.json`（已 gitignore）。
 
