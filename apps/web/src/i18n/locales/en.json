@@ -86,7 +86,6 @@
     "checkupEyebrow": "Production data checkup",
     "checkupTitle": "Scheduling data checkup",
     "checkupSubtitle": "Is this data ready for scheduling?",
-    "focusHintVisual": "Start with charts: trust ring, honesty bar, rule hits, capacity K — details on click.",
     "lastUpdated": "Updated",
     "trustLabel": "Data trust",
     "trustUnavailable": "No honesty breakdown — trust score unavailable.",

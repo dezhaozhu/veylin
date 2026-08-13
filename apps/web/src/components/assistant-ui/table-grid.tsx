@@ -1352,8 +1352,9 @@ export function TableGrid() {
   const agColDefs = useMemo<ColDef<TableRow>[]>(() => {
     const defs: ColDef<TableRow>[] = [];
 
-    // Pinned row-number column (read-only, no sort). Skip master-detail child
-    // rows so expanding a order doesn't steal numbers (4 → 6 / duplicate 6).
+    // Pinned row-number column (read-only, no sort). Number leaf/master rows in
+    // full filtered+sorted order (skip detail panels). Must NOT use the visible
+    // viewport window — that renumbers as 1..N on every scroll.
     defs.push({
       colId: '__rowNum__',
       headerName: '',
@@ -1375,18 +1376,17 @@ export function TableGrid() {
       valueGetter: (p) => {
         const target = p.node;
         if (!target || target.detail) return '';
+        const rowIndex = target.rowIndex;
+        if (rowIndex == null || rowIndex < 0) return '';
         const api = p.api;
-        if (!api) return (target.rowIndex ?? 0) + 1;
-        const first = api.getFirstDisplayedRowIndex();
-        const last = api.getLastDisplayedRowIndex();
+        if (!api) return rowIndex + 1;
         let n = 0;
-        for (let i = first; i <= last; i++) {
+        for (let i = 0; i <= rowIndex; i++) {
           const node = api.getDisplayedRowAtIndex(i);
           if (!node || node.detail) continue;
           n += 1;
-          if (node === target) return n;
         }
-        return '';
+        return n > 0 ? n : '';
       },
       cellStyle: {
         textAlign: 'center',

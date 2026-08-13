@@ -138,7 +138,7 @@ export const SceneCardSummaryPanel: FC<{
             {t('projectPage.checkupTitle')}
           </h2>
           <p className="text-muted-foreground text-xs">
-            {t('projectPage.focusHintVisual')}
+            {t('projectPage.checkupSubtitle')}
           </p>
         </div>
         {checkedAt ? (

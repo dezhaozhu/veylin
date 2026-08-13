@@ -86,7 +86,6 @@
     "checkupEyebrow": "生产数据体检",
     "checkupTitle": "排产数据体检",
     "checkupSubtitle": "当前数据是否具备排产条件？",
-    "focusHintVisual": "先看图：可信度环、诚实度条、规则命中、产能 K；明细点开再看。",
     "lastUpdated": "数据更新",
     "trustLabel": "数据可信度",
     "trustUnavailable": "暂无诚实度口径，无法计算可信度。",
