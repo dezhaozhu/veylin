@@ -20,7 +20,10 @@ import {
   onTableEvent,
   type TableRowPatch,
   type TableEvent,
+  getTableRow,
 } from '../table-store.js';
+import { recordTableEdits } from '../table-edit-journal.js';
+import { formatSelectionToken, registerSelection } from '../table-selection.js';
 import type { ServerDeps } from './types.js';
 import {
   unwrapMcpPayload,
@@ -582,18 +585,71 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
         patch,
       };
     });
+    // 变更日志:**改之前**先把旧值取出来 —— 事后再读就只剩新值了,"从什么改成什么"
+    // 是 agent 唯一读不出来的那一半(见 table-edit-journal.ts)。
+    const before = new Map<string, Record<string, unknown>>();
+    for (const u of updates) {
+      const row = getTableRow(u.rowKey, access.sheetId);
+      if (row) before.set(u.rowKey, { ...row });
+    }
     const result = await updateTableRows(updates, access.sheetId);
     if (!result.ok) {
       const notFound = /not found/i.test(result.message);
       reply.code(notFound ? 404 : 400);
       return { ok: false, message: result.message, rejected: result.rejected };
     }
+    recordTableEdits({
+      threadId,
+      sheet: access.sheetId,
+      by: 'human',                       // 这条路由是表格面板(人)在改;agent 走的是工具
+      edits: updates.flatMap((u) =>
+        Object.entries(u.patch).map(([column, to]) => ({
+          rowKey: u.rowKey,
+          column,
+          from: before.get(u.rowKey)?.[column],
+          to,
+        })),
+      ),
+    });
     return {
       ok: true,
       sheet: result.sheet,
       rows: result.rows,
       updated: result.results.length,
     };
+  });
+
+  // 选区引用:前端圈选后登记,拿一个短 id 插进输入框。**不传数据** —— agent 拿 id 去
+  // table_get 取当前值(见 table-selection.ts:引用是拉,变更是推)。
+  app.post('/api/table/selection', async (req, reply) => {
+    await deps.resolveContext(req.headers);
+    const body = (req.body ?? {}) as {
+      sheet?: string; threadId?: string; rowKeys?: string[]; columns?: string[];
+      groupBy?: string[]; filter?: string;
+    };
+    const access = requireThreadSheet(reply, body.sheet, body.threadId);
+    if (!isSheetAccess(access)) {
+      return access.error;
+    }
+    const threadId = (body.threadId ?? '').trim();
+    if (!threadId) {
+      reply.code(400);
+      return { ok: false, message: 'threadId is required — a selection belongs to a conversation' };
+    }
+    try {
+      const sel = registerSelection({
+        threadId,
+        sheet: access.sheetId,
+        rowKeys: Array.isArray(body.rowKeys) ? body.rowKeys.map(String) : [],
+        columns: Array.isArray(body.columns) ? body.columns.map(String) : [],
+        groupBy: Array.isArray(body.groupBy) ? body.groupBy.map(String) : [],
+        filter: typeof body.filter === 'string' ? body.filter : '',
+      });
+      return { ok: true, id: sel.id, token: formatSelectionToken(sel) };
+    } catch (e) {
+      reply.code(400);
+      return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    }
   });
 
   app.post('/api/table/import', async (req, reply) => {

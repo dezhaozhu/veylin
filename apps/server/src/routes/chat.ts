@@ -44,6 +44,7 @@ import { listDispatchableCustomAgentIds } from '../agent-task-runner.js';
 import { scheduleDreamConsolidation } from '../dream-service.js';
 import { cancelThreadSubagentTasks } from '../cancel-thread-tasks.js';
 import { buildTableContextBlock } from '../table-store.js';
+import { formatTableEditsBlock } from '../table-edit-journal.js';
 import { buildViewer3dContextBlock } from '../viewer3d-store.js';
 import { scheduleEditGuidanceBlock } from '../schedule-edit.js';
 import { compassGroundingBlock as buildCompassGroundingBlock } from '../compass-grounding.js';
@@ -850,7 +851,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const compassGrounding = planMode
       ? ''
       : buildCompassGroundingBlock(() => agentMcp, mcpServerGroups, scope.entryPin);
-    const tableBlock = [tableBlockBase, editGuidance].filter(Boolean).join('\n\n');
+    // 变更事件推进上下文:重新读表只能看到新值,看不到"改过"。放在表格块之后 ——
+    // 先说"表里有什么",再说"刚才谁改了什么"(见 table-edit-journal.ts)。
+    const tableEdits = planMode ? '' : formatTableEditsBlock(threadId);
+    const tableBlock = [tableBlockBase, tableEdits, editGuidance].filter(Boolean).join('\n\n');
     const viewer3dBlock = planMode ? '' : buildViewer3dContextBlock();
     const knowledgeBlock = planMode
       ? ''

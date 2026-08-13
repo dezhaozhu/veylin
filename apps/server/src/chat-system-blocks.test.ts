@@ -168,3 +168,21 @@ describe('chat-system-blocks', () => {
     assert.match(blocks, /rules/);
   });
 });
+
+// --- 表格变更事件进上下文(引用是拉、变更是推) ---------------------------------
+
+import { recordTableEdits, clearTableEdits, formatTableEditsBlock } from './table-edit-journal.js';
+
+describe('表格变更块', () => {
+  it('人改过的值要出现在上下文里,并且写明是用户改的', () => {
+    clearTableEdits();
+    recordTableEdits({
+      threadId: 'th-1', sheet: 'orders', by: 'human',
+      edits: [{ rowKey: 'T-221523002', column: '交期', from: '2026-07-05', to: '2026-08-01' }],
+    });
+
+    const block = formatTableEditsBlock('th-1');
+    assert.match(block, /用户把 `orders` 的 `T-221523002` 的「交期」从 2026-07-05 → 2026-08-01/);
+    assert.match(block, /代表\*\*他的决定\*\*/, '不能让 agent 把人的决定当成系统状态改回去');
+  });
+});

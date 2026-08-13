@@ -117,7 +117,7 @@ function cloneColumns(): TableColumnDef[] {
   return DEFAULT_COLUMNS.map((c) => ({ ...c }));
 }
 
-function tableRowKey(row: TableRowData): string {
+export function tableRowKey(row: TableRowData): string {
   return String(row.row_id);
 }
 

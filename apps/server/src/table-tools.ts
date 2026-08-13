@@ -16,8 +16,10 @@ import {
   isProjectPinMismatch,
   isUnscopedProjectData,
   listTableColumns,
+  listTableRows,
   listTableRowsPage,
   listTableSheets,
+  tableRowKey,
   MAX_TABLE_GET_LIMIT,
   resolveTableSheetId,
   stampTableSheetSource,
@@ -29,6 +31,7 @@ const cellValueSchema = z.union([z.string(), z.number()]);
 
 import { unwrapMcpPayload } from './mcp-payload.js';
 import { resolveCompassServer } from './mcp-scoping.js';
+import { getSelection } from './table-selection.js';
 import { fetchCompassData, type CompassRestScope } from './compass-rest.js';
 
 export { unwrapMcpPayload } from './mcp-payload.js';
@@ -207,6 +210,11 @@ interface TableToolCtx {
  * `execute` ctx — `requestContext.get('projectPin')`, set by routes/chat.ts.
  * Used by `table_get`'s provenance check.
  */
+function readThreadId(ctx?: TableToolCtx): string | null {
+  return (ctx?.requestContext?.get('threadId') as string | null | undefined) ?? null;
+}
+
+
 function readProjectPin(ctx?: TableToolCtx): string | null {
   return (ctx?.requestContext?.get('projectPin') as string | null | undefined) ?? null;
 }
@@ -538,6 +546,13 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         .max(MAX_TABLE_GET_LIMIT)
         .optional()
         .describe(`Rows per page (default ${DEFAULT_TABLE_GET_LIMIT}, max ${MAX_TABLE_GET_LIMIT}).`),
+      selection_id: z
+        .string()
+        .optional()
+        .describe(
+          '用户在表格里圈选后 @ 进来的选区 id(形如 @表格[… #a1b2c3d4] 里的那串)。'
+          + '给了它就只返回选中的行与列 —— 取的是**当前值**,不是圈选那一刻的快照。',
+        ),
     }),
     outputSchema: z.object({
       sheet: z.string(),
@@ -607,9 +622,33 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
 
       // z.coerce.number() already validated string→number; Number() re-narrows the
       // zod-v4 `unknown` input type to a clean number (idempotent at runtime).
+      // 选区引用:用户圈的那块。**按引用取当前值**,而不是把圈选那一刻的数据塞进
+      // 对话 —— 后者五分钟后就成了假话(与 G1 同一个病)。
+      const selection = input.selection_id
+        ? getSelection(readThreadId(ctx) ?? '', String(input.selection_id))
+        : undefined;
+      if (input.selection_id && !selection) {
+        return {
+          sheet,
+          warning: `选区 #${input.selection_id} 不在本会话里(可能已过期或属于别的会话);`
+            + '请让用户重新圈选。',
+        };
+      }
+
       const offset = Number(input.offset ?? 0);
       const limit = Number(input.limit ?? DEFAULT_TABLE_GET_LIMIT);
-      const { totalRows, rows } = listTableRowsPage(sheet, offset, limit);
+      const page = listTableRowsPage(sheet, offset, limit);
+      let { totalRows, rows } = page;
+      if (selection) {
+        const wanted = new Set(selection.rowKeys);
+        const all = listTableRows(sheet).filter((r) => wanted.has(tableRowKey(r)));
+        rows = selection.columns.length
+          ? all.map((r) => Object.fromEntries(
+              Object.entries(r).filter(([k]) => k === 'row_id' || selection.columns.includes(k)),
+            ) as typeof r)
+          : all;
+        totalRows = rows.length;
+      }
       const hasMore = offset + rows.length < totalRows;
       const warning = buildProvenanceWarning(source, projectPin, tenantProjects);
       return {
