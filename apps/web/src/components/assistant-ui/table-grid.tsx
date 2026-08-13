@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuiState } from '@assistant-ui/react';
-import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X, Loader2, Search } from 'lucide-react';
+import { useAui } from '@assistant-ui/store';
+import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X, Loader2, Search, AtSign } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
+import { placeComposerCaret } from '@/lib/composer-caret';
+import { appendSelectionToken, registerTableSelection } from '@/lib/table-selection-ref';
 import {
   type ColDef,
   type GetRowIdParams,
@@ -533,6 +536,7 @@ export function TableGrid() {
   const localThreadId = useAuiState((s) => s.threadListItem.id);
   const remoteThreadId = useAuiState((s) => s.threadListItem.remoteId ?? s.threadListItem.externalId);
   const threadId = remoteThreadId ?? localThreadId ?? undefined;
+  const aui = useAui();
   // 排产即导航: a cockpit drill (focusScheduleFilter) stashes an OpenGridFilter
   // here; we position the already-loaded grid via an AG-Grid external filter.
   const { scheduleFilter, clearScheduleFilter } = usePanelTabs();
@@ -1674,6 +1678,39 @@ export function TableGrid() {
     selectedColumnKeyRef.current = null;
   };
 
+  // 选区 → 对话引用。**登记引用,不塞数据**:agent 拿 id 去取当前值(见
+  // lib/table-selection-ref.ts)。分组/筛选状态一起带走 —— 它是"这里为什么堆这么多"
+  // 里的"这里"。
+  const canReference = selectedRows.size > 0 || Boolean(selectedColumnKey);
+  const referenceSelection = useCallback(async () => {
+    if (!threadId || !activeSheetId) return;
+    const grouped: string[] = [];
+    gridApiRef.current?.getRowGroupColumns?.().forEach((c) => {
+      const id = c.getColId?.();
+      if (id) grouped.push(id);
+    });
+    const res = await registerTableSelection({
+      sheet: activeSheetId,
+      threadId: String(threadId),
+      rowKeys: [...selectedRows],
+      columns: selectedColumnKey ? [selectedColumnKey] : [],
+      groupBy: grouped,
+      // 列筛选也是"这里"的一部分:同一批行,筛过和没筛过问的是两回事
+      filter: Object.entries(filters)
+        .filter(([, v]) => String(v ?? '').trim())
+        .map(([k, v]) => `${k}=${String(v).trim()}`)
+        .join(', '),
+    });
+    if (!res.ok) {
+      showToast(res.message, 'error');
+      return;
+    }
+    const composer = aui.composer();
+    const next = appendSelectionToken(composer.getState().text, res.token);
+    composer.setText(next);
+    placeComposerCaret(next.length);
+  }, [activeSheetId, aui, filters, selectedColumnKey, selectedRows, showToast, threadId]);
+
   const rowActionDelete = selectedRows.size > 0;
   const selectedColumn = columnDefs.find((c) => c.key === selectedColumnKey);
   const columnSelected = Boolean(selectedColumnKey && selectedColumn);
@@ -1857,6 +1894,19 @@ export function TableGrid() {
       {/* Toolbar + search */}
       <div className="border-border shrink-0 space-y-2 border-b px-2 py-2">
         <div className="flex flex-wrap items-center gap-1.5">
+          {canReference && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              onClick={referenceSelection}
+              title={t('table.referenceSelectionHint')}
+            >
+              <AtSign className="size-3" />
+              {t('table.referenceSelection')}
+            </Button>
+          )}
           <Button
             type="button"
             variant="outline"
