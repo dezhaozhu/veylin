@@ -7,6 +7,7 @@ import {
   deleteTableRows,
   deleteTableSheet,
   getTableSheetMeta,
+  isProjectPinMismatch,
   importTableSheet,
   isTableSheetNameTaken,
   listTableColumns,
@@ -32,6 +33,7 @@ import {
 } from '../table-tools.js';
 import { resolveCompassServer } from '../mcp-scoping.js';
 import { resolveThreadPin } from '../thread-state.js';
+import { listProjects } from '../project-store.js';
 import { resolvePinnedProjectScope } from '../project-store.js';
 import { getPooledCompassToolsets, sceneSetKey, type CompassPoolDeps } from '../compass-pool.js';
 import { compassRestBase, fetchCompassData, type CompassRestScope } from '../compass-rest.js';
@@ -635,6 +637,20 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     if (!threadId) {
       reply.code(400);
       return { ok: false, message: 'threadId is required — a selection belongs to a conversation' };
+    }
+    // **早失败**:这张表是别的项目加载来的时,现在就说清楚,而不是等 agent 事后
+    // 讲道理(实测撞到过:圈了 4 行,agent 才回"这是上重的数据,不能用于锅炉厂")。
+    // 判据用与 table_get 同一条 —— 两处口径必须一致。
+    const ctx = await deps.resolveContext(req.headers);
+    const pin = await resolveThreadPin(threadId, ctx);
+    const source = getTableSheetMeta(access.sheetId)?.source;
+    if (isProjectPinMismatch(source, pin, await listProjects(ctx.tenantId))) {
+      reply.code(409);
+      return {
+        ok: false,
+        message: `这张表是项目 ${source?.project ?? source?.server} 加载来的,`
+          + '与当前会话的项目不一致 —— 请在当前项目下重新加载后再引用。',
+      };
     }
     try {
       const sel = registerSelection({

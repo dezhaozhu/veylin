@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuiState } from '@assistant-ui/react';
 import { useAui } from '@assistant-ui/store';
 import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X, Loader2, Search, AtSign } from 'lucide-react';
@@ -1689,11 +1690,27 @@ export function TableGrid() {
       const id = c.getColId?.();
       if (id) grouped.push(id);
     });
+    // 单元格区域优先:它天然就是"行 × 列",正是引用要的形状;没有区域时退回整行勾选。
+    const ranges = gridApiRef.current?.getCellRanges?.() ?? [];
+    const rangeRowKeys = new Set<string>();
+    const rangeColumns = new Set<string>();
+    for (const r of ranges) {
+      r.columns.forEach((c) => { const id = c.getColId?.(); if (id) rangeColumns.add(id); });
+      const from = Math.min(r.startRow?.rowIndex ?? 0, r.endRow?.rowIndex ?? 0);
+      const to = Math.max(r.startRow?.rowIndex ?? 0, r.endRow?.rowIndex ?? 0);
+      for (let i = from; i <= to; i += 1) {
+        const node = gridApiRef.current?.getDisplayedRowAtIndex?.(i);
+        const key = (node?.data as TableRow | undefined)?.row_id;
+        if (key) rangeRowKeys.add(String(key));
+      }
+    }
     const res = await registerTableSelection({
       sheet: activeSheetId,
       threadId: String(threadId),
-      rowKeys: [...selectedRows],
-      columns: selectedColumnKey ? [selectedColumnKey] : [],
+      rowKeys: rangeRowKeys.size ? [...rangeRowKeys] : [...selectedRows],
+      columns: rangeColumns.size
+        ? [...rangeColumns]
+        : selectedColumnKey ? [selectedColumnKey] : [],
       groupBy: grouped,
       // 列筛选也是"这里"的一部分:同一批行,筛过和没筛过问的是两回事
       filter: Object.entries(filters)
@@ -1709,7 +1726,50 @@ export function TableGrid() {
     const next = appendSelectionToken(composer.getState().text, res.token);
     composer.setText(next);
     placeComposerCaret(next.length);
+    setAskAnchor(null);
   }, [activeSheetId, aui, filters, selectedColumnKey, selectedRows, showToast, threadId]);
+
+  // 浮现式「问」:选完在手边冒出来,与已有的"选中文字→问"(thread-selection-ask)
+  // 同一个手势。不再放工具栏 —— 一个动作只留一处入口。
+  const [askAnchor, setAskAnchor] = useState<{ top: number; left: number } | null>(null);
+  useEffect(() => {
+    const onUp = (e: MouseEvent) => {
+      const api = gridApiRef.current;
+      if (!api) return;
+      const hasRows = (api.getSelectedNodes?.() ?? []).length > 0;
+      const hasRange = (api.getCellRanges?.() ?? []).length > 0;
+      if (!hasRows && !hasRange) {
+        setAskAnchor(null);
+        return;
+      }
+      setAskAnchor({ top: e.clientY, left: e.clientX });
+    };
+    document.addEventListener('mouseup', onUp);
+    return () => document.removeEventListener('mouseup', onUp);
+  }, []);
+
+
+  const askBubble =
+    askAnchor && canReference
+      ? createPortal(
+          <div
+            className="fixed z-[210]"
+            style={{ top: Math.max(8, askAnchor.top - 44), left: askAnchor.left }}
+          >
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1 shadow-md"
+              onClick={referenceSelection}
+              title={t('table.referenceSelectionHint')}
+            >
+              <AtSign className="size-3" />
+              {t('table.referenceSelection')}
+            </Button>
+          </div>,
+          document.body,
+        )
+      : null;
 
   const rowActionDelete = selectedRows.size > 0;
   const selectedColumn = columnDefs.find((c) => c.key === selectedColumnKey);
@@ -1816,6 +1876,7 @@ export function TableGrid() {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
+      {askBubble}
       {loadError ? (
         <div
           role="alert"
@@ -1894,19 +1955,6 @@ export function TableGrid() {
       {/* Toolbar + search */}
       <div className="border-border shrink-0 space-y-2 border-b px-2 py-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          {canReference && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-1"
-              onClick={referenceSelection}
-              title={t('table.referenceSelectionHint')}
-            >
-              <AtSign className="size-3" />
-              {t('table.referenceSelection')}
-            </Button>
-          )}
           <Button
             type="button"
             variant="outline"
