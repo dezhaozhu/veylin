@@ -22,6 +22,7 @@ import {
   themeQuartz,
 } from 'ag-grid-community';
 import { anchorOfRow, rowMatchesAnchor } from '@/lib/grain-anchor';
+import { carryViewAcrossGrain } from '@/lib/grain-view-carry';
 import { askBubbleAction, resolveSelectionScope, type SelectionScope } from '@/lib/grid-selection-scope';
 import './ag-grid-modules';
 import { hasProEntitlement } from '@/lib/ag-grid-license';
@@ -600,6 +601,9 @@ export function TableGrid() {
   const activeGridFilterRef = useRef<OpenGridFilter | null>(null);
   // 切焦段时带过去的锚点(见 switchSheet)。新焦段的行到齐后定位过去。
   const pendingAnchorRef = useRef<string | null>(null);
+  // 「怎么看的」也跟着走:分组 + 列筛选。新焦段没有那列就带不过去 —— 而带不过去
+  // 要说出来(见 lib/grain-view-carry.ts)。
+  const pendingViewRef = useRef<{ filterModel: Record<string, unknown>; groupBy: string[] } | null>(null);
   // 判断一次点击落在网格里还是网格外(见 askBubbleAction)
   const gridWrapRef = useRef<HTMLDivElement | null>(null);
   const askBubbleRef = useRef<HTMLDivElement | null>(null);
@@ -651,6 +655,48 @@ export function TableGrid() {
     activeGridFilterRef.current = pending;
     api.onFilterChanged();
   }, []);
+
+  const showToast = useCallback((message: string, variant: 'success' | 'error') => {
+    setToast({ message, variant });
+  }, []);
+
+  // 到达新焦段后,把分组与筛选按新焦段有的列重新装上;装不上的报出来。
+  const applyPendingView = useCallback((attempt = 0) => {
+    const pending = pendingViewRef.current;
+    if (!pending) return;
+    const api = gridApiRef.current;
+    const ready = api && !api.isDestroyed?.() && (api.getDisplayedRowCount?.() ?? 0) > 0;
+    if (!ready) {
+      if (attempt < 20) setTimeout(() => applyPendingView(attempt + 1), 150);
+      return;
+    }
+    pendingViewRef.current = null;
+    const available = new Set(
+      (api.getColumns?.() ?? []).map((c) => c.getColId?.()).filter(Boolean) as string[],
+    );
+    const carried = carryViewAcrossGrain(
+      {
+        groupBy: pending.groupBy,
+        filters: Object.fromEntries(Object.keys(pending.filterModel).map((k) => [k, '1'])),
+      },
+      available,
+    );
+    try {
+      api.setRowGroupColumns?.(carried.groupBy);
+      const keep = Object.fromEntries(
+        Object.entries(pending.filterModel).filter(([k]) => k in carried.filters),
+      );
+      api.setFilterModel?.(Object.keys(keep).length ? keep : null);
+    } catch {
+      /* Enterprise 分组不可用时忽略 —— 筛选照常 */
+    }
+    if (carried.dropped.length) {
+      showToast(
+        t('table.viewCarryDropped', { cols: carried.dropped.map((d) => d.key).join('、') }),
+        'error',
+      );
+    }
+  }, [showToast, t]);
 
   // 到达新焦段后定位到锚点那一单。同样的 remount-safe 重试(切 sheet 会重建网格)。
   const locatePendingAnchor = useCallback((attempt = 0) => {
@@ -717,10 +763,6 @@ export function TableGrid() {
     const timer = window.setTimeout(() => setToast(null), 3500);
     return () => window.clearTimeout(timer);
   }, [toast]);
-
-  const showToast = useCallback((message: string, variant: 'success' | 'error') => {
-    setToast({ message, variant });
-  }, []);
 
   const resetImportInput = useCallback(() => {
     if (importInputRef.current) importInputRef.current.value = '';
@@ -817,7 +859,15 @@ export function TableGrid() {
         const selected = api?.getSelectedRows?.()?.[0];
         anchor = anchorOfRow(selected as Record<string, unknown> | undefined);
       }
+      const groupBy: string[] = [];
+      api?.getRowGroupColumns?.().forEach((c) => {
+        const id = c.getColId?.();
+        if (id) groupBy.push(id);
+      });
+      const filterModel = (api?.getFilterModel?.() ?? {}) as Record<string, unknown>;
       resetSheetUiState();
+      pendingViewRef.current =
+        groupBy.length || Object.keys(filterModel).length ? { filterModel, groupBy } : null;
       pendingAnchorRef.current = anchor;
       setActiveSheetId(sheetId);
       setLoading(true);
@@ -950,7 +1000,10 @@ export function TableGrid() {
   useEffect(() => {
     if (!bootstrapped) return;
     void load(activeSheetId, true);
-    const es = new EventSource('/api/table/stream');
+    // 带上 threadId:服务端据此推出作用域,只推这个作用域里的表的变更(spec §7)。
+    // 换会话可能换作用域,所以 threadId 进依赖 —— 连接跟着重建。
+    const es = new EventSource(
+      `/api/table/stream${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ''}`);
     es.onopen = () => {
       sseErrorNotified.current = false;
       // (re)connected — one full resync catches anything missed while disconnected.
@@ -1001,7 +1054,7 @@ export function TableGrid() {
       showToast(t('table.sseDisconnected'), 'error');
     };
     return () => es.close();
-  }, [activeSheetId, load, bootstrapped, showToast, t]);
+  }, [activeSheetId, load, bootstrapped, showToast, t, threadId]);
 
   // 换会话 = 可能换了作用域(项目 ⇄ 个人区)。表是**那个作用域的 context**,
   // 所以整屏跟着走:重取该作用域的页签,并落到它的默认表。不这么做的话,个人区
@@ -1069,12 +1122,12 @@ export function TableGrid() {
     }
   }, [rows, applyPendingScheduleFilter]);
 
-  // 换了焦段、新一批行到齐 → 定位到切换前那一单。
+  // 换了焦段、新一批行到齐 → 先恢复视图(分组/筛选),再定位到切换前那一单。
   useEffect(() => {
-    if (pendingAnchorRef.current && rows.length > 0) {
-      locatePendingAnchor();
-    }
-  }, [rows, locatePendingAnchor]);
+    if (rows.length === 0) return;
+    if (pendingViewRef.current) applyPendingView();
+    if (pendingAnchorRef.current) locatePendingAnchor();
+  }, [rows, locatePendingAnchor, applyPendingView]);
 
   // Pre-filter rows in React; AG-Grid handles sort natively via comparator
   const filteredRows = useMemo(() => applyFilters(rows, filters), [rows, filters]);

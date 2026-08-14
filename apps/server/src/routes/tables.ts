@@ -36,6 +36,7 @@ import { resolveCompassServer } from '../mcp-scoping.js';
 import { resolveThreadPin } from '../thread-state.js';
 import { resolveSheetScope } from '../table-tools.js';
 import type { SheetScope } from '../table-scope.js';
+import { eventVisibleInScope } from '../table-event-scope.js';
 import { listProjects } from '../project-store.js';
 import { resolvePinnedProjectScope } from '../project-store.js';
 import { getPooledCompassToolsets, sceneSetKey, type CompassPoolDeps } from '../compass-pool.js';
@@ -223,7 +224,10 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   // Server-Sent Events: push row-level table changes so the client can drop its 4s
   // full-sheet poll and apply surgical AG-Grid transactions (cost independent of size).
   app.get('/api/table/stream', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
+    const { threadId } = req.query as { threadId?: string };
+    // 推送也按作用域:不在作用域里的表变了,这个连接不该知道(spec §7)。
+    const scope = await scopeOfRequest(threadId, ctx);
     reply.hijack();
     const raw = reply.raw;
     raw.writeHead(200, {
@@ -234,6 +238,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     });
     raw.write('retry: 3000\n\n');
     const send = (event: TableEvent): void => {
+      if (!eventVisibleInScope(event, scope)) return;
       raw.write(`data: ${JSON.stringify(event)}\n\n`);
     };
     const unsubscribe = onTableEvent(send);

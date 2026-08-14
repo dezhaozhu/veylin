@@ -879,7 +879,8 @@
     "referenceSelection": "引用到对话",
     "anchorNotHere": "这一单在当前视图里没有记录：{{anchor}}",
     "scopeEmpty": "这里还没有表。",
-    "scopeEmptyHint": "选一个项目可以装排产数据,或者直接把 Excel 拖进来。"
+    "scopeEmptyHint": "选一个项目可以装排产数据,或者直接把 Excel 拖进来。",
+    "viewCarryDropped": "「{{cols}}」在这一层没有，已移除"
   },
   "rag": {
     "unknownTime": "未知时间",
