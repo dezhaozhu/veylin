@@ -880,7 +880,12 @@
     "anchorNotHere": "这一单在当前视图里没有记录：{{anchor}}",
     "scopeEmpty": "这里还没有表。",
     "scopeEmptyHint": "选一个项目可以装排产数据,或者直接把 Excel 拖进来。",
-    "viewCarryDropped": "「{{cols}}」在这一层没有，已移除"
+    "viewCarryDropped": "「{{cols}}」在这一层没有，已移除",
+    "snapshot": "快照",
+    "snapshotDone": "已生成快照（{{rows}} 行），从此不变",
+    "snapshotFailed": "快照没生成",
+    "inboxPending": "文件夹里有 {{count}} 个还没导入的文件：{{names}} —— 要用它们请从「导入」进来",
+    "inboxDismiss": "知道了"
   },
   "rag": {
     "unknownTime": "未知时间",

@@ -41,6 +41,7 @@ import { eventVisibleInScope } from '../table-event-scope.js';
 import { archiveImportedFile } from '../table-import-archive.js';
 import { writeSheetSnapshot } from '../project-snapshot.js';
 import { scanProjectInbox } from '../project-inbox.js';
+import { revealInFileManager } from '../project-reveal.js';
 import { getProject } from '../project-store.js';
 import { isFileSource } from '@veylin/db';
 import { listProjects } from '../project-store.js';
@@ -736,6 +737,19 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code(400);
       return { ok: false, message: e instanceof Error ? e.message : String(e) };
     }
+  });
+
+  /** 在访达里显示项目文件夹里的某个东西(Show in Folder)。只允许文件夹之内。 */
+  app.post('/api/project/reveal', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const body = (req.body ?? {}) as { path?: string; threadId?: string };
+    const scope = await scopeOfRequest(body.threadId, ctx);
+    const projectId = scope.kind === 'project' ? scope.id : null;
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    const target = String(body.path ?? '');
+    const out = await revealInFileManager(folder, target || folder || '');
+    if (!out.ok) reply.code(400);
+    return out;
   });
 
   /** 文件夹里有哪些文件还没导入过(spec §6:只列,不自动吸收)。 */

@@ -880,7 +880,12 @@
     "anchorNotHere": "No rows here for {{anchor}}",
     "scopeEmpty": "No tables here yet.",
     "scopeEmptyHint": "Pick a project to load scheduling data, or drop an Excel file in.",
-    "viewCarryDropped": "“{{cols}}” does not exist at this level — removed"
+    "viewCarryDropped": "“{{cols}}” does not exist at this level — removed",
+    "snapshot": "Snapshot",
+    "snapshotDone": "Snapshot written ({{rows}} rows) — frozen from here on",
+    "snapshotFailed": "Snapshot failed",
+    "inboxPending": "{{count}} file(s) in the folder are not imported yet: {{names}} — use Import to bring them in",
+    "inboxDismiss": "Got it"
   },
   "rag": {
     "unknownTime": "Unknown time",

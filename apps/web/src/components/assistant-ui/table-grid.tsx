@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuiState } from '@assistant-ui/react';
 import { useAui } from '@assistant-ui/store';
-import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X, Loader2, Search, AtSign } from 'lucide-react';
+import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X, Loader2, Search, AtSign, Camera, FolderPlus } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
 import { placeComposerCaret } from '@/lib/composer-caret';
 import { appendSelectionToken, registerTableSelection } from '@/lib/table-selection-ref';
@@ -23,6 +23,7 @@ import {
 } from 'ag-grid-community';
 import { anchorOfRow, rowMatchesAnchor } from '@/lib/grain-anchor';
 import { carryViewAcrossGrain } from '@/lib/grain-view-carry';
+import { revealPath } from '@/lib/project-folder';
 import { askBubbleAction, resolveSelectionScope, type SelectionScope } from '@/lib/grid-selection-scope';
 import './ag-grid-modules';
 import { hasProEntitlement } from '@/lib/ag-grid-license';
@@ -764,6 +765,9 @@ export function TableGrid() {
   }, [threadId]);
 
   const [importing, setImporting] = useState(false);
+  const [snapshotting, setSnapshotting] = useState(false);
+  // 项目文件夹里冒出来的新文件(spec §6:只提示,不自动吸收)
+  const [inboxPending, setInboxPending] = useState<Array<{ name: string }>>([]);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [importConfirmOpen, setImportConfirmOpen] = useState(false);
   const [addColumnOpen, setAddColumnOpen] = useState(false);
@@ -1112,6 +1116,24 @@ export function TableGrid() {
       cancelled = true;
     };
   }, [threadId, bootstrapped, applyPayload, resetSheetUiState]);
+
+  // 进到一个项目(或换了会话)时看一眼文件夹里有没有没见过的文件。**只看不吸收**:
+  // 顺手放一份 ≠ 它就是项目数据(spec §6)。
+  useEffect(() => {
+    if (!bootstrapped) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const qs = threadId ? `?threadId=${encodeURIComponent(threadId)}` : '';
+        const res = await fetch(`/api/table/inbox${qs}`);
+        const data = (await res.json()) as { ok?: boolean; pending?: Array<{ name: string }> };
+        if (!cancelled && data.ok) setInboxPending(data.pending ?? []);
+      } catch {
+        /* 扫不到就算了 —— 这只是个提示,不该打断任何事 */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [threadId, bootstrapped]);
 
   // A pending agent chart draws once its target sheet's rows have loaded.
   useEffect(() => {
@@ -2015,6 +2037,32 @@ export function TableGrid() {
     resetImportInput();
   }, [resetImportInput]);
 
+  /**
+   * 快照:把当前 sheet 写成一份不可变文件落进项目文件夹(spec §5)。
+   * 连接器视图是会腐烂的缓存 —— 这是"我要当时那一份"的唯一正解。
+   */
+  const handleSnapshot = async () => {
+    setSnapshotting(true);
+    try {
+      const res = await fetch('/api/table/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheet: activeSheetId, threadId }),
+      });
+      const data = (await res.json()) as { ok?: boolean; path?: string; rows?: number; message?: string };
+      if (!res.ok || !data.ok) {
+        showToast(data.message ?? t('table.snapshotFailed'), 'error');
+        return;
+      }
+      showToast(t('table.snapshotDone', { rows: data.rows ?? 0 }), 'success');
+      if (data.path) void revealPath(data.path, threadId);
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : t('table.snapshotFailed'), 'error');
+    } finally {
+      setSnapshotting(false);
+    }
+  };
+
   const handleImportFile = async (file: File) => {
     setImporting(true);
     try {
@@ -2109,6 +2157,24 @@ export function TableGrid() {
           className="border-destructive/30 bg-destructive/10 text-destructive shrink-0 border-b px-3 py-2 text-xs"
         >
           {t('table.loadError', { error: loadError })}
+        </div>
+      ) : null}
+      {inboxPending.length > 0 ? (
+        <div className="border-border bg-muted/40 text-muted-foreground flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
+          <FolderPlus className="size-3 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">
+            {t('table.inboxPending', {
+              count: inboxPending.length,
+              names: inboxPending.slice(0, 3).map((f) => f.name).join('、'),
+            })}
+          </span>
+          <button
+            type="button"
+            className="hover:text-foreground shrink-0 underline underline-offset-2"
+            onClick={() => setInboxPending([])}
+          >
+            {t('table.inboxDismiss')}
+          </button>
         </div>
       ) : null}
       {toast ? (
@@ -2242,6 +2308,17 @@ export function TableGrid() {
           >
             <Download className="size-3" />
             {t('table.export')}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 px-2 text-xs"
+            onClick={handleSnapshot}
+            disabled={snapshotting}
+          >
+            <Camera className="size-3" />
+            {t('table.snapshot')}
           </Button>
           <span className="text-muted-foreground mx-1 hidden h-4 w-px bg-border sm:inline-block" />
           <div className="relative min-w-[8rem] flex-1">
