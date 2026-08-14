@@ -39,6 +39,8 @@ import { resolveSheetScope } from '../table-tools.js';
 import type { SheetScope } from '../table-scope.js';
 import { eventVisibleInScope } from '../table-event-scope.js';
 import { archiveImportedFile } from '../table-import-archive.js';
+import { writeSheetSnapshot } from '../project-snapshot.js';
+import { scanProjectInbox } from '../project-inbox.js';
 import { getProject } from '../project-store.js';
 import { isFileSource } from '@veylin/db';
 import { listProjects } from '../project-store.js';
@@ -696,6 +698,56 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code(400);
       return { ok: false, message: e instanceof Error ? e.message : String(e) };
     }
+  });
+
+  /**
+   * 快照:把当前 sheet 的内容写成一份**不可变文件**落进项目文件夹(spec §5)。
+   * 连接器视图是会腐烂的缓存,这是"我要当时那一份"的唯一正解。
+   */
+  app.post('/api/table/snapshot', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const body = (req.body ?? {}) as { sheet?: string; threadId?: string };
+    const scope = await scopeOfRequest(body.threadId, ctx);
+    const access = requireScopedSheet(reply, body.sheet, scope);
+    if (!isSheetAccess(access)) return access.error;
+
+    const projectId = scope.kind === 'project' ? scope.id : null;
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    if (!folder) {
+      reply.code(400);
+      return {
+        ok: false,
+        message: projectId
+          ? '当前项目没有绑定文件夹,快照没有地方放'
+          : '个人区还没有项目文件夹,快照没有地方放',
+      };
+    }
+    const meta = getTableSheetMeta(access.sheetId);
+    try {
+      const out = await writeSheetSnapshot({
+        folder,
+        sheetName: meta?.name ?? access.sheetId,
+        columns: listTableColumns(access.sheetId).map((c) => ({ key: c.key, name: c.name })),
+        rows: listTableRows(access.sheetId),
+        origin: meta?.source ?? undefined,
+      });
+      return { ok: true, path: out.path, rows: out.rows };
+    } catch (e: unknown) {
+      reply.code(400);
+      return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
+  /** 文件夹里有哪些文件还没导入过(spec §6:只列,不自动吸收)。 */
+  app.get('/api/table/inbox', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const { threadId } = req.query as { threadId?: string };
+    const scope = await scopeOfRequest(threadId, ctx);
+    const projectId = scope.kind === 'project' ? scope.id : null;
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    if (!folder) return { ok: true, pending: [], note: '当前作用域没有绑定文件夹' };
+    const out = await scanProjectInbox(folder);
+    return { ok: true, folder, pending: out.pending, ...(out.note ? { note: out.note } : {}) };
   });
 
   app.post('/api/table/import', async (req, reply) => {
