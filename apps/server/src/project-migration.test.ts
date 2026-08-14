@@ -11,6 +11,7 @@
  * 'main' plus what this file creates — deterministic counts.
  */
 import assert from 'node:assert/strict';
+import { PERSONAL_SCOPE } from './table-scope.js';
 import { after, before, describe, it } from 'node:test';
 import {
   closeDb,
@@ -332,19 +333,19 @@ describe('runProjectMigration — real store, real fixture rows', () => {
     await insertThreadState(state(threads.migrated, guoluId));
 
     const loadedAt = '2026-07-20T03:04:05.000Z';
-    sheetGuoluId = createTableSheet(`mig-sheet-guolu-${ts}`)!.id;
+    sheetGuoluId = createTableSheet(`mig-sheet-guolu-${ts}`, PERSONAL_SCOPE)!.id;
     await stampTableSheetSource(sheetGuoluId, { server: 'compass-guolu', tenant: 'guolu', loadedAt });
-    sheetCompareId = createTableSheet(`mig-sheet-compare-${ts}`)!.id;
+    sheetCompareId = createTableSheet(`mig-sheet-compare-${ts}`, PERSONAL_SCOPE)!.id;
     await stampTableSheetSource(sheetCompareId, { server: LEGACY_COMPARE_ENTRY_NAME, loadedAt });
-    sheetForeignId = createTableSheet(`mig-sheet-foreign-${ts}`)!.id;
+    sheetForeignId = createTableSheet(`mig-sheet-foreign-${ts}`, PERSONAL_SCOPE)!.id;
     await stampTableSheetSource(sheetForeignId, { server: 'some-other-mcp', loadedAt });
-    sheetAlreadyId = createTableSheet(`mig-sheet-already-${ts}`)!.id;
+    sheetAlreadyId = createTableSheet(`mig-sheet-already-${ts}`, PERSONAL_SCOPE)!.id;
     await stampTableSheetSource(sheetAlreadyId, {
       server: 'compass-guolu',
       loadedAt,
       project: 'pre-stamped-project-id',
     });
-    sheetUnstampedId = createTableSheet(`mig-sheet-unstamped-${ts}`)!.id;
+    sheetUnstampedId = createTableSheet(`mig-sheet-unstamped-${ts}`, PERSONAL_SCOPE)!.id;
   });
 
   after(async () => {

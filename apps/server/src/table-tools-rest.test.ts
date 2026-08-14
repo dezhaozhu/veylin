@@ -20,6 +20,11 @@ import {
   WORKORDERS_SHEET_ID,
 } from './table-tools.js';
 import { getTableSheetMeta, listTableRows } from './table-store.js';
+import { projectScope, sheetIdFor } from './table-scope.js';
+
+// 表有归属:compass 装进来的落在**当前项目**里(spec §3.4),所以断言要按
+// 作用域化后的内部 id 来查。
+const idIn = (project: string, shortName: string) => sheetIdFor(projectScope(project), shortName);
 
 /** Minimal `Response`-shaped stub — fetchCompassData only reads `.ok`/`.status`/`.json()`. */
 function fakeResponse(body: unknown, status = 200): Response {
@@ -62,7 +67,7 @@ describe('importCompassScheduleSheet: REST data-plane first', () => {
     assert.equal(fetchCalls.length, 1);
     assert.match(fetchCalls[0]!, /\/data\/schedule-rows/);
 
-    const meta = getTableSheetMeta(SCHEDULE_SHEET_ID);
+    const meta = getTableSheetMeta(idIn('p1', SCHEDULE_SHEET_ID));
     assert.ok(meta?.source);
     assert.equal(meta!.source!.project, 'p1');
     assert.equal(meta!.source!.tenant, 'guolu');
@@ -147,7 +152,7 @@ describe('importCompassScheduleSheet: REST data-plane first', () => {
     assert.equal(fetchCalled, false, 'fetchImpl must not be invoked when scope.rest is absent');
     assert.equal(mcpCalled, true);
 
-    const meta = getTableSheetMeta(SCHEDULE_SHEET_ID);
+    const meta = getTableSheetMeta(idIn('p3', SCHEDULE_SHEET_ID));
     assert.equal(meta?.source?.project, 'p3');
     assert.equal(meta?.source?.tenant, 'no-rest-tenant');
   });
@@ -171,7 +176,7 @@ describe('importCompassOrderSheet: REST data-plane first', () => {
     assert.equal(out.ok, true);
     assert.equal((out as { imported: number }).imported, 1); // one order_id 'A' aggregated
 
-    const meta = getTableSheetMeta(ORDERS_SHEET_ID);
+    const meta = getTableSheetMeta(idIn('p1', ORDERS_SHEET_ID));
     assert.ok(meta?.source);
     assert.equal(meta!.source!.project, 'p1');
     assert.equal(meta!.source!.tenant, 'guolu');
@@ -218,13 +223,13 @@ describe('importCompassWorkorderSheet: 三级作为焦段主行集', () => {
     assert.match(urls[0]!, /\/data\/workorder-rows/);
     assert.doesNotMatch(urls[0]!, /wbs=|order_id=/, '焦段模式不带单据范围,否则就退化成抽屉');
 
-    const meta = getTableSheetMeta(WORKORDERS_SHEET_ID);
+    const meta = getTableSheetMeta(idIn('p1', WORKORDERS_SHEET_ID));
     assert.equal(meta?.source?.project, 'p1');
     assert.equal(meta?.source?.tenant, 'shangzhong');
-    assert.equal(listTableRows(WORKORDERS_SHEET_ID).length, 2);
+    assert.equal(listTableRows(idIn('p1', WORKORDERS_SHEET_ID)).length, 2);
     // 页签上是人话(这是排产的第三个焦段),但 id 保持英文 —— 工具和接口都按 id 引用。
     assert.equal(meta?.name, '派工');
-    assert.equal(meta?.id, 'workorders');
+    assert.equal(meta?.id, idIn('p1', 'workorders'));
   });
 
   it('total 大于装进来的行数时照实报出来 —— 不能让"装了两行"看起来像"一共两行"', async () => {
@@ -262,8 +267,17 @@ describe('importCompassWorkorderSheet: 三级作为焦段主行集', () => {
     assert.equal(mcpArgs!['wbs'], undefined);
   });
 
-  it('没连 compass 时给出可读错误,而不是空表', async () => {
+  it('没选项目时先被拒,且理由是"没选项目"而不是"没连上"', async () => {
+    // 项目数据只能落在项目里(spec §3.4)。以前这里报 not connected —— 原因不对,
+    // 人会照着去查连接。
     const out = await importCompassWorkorderSheet(() => ({}), {}, () => ({}), undefined);
+    assert.equal(out.ok, false);
+    assert.match((out as { error: string }).error, /没有选项目/);
+  });
+
+  it('选了项目但没连 compass,才报没连上', async () => {
+    const out = await importCompassWorkorderSheet(() => ({}), {}, () => ({}),
+                                                  { entryPin: 'compass', projectId: 'p9' });
     assert.equal(out.ok, false);
     assert.match((out as { error: string }).error, /get_workorder_rows/);
   });

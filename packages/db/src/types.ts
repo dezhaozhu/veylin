@@ -249,8 +249,13 @@ export interface TableSheetRow {
   id: string;
   name: string;
   builtin: boolean;
-  /** Chat session isolation key; null/absent = global (e.g. builtin main). */
+  /** @deprecated 归属改用 `scope`;老行里可能还有,只供回填读取。 */
   threadId?: string | null;
+  /**
+   * 归属:这张表是谁的 context —— `{kind:'personal'|'project'|'thread', id?}`。
+   * 见 apps/server/src/table-scope.ts。老行没有这个字段,由启动时的回填补上。
+   */
+  scope?: { kind: string; id?: string } | null;
   source?: TableSheetSource | null;
 }
 

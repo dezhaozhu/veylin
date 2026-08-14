@@ -15,7 +15,7 @@ import {
   listTableSheets,
   renameTableSheet,
   resolveTableSheetId,
-  sheetBelongsToThread,
+  sheetBelongsToScope,
   updateTableRows,
   DEFAULT_TABLE_SHEET,
   onTableEvent,
@@ -33,6 +33,8 @@ import {
 } from '../table-tools.js';
 import { resolveCompassServer } from '../mcp-scoping.js';
 import { resolveThreadPin } from '../thread-state.js';
+import { resolveSheetScope } from '../table-tools.js';
+import type { SheetScope } from '../table-scope.js';
 import { listProjects } from '../project-store.js';
 import { resolvePinnedProjectScope } from '../project-store.js';
 import { getPooledCompassToolsets, sceneSetKey, type CompassPoolDeps } from '../compass-pool.js';
@@ -45,15 +47,26 @@ import {
   type ProposeEditBody,
 } from '../schedule-edit.js';
 
-// Fork seam: threadId is OPTIONAL on these routes. Sessions (dezhao's per-thread
-// sheet tabs) pass it and see global + their own sheets; our workspace AG-Grid
-// omits it and operates on the workspace scope (global sheets only). Session
-// sheets remain inaccessible without their matching threadId.
+// Fork seam: threadId is OPTIONAL on these routes. It is what the request's
+// **作用域**(表的归属)is resolved from —— thread → 项目钉定 → scope。没带
+// threadId(或那个会话没钉项目)= 个人区。
 function requireThreadId(
   _reply: FastifyReply,
   threadId: string | undefined | null,
 ): string | null {
   return threadId?.trim() || null;
+}
+
+/**
+ * 这个请求在哪个作用域。规则与 agent 侧同一处实现(`resolveSheetScope`):
+ * 有项目钉定 → 项目;没有 → 个人区。见 spec §3.3。
+ */
+async function scopeOfRequest(
+  threadId: string | undefined | null,
+  ctx: { tenantId: string; userId: string },
+): Promise<SheetScope> {
+  const pin = await resolveThreadPin(threadId ?? undefined, ctx);
+  return resolveSheetScope(threadId, pin);
 }
 
 /**
@@ -165,21 +178,20 @@ export async function resolveCompassRequestScope(
   };
 }
 
-type SheetAccess = { sheetId: string; threadId: string | null };
+type SheetAccess = { sheetId: string; scope: SheetScope };
 
-/** Resolve sheet and enforce thread ownership (global sheets pass any scope). */
-function requireThreadSheet(
+/** 解析表并核对归属:不属于本作用域的表,一律 404 —— 不是"看得见但没权限"。 */
+function requireScopedSheet(
   reply: FastifyReply,
   sheetParam: string | undefined,
-  threadId: string | undefined | null,
+  scope: SheetScope,
 ): SheetAccess | { error: { ok: false; message: string } } {
-  const scoped = threadId?.trim() || null;
-  const sheetId = resolveTableSheetId(sheetParam);
-  if (!sheetBelongsToThread(sheetId, scoped)) {
+  const sheetId = resolveTableSheetId(sheetParam, scope);
+  if (!sheetBelongsToScope(sheetId, scope)) {
     reply.code(404);
     return { error: { ok: false, message: 'sheet not found' } };
   }
-  return { sheetId, threadId: scoped };
+  return { sheetId, scope };
 }
 
 function isSheetAccess(
@@ -191,15 +203,16 @@ function isSheetAccess(
 export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // Editable multi-sheet table dataset for the right-panel data grid.
   app.get('/api/table', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheet, threadId } = req.query as { sheet?: string; threadId?: string };
-    const access = requireThreadSheet(reply, sheet, threadId);
+    const scope = await scopeOfRequest(threadId, ctx);
+    const access = requireScopedSheet(reply, sheet, scope);
     if (!isSheetAccess(access)) {
       return access.error;
     }
     return {
       sheet: access.sheetId,
-      sheets: listTableSheets(access.threadId),
+      sheets: listTableSheets(scope),
       defaultSheet: DEFAULT_TABLE_SHEET,
       columns: listTableColumns(access.sheetId),
       rows: listTableRows(access.sheetId),
@@ -395,17 +408,18 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
 
   // Lightweight sheet-tab list (no row payload) — used after sheetsChange SSE.
   app.get('/api/table/sheets', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { threadId } = req.query as { threadId?: string };
-    const scoped = requireThreadId(reply, threadId);
-    return { ok: true, sheets: listTableSheets(scoped) };
+    return { ok: true, sheets: listTableSheets(await scopeOfRequest(threadId, ctx)) };
   });
 
   app.post('/api/table/sheets', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { name, threadId } = (req.body ?? {}) as { name?: string; threadId?: string };
     const trimmed = name?.trim();
-    const scoped = requireThreadId(reply, threadId);
+    // 面板上新建的表落在**当前作用域**(项目 or 个人区),不再是对话级 —— 在
+    // 面板上建一张表是工作区行为,不是"这一轮的临时物"(spec §3.4)。
+    const scoped = await scopeOfRequest(threadId, ctx);
     if (!trimmed) {
       reply.code(400);
       return { ok: false, message: 'name is required' };
@@ -426,12 +440,12 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.delete('/api/table/sheets/:sheetId', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheetId } = req.params as { sheetId: string };
     const { threadId } = req.query as { threadId?: string };
-    const scoped = requireThreadId(reply, threadId);
+    const scoped = await scopeOfRequest(threadId, ctx);
     const existing = getTableSheetMeta(sheetId);
-    if (!existing || (existing.threadId ?? '') !== (scoped ?? '')) {
+    if (!existing || !sheetBelongsToScope(sheetId, scoped)) {
       reply.code(404);
       return { ok: false, message: 'sheet not found' };
     }
@@ -446,7 +460,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.patch('/api/table/sheets/:sheetId', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheetId } = req.params as { sheetId: string };
     const { name, threadId } = (req.body ?? {}) as { name?: string; threadId?: string };
     const trimmed = name?.trim();
@@ -454,9 +468,9 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code(400);
       return { ok: false, message: 'name is required' };
     }
-    const scoped = requireThreadId(reply, threadId);
+    const scoped = await scopeOfRequest(threadId, ctx);
     const existing = getTableSheetMeta(sheetId);
-    if (!existing || (existing.threadId ?? '') !== (scoped ?? '')) {
+    if (!existing || !sheetBelongsToScope(sheetId, scoped)) {
       reply.code(404);
       return { ok: false, message: 'sheet not found' };
     }
@@ -476,9 +490,9 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.post('/api/table/rows', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheet, threadId } = (req.body ?? {}) as { sheet?: string; threadId?: string };
-    const access = requireThreadSheet(reply, sheet, threadId);
+    const access = requireScopedSheet(reply, sheet, await scopeOfRequest(threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -491,14 +505,14 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.delete('/api/table/rows', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       threadId?: string;
       row_keys?: string[];
       order_nos?: string[];
     };
-    const access = requireThreadSheet(reply, body.sheet, body.threadId);
+    const access = requireScopedSheet(reply, body.sheet, await scopeOfRequest(body.threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -508,13 +522,13 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.post('/api/table/columns', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheet, name, threadId } = (req.body ?? {}) as {
       sheet?: string;
       name?: string;
       threadId?: string;
     };
-    const access = requireThreadSheet(reply, sheet, threadId);
+    const access = requireScopedSheet(reply, sheet, await scopeOfRequest(threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -536,13 +550,13 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.delete('/api/table/columns', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheet, key, threadId } = (req.body ?? {}) as {
       sheet?: string;
       key?: string;
       threadId?: string;
     };
-    const access = requireThreadSheet(reply, sheet, threadId);
+    const access = requireScopedSheet(reply, sheet, await scopeOfRequest(threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -559,7 +573,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.patch('/api/table/rows', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       threadId?: string;
@@ -576,7 +590,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code(400);
       return { ok: false, message: 'rows must contain at least one update' };
     }
-    const access = requireThreadSheet(reply, sheet, threadId);
+    const access = requireScopedSheet(reply, sheet, await scopeOfRequest(threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -624,12 +638,12 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   // 选区引用:前端圈选后登记,拿一个短 id 插进输入框。**不传数据** —— agent 拿 id 去
   // table_get 取当前值(见 table-selection.ts:引用是拉,变更是推)。
   app.post('/api/table/selection', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string; threadId?: string; rowKeys?: string[]; columns?: string[];
       groupBy?: string[]; filter?: string;
     };
-    const access = requireThreadSheet(reply, body.sheet, body.threadId);
+    const access = requireScopedSheet(reply, body.sheet, await scopeOfRequest(body.threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -641,7 +655,6 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     // **早失败**:这张表是别的项目加载来的时,现在就说清楚,而不是等 agent 事后
     // 讲道理(实测撞到过:圈了 4 行,agent 才回"这是上重的数据,不能用于锅炉厂")。
     // 判据用与 table_get 同一条 —— 两处口径必须一致。
-    const ctx = await deps.resolveContext(req.headers);
     const pin = await resolveThreadPin(threadId, ctx);
     const source = getTableSheetMeta(access.sheetId)?.source;
     if (isProjectPinMismatch(source, pin, await listProjects(ctx.tenantId))) {
@@ -669,7 +682,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.post('/api/table/import', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       threadId?: string;
@@ -677,7 +690,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       column_names?: string[];
       new_column_names?: string[];
     };
-    const access = requireThreadSheet(reply, body.sheet, body.threadId);
+    const access = requireScopedSheet(reply, body.sheet, await scopeOfRequest(body.threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }

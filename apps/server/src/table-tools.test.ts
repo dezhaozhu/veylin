@@ -14,6 +14,25 @@ import {
   importTableSheet,
   listTableRowsPage,
 } from './table-store.js';
+import { PERSONAL_SCOPE, projectScope, sheetIdFor } from './table-scope.js';
+
+/**
+ * 表有归属:项目数据只能落在项目里。工具从 ctx 的 projectPin 推出作用域,
+ * 所以这些用例得**装作在一个项目里** —— 不给 pin 就是个人区,装载会被拒。
+ */
+const PIN = 'proj-test';
+const ctxIn = (pin: string | null) => ({
+  requestContext: {
+    get: (k: string) => {
+      if (k === 'projectPin') return pin;
+      // compass 装载读的是这一份(装载作用域 + provenance 都从它来)
+      if (k === 'pinnedProjectScope') return pin ? { id: pin, entryPin: null } : null;
+      return null;
+    },
+  },
+});
+const SCHEDULE_ID = sheetIdFor(projectScope(PIN), 'schedule');
+const MAIN_ID = sheetIdFor(PERSONAL_SCOPE, 'main');
 
 describe('load_compass_schedule', () => {
   it('writes get_schedule_rows output into the schedule sheet', async () => {
@@ -37,32 +56,43 @@ describe('load_compass_schedule', () => {
     const tools = buildTableTools(getToolsets);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const out = await (tools.load_compass_schedule.execute as any)({ limit: 100 });
+    const out = await (tools.load_compass_schedule.execute as any)({ limit: 100 }, ctxIn(PIN));
 
     assert.equal(out.ok, true);
-    assert.equal(out.sheet, 'schedule');
+    assert.equal(out.sheet, SCHEDULE_ID, '落在这个项目的作用域里');
     assert.equal(out.imported, 2);
 
     // Verify the in-memory store was populated.
-    const rows = listTableRows('schedule');
+    const rows = listTableRows(SCHEDULE_ID);
     assert.equal(rows.length, 2);
-    const cols = listTableColumns('schedule');
+    const cols = listTableColumns(SCHEDULE_ID);
     assert.equal(cols.length, 2);
   });
 
   it('errors cleanly when no compass MCP server is connected', async () => {
     const tools = buildTableTools(() => ({})); // no compass toolset
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const out = await (tools.load_compass_schedule.execute as any)({});
+    const out = await (tools.load_compass_schedule.execute as any)({}, ctxIn(PIN));
 
     assert.equal(out.ok, false);
     assert.match(String(out.error), /compass|not connected|get_schedule_rows/i);
+  });
+
+  it('没选项目时说的是"没选项目",不是"没连上" —— 原因要对', async () => {
+    // 装载前就拒:项目数据只能落在项目里(spec §3.4)。以前是靠解析不到 compass
+    // 入口间接失败,报 "not connected" —— 人照着这个提示去查连接,查不出所以然。
+    const tools = buildTableTools(() => ({ compass: { get_schedule_rows: { execute: async () => ({}) } } }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out = await (tools.load_compass_schedule.execute as any)({}, ctxIn(null));
+
+    assert.equal(out.ok, false);
+    assert.match(String(out.error), /没有选项目/);
   });
 });
 
 describe('table_get pagination', () => {
   it('returns a bounded page with totalRows and hasMore', async () => {
-    importTableSheet('main', ['name', 'qty'], [
+    importTableSheet(MAIN_ID, ['name', 'qty'], [
       { name: 'A', qty: 1 },
       { name: 'B', qty: 2 },
       { name: 'C', qty: 3 },
@@ -88,7 +118,7 @@ describe('table_get pagination', () => {
   });
 
   it('listTableRowsPage never returns more rows than exist', () => {
-    const { totalRows, rows } = listTableRowsPage('main', 0, 9999);
+    const { totalRows, rows } = listTableRowsPage(MAIN_ID, 0, 9999);
     assert.equal(totalRows, 3);
     assert.equal(rows.length, 3);
   });
@@ -97,7 +127,7 @@ describe('table_get pagination', () => {
 describe('importTableSheet with column descriptors (B1: friendly headers + badges)', () => {
   it('keeps the source key, uses the display name, and preserves custom status options', () => {
     const result = importTableSheet(
-      'main',
+      MAIN_ID,
       [], // names path unused when descriptors are provided
       [
         { order_id: 'O1', schedule_status: 'derived' },
@@ -110,7 +140,7 @@ describe('importTableSheet with column descriptors (B1: friendly headers + badge
       ],
     );
     assert.ok(result);
-    const cols = listTableColumns('main');
+    const cols = listTableColumns(MAIN_ID);
     const byKey = Object.fromEntries(cols.map((c) => [c.key, c]));
     // key stays English (matches row data), NOT slugified from the Chinese name
     assert.ok(byKey['order_id'] && byKey['schedule_status']);
@@ -119,7 +149,7 @@ describe('importTableSheet with column descriptors (B1: friendly headers + badge
     assert.equal(byKey['schedule_status']!.type, 'status');
     assert.deepEqual(byKey['schedule_status']!.statusOptions, ['derived', 'solved', 'unscheduled']);
     // custom statuses survive the sanitizer (not blanked)
-    const rows = listTableRows('main');
+    const rows = listTableRows(MAIN_ID);
     assert.deepEqual(
       rows.map((r) => r['schedule_status']),
       ['derived', 'solved'],

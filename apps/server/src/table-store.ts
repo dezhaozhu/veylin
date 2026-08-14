@@ -16,6 +16,17 @@ import {
 import { DEFAULT_TABLE_STATUS_OPTIONS, type Project } from '@veylin/shared';
 import { EventEmitter } from 'node:events';
 import { legacyServerToProjectId } from './project-migration.js';
+import { planScopeBackfill } from './table-scope-backfill.js';
+import {
+  PERSONAL_SCOPE,
+  sameScope,
+  scopeOfSheetId,
+  sheetIdFor,
+  shortNameOf,
+  threadScope,
+  projectScope,
+  type SheetScope,
+} from './table-scope.js';
 
 // 'sparkline': cell holds a comma-separated numeric series ("3,5,2,…") rendered
 // as an in-cell trend chart when AG-Grid Enterprise is licensed (plain text otherwise).
@@ -38,7 +49,13 @@ export interface TableSheetMeta {
   id: string;
   name: string;
   builtin: boolean;
-  /** Chat session isolation; null = global (builtin main). */
+  /**
+   * 归属:这张表是谁的 context —— 个人 / 某项目 / 某对话。
+   * 见 table-scope.ts 与 docs/specs/2026-08-13-table-scope-context.md。
+   * 迁移期可能缺失(老库里的表尚未回填),缺失 = 还没归属,由回填决定。
+   */
+  scope?: SheetScope;
+  /** @deprecated 老字段,迁移期只用于回填 scope;新代码一律读 `scope`。 */
   threadId?: string | null;
   /**
    * Load provenance: which MCP server (+ tenant, when the payload carried one) the
@@ -103,8 +120,15 @@ const LEGACY_COLUMN_KEYS = [
   'status',
 ] as const;
 
+// 默认表归**个人区**:进到一个项目里是空态,直到装载或导入。项目里不该凭空
+// 有一张我个人的空表(spec §3.5)。
 const BUILTIN_SHEETS: TableSheetMeta[] = [
-  { id: 'main', name: 'Sheet 1', builtin: true, threadId: null },
+  {
+    id: sheetIdFor(PERSONAL_SCOPE, DEFAULT_TABLE_SHEET),
+    name: 'Sheet 1',
+    builtin: true,
+    scope: PERSONAL_SCOPE,
+  },
 ];
 
 interface SheetState {
@@ -249,7 +273,9 @@ export async function initTableStore(): Promise<void> {
       const columns = await listTableColumnsDb(meta.id);
       const rows = await listTableRowsDb(meta.id);
       next.set(meta.id, {
-        meta,
+        // 落库的 scope 是宽松形状({kind:string, id?}),读回来收窄成 SheetScope;
+        // 认不出的形状按"还没归属"处理,交给回填。
+        meta: { ...meta, scope: narrowScope(meta.scope) },
         columns: columns.map((c) =>
           normalizeStatusColumn({
             key: c.key,
@@ -266,11 +292,27 @@ export async function initTableStore(): Promise<void> {
       });
     }
     sheetStore = next;
-    if (!sheetStore.has(DEFAULT_TABLE_SHEET)) {
+    // 归属回填(spec §3.6):老表没有 scope、id 也没有前缀。改 id 要级联
+    // columns/rows —— 内存里"删旧键写新键",再整体 persistAll 落盘。
+    const plan = planScopeBackfill([...sheetStore.values()].map((x) => x.meta));
+    if (plan.length) {
+      for (const entry of plan) {
+        const state = sheetStore.get(entry.from);
+        if (!state) continue;
+        sheetStore.delete(entry.from);
+        state.meta = { ...state.meta, id: entry.to, scope: entry.scope, threadId: undefined };
+        sheetStore.set(entry.to, state);
+      }
+      console.info(`[table] 归属回填:${plan.length} 张表 —— `
+        + plan.map((e) => `${e.from} → ${e.to}`).join(', '));
+      for (const entry of plan) await deleteTableSheetDb(entry.from);
+      await persistAll();
+    }
+    const mainId = sheetIdFor(PERSONAL_SCOPE, DEFAULT_TABLE_SHEET);
+    if (!sheetStore.has(mainId)) {
       const initial = buildInitialStore();
-      const main = initial.get(DEFAULT_TABLE_SHEET)!;
-      sheetStore.set(DEFAULT_TABLE_SHEET, main);
-      await persistSheet(DEFAULT_TABLE_SHEET);
+      sheetStore.set(mainId, initial.get(mainId)!);
+      await persistSheet(mainId);
     }
     let migrated = false;
     for (const sheet of sheetStore.values()) {
@@ -279,6 +321,15 @@ export async function initTableStore(): Promise<void> {
     if (migrated) await persistAll();
   }
   tableHydrated = true;
+}
+
+/** 库里的宽松 scope → SheetScope;认不出返回 undefined(交给回填,不猜)。 */
+function narrowScope(raw: { kind: string; id?: string } | null | undefined): SheetScope | undefined {
+  if (!raw) return undefined;
+  if (raw.kind === 'personal') return PERSONAL_SCOPE;
+  if (raw.kind === 'project' && raw.id) return projectScope(raw.id);
+  if (raw.kind === 'thread' && raw.id) return threadScope(raw.id);
+  return undefined;
 }
 
 function getSheet(sheetId: string): SheetState | undefined {
@@ -389,35 +440,64 @@ export function sanitizePatch(
   return { applied, rejected };
 }
 
-export function resolveTableSheetId(value: string | undefined): string {
-  if (value && sheetStore.has(value)) return value;
-  return DEFAULT_TABLE_SHEET;
+/** 这张表归谁。迁移期缺 `scope` 时从 id 前缀反推,再退回个人区。 */
+export function scopeOfSheet(meta: TableSheetMeta): SheetScope {
+  return meta.scope ?? scopeOfSheetId(meta.id) ?? PERSONAL_SCOPE;
 }
 
 /**
- * Resolve sheet for writes. `undefined`/`''` → main when it exists;
- * an explicit unknown id returns null (do not silently write main).
+ * 入口解析:短名(`schedule`)或内部 id → 本作用域内的内部 id。
+ *
+ * **跨作用域的 id 不被原样接受** —— 拿着 guolu 的 id 在上重的会话里查,应当解析
+ * 不到,而不是把别人的表端出来(spec §3.2)。解析不到时落回本作用域的默认表,
+ * 由调用方按存在与否决定后续。
  */
-export function tryResolveTableSheetId(value: string | undefined): string | null {
-  if (value === undefined || value === '') {
-    return sheetStore.has(DEFAULT_TABLE_SHEET) ? DEFAULT_TABLE_SHEET : null;
+export function resolveTableSheetId(value: string | undefined, scope: SheetScope): string {
+  const fallback = sheetIdFor(scope, DEFAULT_TABLE_SHEET);
+  if (!value) return fallback;
+  if (sheetStore.has(value)) {
+    return sheetBelongsToScope(value, scope) ? value : fallback;
   }
-  return sheetStore.has(value) ? value : null;
+  // 短名:在本作用域里找同名的表
+  const byShortName = sheetIdFor(scope, value);
+  if (sheetStore.has(byShortName)) return byShortName;
+  return fallback;
 }
 
-export function listTableSheets(threadId?: string | null): TableSheetMeta[] {
+/**
+ * 写入用的解析:缺省 → 本作用域的默认表(存在才给);显式给了但找不到 → null
+ * (不静默写到默认表去)。
+ */
+export function tryResolveTableSheetId(
+  value: string | undefined,
+  scope: SheetScope,
+): string | null {
+  if (value === undefined || value === '') {
+    const id = sheetIdFor(scope, DEFAULT_TABLE_SHEET);
+    return sheetStore.has(id) ? id : null;
+  }
+  if (sheetStore.has(value)) return sheetBelongsToScope(value, scope) ? value : null;
+  const byShortName = sheetIdFor(scope, value);
+  return sheetStore.has(byShortName) ? byShortName : null;
+}
+
+/** 内部用:只按 id 取,不问作用域(mutator 拿到的已经是解析过的 id)。 */
+function existingSheetId(sheetId: string): string | null {
+  return sheetStore.has(sheetId) ? sheetId : null;
+}
+
+/**
+ * 列出某作用域的表。**层与层之间不串**:个人区看不到项目的,项目也看不到个人的
+ * (spec §1)。不传 scope = 全部(仅供迁移/运维,不要用在请求路径上)。
+ */
+export function listTableSheets(scope?: SheetScope): TableSheetMeta[] {
   const all = [...sheetStore.values()].map((s) => ({ ...s.meta }));
-  if (threadId === undefined) return all;
-  if (threadId == null) return all.filter((s) => !s.threadId);
-  const key = String(threadId).trim();
-  // Fork seam: global sheets (no threadId — e.g. Compass schedule/resources
-  // imports) are workspace-shared and visible in every session, alongside the
-  // session's own thread-scoped sheets.
-  return all.filter((s) => !s.threadId || (s.threadId ?? '') === key);
+  if (!scope) return all;
+  return all.filter((s) => sameScope(scopeOfSheet(s), scope));
 }
 
 export function getTableSheetMeta(sheetId: string): TableSheetMeta | undefined {
-  const id = tryResolveTableSheetId(sheetId);
+  const id = existingSheetId(sheetId);
   if (!id) return undefined;
   const sheet = getSheet(id);
   return sheet ? { ...sheet.meta } : undefined;
@@ -505,33 +585,27 @@ export async function stampTableSheetSource(
 }
 
 /**
- * Session-scoped access: a thread-scoped sheet is visible only when its
- * threadId matches. Fork seam: sheets with no threadId (Compass imports and
- * other workspace-global sheets) are shared — accessible from every session.
+ * 归属判定。**没有"全局可见"这一档** —— 以前 threadId=null 的表谁都看得见,
+ * 那正是个人区能看到项目排产数据的原因(spec §0 ②)。
  */
-export function sheetBelongsToThread(
-  sheetId: string,
-  threadId: string | null | undefined,
-): boolean {
+export function sheetBelongsToScope(sheetId: string, scope: SheetScope): boolean {
   const meta = getTableSheetMeta(sheetId);
   if (!meta) return false;
-  if (!meta.threadId) return true; // workspace-global sheet
-  const scoped = threadId?.trim() || '';
-  return meta.threadId === scoped;
+  return sameScope(scopeOfSheet(meta), scope);
 }
 
 export function listTableColumns(sheetId: string): TableColumnDef[] {
-  const sheet = getSheet(resolveTableSheetId(sheetId));
+  const sheet = getSheet(existingSheetId(sheetId) ?? sheetId);
   return sheet ? sheet.columns.map((c) => ({ ...c })) : [];
 }
 
-export function listTableRows(sheetId: string = DEFAULT_TABLE_SHEET): TableRowData[] {
-  const sheet = getSheet(resolveTableSheetId(sheetId));
+export function listTableRows(sheetId: string = sheetIdFor(PERSONAL_SCOPE, DEFAULT_TABLE_SHEET)): TableRowData[] {
+  const sheet = getSheet(existingSheetId(sheetId) ?? sheetId);
   return sheet ? sheet.rows.map((r) => ({ ...r })) : [];
 }
 
 export function countTableRows(sheetId: string = DEFAULT_TABLE_SHEET): number {
-  const sheet = getSheet(resolveTableSheetId(sheetId));
+  const sheet = getSheet(existingSheetId(sheetId) ?? sheetId);
   return sheet?.rows.length ?? 0;
 }
 
@@ -544,7 +618,7 @@ export function listTableRowsPage(
   offset = 0,
   limit = DEFAULT_TABLE_GET_LIMIT,
 ): { totalRows: number; rows: TableRowData[] } {
-  const sheet = getSheet(resolveTableSheetId(sheetId));
+  const sheet = getSheet(existingSheetId(sheetId) ?? sheetId);
   if (!sheet) return { totalRows: 0, rows: [] };
   const totalRows = sheet.rows.length;
   const safeOffset = Math.max(0, Math.min(offset, totalRows));
@@ -635,11 +709,11 @@ export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string
  * legacy-stamped sheet read as mismatched (fail-closed, never a leak).
  */
 export function buildTableContextBlock(
-  threadId?: string | null,
+  scope: SheetScope,
   projectPin?: string | null,
   projects: Project[] = [],
 ): string {
-  const snapshots = listTableSheets(threadId).map((meta) => {
+  const snapshots = listTableSheets(scope).map((meta) => {
     const pinMismatch = isProjectPinMismatch(meta.source, projectPin, projects);
     // G1: withheld for the other reason — project data, no project pinned.
     const unscopedProjectData = isUnscopedProjectData(meta.source, projectPin);
@@ -660,7 +734,7 @@ export function buildTableContextBlock(
 }
 
 export function getTableRow(rowKey: string, sheetId: string = DEFAULT_TABLE_SHEET) {
-  const sheet = getSheet(resolveTableSheetId(sheetId));
+  const sheet = getSheet(existingSheetId(sheetId) ?? sheetId);
   const found = sheet?.rows.find((r) => tableRowKey(r) === rowKey);
   return found ? { ...found } : undefined;
 }
@@ -670,14 +744,14 @@ export async function updateTableRow(
   patch: TableRowPatch,
   sheetId: string = DEFAULT_TABLE_SHEET,
 ): Promise<TableRowData | null> {
-  const sheet = getSheet(resolveTableSheetId(sheetId));
+  const sheet = getSheet(existingSheetId(sheetId) ?? sheetId);
   if (!sheet) return null;
   const idx = sheet.rows.findIndex((r) => tableRowKey(r) === rowKey);
   if (idx === -1) return null;
   const clean = sanitizePatch(patch, sheet.columns).applied;
   sheet.rows[idx] = { ...sheet.rows[idx]!, ...clean };
-  await persistSheet(resolveTableSheetId(sheetId));
-  emitTable({ type: 'rowUpsert', sheet: resolveTableSheetId(sheetId), row: { ...sheet.rows[idx]! } });
+  await persistSheet(existingSheetId(sheetId) ?? sheetId);
+  emitTable({ type: 'rowUpsert', sheet: existingSheetId(sheetId) ?? sheetId, row: { ...sheet.rows[idx]! } });
   return { ...sheet.rows[idx]! };
 }
 
@@ -727,10 +801,11 @@ export async function updateTableRows(
     };
   }
 
+  // 到这里 sheetId 已经是解析过的内部 id;短名 `main` 是历史调用留下的宽容。
   const effectiveSheetId = sheetStore.has(sheetId)
     ? sheetId
     : sheetId === DEFAULT_TABLE_SHEET
-      ? tryResolveTableSheetId(undefined)
+      ? tryResolveTableSheetId(undefined, PERSONAL_SCOPE)
       : null;
 
   if (!effectiveSheetId) {
@@ -858,19 +933,20 @@ export async function updateTableRows(
   };
 }
 
-function slugifySheetId(name: string): string {
+/** \u663e\u793a\u540d \u2192 \u77ed\u540d(\u4e0d\u5e26\u4f5c\u7528\u57df\u524d\u7f00);\u540c\u4f5c\u7528\u57df\u5185\u649e\u4e86\u5c31\u52a0\u5e8f\u53f7\u3002 */
+function slugifySheetShortName(name: string, scope: SheetScope): string {
   const base =
     name
       .trim()
       .toLowerCase()
       .replace(/\s+/g, '_')
       .replace(/[^a-z0-9_\u4e00-\u9fff-]/g, '') || 'sheet';
-  let id = base;
+  let short = base;
   let n = 1;
-  while (sheetStore.has(id)) {
-    id = `${base}_${n++}`;
+  while (sheetStore.has(sheetIdFor(scope, short))) {
+    short = `${base}_${n++}`;
   }
-  return id;
+  return short;
 }
 
 /** Display-name key for uniqueness (trim + case-insensitive). */
@@ -878,37 +954,32 @@ function sheetNameKey(name: string): string {
   return name.trim().toLowerCase();
 }
 
-/** True if another sheet in the same thread already uses this display name (case-insensitive). */
+/** 同作用域内是否已有同名表(去空白、不分大小写)。跨作用域同名是两张表。 */
 export function isTableSheetNameTaken(
   name: string,
-  excludeSheetId?: string,
-  threadId?: string | null,
+  excludeSheetId: string | undefined,
+  scope: SheetScope,
 ): boolean {
   const key = sheetNameKey(name);
   if (!key) return false;
-  const scope = (threadId ?? '').trim();
   for (const other of sheetStore.values()) {
     if (excludeSheetId && other.meta.id === excludeSheetId) continue;
-    if ((other.meta.threadId ?? '') !== scope) continue;
+    if (!sameScope(scopeOfSheet(other.meta), scope)) continue;
     if (sheetNameKey(other.meta.name) === key) return true;
   }
   return false;
 }
 
-export function createTableSheet(
-  name: string,
-  threadId?: string | null,
-): TableSheetMeta | null {
+export function createTableSheet(name: string, scope: SheetScope): TableSheetMeta | null {
   const trimmed = name.trim();
   if (!trimmed) return null;
-  const scope = threadId?.trim() || null;
   if (isTableSheetNameTaken(trimmed, undefined, scope)) return null;
-  const id = slugifySheetId(trimmed);
+  const id = sheetIdFor(scope, slugifySheetShortName(trimmed, scope));
   const meta: TableSheetMeta = {
     id,
     name: trimmed,
     builtin: false,
-    threadId: scope,
+    scope,
   };
   sheetStore.set(id, {
     meta,
@@ -927,7 +998,7 @@ export function renameTableSheet(sheetId: string, name: string): TableSheetMeta 
   const trimmed = name.trim();
   if (!trimmed) return null;
   if (sheet.meta.name === trimmed) return { ...sheet.meta };
-  if (isTableSheetNameTaken(trimmed, sheetId, sheet.meta.threadId)) return null;
+  if (isTableSheetNameTaken(trimmed, sheetId, scopeOfSheet(sheet.meta))) return null;
   sheet.meta = { ...sheet.meta, name: trimmed };
   tablePersist(sheetId);
   emitTable({ type: 'sheetsChange' });
@@ -963,21 +1034,24 @@ export async function deleteTableSheet(sheetId: string): Promise<boolean> {
 }
 
 /** After deleting the last sheet, seed a fresh default Sheet 1. */
-async function ensureAtLeastOneSheet(): Promise<void> {
-  if (sheetStore.size > 0) return;
+async function ensureAtLeastOneSheet(scope: SheetScope = PERSONAL_SCOPE): Promise<void> {
+  // "至少一张"是**按作用域**算的:项目里删光了不该冒出一张个人的空表来
+  // (spec §3.5)。个人区是唯一有内建默认表的作用域。
+  if (listTableSheets(scope).length > 0) return;
+  if (!sameScope(scope, PERSONAL_SCOPE)) return;
+  const id = sheetIdFor(PERSONAL_SCOPE, DEFAULT_TABLE_SHEET);
   const initial = buildInitialStore();
-  const main = initial.get(DEFAULT_TABLE_SHEET)!;
-  sheetStore.set(DEFAULT_TABLE_SHEET, main);
-  await persistSheet(DEFAULT_TABLE_SHEET);
+  sheetStore.set(id, initial.get(id)!);
+  await persistSheet(id);
 }
 
 export function addTableRow(sheetId: string): TableRowData | null {
-  const sheet = getSheet(resolveTableSheetId(sheetId));
+  const sheet = getSheet(existingSheetId(sheetId) ?? sheetId);
   if (!sheet) return null;
   const row = emptyRow();
   sheet.rows.push(row);
-  tablePersist(resolveTableSheetId(sheetId));
-  emitTable({ type: 'rowUpsert', sheet: resolveTableSheetId(sheetId), row: { ...row } });
+  tablePersist(existingSheetId(sheetId) ?? sheetId);
+  emitTable({ type: 'rowUpsert', sheet: existingSheetId(sheetId) ?? sheetId, row: { ...row } });
   return { ...row };
 }
 
@@ -996,7 +1070,7 @@ export function deleteTableRows(
   sheetId: string,
   rowKeys: string[],
 ): DeleteTableRowsResult {
-  const sheet = getSheet(resolveTableSheetId(sheetId));
+  const sheet = getSheet(existingSheetId(sheetId) ?? sheetId);
   if (!sheet || rowKeys.length === 0) return { removed: 0, rows: [] };
   const drop = new Set(rowKeys);
   const removedRows: DeletedTableRowSnapshot[] = [];
@@ -1008,7 +1082,7 @@ export function deleteTableRows(
   }
   if (removedRows.length === 0) return { removed: 0, rows: [] };
   sheet.rows = sheet.rows.filter((r) => !drop.has(tableRowKey(r)));
-  const effectiveId = resolveTableSheetId(sheetId);
+  const effectiveId = existingSheetId(sheetId) ?? sheetId;
   tablePersist(effectiveId);
   emitTable({
     type: 'rowsDelete',
@@ -1019,7 +1093,7 @@ export function deleteTableRows(
 }
 
 export function addTableColumn(sheetId: string, name: string): TableColumnDef | null {
-  const sheet = getSheet(resolveTableSheetId(sheetId));
+  const sheet = getSheet(existingSheetId(sheetId) ?? sheetId);
   const trimmed = name.trim();
   if (!sheet || !trimmed) return null;
   const type = inferColumnType(trimmed);
@@ -1031,13 +1105,13 @@ export function addTableColumn(sheetId: string, name: string): TableColumnDef | 
     deletable: true,
   }, true);
   sheet.columns.push(col);
-  tablePersist(resolveTableSheetId(sheetId));
-  emitTable({ type: 'schemaChange', sheet: resolveTableSheetId(sheetId) });
+  tablePersist(existingSheetId(sheetId) ?? sheetId);
+  emitTable({ type: 'schemaChange', sheet: existingSheetId(sheetId) ?? sheetId });
   return { ...col };
 }
 
 export function deleteTableColumn(sheetId: string, columnKey: string): boolean {
-  const sheet = getSheet(resolveTableSheetId(sheetId));
+  const sheet = getSheet(existingSheetId(sheetId) ?? sheetId);
   if (!sheet) return false;
   const col = sheet.columns.find((c) => c.key === columnKey);
   if (!col || !col.deletable) return false;
@@ -1045,8 +1119,8 @@ export function deleteTableColumn(sheetId: string, columnKey: string): boolean {
   for (const row of sheet.rows) {
     delete row[columnKey];
   }
-  tablePersist(resolveTableSheetId(sheetId));
-  emitTable({ type: 'schemaChange', sheet: resolveTableSheetId(sheetId) });
+  tablePersist(existingSheetId(sheetId) ?? sheetId);
+  emitTable({ type: 'schemaChange', sheet: existingSheetId(sheetId) ?? sheetId });
   return true;
 }
 
@@ -1137,7 +1211,7 @@ export function importTableSheet(
   columnTypes?: Record<string, TableColumnType>,
   columnDescriptors?: TableColumnDescriptor[],
 ): { columns: TableColumnDef[]; rows: TableRowData[] } | null {
-  const resolved = resolveTableSheetId(sheetId);
+  const resolved = existingSheetId(sheetId) ?? sheetId;
   const sheet = getSheet(resolved);
   if (!sheet) return null;
 
@@ -1168,5 +1242,11 @@ export function importTableSheet(
 
 export async function resetTableStore(): Promise<void> {
   sheetStore = buildInitialStore();
-  await persistAll();
+  // 内存是权威,落盘失败不该让 reset 本身失败(与其它 mutator 的
+  // fire-and-forget 落盘同一条容忍);没有配 DB 的场景也能用。
+  try {
+    await persistAll();
+  } catch (e) {
+    console.error('[table] reset persist failed:', e);
+  }
 }

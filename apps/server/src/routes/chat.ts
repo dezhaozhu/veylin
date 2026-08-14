@@ -44,6 +44,7 @@ import { listDispatchableCustomAgentIds } from '../agent-task-runner.js';
 import { scheduleDreamConsolidation } from '../dream-service.js';
 import { cancelThreadSubagentTasks } from '../cancel-thread-tasks.js';
 import { buildTableContextBlock } from '../table-store.js';
+import { resolveSheetScope } from '../table-tools.js';
 import { formatTableEditsBlock } from '../table-edit-journal.js';
 import { buildViewer3dContextBlock } from '../viewer3d-store.js';
 import { scheduleEditGuidanceBlock } from '../schedule-edit.js';
@@ -835,7 +836,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     // Live workspace awareness (table + knowledge base + right-panel focus).
     const tableBlockBase = planMode
       ? ''
-      : buildTableContextBlock(threadId, projectPin, tenantProjects);
+      : buildTableContextBlock(resolveSheetScope(threadId, projectPin), projectPin, tenantProjects);
     // Thread-tied (unlike the workspace grid's own schedule-edit HTTP routes,
     // see mcp-scoping.ts's module docstring): this request already resolved
     // its final per-request toolsets (`agentMcp`, pooled compass included)

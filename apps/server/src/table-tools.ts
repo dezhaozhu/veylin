@@ -33,6 +33,7 @@ const cellValueSchema = z.union([z.string(), z.number()]);
 import { unwrapMcpPayload } from './mcp-payload.js';
 import { resolveCompassServer } from './mcp-scoping.js';
 import { getSelection } from './table-selection.js';
+import { PERSONAL_SCOPE, projectScope, sheetIdFor, type SheetScope } from './table-scope.js';
 import { fetchCompassData, type CompassRestScope } from './compass-rest.js';
 
 export { unwrapMcpPayload } from './mcp-payload.js';
@@ -232,6 +233,21 @@ function readTenantProjects(ctx?: TableToolCtx): Project[] {
 }
 
 /**
+ * 这一轮对话在哪个作用域(spec §3.3)。唯一入口 —— 三个调用面(agent 工具、
+ * REST 路由、面板)都从这里推导,规则只有一处。
+ */
+export function resolveSheetScope(
+  _threadId: string | null | undefined,
+  projectPin: string | null | undefined,
+): SheetScope {
+  return projectPin ? projectScope(projectPin) : PERSONAL_SCOPE;
+}
+
+function scopeFromCtx(ctx?: TableToolCtx): SheetScope {
+  return resolveSheetScope(readThreadId(ctx), readProjectPin(ctx));
+}
+
+/**
  * Compose the per-request Compass scope for the load_compass_* AGENT tools
  * from the chat turn's requestContext (all three set by routes/chat.ts):
  * `scopedMcpToolsets` (the final per-request toolsets, pooled compass
@@ -273,11 +289,25 @@ export const SCHEDULE_SHEET_ID = 'schedule';
  * Compass 表本来就是同一个模型的三个**焦段**(订单 / 工序 / 派工),页签直接这么写,
  * 就不必再在工具栏上放一个说同一件事的切换器。
  */
-function ensureCompassSheet(id: string, label: string): void {
-  if (listTableSheets().find((s) => s.id === id)) return;
-  createTableSheet(id);
+function ensureCompassSheet(shortName: string, label: string, scope: SheetScope): string {
+  const id = sheetIdFor(scope, shortName);
+  if (listTableSheets(scope).find((s) => s.id === id)) return id;
+  createTableSheet(shortName, scope);
   renameTableSheet(id, label);
+  return id;
 }
+
+
+/**
+ * Compass 装载的落点作用域:**必须有项目**。项目数据只能落在项目里 —— 个人区
+ * 装不了(spec §3.4)。今天靠 `resolveCompassServer` 拿不到 entry 间接失败,
+ * 报的是 "not connected",原因不对;这里显式拒绝并说人话。
+ */
+function compassSheetScope(scope?: CompassLoadScope): SheetScope | null {
+  return scope?.projectId ? projectScope(scope.projectId) : null;
+}
+
+const NO_PROJECT_ERROR = '当前会话没有选项目,无法装载项目数据 —— 先选一个项目再试';
 
 /**
  * Compass 的 typed columns → 网格的列描述:显示名 + 类型 + (status 列的)选项集与
@@ -317,6 +347,8 @@ export async function importCompassScheduleSheet(
   | { ok: true; sheet: string; imported: number; total: number; columns: number }
   | { ok: false; error: string }
 > {
+  const sheetScope = compassSheetScope(scope);
+  if (!sheetScope) return { ok: false as const, error: NO_PROJECT_ERROR };
   // Load the FULL result set into the grid sheet (not just 500). This is safe for
   // the agent's context: importCompassScheduleSheet returns only a summary
   // (imported/total counts), never the rows — the rows go straight into the grid.
@@ -368,22 +400,22 @@ export async function importCompassScheduleSheet(
   const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
 
   // Ensure the 'schedule' sheet exists (create on first use; fire-and-forget persist is fine)
-  ensureCompassSheet(SCHEDULE_SHEET_ID, '工序');
+  const sheetId = ensureCompassSheet(SCHEDULE_SHEET_ID, '工序', sheetScope);
 
   const descriptors = compassColumnDescriptors(columns);
 
   const result = importTableSheet(
-    SCHEDULE_SHEET_ID,
+    sheetId,
     [],
     rows as Array<Record<string, string | number>>,
     undefined,
     descriptors,
   );
-  await stampCompassLoadSource(SCHEDULE_SHEET_ID, sourceName!, payload, scope?.projectId ?? null);
+  await stampCompassLoadSource(sheetId, sourceName!, payload, scope?.projectId ?? null);
 
   return {
     ok: true as const,
-    sheet: SCHEDULE_SHEET_ID,
+    sheet: sheetId,
     imported: rows.length,
     total: (payload['total'] as number | undefined) ?? rows.length,
     columns: result?.columns?.length ?? columns.length,
@@ -411,6 +443,8 @@ export async function importCompassWorkorderSheet(
   | { ok: true; sheet: string; imported: number; total: number; columns: number }
   | { ok: false; error: string }
 > {
+  const sheetScope = compassSheetScope(scope);
+  if (!sheetScope) return { ok: false as const, error: NO_PROJECT_ERROR };
   const params = {
     limit: input.limit ?? 1_000_000,
     resource: input.resource,
@@ -440,20 +474,20 @@ export async function importCompassWorkorderSheet(
 
   const columns = (payload['columns'] as Array<Record<string, unknown>> | undefined) ?? [];
   const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
-  ensureCompassSheet(WORKORDERS_SHEET_ID, '派工');
+  const sheetId = ensureCompassSheet(WORKORDERS_SHEET_ID, '派工', sheetScope);
   const descriptors = compassColumnDescriptors(columns);
   const result = importTableSheet(
-    WORKORDERS_SHEET_ID,
+    sheetId,
     [],
     rows as Array<Record<string, string | number>>,
     undefined,
     descriptors,
   );
-  await stampCompassLoadSource(WORKORDERS_SHEET_ID, sourceName!, payload, scope?.projectId ?? null);
+  await stampCompassLoadSource(sheetId, sourceName!, payload, scope?.projectId ?? null);
 
   return {
     ok: true as const,
-    sheet: WORKORDERS_SHEET_ID,
+    sheet: sheetId,
     imported: rows.length,
     // Compass 报的是筛完、切页前的真数。装进来的是 imported —— 两个数不合并,
     // 合并了就等于把"装了 500 行"说成"一共 500 行"。
@@ -472,6 +506,8 @@ export async function importCompassResourceSheet(
   | { ok: true; sheet: string; imported: number }
   | { ok: false; error: string }
 > {
+  const sheetScope = compassSheetScope(scope);
+  if (!sheetScope) return { ok: false as const, error: NO_PROJECT_ERROR };
   const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
   const tool = compass?.toolset['get_resources'];
   if (!compass || !tool) {
@@ -483,9 +519,7 @@ export async function importCompassResourceSheet(
   const resources =
     (payload['resources'] as Array<Record<string, unknown>> | undefined) ?? [];
 
-  if (!listTableSheets().find((s) => s.id === RESOURCES_SHEET_ID)) {
-    createTableSheet(RESOURCES_SHEET_ID);
-  }
+  const sheetId = ensureCompassSheet(RESOURCES_SHEET_ID, '资源', sheetScope);
 
   // Compass's per-resource `trend` is a 12-month forward load series (array);
   // store it as the sparkline column's comma-separated form.
@@ -508,9 +542,9 @@ export async function importCompassResourceSheet(
     { key: 'load_days', name: '负荷(天)', type: 'number' as const },
     { key: 'source', name: '来源', type: 'text' as const },
   ];
-  importTableSheet(RESOURCES_SHEET_ID, [], rows, undefined, descriptors);
-  await stampCompassLoadSource(RESOURCES_SHEET_ID, compass.serverName, payload, scope?.projectId ?? null);
-  return { ok: true as const, sheet: RESOURCES_SHEET_ID, imported: rows.length };
+  importTableSheet(sheetId, [], rows, undefined, descriptors);
+  await stampCompassLoadSource(sheetId, compass.serverName, payload, scope?.projectId ?? null);
+  return { ok: true as const, sheet: sheetId, imported: rows.length };
 }
 
 export const ORDERS_SHEET_ID = 'orders';
@@ -527,6 +561,8 @@ export async function importCompassOrderSheet(
   | { ok: true; sheet: string; imported: number; total: number; columns: number }
   | { ok: false; error: string }
 > {
+  const sheetScope = compassSheetScope(scope);
+  if (!sheetScope) return { ok: false as const, error: NO_PROJECT_ERROR };
   let payload: Record<string, unknown> | undefined;
   let sourceName: string | undefined;
   if (scope?.rest) {
@@ -600,9 +636,9 @@ export async function importCompassOrderSheet(
     { key: 'end', name: '计划完工', type: 'text' as const },
     { key: 'due_at', name: '交期', type: 'text' as const },
   ];
-  ensureCompassSheet(ORDERS_SHEET_ID, '订单');
+  const sheetId = ensureCompassSheet(ORDERS_SHEET_ID, '订单', sheetScope);
   importTableSheet(ORDERS_SHEET_ID, [], orderRows as Array<Record<string, string | number>>, undefined, descriptors);
-  await stampCompassLoadSource(ORDERS_SHEET_ID, sourceName!, payload, scope?.projectId ?? null);
+  await stampCompassLoadSource(sheetId, sourceName!, payload, scope?.projectId ?? null);
   return {
     ok: true as const, sheet: ORDERS_SHEET_ID,
     imported: orderRows.length, total: orderRows.length, columns: descriptors.length,
@@ -678,7 +714,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         ),
     }),
     execute: async (input, ctx?: TableToolCtx) => {
-      const sheet = resolveTableSheetId(input.sheet);
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const source = getTableSheetMeta(sheet)?.source ?? undefined;
       // v3: both pin and stamp are PROJECT ids; tenantProjects feeds the
       // legacy-stamp shim (see isProjectPinMismatch's re-key note).
@@ -785,8 +821,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       row: rowSchema.nullable(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const updated = await updateTableRow(input.row_key, input.values, sheet);
       if (!updated) {
         return { ok: false, sheet, row: null, message: `Row ${input.row_key} not found` };
@@ -811,8 +847,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       row: rowSchema.nullable(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const updated = await updateTableRow(
         input.row_key,
         { [input.column]: input.value },
@@ -842,8 +878,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       row: rowSchema.nullable(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const row = addTableRow(sheet);
       if (!row) return { ok: false, sheet, row: null, message: 'Failed to add row' };
       return { ok: true, sheet, row, message: 'Added a blank row' };
@@ -863,8 +899,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       removed: z.number(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const { removed } = deleteTableRows(sheet, input.row_keys);
       return { ok: removed > 0, sheet, removed, message: `Deleted ${removed} row(s)` };
     },
@@ -883,8 +919,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       column: z.object({ key: z.string(), name: z.string() }).nullable(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const column = addTableColumn(sheet, input.name);
       if (!column) return { ok: false, sheet, column: null, message: 'Failed to add column' };
       return {
@@ -908,8 +944,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       sheet: z.string(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const ok = deleteTableColumn(sheet, input.column);
       return {
         ok,
@@ -930,8 +966,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       sheet: z.object({ id: z.string(), name: z.string() }).nullable(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = createTableSheet(input.name);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = createTableSheet(input.name, scopeFromCtx(ctx));
       if (!sheet) return { ok: false, sheet: null, message: 'Failed to create sheet' };
       return { ok: true, sheet: { id: sheet.id, name: sheet.name }, message: `Created sheet ${sheet.name}` };
     },
@@ -947,8 +983,9 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       ok: z.boolean(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const ok = await deleteTableSheet(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const id = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
+      const ok = await deleteTableSheet(id);
       return { ok, message: ok ? `Deleted sheet ${input.sheet}` : 'Failed to delete sheet' };
     },
   });
@@ -1012,8 +1049,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         .optional()
         .describe('数值聚合（配合分组时用）'),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const known = new Set(listTableColumns(sheet).map((c) => c.key));
       const missing = input.columns.filter((c) => !known.has(c));
       if (missing.length) {

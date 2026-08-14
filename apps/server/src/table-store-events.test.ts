@@ -7,6 +7,7 @@
  * same shape as addTableRow's).
  */
 import { describe, it } from 'node:test';
+import { PERSONAL_SCOPE, sheetIdFor } from './table-scope.js';
 import assert from 'node:assert/strict';
 import {
   onTableEvent,
@@ -18,13 +19,16 @@ import {
   type TableEvent,
 } from './table-store.js';
 
+// 表有归属:mutator 拿的是**内部 id**(个人区的 main = `me~main`)。
+const MAIN = sheetIdFor(PERSONAL_SCOPE, 'main');
+
 // No resetTableStore(): it awaits a real DB (persistAll), unlike the fire-and-forget
 // mutators. Each test observes only its own mutation's event, so shared store state is fine.
 describe('table-store change events', () => {
   it('addTableRow emits rowUpsert with the new row', () => {
     const events: TableEvent[] = [];
     const off = onTableEvent((e) => events.push(e));
-    const row = addTableRow('main');
+    const row = addTableRow(MAIN);
     off();
     assert.ok(row);
     const upsert = events.find((e) => e.type === 'rowUpsert');
@@ -33,10 +37,10 @@ describe('table-store change events', () => {
   });
 
   it('deleteTableRows emits rowsDelete carrying the keys', () => {
-    const row = addTableRow('main')!;
+    const row = addTableRow(MAIN)!;
     const events: TableEvent[] = [];
     const off = onTableEvent((e) => events.push(e));
-    deleteTableRows('main', [row.row_id]);
+    deleteTableRows(MAIN, [row.row_id]);
     off();
     const del = events.find((e) => e.type === 'rowsDelete');
     assert.ok(del && del.type === 'rowsDelete');
@@ -46,7 +50,7 @@ describe('table-store change events', () => {
   it('addTableColumn emits schemaChange', () => {
     const events: TableEvent[] = [];
     const off = onTableEvent((e) => events.push(e));
-    addTableColumn('main', 'newcol');
+    addTableColumn(MAIN, 'newcol');
     off();
     assert.ok(events.some((e) => e.type === 'schemaChange'));
   });
@@ -54,7 +58,7 @@ describe('table-store change events', () => {
   it('importTableSheet emits sheetReplace', () => {
     const events: TableEvent[] = [];
     const off = onTableEvent((e) => events.push(e));
-    importTableSheet('main', ['a', 'b'], [{ a: '1', b: '2' }]);
+    importTableSheet(MAIN, ['a', 'b'], [{ a: '1', b: '2' }]);
     off();
     assert.ok(events.some((e) => e.type === 'sheetReplace'));
   });
@@ -62,7 +66,7 @@ describe('table-store change events', () => {
   it('createTableSheet emits sheetsChange', () => {
     const events: TableEvent[] = [];
     const off = onTableEvent((e) => events.push(e));
-    createTableSheet('Sheet X');
+    createTableSheet('Sheet X', PERSONAL_SCOPE);
     off();
     assert.ok(events.some((e) => e.type === 'sheetsChange'));
   });
@@ -71,7 +75,7 @@ describe('table-store change events', () => {
     const events: TableEvent[] = [];
     const off = onTableEvent((e) => events.push(e));
     off();
-    addTableRow('main');
+    addTableRow(MAIN);
     assert.equal(events.length, 0);
   });
 });

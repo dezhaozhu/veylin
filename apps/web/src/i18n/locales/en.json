@@ -877,7 +877,9 @@
     "loadingCompass": "Loading schedule data from Compass…",
     "compassUnavailable": "Compass schedule not loaded (MCP disconnected or unavailable); showing default empty sheet",
     "referenceSelection": "Reference in chat",
-    "anchorNotHere": "No rows here for {{anchor}}"
+    "anchorNotHere": "No rows here for {{anchor}}",
+    "scopeEmpty": "No tables here yet.",
+    "scopeEmptyHint": "Pick a project to load scheduling data, or drop an Excel file in."
   },
   "rag": {
     "unknownTime": "Unknown time",

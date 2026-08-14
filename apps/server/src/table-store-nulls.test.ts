@@ -8,13 +8,14 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTableSheet, importTableSheet, listTableRows, deleteTableSheet } from './table-store.js';
+import { PERSONAL_SCOPE, sheetIdFor } from './table-scope.js';
 
-const SHEET = 'null-probe';
+const SHEET = sheetIdFor(PERSONAL_SCOPE, 'null-probe');
 
 describe('导入时的空值', () => {
   beforeEach(async () => {
     await deleteTableSheet(SHEET).catch(() => {});
-    createTableSheet(SHEET);
+    createTableSheet('null-probe', PERSONAL_SCOPE);
   });
 
   it('null 落成空串,不落成 "null"', () => {

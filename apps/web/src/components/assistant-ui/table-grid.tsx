@@ -299,8 +299,16 @@ async function readJsonResponse<T>(res: Response): Promise<T> {
   }
 }
 
-async function fetchSchedule(sheetId: string): Promise<SchedulePayload> {
-  const res = await fetch(`/api/table?sheet=${encodeURIComponent(sheetId)}`);
+/**
+ * 取一张表。**必须带 threadId** —— 服务端要靠它推出这一屏的作用域(项目 or
+ * 个人区)。不带就等于每次都问"个人区有什么",项目的表一张也看不到。
+ * `sheetId` 省略 = 让服务端给这个作用域的默认表(切项目时用)。
+ */
+async function fetchSchedule(sheetId: string | undefined, threadId?: string): Promise<SchedulePayload> {
+  const qs = new URLSearchParams();
+  if (sheetId) qs.set('sheet', sheetId);
+  if (threadId) qs.set('threadId', threadId);
+  const res = await fetch(`/api/table?${qs.toString()}`);
   const data = await readJsonResponse<SchedulePayload>(res);
   if (!res.ok) {
     throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
@@ -573,6 +581,9 @@ export function TableGrid() {
   const selectedColumnKeyRef = useRef<string | null>(null);
   // Ref mirror of rows — used in async paste handler to avoid stale closure
   const rowsRef = useRef<TableRow[]>(rows);
+  // load() 是 useCallback 且不该因为换会话就重建(SSE 订阅挂在它上面),
+  // 所以当前 threadId 走 ref 读。
+  const threadIdRef = useRef<string | undefined>(threadId);
   const sseErrorNotified = useRef(false);
   // Agent-requested chart waiting for the target sheet's rows to be on screen
   const pendingChartRef = useRef<{
@@ -669,6 +680,10 @@ export function TableGrid() {
     rowsRef.current = rows;
   }, [rows]);
 
+  useEffect(() => {
+    threadIdRef.current = threadId;
+  }, [threadId]);
+
   const [importing, setImporting] = useState(false);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [importConfirmOpen, setImportConfirmOpen] = useState(false);
@@ -746,7 +761,9 @@ export function TableGrid() {
   }, []);
 
   const applyPayload = useCallback((data: SchedulePayload, initial: boolean) => {
-    if (data.sheets?.length) setSheets(data.sheets);
+    // 空数组也要照收:换到一个还没装过表的项目时,页签就该空掉,而不是留着
+    // 上一个作用域的页签(那正是"个人区看得见项目的表"那个病的另一半)。
+    if (data.sheets) setSheets(data.sheets);
     if (data.columns) setColumnDefs(data.columns);
     const next = data.rows ?? [];
     if (initial) setLoading(false);
@@ -762,7 +779,7 @@ export function TableGrid() {
       const attempts = initial ? 6 : 1;
       for (let i = 0; i < attempts; i++) {
         try {
-          const data = await fetchSchedule(sheetId);
+          const data = await fetchSchedule(sheetId, threadIdRef.current);
           applyPayload(data, initial);
           if (initial) setLoadError(null);
           return;
@@ -982,6 +999,33 @@ export function TableGrid() {
     };
     return () => es.close();
   }, [activeSheetId, load, bootstrapped, showToast, t]);
+
+  // 换会话 = 可能换了作用域(项目 ⇄ 个人区)。表是**那个作用域的 context**,
+  // 所以整屏跟着走:重取该作用域的页签,并落到它的默认表。不这么做的话,个人区
+  // 里会继续摆着上一个项目的三万行 —— 而 agent 那侧早就读不到了,两边说法打架。
+  const lastScopeThread = useRef<string | undefined>(threadId);
+  useEffect(() => {
+    if (!bootstrapped) return;
+    if (lastScopeThread.current === threadId) return;
+    lastScopeThread.current = threadId;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await fetchSchedule(undefined, threadId);
+        if (cancelled) return;
+        resetSheetUiState();
+        setSheets(data.sheets ?? []);
+        if (data.sheet) setActiveSheetId(data.sheet);
+        lastSerialized.current = '';
+        applyPayload(data, true);
+      } catch {
+        /* 取不到就维持现状:下一次 SSE 或手动切换会再试 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, bootstrapped, applyPayload, resetSheetUiState]);
 
   // A pending agent chart draws once its target sheet's rows have loaded.
   useEffect(() => {
@@ -1938,6 +1982,16 @@ export function TableGrid() {
     return (
       <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
         {compassLoading ? t('table.loadingCompass') : t('table.loading')}
+      </div>
+    );
+  }
+
+  // 这个作用域还没有表。说现状和下一步就够了 —— 不解释归属机制。
+  if (sheets.length === 0 && rows.length === 0 && columnDefs.length === 0) {
+    return (
+      <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-sm">
+        <span>{t('table.scopeEmpty')}</span>
+        <span className="text-xs opacity-70">{t('table.scopeEmptyHint')}</span>
       </div>
     );
   }

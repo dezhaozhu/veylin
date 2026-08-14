@@ -24,6 +24,10 @@
  * DB round-trip lives in table-store-provenance.test.ts.
  */
 import { describe, it } from 'node:test';
+import { PERSONAL_SCOPE, projectScope, sheetIdFor } from './table-scope.js';
+
+/** compass 装进来的表落在**那个项目**的作用域里(spec §3.4)。 */
+const scheduleIdOf = (project: Project) => sheetIdFor(projectScope(project.id), 'schedule');
 import assert from 'node:assert/strict';
 import type { Project } from '@veylin/shared';
 import { buildTableTools } from './table-tools.js';
@@ -121,7 +125,7 @@ describe('table provenance: stamping on Compass (re)load', () => {
     const tools = await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
     void tools;
 
-    const meta = getTableSheetMeta('schedule');
+    const meta = getTableSheetMeta(scheduleIdOf(PROJ_GUOLU));
     assert.ok(meta?.source, 'expected sheet meta to carry a source stamp');
     assert.equal(meta!.source!.server, 'compass');
     assert.equal(meta!.source!.project, PROJ_GUOLU.id);
@@ -132,45 +136,50 @@ describe('table provenance: stamping on Compass (re)load', () => {
     );
   });
 
-  it('legacy ungrouped deployment (no request scope): stamps the resolved server name only, no project', async () => {
+  it('无项目根本装不进来 —— 旧的"没项目也能装、只盖一个 server 戳"那条路已经关了', async () => {
+    // 那条路正是项目数据落进个人区的入口(spec §0 ②)。现在装载前就拒。
     const getToolsets = () => ({ 'compass-shangzhong': scheduleToolset('shangzhong') });
     const tools = buildTableTools(getToolsets);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (tools.load_compass_schedule.execute as any)({});
+    const out = await (tools.load_compass_schedule.execute as any)({});
 
-    const meta = getTableSheetMeta('schedule');
-    assert.equal(meta?.source?.server, 'compass-shangzhong');
-    assert.equal(meta?.source?.project, undefined);
-    assert.equal(meta?.source?.tenant, 'shangzhong');
+    assert.equal(out.ok, false);
+    assert.match(String(out.error), /没有选项目/);
   });
 
   it('omits tenant when the Compass payload carries none', async () => {
-    const getToolsets = () => ({ compass: scheduleToolset(undefined) });
-    const tools = buildTableTools(getToolsets);
-
+    const tools = buildTableTools(() => ({}));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (tools.load_compass_schedule.execute as any)({});
+    await (tools.load_compass_schedule.execute as any)(
+      {},
+      ctxFor({ pin: PROJ_GUOLU.id, toolsets: { compass: scheduleToolset(undefined) } }),
+    );
 
-    const meta = getTableSheetMeta('schedule');
+    const meta = getTableSheetMeta(scheduleIdOf(PROJ_GUOLU));
     assert.ok(meta?.source);
     assert.equal(meta!.source!.tenant, undefined);
   });
 
   it('re-stamps loadedAt on a repeat load', async () => {
     await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
-    const first = getTableSheetMeta('schedule')!.source!.loadedAt;
+    const first = getTableSheetMeta(scheduleIdOf(PROJ_GUOLU))!.source!.loadedAt;
 
     await new Promise((r) => setTimeout(r, 5));
     await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
-    const second = getTableSheetMeta('schedule')!.source!.loadedAt;
+    const second = getTableSheetMeta(scheduleIdOf(PROJ_GUOLU))!.source!.loadedAt;
 
     assert.notEqual(first, second);
   });
 });
 
-describe('table_get: source + project-pin mismatch refusal (project-id keyed)', () => {
-  it('refuses the rows (no row data) when the sheet source.project differs from the current project pin', async () => {
+/**
+ * 归属上线之后(spec §4):跨项目**根本看不见**,不是"看得见但被拒"。拒绝那道
+ * 守卫仍在,降级为纵深防御 —— 只在结构够不着的地方(作用域内却带着别的项目的
+ * 戳)才会触发。两种写法都留着测:结构一条,守卫一条。
+ */
+describe('table_get: 跨项目在结构上就够不着', () => {
+  it('别的项目装的表,在本项目里查不到 —— 拿不到它的行', async () => {
     const tools = await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
 
     const out = await callTableGet(
@@ -178,18 +187,13 @@ describe('table_get: source + project-pin mismatch refusal (project-id keyed)', 
       { sheet: 'schedule' },
       ctxFor({ pin: PROJ_SHANGZHONG.id, projects: TENANT_PROJECTS }),
     );
-    assert.equal(out.refused, true);
-    assert.equal('rows' in out, false, 'refused response must carry no row data');
-    assert.equal('source' in out, false, 'refused response must carry no source either');
-    assert.match(out.warning ?? '', /^注意:/);
-    assert.match(out.warning ?? '', new RegExp(PROJ_GUOLU.id));
-    assert.match(out.warning ?? '', /guolu/); // tenant
-    assert.match(out.warning ?? '', new RegExp(PROJ_SHANGZHONG.id));
-    assert.match(out.warning ?? '', /勿与当前项目的实时数据混用/);
-    assert.match(out.warning ?? '', /请在当前项目下重新加载/);
+    // 解析落到了上重自己的作用域(那里还没有 schedule),不是锅炉厂那张
+    assert.notEqual(out.sheet, scheduleIdOf(PROJ_GUOLU));
+    assert.equal(out.rows?.length ?? 0, 0);
+    assert.equal('source' in out, false, '拿不到别的项目的来源戳');
   });
 
-  it('refuses in the OTHER direction too: a shangzhong-project sheet under the guolu-project pin', async () => {
+  it('反方向同理', async () => {
     const tools = await loadScheduleUnderProject(PROJ_SHANGZHONG, 'shangzhong');
 
     const out = await callTableGet(
@@ -197,8 +201,30 @@ describe('table_get: source + project-pin mismatch refusal (project-id keyed)', 
       { sheet: 'schedule' },
       ctxFor({ pin: PROJ_GUOLU.id, projects: TENANT_PROJECTS }),
     );
+    assert.notEqual(out.sheet, scheduleIdOf(PROJ_SHANGZHONG));
+    assert.notEqual(out.source?.project, PROJ_SHANGZHONG.id, '拿到的绝不是上重那张');
+  });
+
+  it('守卫仍在:作用域内的表带着别的项目的戳(陈旧状态),照样拒行', async () => {
+    // 结构够不着的地方还有一道 —— 比如迁移遗留、或手工改过的戳。
+    const created = createTableSheet(`stale-stamp-${Date.now()}`, projectScope(PROJ_SHANGZHONG.id));
+    assert.ok(created);
+    await stampTableSheetSource(created!.id, {
+      server: 'compass', project: PROJ_GUOLU.id, tenant: 'guolu',
+      loadedAt: '2026-07-20T00:00:00.000Z',
+    }).catch(() => undefined);
+    const tools = buildTableTools();
+
+    const out = await callTableGet(
+      tools,
+      { sheet: created!.id },
+      ctxFor({ pin: PROJ_SHANGZHONG.id, projects: TENANT_PROJECTS }),
+    );
     assert.equal(out.refused, true);
-    assert.equal('rows' in out, false);
+    assert.equal('rows' in out, false, 'refused response must carry no row data');
+    assert.match(out.warning ?? '', /^注意:/);
+    assert.match(out.warning ?? '', new RegExp(PROJ_GUOLU.id));
+    assert.match(out.warning ?? '', /勿与当前项目的实时数据混用/);
   });
 
   it('no warning when the sheet source.project matches the current project pin', async () => {
@@ -206,7 +232,7 @@ describe('table_get: source + project-pin mismatch refusal (project-id keyed)', 
 
     const out = await callTableGet(
       tools,
-      { sheet: 'schedule' },
+      { sheet: 'schedule' }, // 短名在本项目里解析到本项目那张
       ctxFor({ pin: PROJ_GUOLU.id, projects: TENANT_PROJECTS }),
     );
     assert.equal('warning' in out, false);
@@ -214,7 +240,7 @@ describe('table_get: source + project-pin mismatch refusal (project-id keyed)', 
   });
 
   it('legacy unstamped sheet under a pin gets the legacy warning, not the mismatch warning — and still returns rows (audit fix #2 refuses only STAMPED mismatches, not unlabeled legacy data)', async () => {
-    const created = createTableSheet('legacy-sheet-pin');
+    const created = createTableSheet('legacy-sheet-pin', PERSONAL_SCOPE);
     assert.ok(created);
     const tools = buildTableTools();
 
@@ -230,7 +256,7 @@ describe('table_get: source + project-pin mismatch refusal (project-id keyed)', 
   });
 
   it('legacy unstamped sheet with no pin is byte-identical to pre-provenance output (no source, no warning)', async () => {
-    const created = createTableSheet('legacy-sheet-nopin');
+    const created = createTableSheet('legacy-sheet-nopin', PERSONAL_SCOPE);
     assert.ok(created);
     const tools = buildTableTools();
 
@@ -256,31 +282,38 @@ describe('table_get: source + project-pin mismatch refusal (project-id keyed)', 
  * 行为逐字不变。
  */
 describe('G1: 未钉项目的会话不得读取项目数据(带来源戳的表)', () => {
-  it('refuses a project-stamped sheet when the turn has no project pin', async () => {
+  it('个人区看不到项目装进来的表 —— 结构上就不在(不再是"看得见但被拒")', async () => {
     const tools = await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
 
     const out = await callTableGet(tools, { sheet: 'schedule' }, ctxFor({ pin: null }));
 
-    assert.equal(out.refused, true, '个人会话读项目数据必须被拒绝,而不是拿到行');
-    assert.equal('rows' in out, false, 'refused response must carry no row data');
-    assert.equal('source' in out, false);
-    assert.match(out.warning ?? '', /项目数据/);
-    assert.match(out.warning ?? '', new RegExp(PROJ_GUOLU.id));
-    assert.match(out.warning ?? '', /不能作为依据/);
-    assert.match(out.warning ?? '', /移动|新建/);
+    assert.notEqual(out.sheet, scheduleIdOf(PROJ_GUOLU), '解析不到项目那张');
+    assert.equal('source' in out, false, '拿不到项目的来源戳');
+    // 个人区的表照常可读(这里是空的默认表),项目数据一行也带不出来
+    assert.equal((out.rows ?? []).length, 0);
   });
 
-  it('refuses with no requestContext at all (tool invoked outside a chat turn — same ambiguity, same fail-closed)', async () => {
+  it('拿着项目那张表的裸 id 在个人区查,同样够不着', async () => {
+    // 结构防线不能只拦短名 —— agent 见过内部 id 就会照抄。
+    const tools = await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
+
+    const out = await callTableGet(tools, { sheet: scheduleIdOf(PROJ_GUOLU) }, ctxFor({ pin: null }));
+
+    assert.notEqual(out.sheet, scheduleIdOf(PROJ_GUOLU));
+    assert.equal('source' in out, false);
+  });
+
+  it('没有 requestContext(不在对话里调用)= 个人区,同样够不着', async () => {
     const tools = await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
 
     const out = await callTableGet(tools, { sheet: 'schedule' });
 
-    assert.equal(out.refused, true);
-    assert.equal('rows' in out, false);
+    assert.notEqual(out.sheet, scheduleIdOf(PROJ_GUOLU));
+    assert.equal('source' in out, false);
   });
 
   it('refuses a LEGACY entry-name stamp too (project data is project data, mapped or not)', async () => {
-    const created = createTableSheet(`g1-legacy-${Date.now()}`);
+    const created = createTableSheet(`g1-legacy-${Date.now()}`, PERSONAL_SCOPE);
     assert.ok(created);
     await stampTableSheetSource(created!.id, {
       server: 'compass-guolu',
@@ -297,7 +330,7 @@ describe('G1: 未钉项目的会话不得读取项目数据(带来源戳的表)'
   });
 
   it('UNSTAMPED sheets (the user\'s own upload) stay fully readable in the personal area — byte-identical to before', async () => {
-    const created = createTableSheet(`g1-personal-${Date.now()}`);
+    const created = createTableSheet(`g1-personal-${Date.now()}`, PERSONAL_SCOPE);
     assert.ok(created);
     const tools = buildTableTools();
 
@@ -309,13 +342,12 @@ describe('G1: 未钉项目的会话不得读取项目数据(带来源戳的表)'
     assert.equal('source' in out, false);
   });
 
-  it('buildTableContextBlock withholds a project-stamped sheet from the unpinned system prompt (no sample rows)', async () => {
+  it('个人区的系统提示块里没有项目那张表 —— 连名字带样本行都不进去', async () => {
     await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
 
-    const block = buildTableContextBlock(null, null, TENANT_PROJECTS);
+    const block = buildTableContextBlock(PERSONAL_SCOPE, null, TENANT_PROJECTS);
 
-    const scheduleLine = block.split('\n').find((l) => l.includes('(id: `schedule`)')) ?? '';
-    assert.match(scheduleLine, /跳过: 本表是项目数据/);
+    assert.doesNotMatch(block, new RegExp(scheduleIdOf(PROJ_GUOLU)));
     assert.doesNotMatch(block, /O1/, '未钉项目时不得把项目数据样本喂进提示词');
   });
 
@@ -353,9 +385,16 @@ describe('isUnscopedProjectData (G1 predicate)', () => {
 describe('table_get: LEGACY entry-name stamps via the legacyServerToProjectId shim', () => {
   let sheetSeq = 0;
 
-  /** Create a sheet carrying a pre-migration stamp (server only, no project). */
-  async function legacyStampedSheet(server: string, tenant?: string): Promise<string> {
-    const created = createTableSheet(`legacy-stamp-${server}-${++sheetSeq}-${Date.now()}`);
+  /**
+   * 一张**落在给定作用域里**、却带着迁移前老戳(只有 server、没有 project)的表。
+   * 归属上线后,老戳判定只在这种"作用域够得着"的表上还会被走到(spec §4)。
+   */
+  async function legacyStampedSheet(
+    server: string,
+    tenant?: string,
+    scope = projectScope(PROJ_GUOLU.id),
+  ): Promise<string> {
+    const created = createTableSheet(`legacy-stamp-${server}-${++sheetSeq}-${Date.now()}`, scope);
     assert.ok(created);
     // In-memory stamp is synchronous inside stampTableSheetSource; the awaited
     // DB persist is best-effort in this no-DB suite (same tolerance as
@@ -384,7 +423,9 @@ describe('table_get: LEGACY entry-name stamps via the legacyServerToProjectId sh
   });
 
   it("the same 'compass-guolu' stamp REFUSES under the shangzhong project pin", async () => {
-    const sheetId = await legacyStampedSheet('compass-guolu', 'guolu');
+    // 表在上重的作用域里(够得着),但戳是锅炉厂的老名字 —— 守卫该拒。
+    const sheetId = await legacyStampedSheet('compass-guolu', 'guolu',
+                                             projectScope(PROJ_SHANGZHONG.id));
     const tools = buildTableTools();
 
     const out = await callTableGet(
@@ -436,21 +477,21 @@ describe('risk #1 regression: provenance never collapses to the shared toolset k
     // 'compass', every mismatch check would pass, and cross-project sheet
     // mixing would go silently undetected (regression of audit fix #2).
     const tools = await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
-    const guoluStamp = getTableSheetMeta('schedule')!.source!;
+    const guoluStamp = getTableSheetMeta(scheduleIdOf(PROJ_GUOLU))!.source!;
     assert.equal(guoluStamp.project, PROJ_GUOLU.id);
     assert.notEqual(guoluStamp.project, 'compass', 'stamp must NEVER be the toolset key');
 
-    // The guolu-loaded sheet is refused under the shangzhong pin...
-    const refusedUnderShangzhong = await callTableGet(
+    // 上重的会话读不到锅炉厂那张(归属之后是**够不着**,不是"够得着但被拒")
+    const fromShangzhong = await callTableGet(
       tools,
       { sheet: 'schedule' },
       ctxFor({ pin: PROJ_SHANGZHONG.id, projects: TENANT_PROJECTS }),
     );
-    assert.equal(refusedUnderShangzhong.refused, true);
+    assert.notEqual(fromShangzhong.source?.project, PROJ_GUOLU.id);
 
-    // ...then reloaded under shangzhong it re-keys, and the direction flips.
+    // 上重自己装一份:两张表并存,戳各是各的(不会因为共用 'compass' 这个 key 而塌成一个)
     await loadScheduleUnderProject(PROJ_SHANGZHONG, 'shangzhong');
-    const szStamp = getTableSheetMeta('schedule')!.source!;
+    const szStamp = getTableSheetMeta(scheduleIdOf(PROJ_SHANGZHONG))!.source!;
     assert.equal(szStamp.project, PROJ_SHANGZHONG.id);
     assert.notEqual(
       szStamp.project,
@@ -458,20 +499,22 @@ describe('risk #1 regression: provenance never collapses to the shared toolset k
       'two projects sharing the compass key must still produce DISTINCT stamps',
     );
 
-    const refusedUnderGuolu = await callTableGet(
+    // 各自的会话各读各的那张,都不被拒
+    const inGuolu = await callTableGet(
       tools,
       { sheet: 'schedule' },
       ctxFor({ pin: PROJ_GUOLU.id, projects: TENANT_PROJECTS }),
     );
-    assert.equal(refusedUnderGuolu.refused, true);
+    assert.equal(inGuolu.refused ?? false, false);
+    assert.equal(inGuolu.source?.project, PROJ_GUOLU.id);
 
-    const okUnderShangzhong = await callTableGet(
+    const inShangzhong = await callTableGet(
       tools,
       { sheet: 'schedule' },
       ctxFor({ pin: PROJ_SHANGZHONG.id, projects: TENANT_PROJECTS }),
     );
-    assert.equal(okUnderShangzhong.refused ?? false, false);
-    assert.ok(Array.isArray(okUnderShangzhong.rows));
+    assert.equal(inShangzhong.refused ?? false, false);
+    assert.equal(inShangzhong.source?.project, PROJ_SHANGZHONG.id);
   });
 });
 
@@ -570,21 +613,28 @@ describe('buildTableContextBlock: pinned mismatch is omitted from the injected p
   it('buildTableContextBlock end-to-end: a project-stamped mismatched sheet is omitted, a matching one is not', async () => {
     await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
 
-    const meta = getTableSheetMeta('schedule');
+    const meta = getTableSheetMeta(scheduleIdOf(PROJ_GUOLU));
     assert.equal(meta?.source?.project, PROJ_GUOLU.id);
 
     // The whole-block assertions target the schedule sheet's own section:
     // this suite's earlier tests legitimately leave OTHER (foreign-stamped)
     // sheets in the shared in-memory store, which correctly show 跳过 under
     // any pin — that is the fail-closed behavior, not noise.
+    const guoluSheetId = scheduleIdOf(PROJ_GUOLU);
     const scheduleLine = (block: string): string =>
-      block.split('\n').find((line) => line.includes('(id: `schedule`)')) ?? '';
+      block.split('\n').find((line) => line.includes(`(id: \`${guoluSheetId}\`)`)) ?? '';
 
-    const mismatchedBlock = buildTableContextBlock(null, PROJ_SHANGZHONG.id, TENANT_PROJECTS);
-    assert.match(scheduleLine(mismatchedBlock), /跳过: 数据来源与当前项目不一致/);
-    assert.doesNotMatch(mismatchedBlock, /O1/); // the seeded row's order_id
+    // 上重的会话:锅炉厂那张**根本不在列表里**。
+    // (行内容不能用来判别 —— 本套用例里两个项目喂的是同一份假数据,上重自己那张
+    //  也有 O1;能判别的是 sheet id。)
+    const otherProjectBlock = buildTableContextBlock(
+      projectScope(PROJ_SHANGZHONG.id), PROJ_SHANGZHONG.id, TENANT_PROJECTS);
+    assert.equal(scheduleLine(otherProjectBlock), '');
+    assert.doesNotMatch(otherProjectBlock, new RegExp(guoluSheetId));
 
-    const matchingBlock = buildTableContextBlock(null, PROJ_GUOLU.id, TENANT_PROJECTS);
+    // 锅炉厂自己的会话:在,而且有数据
+    const matchingBlock = buildTableContextBlock(
+      projectScope(PROJ_GUOLU.id), PROJ_GUOLU.id, TENANT_PROJECTS);
     assert.doesNotMatch(scheduleLine(matchingBlock), /跳过:/);
     assert.match(matchingBlock, /O1/);
   });
