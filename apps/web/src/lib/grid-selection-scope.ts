@@ -24,3 +24,23 @@ export function resolveSelectionScope(input: {
   if (selectedColumnKey) return { rowKeys: [], columns: [selectedColumnKey] };
   return null;
 }
+
+/**
+ * 那个浮现的「@ 引用到对话」该不该出现。
+ *
+ * 监听挂在 document 上(拖选的抬手可能落在网格外),所以必须自己判断这一下点在
+ * 哪儿 —— 否则点应用里任何地方都会冒出来一个引用按钮(实测撞到过:侧栏空白处
+ * 一点,气泡就飘在那儿)。
+ *
+ * `keep` 是为气泡自己留的:点在气泡上时什么都别做。mouseup 早于 click,这时
+ * 把它收掉,按钮还没来得及被点到就没了。
+ */
+export function askBubbleAction(input: {
+  insideGrid: boolean;
+  insideBubble: boolean;
+  scope: SelectionScope | null;
+}): 'show' | 'hide' | 'keep' {
+  if (input.insideBubble) return 'keep';
+  if (!input.insideGrid) return 'hide';
+  return input.scope ? 'show' : 'hide';
+}

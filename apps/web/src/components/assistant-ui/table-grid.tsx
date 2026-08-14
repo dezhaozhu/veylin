@@ -22,7 +22,7 @@ import {
   themeQuartz,
 } from 'ag-grid-community';
 import { anchorOfRow, rowMatchesAnchor } from '@/lib/grain-anchor';
-import { resolveSelectionScope, type SelectionScope } from '@/lib/grid-selection-scope';
+import { askBubbleAction, resolveSelectionScope, type SelectionScope } from '@/lib/grid-selection-scope';
 import './ag-grid-modules';
 import { hasProEntitlement } from '@/lib/ag-grid-license';
 import { isAgGridEnterpriseReady } from '@/lib/ag-grid-enterprise-state';
@@ -600,6 +600,9 @@ export function TableGrid() {
   const activeGridFilterRef = useRef<OpenGridFilter | null>(null);
   // 切焦段时带过去的锚点(见 switchSheet)。新焦段的行到齐后定位过去。
   const pendingAnchorRef = useRef<string | null>(null);
+  // 判断一次点击落在网格里还是网格外(见 askBubbleAction)
+  const gridWrapRef = useRef<HTMLDivElement | null>(null);
+  const askBubbleRef = useRef<HTMLDivElement | null>(null);
 
   const drawPendingChart = useCallback((attempt = 0) => {
     const pending = pendingChartRef.current;
@@ -1829,6 +1832,15 @@ export function TableGrid() {
     const onUp = (e: MouseEvent) => {
       const api = gridApiRef.current;
       if (!api) return;
+      const target = e.target as Node | null;
+      // 点在气泡自己身上:什么都别做(mouseup 早于 click,这时收掉就点不到了)
+      if (target && askBubbleRef.current?.contains(target)) return;
+      // 点在网格外:收起来。监听挂在 document 上是为了接住拖选时落在网格外的
+      // 抬手 —— 代价是应用里任何一次点击都会走到这儿。
+      if (!target || !gridWrapRef.current?.contains(target)) {
+        setAskAnchor(null);
+        return;
+      }
       // 把 AG-Grid 的区域展开成"哪些行、哪些列"——判定交给 resolveSelectionScope,
       // 这里只负责读形状。
       const rowKeys = new Set<string>();
@@ -1851,7 +1863,8 @@ export function TableGrid() {
           .filter(Boolean),
         selectedColumnKey: selectedColumnKeyRef.current,
       });
-      if (!scope) {
+      const action = askBubbleAction({ insideGrid: true, insideBubble: false, scope });
+      if (action !== 'show') {
         setAskAnchor(null);
         return;
       }
@@ -1866,6 +1879,7 @@ export function TableGrid() {
     askAnchor && canReference
       ? createPortal(
           <div
+            ref={askBubbleRef}
             className="fixed z-[210]"
             style={{ top: Math.max(8, askAnchor.top - 44), left: askAnchor.left }}
           >
@@ -2231,7 +2245,7 @@ export function TableGrid() {
           ) : null}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden" ref={gridWrapRef}>
           <div className="min-h-0 flex-1 text-sm" style={{ height: '100%' }}>
             <AgGridReact<TableRow>
               key={proMasterDetail ? 'grid-md' : 'grid-plain'}

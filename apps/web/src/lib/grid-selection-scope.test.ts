@@ -6,7 +6,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveSelectionScope } from './grid-selection-scope.js';
+import { askBubbleAction, resolveSelectionScope } from './grid-selection-scope.js';
 
 const noRange = { rowKeys: [], columns: [] };
 
@@ -60,5 +60,27 @@ describe('resolveSelectionScope', () => {
       range: noRange, checkedRowKeys: ['r1'], selectedColumnKey: 'workshop',
     });
     assert.deepEqual(out, { rowKeys: ['r1'], columns: [] });
+  });
+});
+
+describe('askBubbleAction', () => {
+  const scope = { rowKeys: ['r1'], columns: [] };
+
+  it('点在网格里且有选区 → 冒出来', () => {
+    assert.equal(askBubbleAction({ insideGrid: true, insideBubble: false, scope }), 'show');
+  });
+
+  it('点在网格外 → 收起来(哪怕选区还在)', () => {
+    // 实测的 bug:监听挂在 document 上,点侧栏空白处也会冒一个引用按钮出来。
+    assert.equal(askBubbleAction({ insideGrid: false, insideBubble: false, scope }), 'hide');
+  });
+
+  it('点在网格里但没有选区 → 收起来', () => {
+    assert.equal(askBubbleAction({ insideGrid: true, insideBubble: false, scope: null }), 'hide');
+  });
+
+  it('点在气泡自己身上 → 什么都别做', () => {
+    // mouseup 早于 click:这时收掉,按钮还没被点到就没了。
+    assert.equal(askBubbleAction({ insideGrid: false, insideBubble: true, scope }), 'keep');
   });
 });
