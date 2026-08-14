@@ -317,12 +317,30 @@ async function fetchSchedule(sheetId: string | undefined, threadId?: string): Pr
   return data;
 }
 
-async function patchRow(sheetId: string, row: TableRow): Promise<boolean> {
+/**
+ * 提交改动过的行。**一次一个批次**,打到 `PATCH /api/table/rows`。
+ *
+ * 这里曾经是 `PATCH /api/table` 打单行 —— 而服务端只有 `/api/table/rows`,于是
+ * 普通单元格编辑一直是 404:本地看着改了,实际一个字也没存进去(上游 2026-07
+ * 的 batch-PATCH 修复没进我们这条 fork)。
+ *
+ * `threadId` 决定服务端解析到哪个作用域;不带就是个人区,项目里的表会 404。
+ */
+async function patchRows(
+  sheetId: string,
+  rows: TableRow[],
+  threadId?: string,
+): Promise<boolean> {
+  if (rows.length === 0) return true;
   try {
-    const res = await fetch('/api/table', {
+    const res = await fetch('/api/table/rows', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: sheetId, row_key: rowKey(row), ...row }),
+      body: JSON.stringify({
+        sheet: sheetId,
+        threadId,
+        rows: rows.map((row) => ({ row_key: rowKey(row), ...row })),
+      }),
     });
     const data = (await res.json()) as { ok?: boolean };
     return res.ok && data.ok === true;
@@ -330,6 +348,7 @@ async function patchRow(sheetId: string, row: TableRow): Promise<boolean> {
     return false;
   }
 }
+
 
 function applyHistoryBatch(
   allRows: TableRow[],
@@ -1145,11 +1164,9 @@ export function TableGrid() {
       lastSerialized.current = JSON.stringify(merged);
       editingUntil.current = Date.now() + 3000;
       setRows(merged);
-      for (const row of merged) {
-        if (touchedKeys.has(rowKey(row))) void patchRow(activeSheetId, row);
-      }
+      void patchRows(activeSheetId, merged.filter((r) => touchedKeys.has(rowKey(r))), threadId);
     },
-    [activeSheetId],
+    [activeSheetId, threadId],
   );
 
   // B2: send one governed cell edit into the Compass draft
@@ -1292,9 +1309,7 @@ export function TableGrid() {
         lastSerialized.current = JSON.stringify(merged);
         editingUntil.current = Date.now() + 3000;
         const touched = new Set(batch.map((e) => e.rowKey));
-        for (const row of merged) {
-          if (touched.has(rowKey(row))) void patchRow(activeSheetId, row);
-        }
+        void patchRows(activeSheetId, merged.filter((r) => touched.has(rowKey(r))), threadId);
         return merged;
       });
       queueMicrotask(() => {
@@ -1394,7 +1409,7 @@ export function TableGrid() {
         }
         return;
       }
-      // Paste: read clipboard, coerce to column type, commit via patchRow
+      // Paste: read clipboard, coerce to column type, commit via patchRows
       if (key === 'v') {
         const colId = event.column.getColId();
         if (colId && editableKeys.has(colId) && event.data) {
@@ -1744,7 +1759,7 @@ export function TableGrid() {
     const res = await fetch('/api/table/rows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: activeSheetId }),
+      body: JSON.stringify({ sheet: activeSheetId, threadId }),
     });
     const data = (await res.json()) as { ok?: boolean; rows?: TableRow[] };
     if (data.ok && data.rows) {
@@ -1759,7 +1774,7 @@ export function TableGrid() {
     const res = await fetch('/api/table/rows', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: activeSheetId, row_keys: [...selectedRows] }),
+      body: JSON.stringify({ sheet: activeSheetId, row_keys: [...selectedRows], threadId }),
     });
     const data = (await res.json()) as { ok?: boolean; rows?: TableRow[] };
     if (!data.ok || !data.rows) return;
@@ -1782,7 +1797,7 @@ export function TableGrid() {
       const res = await fetch('/api/table/columns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheet: activeSheetId, name }),
+        body: JSON.stringify({ sheet: activeSheetId, name, threadId }),
       });
       const data = (await res.json()) as {
         ok?: boolean;
@@ -1813,7 +1828,7 @@ export function TableGrid() {
     const res = await fetch('/api/table/columns', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: activeSheetId, key: selectedColumnKey }),
+      body: JSON.stringify({ sheet: activeSheetId, key: selectedColumnKey, threadId }),
     });
     const data = (await res.json()) as {
       ok?: boolean;
@@ -2004,6 +2019,7 @@ export function TableGrid() {
           sheet: activeSheetId,
           column_names: columnNames,
           rows: importedRows,
+          threadId,
         }),
       });
       const data = (await res.json()) as {

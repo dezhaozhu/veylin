@@ -14,7 +14,7 @@ import {
   listTableRows,
   listTableSheets,
   renameTableSheet,
-  resolveTableSheetId,
+  tryResolveTableSheetId,
   sheetBelongsToScope,
   flushTablePersist,
   updateTableRows,
@@ -182,14 +182,21 @@ export async function resolveCompassRequestScope(
 
 type SheetAccess = { sheetId: string; scope: SheetScope };
 
-/** 解析表并核对归属:不属于本作用域的表,一律 404 —— 不是"看得见但没权限"。 */
+/**
+ * 解析表并核对归属:不属于本作用域的表,一律 404 —— 不是"看得见但没权限"。
+ *
+ * **显式给了 id 就绝不退回默认表**。退回是这里最危险的行为:一个请求带着项目里的
+ * sheet id、却没带 threadId(于是解析成个人区),退回默认表就把行**写进了个人区的
+ * main** —— 返回 200、写错地方,比 404 糟得多。`tryResolveTableSheetId` 正是这个
+ * 语义:给了但找不到/不属于本作用域 → null;没给 → 本作用域的默认表。
+ */
 function requireScopedSheet(
   reply: FastifyReply,
   sheetParam: string | undefined,
   scope: SheetScope,
 ): SheetAccess | { error: { ok: false; message: string } } {
-  const sheetId = resolveTableSheetId(sheetParam, scope);
-  if (!sheetBelongsToScope(sheetId, scope)) {
+  const sheetId = tryResolveTableSheetId(sheetParam, scope);
+  if (!sheetId || !sheetBelongsToScope(sheetId, scope)) {
     reply.code(404);
     return { error: { ok: false, message: 'sheet not found' } };
   }
