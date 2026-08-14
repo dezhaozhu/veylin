@@ -16,6 +16,7 @@ import {
   renameTableSheet,
   resolveTableSheetId,
   sheetBelongsToScope,
+  flushTablePersist,
   updateTableRows,
   DEFAULT_TABLE_SHEET,
   onTableEvent,
@@ -703,6 +704,8 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       body.new_column_names ??
       [];
     const result = importTableSheet(access.sheetId, columnNames, body.rows);
+    // 用户导一张大表、紧接着关掉 app —— 响应必须意味着"已经在盘上了"
+    await flushTablePersist();
     if (!result) {
       reply.code(400);
       return { ok: false, message: 'Import failed' };

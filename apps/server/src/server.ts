@@ -25,7 +25,7 @@ import { buildAgentTaskTools } from './agent-task-tool';
 import { executeSubagentJob, CancelledTaskError } from './agent-task-runner';
 import { buildTableTools } from './table-tools';
 import { buildViewer3dTools } from './viewer3d-tools';
-import { initTableStore, listTableSheets, stampTableSheetSource } from './table-store';
+import { flushTablePersist, initTableStore, listTableSheets, stampTableSheetSource } from './table-store';
 import { pruneDesktopThreadClutter } from './thread-state';
 import {
   initResumableChatStreams,
@@ -584,6 +584,9 @@ async function main() {
         await mcp.disconnect().catch(() => undefined);
         mcp = null;
       }
+      // 关库之前把排队中的表格落盘走完 —— 行级改动是 fire-and-forget 的,
+      // 这时候关掉就是静默丢最后几笔(大表导入曾经这样少过一万行)。
+      await flushTablePersist();
       await closeDb();
       await app.close();
     } catch (err) {

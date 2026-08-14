@@ -259,6 +259,20 @@ function tablePersist(sheetId: string): void {
   });
 }
 
+/**
+ * 等所有排队中的落盘走完。
+ *
+ * 平时的行级改动 fire-and-forget 就够了(改一格丢了下次还会写)。但**批量导入**
+ * 不行:实测导 49,350 行,内存全的、库里只有 39,685 —— 进程在链走完前退出,
+ * 静默少一截,还不报错。凡是"这一步完成"要对用户成立的地方(导入接口的响应、
+ * Compass 装载的返回、退出前),都得先等这个。
+ *
+ * 落盘链是串行的,所以等当前链尾就等于等到此刻为止排队的全部写完。
+ */
+export async function flushTablePersist(): Promise<void> {
+  await persistChain;
+}
+
 /** Load tables from SurrealDB or seed builtin sheets on first run. */
 export async function initTableStore(): Promise<void> {
   if (tableHydrated) return;

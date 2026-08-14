@@ -19,6 +19,7 @@ import {
   listTableRows,
   listTableRowsPage,
   listTableSheets,
+  flushTablePersist,
   tableRowKey,
   MAX_TABLE_GET_LIMIT,
   renameTableSheet,
@@ -412,6 +413,8 @@ export async function importCompassScheduleSheet(
     descriptors,
   );
   await stampCompassLoadSource(sheetId, sourceName!, payload, scope?.projectId ?? null);
+  // 大表导入的落盘是排队写的:等它走完再说"装好了"(实测截断过一次,49,350 → 39,685)
+  await flushTablePersist();
 
   return {
     ok: true as const,
@@ -484,6 +487,8 @@ export async function importCompassWorkorderSheet(
     descriptors,
   );
   await stampCompassLoadSource(sheetId, sourceName!, payload, scope?.projectId ?? null);
+  // 大表导入的落盘是排队写的:等它走完再说"装好了"(实测截断过一次,49,350 → 39,685)
+  await flushTablePersist();
 
   return {
     ok: true as const,
@@ -544,6 +549,7 @@ export async function importCompassResourceSheet(
   ];
   importTableSheet(sheetId, [], rows, undefined, descriptors);
   await stampCompassLoadSource(sheetId, compass.serverName, payload, scope?.projectId ?? null);
+  await flushTablePersist();
   return { ok: true as const, sheet: sheetId, imported: rows.length };
 }
 
@@ -637,8 +643,10 @@ export async function importCompassOrderSheet(
     { key: 'due_at', name: '交期', type: 'text' as const },
   ];
   const sheetId = ensureCompassSheet(ORDERS_SHEET_ID, '订单', sheetScope);
-  importTableSheet(ORDERS_SHEET_ID, [], orderRows as Array<Record<string, string | number>>, undefined, descriptors);
+  importTableSheet(sheetId, [], orderRows as Array<Record<string, string | number>>, undefined, descriptors);
   await stampCompassLoadSource(sheetId, sourceName!, payload, scope?.projectId ?? null);
+  // 大表导入的落盘是排队写的:等它走完再说"装好了"(实测截断过一次,49,350 → 39,685)
+  await flushTablePersist();
   return {
     ok: true as const, sheet: ORDERS_SHEET_ID,
     imported: orderRows.length, total: orderRows.length, columns: descriptors.length,
