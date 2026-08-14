@@ -18,8 +18,10 @@ import {
   type IHeaderParams,
   type GridApi,
   type GridReadyEvent,
+  type IRowNode,
   themeQuartz,
 } from 'ag-grid-community';
+import { anchorOfRow, rowMatchesAnchor } from '@/lib/grain-anchor';
 import './ag-grid-modules';
 import { hasProEntitlement } from '@/lib/ag-grid-license';
 import { isAgGridEnterpriseReady } from '@/lib/ag-grid-enterprise-state';
@@ -583,6 +585,8 @@ export function TableGrid() {
   // (props, so they must read a ref, not state — cf. selectedColumnKeyRef).
   const pendingScheduleFilterRef = useRef<OpenGridFilter | null>(null);
   const activeGridFilterRef = useRef<OpenGridFilter | null>(null);
+  // 切焦段时带过去的锚点(见 switchSheet)。新焦段的行到齐后定位过去。
+  const pendingAnchorRef = useRef<string | null>(null);
 
   const drawPendingChart = useCallback((attempt = 0) => {
     const pending = pendingChartRef.current;
@@ -631,6 +635,33 @@ export function TableGrid() {
     activeGridFilterRef.current = pending;
     api.onFilterChanged();
   }, []);
+
+  // 到达新焦段后定位到锚点那一单。同样的 remount-safe 重试(切 sheet 会重建网格)。
+  const locatePendingAnchor = useCallback((attempt = 0) => {
+    const anchor = pendingAnchorRef.current;
+    if (!anchor) return;
+    const api = gridApiRef.current;
+    const ready = api && !api.isDestroyed?.() && (api.getDisplayedRowCount?.() ?? 0) > 0;
+    if (!ready) {
+      if (attempt < 20) setTimeout(() => locatePendingAnchor(attempt + 1), 150);
+      return;
+    }
+    pendingAnchorRef.current = null;
+    const hits: IRowNode<TableRow>[] = [];
+    api.forEachNodeAfterFilterAndSort((node) => {
+      if (rowMatchesAnchor(node.data as Record<string, unknown> | undefined, anchor)) {
+        hits.push(node);
+      }
+    });
+    if (hits.length === 0) {
+      // 这一单在这个焦段没有行 —— 说出来。三级只覆盖二级的一部分,静悄悄地
+      // 停在别处等于让人以为自己找错了。
+      showToast(t('table.anchorNotHere', { anchor }), 'error');
+      return;
+    }
+    api.ensureNodeVisible(hits[0]!, 'middle');
+    api.flashCells({ rowNodes: hits });
+  }, [t]);
 
   useEffect(() => {
     rowsRef.current = rows;
@@ -753,7 +784,19 @@ export function TableGrid() {
   const switchSheet = useCallback(
     (sheetId: string) => {
       if (sheetId === activeSheetId) return;
+      // 焦段之间带上锚点:切表前记下"我在看哪一单",到了新焦段再定位过去。
+      // 用户对多表切换的担心就是这个 —— 每切一次都得重新找位置。
+      const api = gridApiRef.current;
+      const focused = api?.getFocusedCell?.();
+      const focusedRow =
+        focused != null ? api?.getDisplayedRowAtIndex?.(focused.rowIndex)?.data : undefined;
+      let anchor = anchorOfRow(focusedRow as Record<string, unknown> | undefined);
+      if (!anchor) {
+        const selected = api?.getSelectedRows?.()?.[0];
+        anchor = anchorOfRow(selected as Record<string, unknown> | undefined);
+      }
       resetSheetUiState();
+      pendingAnchorRef.current = anchor;
       setActiveSheetId(sheetId);
       setLoading(true);
     },
@@ -976,6 +1019,13 @@ export function TableGrid() {
       applyPendingScheduleFilter();
     }
   }, [rows, applyPendingScheduleFilter]);
+
+  // 换了焦段、新一批行到齐 → 定位到切换前那一单。
+  useEffect(() => {
+    if (pendingAnchorRef.current && rows.length > 0) {
+      locatePendingAnchor();
+    }
+  }, [rows, locatePendingAnchor]);
 
   // Pre-filter rows in React; AG-Grid handles sort natively via comparator
   const filteredRows = useMemo(() => applyFilters(rows, filters), [rows, filters]);
@@ -1682,7 +1732,10 @@ export function TableGrid() {
   // 选区 → 对话引用。**登记引用,不塞数据**:agent 拿 id 去取当前值(见
   // lib/table-selection-ref.ts)。分组/筛选状态一起带走 —— 它是"这里为什么堆这么多"
   // 里的"这里"。
-  const canReference = selectedRows.size > 0 || Boolean(selectedColumnKey);
+  // 拖选的单元格区域**不在** React state 里(它活在 AG-Grid 里),所以不能只看勾选行和
+  // 选中列 —— 第一版就是这么错的:拖出一块区域时两个条件都不满足,按钮永远不冒。
+  const [hasCellRange, setHasCellRange] = useState(false);
+  const canReference = selectedRows.size > 0 || Boolean(selectedColumnKey) || hasCellRange;
   const referenceSelection = useCallback(async () => {
     if (!threadId || !activeSheetId) return;
     const grouped: string[] = [];
@@ -1738,6 +1791,7 @@ export function TableGrid() {
       if (!api) return;
       const hasRows = (api.getSelectedNodes?.() ?? []).length > 0;
       const hasRange = (api.getCellRanges?.() ?? []).length > 0;
+      setHasCellRange(hasRange);
       if (!hasRows && !hasRange) {
         setAskAnchor(null);
         return;

@@ -14,10 +14,12 @@ import assert from 'node:assert/strict';
 import {
   importCompassScheduleSheet,
   importCompassOrderSheet,
+  importCompassWorkorderSheet,
   SCHEDULE_SHEET_ID,
   ORDERS_SHEET_ID,
+  WORKORDERS_SHEET_ID,
 } from './table-tools.js';
-import { getTableSheetMeta } from './table-store.js';
+import { getTableSheetMeta, listTableRows } from './table-store.js';
 
 /** Minimal `Response`-shaped stub — fetchCompassData only reads `.ok`/`.status`/`.json()`. */
 function fakeResponse(body: unknown, status = 200): Response {
@@ -173,5 +175,96 @@ describe('importCompassOrderSheet: REST data-plane first', () => {
     assert.ok(meta?.source);
     assert.equal(meta!.source!.project, 'p1');
     assert.equal(meta!.source!.tenant, 'guolu');
+  });
+});
+
+/**
+ * 派工焦段 —— 三级作为**主行集**,不是某一单下面的抽屉。
+ * 「这周哪台压机堵了」要能对全场景的火次排序/分组;锁在各自父行的 detail 里查不了。
+ */
+const WO_PAYLOAD = {
+  columns: [
+    { key: 'wbs', name: 'WBS', type: 'text' },
+    { key: 'op_seq', name: '工序号', type: 'number' },
+    { key: 'status', name: '状态', type: 'status', options: ['DONE'], semantics: { DONE: 'positive' } },
+  ],
+  rows: [
+    { wbs: 'W1', op_seq: 10, op_name: '第一火', resource_id: 'DJ0202-2', status: 'DONE' },
+    { wbs: 'W2', op_seq: 10, op_name: '精炼', resource_id: 'YZ0202-4', status: 'DONE' },
+  ],
+  total: 23349,
+  tenant: 'shangzhong',
+};
+
+describe('importCompassWorkorderSheet: 三级作为焦段主行集', () => {
+  it('走数据面拉整场景的三级(不带 wbs/order_id),落进 workorders sheet,盖来源戳', async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      urls.push(String(input));
+      return fakeResponse(WO_PAYLOAD);
+    }) as unknown as typeof fetch;
+
+    const out = await importCompassWorkorderSheet(
+      undefined, // getMcpToolsets — REST 路径不许碰 MCP
+      {},
+      undefined,
+      { entryPin: 'compass', projectId: 'p1', rest: { baseUrl: 'http://fake.compass.local', headers: {} } },
+      { fetchImpl },
+    );
+
+    assert.equal(out.ok, true);
+    assert.equal((out as { imported: number }).imported, 2);
+    assert.equal(urls.length, 1);
+    assert.match(urls[0]!, /\/data\/workorder-rows/);
+    assert.doesNotMatch(urls[0]!, /wbs=|order_id=/, '焦段模式不带单据范围,否则就退化成抽屉');
+
+    const meta = getTableSheetMeta(WORKORDERS_SHEET_ID);
+    assert.equal(meta?.source?.project, 'p1');
+    assert.equal(meta?.source?.tenant, 'shangzhong');
+    assert.equal(listTableRows(WORKORDERS_SHEET_ID).length, 2);
+    // 页签上是人话(这是排产的第三个焦段),但 id 保持英文 —— 工具和接口都按 id 引用。
+    assert.equal(meta?.name, '派工');
+    assert.equal(meta?.id, 'workorders');
+  });
+
+  it('total 大于装进来的行数时照实报出来 —— 不能让"装了两行"看起来像"一共两行"', async () => {
+    const fetchImpl = (async () => fakeResponse(WO_PAYLOAD)) as unknown as typeof fetch;
+    const out = await importCompassWorkorderSheet(
+      undefined, {}, undefined,
+      { entryPin: 'compass', projectId: 'p1', rest: { baseUrl: 'http://x', headers: {} } },
+      { fetchImpl },
+    );
+    assert.equal((out as { total: number }).total, 23349);
+    assert.equal((out as { imported: number }).imported, 2);
+  });
+
+  it('REST 挂了退回 MCP 的 get_workorder_rows', async () => {
+    const fetchImpl = (async () => fakeResponse({}, 500)) as unknown as typeof fetch;
+    let mcpArgs: Record<string, unknown> | undefined;
+    const getMcpToolsets = () => ({
+      compass: {
+        get_workorder_rows: {
+          execute: async (args: Record<string, unknown>) => {
+            mcpArgs = args;
+            return { ...WO_PAYLOAD, tenant: 'fallback' };
+          },
+        },
+      },
+    });
+
+    const out = await importCompassWorkorderSheet(
+      getMcpToolsets, {}, () => ({}),
+      { entryPin: 'compass', projectId: 'p2', rest: { baseUrl: 'http://x', headers: {} } },
+      { fetchImpl },
+    );
+    assert.equal(out.ok, true);
+    assert.ok(mcpArgs, 'must fall back to the MCP tool');
+    assert.equal(mcpArgs!['wbs'], undefined);
+  });
+
+  it('没连 compass 时给出可读错误,而不是空表', async () => {
+    const out = await importCompassWorkorderSheet(() => ({}), {}, () => ({}), undefined);
+    assert.equal(out.ok, false);
+    assert.match((out as { error: string }).error, /get_workorder_rows/);
   });
 });

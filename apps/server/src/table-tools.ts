@@ -21,6 +21,7 @@ import {
   listTableSheets,
   tableRowKey,
   MAX_TABLE_GET_LIMIT,
+  renameTableSheet,
   resolveTableSheetId,
   stampTableSheetSource,
   updateTableRow,
@@ -265,6 +266,47 @@ function compassScopeFromCtx(ctx?: TableToolCtx): CompassLoadScope | undefined {
  */
 export const SCHEDULE_SHEET_ID = 'schedule';
 
+/**
+ * 建表(只在第一次)并给页签一个人话名字。
+ *
+ * id 保持英文且稳定 —— 工具、REST、选区引用全按 id 走;显示名是给人看的,而三张
+ * Compass 表本来就是同一个模型的三个**焦段**(订单 / 工序 / 派工),页签直接这么写,
+ * 就不必再在工具栏上放一个说同一件事的切换器。
+ */
+function ensureCompassSheet(id: string, label: string): void {
+  if (listTableSheets().find((s) => s.id === id)) return;
+  createTableSheet(id);
+  renameTableSheet(id, label);
+}
+
+/**
+ * Compass 的 typed columns → 网格的列描述:显示名 + 类型 + (status 列的)选项集与
+ * 语义色。域知识全部来自服务端 —— Veylin 这边不重新硬编码一份状态色表。
+ */
+function compassColumnDescriptors(columns: Array<Record<string, unknown>>) {
+  return columns
+    .map((c) => {
+      const key = String(c['key'] ?? '');
+      if (!key) return null;
+      const rawType = c['type'];
+      const type: 'text' | 'number' | 'status' =
+        rawType === 'number' ? 'number' : rawType === 'status' ? 'status' : 'text';
+      const opts = c['options'];
+      const sem = c['semantics'];
+      return {
+        key,
+        name: String(c['name'] ?? key),
+        type,
+        statusOptions: type === 'status' && Array.isArray(opts) ? (opts as string[]) : undefined,
+        semantics:
+          type === 'status' && sem && typeof sem === 'object'
+            ? (sem as Record<string, string>)
+            : undefined,
+      };
+    })
+    .filter((d): d is NonNullable<typeof d> => d !== null);
+}
+
 export async function importCompassScheduleSheet(
   getMcpToolsets: ToolsetsGetter | undefined,
   input: { limit?: number; workshop?: string; status?: string; order_id?: string },
@@ -326,35 +368,9 @@ export async function importCompassScheduleSheet(
   const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
 
   // Ensure the 'schedule' sheet exists (create on first use; fire-and-forget persist is fine)
-  const existingSheets = listTableSheets();
-  if (!existingSheets.find((s) => s.id === SCHEDULE_SHEET_ID)) {
-    createTableSheet(SCHEDULE_SHEET_ID);
-  }
+  ensureCompassSheet(SCHEDULE_SHEET_ID, '工序');
 
-  // Build rich column descriptors from Compass's typed columns: friendly display
-  // name + type + (for status columns) the real option set — so the grid shows
-  // readable headers and colored status badges without blanking derived/solved.
-  const descriptors = columns
-    .map((c) => {
-      const key = String(c['key'] ?? '');
-      if (!key) return null;
-      const rawType = c['type'];
-      const type: 'text' | 'number' | 'status' =
-        rawType === 'number' ? 'number' : rawType === 'status' ? 'status' : 'text';
-      const opts = c['options'];
-      const sem = c['semantics'];
-      return {
-        key,
-        name: String(c['name'] ?? key),
-        type,
-        statusOptions: type === 'status' && Array.isArray(opts) ? (opts as string[]) : undefined,
-        semantics:
-          type === 'status' && sem && typeof sem === 'object'
-            ? (sem as Record<string, string>)
-            : undefined,
-      };
-    })
-    .filter((d): d is NonNullable<typeof d> => d !== null);
+  const descriptors = compassColumnDescriptors(columns);
 
   const result = importTableSheet(
     SCHEDULE_SHEET_ID,
@@ -371,6 +387,78 @@ export async function importCompassScheduleSheet(
     imported: rows.length,
     total: (payload['total'] as number | undefined) ?? rows.length,
     columns: result?.columns?.length ?? columns.length,
+  };
+}
+
+export const WORKORDERS_SHEET_ID = 'workorders';
+
+/**
+ * 派工焦段:把整个场景的三级(设备级工序工单)作为**主行集**装进 `workorders` sheet。
+ *
+ * 与 master-detail 抽屉的区别不是显示样式,是**谁是主行集**:抽屉里的子行不参与主表的
+ * 排序/筛选/分组,所以「这周哪台压机堵了」在抽屉里问不出来 —— 那得让三级自己当主行集。
+ * 反过来,「这一单到哪了」用抽屉更好,不必离开订单层。两个都要,各管一件事。
+ *
+ * Compass 侧同一个端点按有无单据范围区分两种模式(见 joint_service.work_order_rows_payload)。
+ */
+export async function importCompassWorkorderSheet(
+  getMcpToolsets: ToolsetsGetter | undefined,
+  input: { limit?: number; resource?: string; status?: string },
+  getMcpGroups?: GroupsGetter,
+  scope?: CompassLoadScope,
+  seams: { fetchImpl?: typeof fetch } = {},
+): Promise<
+  | { ok: true; sheet: string; imported: number; total: number; columns: number }
+  | { ok: false; error: string }
+> {
+  const params = {
+    limit: input.limit ?? 1_000_000,
+    resource: input.resource,
+    status: input.status,
+  };
+  let payload: Record<string, unknown> | undefined;
+  let sourceName: string | undefined;
+  if (scope?.rest) {
+    const r = await fetchCompassData(scope.rest, '/data/workorder-rows', params, seams);
+    if (r.ok) {
+      payload = r.payload;
+      sourceName = scope.entryPin ?? 'compass';
+    } else {
+      console.warn('[table-tools] compass data-plane fetch failed, falling back to MCP:', r.error);
+    }
+  }
+  if (!payload) {
+    const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
+    const tool = compass?.toolset['get_workorder_rows'];
+    if (!compass || !tool) {
+      return { ok: false as const, error: 'compass MCP server not connected (no get_workorder_rows)' };
+    }
+    const res: unknown = await tool.execute(params);
+    payload = unwrapMcpPayload(res);
+    sourceName = compass.serverName;
+  }
+
+  const columns = (payload['columns'] as Array<Record<string, unknown>> | undefined) ?? [];
+  const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
+  ensureCompassSheet(WORKORDERS_SHEET_ID, '派工');
+  const descriptors = compassColumnDescriptors(columns);
+  const result = importTableSheet(
+    WORKORDERS_SHEET_ID,
+    [],
+    rows as Array<Record<string, string | number>>,
+    undefined,
+    descriptors,
+  );
+  await stampCompassLoadSource(WORKORDERS_SHEET_ID, sourceName!, payload, scope?.projectId ?? null);
+
+  return {
+    ok: true as const,
+    sheet: WORKORDERS_SHEET_ID,
+    imported: rows.length,
+    // Compass 报的是筛完、切页前的真数。装进来的是 imported —— 两个数不合并,
+    // 合并了就等于把"装了 500 行"说成"一共 500 行"。
+    total: (payload['total'] as number | undefined) ?? rows.length,
+    columns: result?.columns?.length ?? descriptors.length,
   };
 }
 
@@ -512,7 +600,7 @@ export async function importCompassOrderSheet(
     { key: 'end', name: '计划完工', type: 'text' as const },
     { key: 'due_at', name: '交期', type: 'text' as const },
   ];
-  if (!listTableSheets().find((s) => s.id === ORDERS_SHEET_ID)) createTableSheet(ORDERS_SHEET_ID);
+  ensureCompassSheet(ORDERS_SHEET_ID, '订单');
   importTableSheet(ORDERS_SHEET_ID, [], orderRows as Array<Record<string, string | number>>, undefined, descriptors);
   await stampCompassLoadSource(ORDERS_SHEET_ID, sourceName!, payload, scope?.projectId ?? null);
   return {
@@ -955,6 +1043,25 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       importCompassOrderSheet(getMcpToolsets, getMcpGroups, compassScopeFromCtx(ctx)),
   });
 
+  const loadCompassWorkorders = createTool({
+    id: 'load_compass_workorders',
+    description:
+      '从 Compass 拉取本场景的三级派工行（每道现场工序一行：WBS/工序/设备工作中心/状态/计划与实际起止），' +
+      '写入名为 workorders 的表 sheet。这是把三级当**主行集**看——适合「哪台设备上堆了多少活」' +
+      '这类跨订单的问题；只想看某一单下面的三级，展开该订单那一行即可，不必装这张表。',
+    inputSchema: z.object({
+      resource: z.string().optional().describe('只看某台设备/工作中心（可选）'),
+      status: z.string().optional().describe('只看某个执行状态（可选）'),
+    }),
+    execute: async (input, ctx?: TableToolCtx) =>
+      importCompassWorkorderSheet(
+        getMcpToolsets,
+        { resource: input.resource, status: input.status },
+        getMcpGroups,
+        compassScopeFromCtx(ctx),
+      ),
+  });
+
   const loadCompassResources = createTool({
     id: 'load_compass_resources',
     description:
@@ -978,6 +1085,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     table_list_sheets: tableListSheets,
     load_compass_schedule: loadCompassSchedule,
     load_compass_orders: loadCompassOrders,
+    load_compass_workorders: loadCompassWorkorders,
     load_compass_resources: loadCompassResources,
     table_chart: tableChart,
   };
