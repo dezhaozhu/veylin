@@ -342,6 +342,12 @@ export function sanitizePatch(
       rejected.push({ field, reason: `Unknown column "${field}"` });
       continue;
     }
+    // 上游 JSON 的 null = 这件事还没发生(如未开工的"实际开始")。落成空,不落成
+    // 字面量 "null",更不能落成 Number(null)=0 —— 那是凭空造出来的值。
+    if (raw === null) {
+      applied[col.key] = '';
+      continue;
+    }
     if (col.type === 'number') {
       if (raw === '' || raw === undefined) {
         applied[col.key] = '';
