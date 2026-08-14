@@ -158,6 +158,9 @@ const SCHEMA_STATEMENTS: string[] = [
   `DEFINE FIELD IF NOT EXISTS managed ON project TYPE bool DEFAULT false`,
   `DEFINE FIELD IF NOT EXISTS enabled ON project TYPE bool DEFAULT true`,
   `DEFINE FIELD IF NOT EXISTS migrated_from ON project TYPE option<string>`,
+  // 项目文件夹的绝对路径(用户选);未设 = 还没绑。SCHEMAFULL 表里没声明的字段会被
+  // **静默丢掉** —— 这条漏了的话 PATCH 会返回 200 而什么都没写进去。
+  `DEFINE FIELD IF NOT EXISTS folder ON project TYPE option<string>`,
   `DEFINE FIELD IF NOT EXISTS created_at ON project TYPE datetime DEFAULT time::now()`,
   `DEFINE INDEX IF NOT EXISTS project_tenant_idx ON project FIELDS tenant_id`,
   // Structural identity, enforced by the DB rather than by check-then-insert

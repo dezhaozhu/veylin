@@ -42,6 +42,8 @@ import {
   updateProject,
 } from '../project-store.js';
 import type { ServerDeps } from './types.js';
+import { isAbsolute } from 'node:path';
+import { stat } from 'node:fs/promises';
 
 type ApiProject = Pick<Project, 'id' | 'name' | 'sources' | 'managed'>;
 
@@ -108,13 +110,36 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
       reply.code(404);
       return { ok: false, error: 'project not found' };
     }
-    if (existing.managed) {
+    const body = (req.body ?? {}) as { name?: unknown; sources?: unknown; folder?: unknown };
+    const patch: { name?: string; sources?: string[]; folder?: string } = {};
+
+    // 项目文件夹既不是身份也不是范围,是**本机偏好** —— 所以 managed 项目
+    // (guolu、上重这些默认项目,恰恰是用户真正在用的)也能设。名字与场景仍归
+    // reconciler 管。见 docs/specs/2026-08-14-project-folder-immutable-originals.md。
+    if (body.folder !== undefined) {
+      const folder = typeof body.folder === 'string' ? body.folder.trim() : '';
+      if (!folder || !isAbsolute(folder)) {
+        reply.code(400);
+        return { ok: false, error: 'folder 必须是绝对路径' };
+      }
+      let isDir = false;
+      try {
+        isDir = (await stat(folder)).isDirectory();
+      } catch {
+        isDir = false;
+      }
+      if (!isDir) {
+        // 早失败:绑一个不存在的目录,用户会以为绑好了,而原件一份也不会落下来。
+        reply.code(400);
+        return { ok: false, error: `folder 不存在或不是目录: ${folder}` };
+      }
+      patch.folder = folder;
+    }
+
+    if (existing.managed && (body.name !== undefined || body.sources !== undefined)) {
       reply.code(403);
       return { ok: false, error: 'managed projects cannot be modified' };
     }
-
-    const body = (req.body ?? {}) as { name?: unknown; sources?: unknown };
-    const patch: { name?: string; sources?: string[] } = {};
     if (body.name !== undefined) {
       const name = typeof body.name === 'string' ? body.name.trim() : '';
       if (name === '') {
@@ -138,12 +163,12 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
       }
       patch.sources = sources;
     }
-    if (patch.name === undefined && patch.sources === undefined) {
+    if (patch.name === undefined && patch.sources === undefined && patch.folder === undefined) {
       reply.code(400);
-      return { ok: false, error: 'name or sources is required' };
+      return { ok: false, error: 'name / sources / folder 至少给一个' };
     }
 
-    // Only name/sources ever reach the store from here — managed/enabled/
+    // Only name/sources/folder ever reach the store from here — managed/enabled/
     // migratedFrom stay structurally out of HTTP reach.
     const updated = await updateProject(ctx.tenantId, id, patch);
     if (!updated) {

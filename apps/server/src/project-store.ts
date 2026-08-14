@@ -25,6 +25,7 @@ function rowToProject(row: NonNullable<Awaited<ReturnType<typeof getProjectRow>>
     managed: row.managed,
     enabled: row.enabled,
     migratedFrom: row.migratedFrom,
+    folder: row.folder,
     createdAt: row.createdAt,
   };
 }
@@ -48,6 +49,8 @@ export interface ProjectInput {
   enabled?: boolean;
   /** Set-once identity marker; only the boot migration passes this. Not patchable. */
   migratedFrom?: string;
+  /** 项目文件夹绝对路径(用户选)。见 spec 2026-08-14。 */
+  folder?: string;
 }
 
 export async function createProject(tenantId: string, input: ProjectInput): Promise<Project> {
@@ -57,6 +60,7 @@ export async function createProject(tenantId: string, input: ProjectInput): Prom
     managed: input.managed ?? false,
     enabled: input.enabled ?? true,
     migratedFrom: input.migratedFrom,
+    ...(input.folder != null ? { folder: input.folder } : {}),
   });
   return rowToProject(row);
 }
@@ -71,6 +75,7 @@ export async function updateProject(
     ...(patch.sources != null ? { sources: patch.sources } : {}),
     ...(patch.managed != null ? { managed: patch.managed } : {}),
     ...(patch.enabled != null ? { enabled: patch.enabled } : {}),
+    ...(patch.folder != null ? { folder: patch.folder } : {}),
   });
   return row ? rowToProject(row) : null;
 }

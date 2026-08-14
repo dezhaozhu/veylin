@@ -9,6 +9,9 @@
  * posture cases.
  */
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { closeDb, connectDb } from '@veylin/db';
@@ -266,5 +269,55 @@ describe('project CRUD routes', () => {
     assert.ok(stored);
     assert.equal(stored.name, '别家的');
     assert.equal(stored.enabled, true);
+  });
+
+  // ---- 项目文件夹(spec 2026-08-14)-------------------------------------
+  // folder 既不是身份也不是范围,是**本机偏好** —— 所以 managed 项目(guolu、上重
+  // 这些默认项目,恰恰是用户真正在用的)也必须能设,否则这个功能对他们等于不存在。
+
+  it('给项目绑一个文件夹', async () => {
+    const p = await createProject(TENANT, { name: '带文件夹的', sources: ['guolu'] });
+    const dir = mkdtempSync(join(tmpdir(), 'veylin-projroute-'));
+    try {
+      const res = await app.inject({
+        method: 'PATCH', url: `/api/projects/${p.id}`, payload: { folder: dir },
+      });
+      assert.equal(res.statusCode, 200, res.body);
+      assert.equal((await getProject(TENANT, p.id))!.folder, dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('managed 项目也能绑文件夹 —— 名字和场景仍然锁着', async () => {
+    const managed = await createProject(TENANT, {
+      name: '受管的', sources: ['guolu'], managed: true,
+    });
+    const dir = mkdtempSync(join(tmpdir(), 'veylin-projroute-'));
+    try {
+      const ok = await app.inject({
+        method: 'PATCH', url: `/api/projects/${managed.id}`, payload: { folder: dir },
+      });
+      assert.equal(ok.statusCode, 200);
+      assert.equal((await getProject(TENANT, managed.id))!.folder, dir);
+
+      const denied = await app.inject({
+        method: 'PATCH', url: `/api/projects/${managed.id}`, payload: { name: '改名' },
+      });
+      assert.equal(denied.statusCode, 403, '身份与范围仍归 reconciler 管');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('文件夹必须是存在的绝对路径 —— 否则用户会以为绑好了,其实什么都不会落下来', async () => {
+    const p = await createProject(TENANT, { name: '坏路径', sources: ['guolu'] });
+    for (const bad of ['relative/path', '/definitely/not/here/veylin-nope']) {
+      const res = await app.inject({
+        method: 'PATCH', url: `/api/projects/${p.id}`, payload: { folder: bad },
+      });
+      assert.equal(res.statusCode, 400, bad);
+    }
+    assert.equal((await getProject(TENANT, p.id))!.folder, undefined);
   });
 });

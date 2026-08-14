@@ -181,6 +181,8 @@ export interface ProjectRow {
    * can never be mistaken for it (security review C1).
    */
   migratedFrom?: string;
+  /** 项目文件夹绝对路径(用户选);未设 = 还没绑文件夹。 */
+  folder?: string;
   createdAt?: string;
 }
 

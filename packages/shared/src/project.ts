@@ -20,6 +20,12 @@ export interface Project {
    * the display name — user-composed projects can share any name safely.
    */
   migratedFrom?: string;
+  /**
+   * 项目文件夹的绝对路径(用户选)。原件、产物、快照都躺在这里,`.veylin/` 放
+   * 不可变原件仓与 manifest —— 见 docs/specs/2026-08-14-project-folder-immutable-originals.md。
+   * 没设 = 这个项目还没绑文件夹(旧项目全是这样),导入照旧只存解析结果。
+   */
+  folder?: string;
   createdAt?: string;
 }
 
