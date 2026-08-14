@@ -10,7 +10,7 @@
     "build:bundle": "esbuild src/server.ts --bundle --platform=node --format=esm --outfile=dist/server.mjs --packages=external",
     "build:sidecar": "node scripts/build-sidecar.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "test": "VEYLIN_TEST_DATA=1 node --import tsx --test \"src/**/*.test.ts\"",
     "gen:compass-refs": "node --import tsx src/compass-refs.ts"
   },
   "dependencies": {
