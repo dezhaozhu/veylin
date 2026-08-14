@@ -718,8 +718,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       if (input.selection_id && !selection) {
         return {
           sheet,
-          warning: `选区 #${input.selection_id} 不在本会话里(可能已过期或属于别的会话);`
-            + '请让用户重新圈选。',
+          warning: `选区 #${String(input.selection_id).trim().replace(/^#+/, '')}`
+            + ' 不在本会话里(可能已过期或属于别的会话);请让用户重新圈选。',
         };
       }
 

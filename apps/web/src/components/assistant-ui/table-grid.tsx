@@ -22,6 +22,7 @@ import {
   themeQuartz,
 } from 'ag-grid-community';
 import { anchorOfRow, rowMatchesAnchor } from '@/lib/grain-anchor';
+import { resolveSelectionScope, type SelectionScope } from '@/lib/grid-selection-scope';
 import './ag-grid-modules';
 import { hasProEntitlement } from '@/lib/ag-grid-license';
 import { isAgGridEnterpriseReady } from '@/lib/ag-grid-enterprise-state';
@@ -66,6 +67,7 @@ type TableEvent =
 // ── 二三级 master-detail (Pro / AG-Grid Enterprise) ──────────────────────────
 // The schedule sheet's 二级 rows expand to their 三级 (设备级) ops, fetched on
 // demand from /api/schedule-detail (→ Compass get_workorder_rows). Read-only.
+const EMPTY_RANGE: SelectionScope = { rowKeys: [], columns: [] };
 const SCHEDULE_SHEET_ID = 'schedule';
 const ORDER_SHEET_ID = 'orders';
 
@@ -1734,36 +1736,30 @@ export function TableGrid() {
   // 里的"这里"。
   // 拖选的单元格区域**不在** React state 里(它活在 AG-Grid 里),所以不能只看勾选行和
   // 选中列 —— 第一版就是这么错的:拖出一块区域时两个条件都不满足,按钮永远不冒。
-  const [hasCellRange, setHasCellRange] = useState(false);
-  const canReference = selectedRows.size > 0 || Boolean(selectedColumnKey) || hasCellRange;
+  // 第二版错在反方向:点一个格子也算"区域"(1×1),于是勾了 4 行再点一下格子,引用就
+  // 缩成了「1 行 · 列 order_id」。判定收进 resolveSelectionScope。
+  const [rangeShape, setRangeShape] = useState<SelectionScope>(EMPTY_RANGE);
+  const selectionScope = useMemo(
+    () => resolveSelectionScope({
+      range: rangeShape,
+      checkedRowKeys: [...selectedRows],
+      selectedColumnKey,
+    }),
+    [rangeShape, selectedRows, selectedColumnKey],
+  );
+  const canReference = selectionScope !== null;
   const referenceSelection = useCallback(async () => {
-    if (!threadId || !activeSheetId) return;
+    if (!threadId || !activeSheetId || !selectionScope) return;
     const grouped: string[] = [];
     gridApiRef.current?.getRowGroupColumns?.().forEach((c) => {
       const id = c.getColId?.();
       if (id) grouped.push(id);
     });
-    // 单元格区域优先:它天然就是"行 × 列",正是引用要的形状;没有区域时退回整行勾选。
-    const ranges = gridApiRef.current?.getCellRanges?.() ?? [];
-    const rangeRowKeys = new Set<string>();
-    const rangeColumns = new Set<string>();
-    for (const r of ranges) {
-      r.columns.forEach((c) => { const id = c.getColId?.(); if (id) rangeColumns.add(id); });
-      const from = Math.min(r.startRow?.rowIndex ?? 0, r.endRow?.rowIndex ?? 0);
-      const to = Math.max(r.startRow?.rowIndex ?? 0, r.endRow?.rowIndex ?? 0);
-      for (let i = from; i <= to; i += 1) {
-        const node = gridApiRef.current?.getDisplayedRowAtIndex?.(i);
-        const key = (node?.data as TableRow | undefined)?.row_id;
-        if (key) rangeRowKeys.add(String(key));
-      }
-    }
     const res = await registerTableSelection({
       sheet: activeSheetId,
       threadId: String(threadId),
-      rowKeys: rangeRowKeys.size ? [...rangeRowKeys] : [...selectedRows],
-      columns: rangeColumns.size
-        ? [...rangeColumns]
-        : selectedColumnKey ? [selectedColumnKey] : [],
+      rowKeys: selectionScope.rowKeys,
+      columns: selectionScope.columns,
       groupBy: grouped,
       // 列筛选也是"这里"的一部分:同一批行,筛过和没筛过问的是两回事
       filter: Object.entries(filters)
@@ -1780,7 +1776,7 @@ export function TableGrid() {
     composer.setText(next);
     placeComposerCaret(next.length);
     setAskAnchor(null);
-  }, [activeSheetId, aui, filters, selectedColumnKey, selectedRows, showToast, threadId]);
+  }, [activeSheetId, aui, filters, selectionScope, showToast, threadId]);
 
   // 浮现式「问」:选完在手边冒出来,与已有的"选中文字→问"(thread-selection-ask)
   // 同一个手势。不再放工具栏 —— 一个动作只留一处入口。
@@ -1789,10 +1785,29 @@ export function TableGrid() {
     const onUp = (e: MouseEvent) => {
       const api = gridApiRef.current;
       if (!api) return;
-      const hasRows = (api.getSelectedNodes?.() ?? []).length > 0;
-      const hasRange = (api.getCellRanges?.() ?? []).length > 0;
-      setHasCellRange(hasRange);
-      if (!hasRows && !hasRange) {
+      // 把 AG-Grid 的区域展开成"哪些行、哪些列"——判定交给 resolveSelectionScope,
+      // 这里只负责读形状。
+      const rowKeys = new Set<string>();
+      const columns = new Set<string>();
+      for (const r of api.getCellRanges?.() ?? []) {
+        r.columns.forEach((c) => { const id = c.getColId?.(); if (id) columns.add(id); });
+        const from = Math.min(r.startRow?.rowIndex ?? 0, r.endRow?.rowIndex ?? 0);
+        const to = Math.max(r.startRow?.rowIndex ?? 0, r.endRow?.rowIndex ?? 0);
+        for (let i = from; i <= to; i += 1) {
+          const key = (api.getDisplayedRowAtIndex?.(i)?.data as TableRow | undefined)?.row_id;
+          if (key) rowKeys.add(String(key));
+        }
+      }
+      const range: SelectionScope = { rowKeys: [...rowKeys], columns: [...columns] };
+      setRangeShape(range);
+      const scope = resolveSelectionScope({
+        range,
+        checkedRowKeys: (api.getSelectedNodes?.() ?? [])
+          .map((n) => String((n.data as TableRow | undefined)?.row_id ?? ''))
+          .filter(Boolean),
+        selectedColumnKey: selectedColumnKeyRef.current,
+      });
+      if (!scope) {
         setAskAnchor(null);
         return;
       }
@@ -1815,7 +1830,6 @@ export function TableGrid() {
               size="sm"
               className="gap-1 shadow-md"
               onClick={referenceSelection}
-              title={t('table.referenceSelectionHint')}
             >
               <AtSign className="size-3" />
               {t('table.referenceSelection')}

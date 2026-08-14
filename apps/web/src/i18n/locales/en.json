@@ -877,7 +877,6 @@
     "loadingCompass": "Loading schedule data from Compass…",
     "compassUnavailable": "Compass schedule not loaded (MCP disconnected or unavailable); showing default empty sheet",
     "referenceSelection": "Reference in chat",
-    "referenceSelectionHint": "Insert the selected rows/columns as a reference (reference only, no data — the agent reads current values)",
     "anchorNotHere": "No rows here for {{anchor}}"
   },
   "rag": {

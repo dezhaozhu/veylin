@@ -63,6 +63,19 @@ describe('table selection reference', () => {
     assert.ok(getSelection('t1', ids[ids.length - 1]!), '最新的还在');
   });
 
+  it('id 前面带 # 也认 —— 人看到的 token 就是 #a1b2c3d4,agent 常常连 # 一起抄过来', () => {
+    // 真实翻车:@表格[orders · 1 行 #d69788cd] → agent 传 selection_id="#d69788cd"
+    // → 查不到 → 回答"选区已过期,请重新圈选"。选区好好的,是我们没剥那个井号。
+    const sel = registerSelection({ threadId: 't1', sheet: 's', rowKeys: ['r1'], columns: [] });
+    assert.ok(getSelection('t1', `#${sel.id}`), '带 # 应当取得到');
+    assert.ok(getSelection('t1', ` ${sel.id} `), '前后空白也不该挡住');
+  });
+
+  it('剥了 # 也不能把别的 id 认成自己', () => {
+    registerSelection({ threadId: 't1', sheet: 's', rowKeys: ['r1'], columns: [] });
+    assert.equal(getSelection('t1', '#deadbeef'), undefined);
+  });
+
   it('an empty selection is refused — there is nothing to reference', () => {
     assert.throws(() => registerSelection({ threadId: 't1', sheet: 's', rowKeys: [], columns: [] }),
                   /选区为空/);

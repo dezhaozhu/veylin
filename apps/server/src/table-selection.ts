@@ -59,8 +59,11 @@ export function registerSelection(input: {
 }
 
 export function getSelection(threadId: string, id: string): TableSelection | undefined {
+  // 人看到的 token 是 `#a1b2c3d4`,agent 常常把井号一起抄进 selection_id。剥掉再查
+  // —— 否则一个好好的选区会被回成"已过期,请重新圈选",而人明明刚圈完。
+  const key = String(id ?? '').trim().replace(/^#+/, '');
   // 按会话隔离:别的会话取不到 —— 与项目钉定同一条边界。
-  return store.get(threadId)?.get(id);
+  return store.get(threadId)?.get(key);
 }
 
 export function clearSelections(): void {

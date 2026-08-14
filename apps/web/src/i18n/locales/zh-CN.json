@@ -877,7 +877,6 @@
     "loadingCompass": "正在从 Compass 加载排产数据…",
     "compassUnavailable": "Compass 排产未加载（MCP 未连接或不可用），显示默认空表",
     "referenceSelection": "引用到对话",
-    "referenceSelectionHint": "把选中的行/列作为引用插入输入框(只带引用,不带数据 —— agent 会取当前值)",
     "anchorNotHere": "这一单在当前视图里没有记录：{{anchor}}"
   },
   "rag": {
