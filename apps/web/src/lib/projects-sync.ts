@@ -15,6 +15,8 @@ export type ProjectInfo = {
   sources: string[];
   /** Reconciler-managed default project (one per granted source). */
   managed: boolean;
+  /** 项目文件夹绝对路径(用户在桌面端选);未绑 = undefined。见 spec 2026-08-14。 */
+  folder?: string;
 };
 
 const EMPTY: ProjectInfo[] = [];
@@ -93,6 +95,33 @@ export async function createProject(
     if (!res.ok || !data.ok || !data.project) {
       return { ok: false, error: data.error ?? `HTTP ${res.status}` };
     }
+    return { ok: true, project: data.project };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * `PATCH /api/projects/:id` —— 绑定项目文件夹(spec 2026-08-14 §2)。
+ *
+ * managed 项目也能绑:文件夹既不是身份也不是范围,是本机偏好,而默认项目
+ * (锅炉厂、上重)恰恰是最需要它的那些。名字与场景仍归 reconciler 管。
+ */
+export async function setProjectFolder(
+  id: string,
+  folder: string,
+): Promise<{ ok: true; project: ProjectInfo } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder }),
+    });
+    const data = (await res.json()) as { ok?: boolean; project?: ProjectInfo; error?: string };
+    if (!res.ok || !data.ok || !data.project) {
+      return { ok: false, error: data.error ?? `HTTP ${res.status}` };
+    }
+    invalidateProjects();
     return { ok: true, project: data.project };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

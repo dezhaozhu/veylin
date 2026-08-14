@@ -45,7 +45,7 @@ import type { ServerDeps } from './types.js';
 import { isAbsolute } from 'node:path';
 import { stat } from 'node:fs/promises';
 
-type ApiProject = Pick<Project, 'id' | 'name' | 'sources' | 'managed'>;
+type ApiProject = Pick<Project, 'id' | 'name' | 'sources' | 'managed' | 'folder'>;
 
 function toApiProject(project: Project): ApiProject {
   return {
@@ -53,6 +53,8 @@ function toApiProject(project: Project): ApiProject {
     name: project.name,
     sources: project.sources,
     managed: project.managed,
+    // 项目文件夹要能被界面看到 —— 否则"绑没绑"这件事只有服务端知道。
+    ...(project.folder ? { folder: project.folder } : {}),
   };
 }
 

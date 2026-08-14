@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FC } from 'react';
 import { ThreadListPrimitive, useAuiState } from '@assistant-ui/react';
-import { LoaderIcon } from 'lucide-react';
+import { FolderOpen, LoaderIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   ThreadActivityContext,
@@ -11,7 +11,13 @@ import { useWorkspaceCollapsedInset } from '@/components/features/workspace-view
 import { WorkspaceMain } from '@/components/features/workspace-main';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { projectSourceLabel } from '@/lib/project-labels';
-import { useProjects, type ProjectInfo } from '@/lib/projects-sync';
+import { setProjectFolder, useProjects, type ProjectInfo } from '@/lib/projects-sync';
+import {
+  describeFolderState,
+  folderPickAvailability,
+  pickProjectFolder,
+  revealPath,
+} from '@/lib/project-folder';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
 import { useThreadActivityMap } from '@/lib/use-thread-activity';
 import { startWindowDrag } from '@/lib/window-drag';
@@ -106,9 +112,67 @@ const ProjectOverview: FC = () => {
         title={project.name}
         description={project.sources.map(projectSourceLabel).join(' · ')}
       />
+      <ProjectFolderRow project={project} />
       <ProjectCardsGrid project={project} byServer={byServer} />
       <ProjectThreads projectId={project.id} />
     </div>
+  );
+};
+
+/**
+ * 项目文件夹(spec 2026-08-14 §2)。
+ *
+ * 这一行要回答的不是"设了没有",而是**没设会怎样** —— 导入的原件不会留档,只存
+ * 解析出来的行。浏览器里选不了目录(拿不到绝对路径),那就说清楚为什么并指向桌面端,
+ * 而不是给一个点了没反应的按钮。
+ */
+const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
+  const [folder, setFolder] = useState<string | undefined>(project.folder);
+  const [error, setError] = useState<string | null>(null);
+  const availability = folderPickAvailability();
+
+  useEffect(() => { setFolder(project.folder); }, [project.folder]);
+
+  const choose = async () => {
+    setError(null);
+    const picked = await pickProjectFolder();
+    if (!picked) return;
+    const res = await setProjectFolder(project.id, picked);
+    if (res.ok) setFolder(res.project.folder);
+    else setError(res.error);
+  };
+
+  return (
+    <section className="border-border mb-4 rounded-md border px-3 py-2 text-sm">
+      <div className="flex items-center gap-2">
+        <FolderOpen className="text-muted-foreground size-4 shrink-0" />
+        <span className="text-muted-foreground min-w-0 flex-1 truncate">
+          {describeFolderState(folder)}
+        </span>
+        {availability.canPick ? (
+          <button
+            type="button"
+            onClick={() => void choose()}
+            className="hover:bg-muted shrink-0 rounded-md border px-2 py-1 text-xs"
+          >
+            {folder ? '换一个' : '选择文件夹'}
+          </button>
+        ) : null}
+        {folder ? (
+          <button
+            type="button"
+            onClick={() => void revealPath(folder)}
+            className="hover:bg-muted shrink-0 rounded-md border px-2 py-1 text-xs"
+          >
+            在访达中显示
+          </button>
+        ) : null}
+      </div>
+      {!availability.canPick ? (
+        <p className="text-muted-foreground mt-1 text-xs">{availability.reason}</p>
+      ) : null}
+      {error ? <p className="text-destructive mt-1 text-xs">{error}</p> : null}
+    </section>
   );
 };
 

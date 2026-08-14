@@ -132,8 +132,8 @@ Claude 那边 agent 产出**就是文件**,直接写进项目文件夹,UI 只是
 | §4 来源指针两类 | ✅ 判别式 union,provenance 判据跟着分流 |
 | §5 导出与快照 | ✅ `project-snapshot.ts` + `POST /api/table/snapshot` |
 | §6 显式吸收 | ✅ `project-inbox.ts` + `GET /api/table/inbox`(只列不吸收) |
-| 前端 | 🟡 快照按钮、待导入提示条、Show in Folder 已有;**绑文件夹的入口还没接进项目页** |
-| 对话附件 | ⬜ RAG 那条线还没接原件仓(§4 说了"知识库文档同样记 source_file") |
+| 前端 | ✅ 项目页绑文件夹、快照按钮、待导入提示条、Show in Folder |
+| 对话附件 | ✅ `/api/rag/documents` 收原件字节并留档(抽取的文本照旧入库,两回事) |
 
 **Show in Folder 的实现说明**:前端没有 opener/shell 的 Tauri 插件绑定(加它要动
 Rust 侧与 capability),所以由**服务端**代劳 —— 它本来就是本机进程。边界收在
