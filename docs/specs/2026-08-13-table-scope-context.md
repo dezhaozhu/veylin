@@ -67,8 +67,10 @@ export type SheetScope =
 
 ### 3.2 sheet id:内部带作用域,对外仍叫 `schedule`
 
-- 内部 id:`${scopeKey}:${slug}`,`scopeKey ∈ { me | p_<projectId> | t_<threadId> }`。
-  例:`p_proj-guolu:schedule`、`me:main`。
+- 内部 id:`${scopeKey}~${slug}`,`scopeKey ∈ { me | p_<projectId> | t_<threadId> }`。
+  例:`p_proj-guolu~schedule`、`me~main`。
+  **分隔符不用冒号**(原稿写的是冒号):SurrealDB 的记录 id 就写作 `table:id`,
+  在里面再塞冒号要靠 ⟨⟩ 转义,是自找的麻烦。`~` 在 URL 里是非保留字符。
 - 对外(agent 工具的 `sheet` 参数、REST 的 `?sheet=`、选区的 `sheet` 字段)**仍然是短名** `schedule`。
 - `resolveTableSheetId(shortName, scope)` 负责短名 → 内部 id。同一句 `table_get(sheet:'schedule')` 在两个项目下解析到两张不同的表,这正是要的效果 —— agent 和人都不用改口。
 
@@ -106,7 +108,7 @@ resolveSheetScope(threadId, projectPin): SheetScope
 - `GET /api/table`、`GET /api/table/sheets` 按解析出的 scope 列表与取数(今天完全不看 pin)。
 - 面板的加载 effect 依赖加上 `threadId`:切对话 → 重取 sheets 与当前表。
 - 切换后若 `activeSheetId` 不在新作用域 → 落到该作用域的默认表;没有表就空态。
-- **默认表 `main` 归个人**(`me:main`)。所以**进到一个新项目时是空态**,直到装载或导入 —— 这是对的:项目里不该凭空有一张我个人的空表。相应地,`ensureAtLeastOneSheet`(删掉最后一张表后补一张)的"至少一张"是**按作用域**算,不是全局算。
+- **默认表 `main` 归个人**(`me~main`)。所以**进到一个新项目时是空态**,直到装载或导入 —— 这是对的:项目里不该凭空有一张我个人的空表。相应地,`ensureAtLeastOneSheet`(删掉最后一张表后补一张)的"至少一张"是**按作用域**算,不是全局算。
 - **空态文案**(个人区、没有表):说清楚现状和下一步,不解释机制、不说教。
   > 这里还没有表。选一个项目可以装排产数据,或者直接把 Excel 拖进来。
 
