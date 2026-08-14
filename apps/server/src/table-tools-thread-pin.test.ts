@@ -24,6 +24,10 @@ import { buildTableTools } from './table-tools.js';
 import { getTableSheetMeta } from './table-store.js';
 import { projectScope, sheetIdFor } from './table-scope.js';
 
+/** 测试里读连接器来源的收窄小工具(来源现在是判别式两类,见 spec §4)。 */
+const conn = (s: unknown) =>
+  (s ?? {}) as { server?: string; project?: string; tenant?: string; loadedAt?: string };
+
 /** 表落在**当前项目**的作用域里(spec §3.4),断言按作用域化的内部 id 查。 */
 const idIn = (projectId: string, shortName: string) =>
   sheetIdFor(projectScope(projectId), shortName);
@@ -106,9 +110,9 @@ describe('load_compass_schedule: resolves Compass through the request-scoped too
     );
     assert.equal(out.ok, true);
     const meta = getTableSheetMeta(idIn(projectId, 'schedule'));
-    assert.equal(meta?.source?.tenant, 'guolu', 'must resolve via the request-scoped record');
-    assert.equal(meta?.source?.server, 'compass', 'toolset key kept for display only');
-    assert.equal(meta?.source?.project, projectId, 'durable identity = the PROJECT id (risk #1)');
+    assert.equal(conn(meta?.source).tenant, 'guolu', 'must resolve via the request-scoped record');
+    assert.equal(conn(meta?.source).server, 'compass', 'toolset key kept for display only');
+    assert.equal(conn(meta?.source).project, projectId, 'durable identity = the PROJECT id (risk #1)');
   });
 
   it('没有 requestContext = 没有项目:装载在到达 compass 之前就被拒(原因是"没选项目")', async () => {
@@ -163,8 +167,8 @@ describe('load_compass_orders / load_compass_resources: same request-scope resol
     );
     assert.equal(out.ok, true);
     const meta = getTableSheetMeta(idIn(projectId, 'orders'));
-    assert.equal(meta?.source?.tenant, 'guolu');
-    assert.equal(meta?.source?.project, projectId);
+    assert.equal(conn(meta?.source).tenant, 'guolu');
+    assert.equal(conn(meta?.source).project, projectId);
   });
 
   it('load_compass_resources resolves the scoped record and stamps the project id', async () => {
@@ -184,7 +188,7 @@ describe('load_compass_orders / load_compass_resources: same request-scope resol
     );
     assert.equal(out.ok, true);
     const meta = getTableSheetMeta(idIn(projectId, 'resources'));
-    assert.equal(meta?.source?.tenant, 'shangzhong');
-    assert.equal(meta?.source?.project, projectId);
+    assert.equal(conn(meta?.source).tenant, 'shangzhong');
+    assert.equal(conn(meta?.source).project, projectId);
   });
 });

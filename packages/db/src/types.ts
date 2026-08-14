@@ -234,17 +234,45 @@ export interface WebhookEndpointRow {
  * sheets that predate this field or were never loaded from Compass ("legacy
  * unstamped" — table_get/table-tools surfaces a distinct warning for those).
  */
-export interface TableSheetSource {
-  server: string;
-  tenant?: string;
-  loadedAt: string;
-  /**
-   * Project id (v3) the sheet's data belongs to — the durable provenance key
-   * once pins are project ids. `server` is kept for display. Absent on stamps
-   * that predate the Phase B migration and were not mappable at boot; the
-   * comparison-time shim `legacyServerToProjectId` covers those permanently.
-   */
-  project?: string;
+/**
+ * 一张表的数据从哪儿来。**两类,不混**(spec 2026-08-14 §4):
+ *
+ *  - `connector` —— 从远端连接器(Compass)拉来的**缓存**,会腐烂,界面上给
+ *    「上次刷新 X 前」+ 刷新。老数据没有 `kind` 字段,一律当 connector。
+ *  - `file` —— 从一份**不可变原件**解析来的,不会腐烂,界面上给「来自 xxx.xlsx ·
+ *    8月14日」+ 重新解析。原件按内容哈希躺在项目文件夹的 .veylin/originals 里。
+ */
+export type TableSheetSource =
+  | {
+      kind?: 'connector';
+      server: string;
+      tenant?: string;
+      loadedAt: string;
+      /**
+       * Project id (v3) the sheet's data belongs to — the durable provenance key
+       * once pins are project ids. `server` is kept for display. Absent on stamps
+       * that predate the Phase B migration and were not mappable at boot; the
+       * comparison-time shim `legacyServerToProjectId` covers those permanently.
+       */
+      project?: string;
+    }
+  | {
+      kind: 'file';
+      /** 原件的 sha256(内容寻址;改一个字节就是另一份) */
+      fileHash: string;
+      fileName: string;
+      importedAt: string;
+      /** 它当初躺在哪儿(下载目录、桌面…),纯溯源 */
+      fromPath?: string;
+      /** 留档进了哪个项目的文件夹 */
+      project?: string;
+    };
+
+/** 从文件解析来的表(与从连接器拉来的缓存分开) */
+export function isFileSource(
+  s: TableSheetSource | null | undefined,
+): s is Extract<TableSheetSource, { kind: 'file' }> {
+  return !!s && (s as { kind?: string }).kind === 'file';
 }
 
 export interface TableSheetRow {

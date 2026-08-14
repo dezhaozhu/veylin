@@ -326,6 +326,17 @@ async function fetchSchedule(sheetId: string | undefined, threadId?: string): Pr
  *
  * `threadId` 决定服务端解析到哪个作用域;不带就是个人区,项目里的表会 404。
  */
+/** 读成 base64(留档用;解析仍在前端做)。 */
+async function fileToBase64(file: File): Promise<string> {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let bin = '';
+  const CHUNK = 0x8000;               // 大文件别一次性 apply,会爆栈
+  for (let i = 0; i < buf.length; i += CHUNK) {
+    bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
 async function patchRows(
   sheetId: string,
   rows: TableRow[],
@@ -2012,6 +2023,9 @@ export function TableGrid() {
         showToast(t('table.importEmpty'), 'error');
         return;
       }
+      // 原件字节一起送上去:服务端按内容哈希留档进项目文件夹(spec §3「导入即留档」)。
+      // 解析仍在前端做 —— 服务端只需要字节来存档,不重复解析一遍。
+      const base64 = await fileToBase64(file);
       const res = await fetch('/api/table/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2020,6 +2034,7 @@ export function TableGrid() {
           column_names: columnNames,
           rows: importedRows,
           threadId,
+          file: { name: file.name, base64 },
         }),
       });
       const data = (await res.json()) as {
@@ -2027,6 +2042,8 @@ export function TableGrid() {
         message?: string;
         columns?: TableColumnDef[];
         rows?: TableRow[];
+        archived?: boolean;
+        archiveNote?: string;
       };
       if (!res.ok || !data.ok) {
         showToast(data.message ?? t('table.importFailed'), 'error');
@@ -2043,6 +2060,10 @@ export function TableGrid() {
         t('table.importSuccess', { count: data.rows?.length ?? importedRows.length }),
         'success',
       );
+      // 没留档要说出来 —— 用户以为"原件存好了"而其实没有,是最坏的一种沉默。
+      if (data.archived === false && data.archiveNote) {
+        setTimeout(() => showToast(data.archiveNote!, 'error'), 1200);
+      }
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : t('table.importFailed'), 'error');
     } finally {

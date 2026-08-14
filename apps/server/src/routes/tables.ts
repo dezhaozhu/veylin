@@ -17,6 +17,7 @@ import {
   tryResolveTableSheetId,
   sheetBelongsToScope,
   flushTablePersist,
+  stampTableSheetSource,
   updateTableRows,
   DEFAULT_TABLE_SHEET,
   onTableEvent,
@@ -37,6 +38,9 @@ import { resolveThreadPin } from '../thread-state.js';
 import { resolveSheetScope } from '../table-tools.js';
 import type { SheetScope } from '../table-scope.js';
 import { eventVisibleInScope } from '../table-event-scope.js';
+import { archiveImportedFile } from '../table-import-archive.js';
+import { getProject } from '../project-store.js';
+import { isFileSource } from '@veylin/db';
 import { listProjects } from '../project-store.js';
 import { resolvePinnedProjectScope } from '../project-store.js';
 import { getPooledCompassToolsets, sceneSetKey, type CompassPoolDeps } from '../compass-pool.js';
@@ -674,7 +678,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code(409);
       return {
         ok: false,
-        message: `这张表是项目 ${source?.project ?? source?.server} 加载来的,`
+        message: `这张表是项目 ${source?.project ?? (isFileSource(source) ? source.fileName : source?.server)} 加载来的,`
           + '与当前会话的项目不一致 —— 请在当前项目下重新加载后再引用。',
       };
     }
@@ -702,6 +706,10 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       rows?: TableRowPatch[];
       column_names?: string[];
       new_column_names?: string[];
+      /** 原件字节(base64)。有它才谈得上留档 —— 见 spec §3。 */
+      file?: { name: string; base64: string };
+      /** 它当初躺在哪儿(纯溯源) */
+      fromPath?: string;
     };
     const access = requireScopedSheet(reply, body.sheet, await scopeOfRequest(body.threadId, ctx));
     if (!isSheetAccess(access)) {
@@ -722,11 +730,30 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code(400);
       return { ok: false, message: 'Import failed' };
     }
+
+    // 导入即留档(spec 2026-08-14 §3):原件按内容哈希存进项目文件夹,sheet 记一根
+    // 指向它的指针。留不成不是错误,是**要说出来的事实** —— 照实回给前端。
+    const projectId = access.scope.kind === 'project' ? access.scope.id : null;
+    const folder = projectId
+      ? (await getProject(ctx.tenantId, projectId))?.folder
+      : undefined;
+    const archive = await archiveImportedFile({
+      folder, projectId, file: body.file, fromPath: body.fromPath,
+    });
+    if (archive.source) {
+      await stampTableSheetSource(access.sheetId, archive.source).catch((e: unknown) => {
+        console.error('[table] file-source stamp failed:', e);
+      });
+    }
     return {
       ok: true,
       sheet: access.sheetId,
       columns: result.columns,
       rows: result.rows,
+      // 留档结果照实回:archived=false 时 reason 是人话,前端原样显示。
+      archived: archive.archived,
+      ...(archive.archived ? { original: { hash: archive.source!.fileHash, name: archive.source!.fileName } } : {}),
+      ...(archive.reason ? { archiveNote: archive.reason } : {}),
     };
   });
 }

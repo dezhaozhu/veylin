@@ -11,6 +11,7 @@ import {
   replaceTableColumns,
   replaceTableRows,
   upsertTableSheet,
+  isFileSource,
   type TableSheetSource,
 } from '@veylin/db';
 import { DEFAULT_TABLE_STATUS_OPTIONS, type Project } from '@veylin/shared';
@@ -548,8 +549,10 @@ export function isProjectPinMismatch(
   projects: Project[] = [],
 ): boolean {
   if (!projectPin) return false;
-  if (!source?.project && !source?.server) return false; // unstamped → soft-warning path
-  const sourceProject = source.project ?? legacyServerToProjectId(source.server, projects);
+  // 文件来源没有 server(它不是从连接器拉来的);老戳只有 server 的走 shim 反查项目。
+  const server = isFileSource(source) ? undefined : source?.server;
+  if (!source || (!source.project && !server)) return false; // unstamped → soft-warning path
+  const sourceProject = source.project ?? legacyServerToProjectId(server, projects);
   return sourceProject !== projectPin;
 }
 
@@ -577,7 +580,9 @@ export function isUnscopedProjectData(
   projectPin: string | null | undefined,
 ): boolean {
   if (projectPin) return false;
-  return Boolean(source?.project || source?.server);
+  // 从文件解析来的表同样算项目数据 —— 只要它是留档进某个项目的(有 project)。
+  const server = isFileSource(source) ? undefined : source?.server;
+  return Boolean(source?.project || server);
 }
 
 /**

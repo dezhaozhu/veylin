@@ -11,6 +11,10 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+
+/** 测试里读连接器来源的收窄小工具(来源现在是判别式两类,见 spec §4)。 */
+const conn = (s: unknown) =>
+  (s ?? {}) as { server?: string; project?: string; tenant?: string; loadedAt?: string };
 import {
   importCompassScheduleSheet,
   importCompassOrderSheet,
@@ -69,8 +73,8 @@ describe('importCompassScheduleSheet: REST data-plane first', () => {
 
     const meta = getTableSheetMeta(idIn('p1', SCHEDULE_SHEET_ID));
     assert.ok(meta?.source);
-    assert.equal(meta!.source!.project, 'p1');
-    assert.equal(meta!.source!.tenant, 'guolu');
+    assert.equal(conn(meta!.source).project, 'p1');
+    assert.equal(conn(meta!.source).tenant, 'guolu');
   });
 
   it('REST failure falls back to the MCP get_schedule_rows tool (fetchImpl 404 → MCP stub called, still ok:true)', async () => {
@@ -153,8 +157,8 @@ describe('importCompassScheduleSheet: REST data-plane first', () => {
     assert.equal(mcpCalled, true);
 
     const meta = getTableSheetMeta(idIn('p3', SCHEDULE_SHEET_ID));
-    assert.equal(meta?.source?.project, 'p3');
-    assert.equal(meta?.source?.tenant, 'no-rest-tenant');
+    assert.equal(conn(meta?.source).project, 'p3');
+    assert.equal(conn(meta?.source).tenant, 'no-rest-tenant');
   });
 });
 
@@ -178,8 +182,8 @@ describe('importCompassOrderSheet: REST data-plane first', () => {
 
     const meta = getTableSheetMeta(idIn('p1', ORDERS_SHEET_ID));
     assert.ok(meta?.source);
-    assert.equal(meta!.source!.project, 'p1');
-    assert.equal(meta!.source!.tenant, 'guolu');
+    assert.equal(conn(meta!.source).project, 'p1');
+    assert.equal(conn(meta!.source).tenant, 'guolu');
   });
 });
 
@@ -224,8 +228,8 @@ describe('importCompassWorkorderSheet: 三级作为焦段主行集', () => {
     assert.doesNotMatch(urls[0]!, /wbs=|order_id=/, '焦段模式不带单据范围,否则就退化成抽屉');
 
     const meta = getTableSheetMeta(idIn('p1', WORKORDERS_SHEET_ID));
-    assert.equal(meta?.source?.project, 'p1');
-    assert.equal(meta?.source?.tenant, 'shangzhong');
+    assert.equal(conn(meta?.source).project, 'p1');
+    assert.equal(conn(meta?.source).tenant, 'shangzhong');
     assert.equal(listTableRows(idIn('p1', WORKORDERS_SHEET_ID)).length, 2);
     // 页签上是人话(这是排产的第三个焦段),但 id 保持英文 —— 工具和接口都按 id 引用。
     assert.equal(meta?.name, '派工');

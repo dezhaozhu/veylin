@@ -1,6 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import type { TableSheetSource } from '@veylin/db';
+import { isFileSource, type TableSheetSource } from '@veylin/db';
 import type { Project } from '@veylin/shared';
 import {
   addTableColumn,
@@ -185,9 +185,17 @@ function buildProvenanceWarning(
   // project-id pin) — never a raw string compare against the toolset key.
   if (!isProjectPinMismatch(source, projectPin, projects)) return undefined;
   return (
-    `注意: 本表数据来自项目 ${source.project ?? source.server}(租户 ${source.tenant ?? '未知'}, ${source.loadedAt} 加载), ` +
+    `注意: 本表数据来自${describeSource(source)}, ` +
     `与当前会话项目 ${projectPin} 不一致 — 勿与当前项目的实时数据混用`
   );
+}
+
+/** 一句给人看的来源描述,两类来源各说各的话(spec §4)。 */
+function describeSource(source: TableSheetSource): string {
+  if (isFileSource(source)) {
+    return `文件「${source.fileName}」(${source.importedAt} 导入)`;
+  }
+  return `项目 ${source.project ?? source.server}(租户 ${source.tenant ?? '未知'}, ${source.loadedAt} 加载)`;
 }
 
 /**
@@ -198,9 +206,8 @@ function buildProvenanceWarning(
  */
 function buildUnscopedProjectDataWarning(source: TableSheetSource): string {
   return (
-    `本表是项目数据(来自项目 ${source.project ?? source.server}, 租户 ${source.tenant ?? '未知'}, ` +
-    `${source.loadedAt} 加载);当前会话未绑定任何项目,这些数据不能作为依据 — ` +
-    `请将本会话移动到该项目,或在该项目下新建会话`
+    `本表是项目数据(来自${describeSource(source)});当前会话未绑定任何项目,` +
+    `这些数据不能作为依据 — 请将本会话移动到该项目,或在该项目下新建会话`
   );
 }
 
@@ -697,15 +704,21 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         .optional(),
       rows: z.array(rowSchema).optional(),
       notice: z.string().optional(),
+      // 两类来源(spec 2026-08-14 §4):connector = 会腐烂的缓存(有 loadedAt),
+      // file = 不可变原件解析来的(有 fileHash/fileName)。字段都可选,由 kind 区分。
       source: z
         .object({
-          server: z.string(),
+          kind: z.enum(['connector', 'file']).optional(),
+          server: z.string().optional(),
           project: z
             .string()
             .optional()
             .describe('Pinned project id at load time (v3 durable provenance identity).'),
           tenant: z.string().optional(),
-          loadedAt: z.string(),
+          loadedAt: z.string().optional(),
+          fileHash: z.string().optional().describe('原件 sha256(内容寻址)'),
+          fileName: z.string().optional(),
+          importedAt: z.string().optional(),
         })
         .optional()
         .describe('Load provenance, verbatim from sheet metadata. Absent on legacy unstamped sheets.'),

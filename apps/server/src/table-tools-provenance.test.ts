@@ -26,6 +26,10 @@
 import { describe, it } from 'node:test';
 import { PERSONAL_SCOPE, projectScope, sheetIdFor } from './table-scope.js';
 
+/** 测试里读连接器来源的收窄小工具(来源现在是判别式两类,见 spec §4)。 */
+const conn = (s: unknown) =>
+  (s ?? {}) as { server?: string; project?: string; tenant?: string; loadedAt?: string };
+
 /** compass 装进来的表落在**那个项目**的作用域里(spec §3.4)。 */
 const scheduleIdOf = (project: Project) => sheetIdFor(projectScope(project.id), 'schedule');
 import assert from 'node:assert/strict';
@@ -127,12 +131,12 @@ describe('table provenance: stamping on Compass (re)load', () => {
 
     const meta = getTableSheetMeta(scheduleIdOf(PROJ_GUOLU));
     assert.ok(meta?.source, 'expected sheet meta to carry a source stamp');
-    assert.equal(meta!.source!.server, 'compass');
-    assert.equal(meta!.source!.project, PROJ_GUOLU.id);
-    assert.equal(meta!.source!.tenant, 'guolu');
+    assert.equal(conn(meta!.source).server, 'compass');
+    assert.equal(conn(meta!.source).project, PROJ_GUOLU.id);
+    assert.equal(conn(meta!.source).tenant, 'guolu');
     assert.ok(
-      Date.parse(meta!.source!.loadedAt) >= before,
-      `loadedAt ${meta!.source!.loadedAt} should be >= test start`,
+      Date.parse(conn(meta!.source).loadedAt ?? '') >= before,
+      `loadedAt ${conn(meta!.source).loadedAt} should be >= test start`,
     );
   });
 
@@ -158,16 +162,16 @@ describe('table provenance: stamping on Compass (re)load', () => {
 
     const meta = getTableSheetMeta(scheduleIdOf(PROJ_GUOLU));
     assert.ok(meta?.source);
-    assert.equal(meta!.source!.tenant, undefined);
+    assert.equal(conn(meta!.source).tenant, undefined);
   });
 
   it('re-stamps loadedAt on a repeat load', async () => {
     await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
-    const first = getTableSheetMeta(scheduleIdOf(PROJ_GUOLU))!.source!.loadedAt;
+    const first = conn(getTableSheetMeta(scheduleIdOf(PROJ_GUOLU))!.source).loadedAt;
 
     await new Promise((r) => setTimeout(r, 5));
     await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
-    const second = getTableSheetMeta(scheduleIdOf(PROJ_GUOLU))!.source!.loadedAt;
+    const second = conn(getTableSheetMeta(scheduleIdOf(PROJ_GUOLU))!.source).loadedAt;
 
     assert.notEqual(first, second);
   });
@@ -202,7 +206,7 @@ describe('table_get: 跨项目在结构上就够不着', () => {
       ctxFor({ pin: PROJ_GUOLU.id, projects: TENANT_PROJECTS }),
     );
     assert.notEqual(out.sheet, scheduleIdOf(PROJ_SHANGZHONG));
-    assert.notEqual(out.source?.project, PROJ_SHANGZHONG.id, '拿到的绝不是上重那张');
+    assert.notEqual(conn(out.source).project, PROJ_SHANGZHONG.id, '拿到的绝不是上重那张');
   });
 
   it('守卫仍在:作用域内的表带着别的项目的戳(陈旧状态),照样拒行', async () => {
@@ -236,7 +240,7 @@ describe('table_get: 跨项目在结构上就够不着', () => {
       ctxFor({ pin: PROJ_GUOLU.id, projects: TENANT_PROJECTS }),
     );
     assert.equal('warning' in out, false);
-    assert.equal(out.source!.project, PROJ_GUOLU.id);
+    assert.equal(conn(out.source).project, PROJ_GUOLU.id);
   });
 
   it('legacy unstamped sheet under a pin gets the legacy warning, not the mismatch warning — and still returns rows (audit fix #2 refuses only STAMPED mismatches, not unlabeled legacy data)', async () => {
@@ -404,7 +408,7 @@ describe('table_get: LEGACY entry-name stamps via the legacyServerToProjectId sh
       ...(tenant ? { tenant } : {}),
       loadedAt: '2026-07-20T00:00:00.000Z',
     }).catch(() => undefined);
-    assert.equal(getTableSheetMeta(created!.id)?.source?.server, server);
+    assert.equal(conn(getTableSheetMeta(created!.id)?.source).server, server);
     return created!.id;
   }
 
@@ -487,7 +491,7 @@ describe('risk #1 regression: provenance never collapses to the shared toolset k
       { sheet: 'schedule' },
       ctxFor({ pin: PROJ_SHANGZHONG.id, projects: TENANT_PROJECTS }),
     );
-    assert.notEqual(fromShangzhong.source?.project, PROJ_GUOLU.id);
+    assert.notEqual(conn(fromShangzhong.source).project, PROJ_GUOLU.id);
 
     // 上重自己装一份:两张表并存,戳各是各的(不会因为共用 'compass' 这个 key 而塌成一个)
     await loadScheduleUnderProject(PROJ_SHANGZHONG, 'shangzhong');
@@ -506,7 +510,7 @@ describe('risk #1 regression: provenance never collapses to the shared toolset k
       ctxFor({ pin: PROJ_GUOLU.id, projects: TENANT_PROJECTS }),
     );
     assert.equal(inGuolu.refused ?? false, false);
-    assert.equal(inGuolu.source?.project, PROJ_GUOLU.id);
+    assert.equal(conn(inGuolu.source).project, PROJ_GUOLU.id);
 
     const inShangzhong = await callTableGet(
       tools,
@@ -514,7 +518,7 @@ describe('risk #1 regression: provenance never collapses to the shared toolset k
       ctxFor({ pin: PROJ_SHANGZHONG.id, projects: TENANT_PROJECTS }),
     );
     assert.equal(inShangzhong.refused ?? false, false);
-    assert.equal(inShangzhong.source?.project, PROJ_SHANGZHONG.id);
+    assert.equal(conn(inShangzhong.source).project, PROJ_SHANGZHONG.id);
   });
 });
 
@@ -614,7 +618,7 @@ describe('buildTableContextBlock: pinned mismatch is omitted from the injected p
     await loadScheduleUnderProject(PROJ_GUOLU, 'guolu');
 
     const meta = getTableSheetMeta(scheduleIdOf(PROJ_GUOLU));
-    assert.equal(meta?.source?.project, PROJ_GUOLU.id);
+    assert.equal(conn(meta?.source).project, PROJ_GUOLU.id);
 
     // The whole-block assertions target the schedule sheet's own section:
     // this suite's earlier tests legitimately leave OTHER (foreign-stamped)
