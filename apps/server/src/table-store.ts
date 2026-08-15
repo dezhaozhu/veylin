@@ -673,6 +673,8 @@ export function formatTableContextBlock(snapshots: TableSheetSnapshot[]): string
     '# Table / spreadsheet data (live snapshot)',
     'The workspace **表格** panel holds multi-sheet spreadsheet data. This is separate from the knowledge base (uploaded documents).',
     'Before saying there is no data, check this block and call `table_list_sheets` / `table_get` when row counts are non-zero.',
+    '**大表(几千行以上)用 `table_query`**:按列筛选、分组计数、只取需要的列 —— `table_get` 一次最多 200 行,'
+      + '几万行翻页既读不完也读不懂。不认识一张表时,先 `table_query(group_by: 某列)` 看看它有哪些值。',
   ];
 
   for (const sheet of snapshots) {

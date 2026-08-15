@@ -813,9 +813,14 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         ...(warning ? { warning } : {}),
         ...(hasMore
           ? {
+              // 还剩很多没看时,指向 **查** 而不是继续翻 —— 四万九千行翻 247 页
+              // 既读不完也读不懂。翻页只对"就差一点"的情况有意义。
               notice:
                 `Showing rows ${offset + 1}–${offset + rows.length} of ${totalRows}. ` +
-                `Call table_get again with offset=${offset + rows.length} for the next page.`,
+                (totalRows - offset - rows.length > limit
+                  ? `还有 ${totalRows - offset - rows.length} 行没看 —— **用 table_query** 按列筛选或分组计数`
+                    + `(不认识这张表就先 group_by 某一列看看有哪些值),不要一页页翻。`
+                  : `Call table_get again with offset=${offset + rows.length} for the next page.`),
             }
           : totalRows === 0
             ? {

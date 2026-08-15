@@ -13,6 +13,7 @@ import {
   listTableColumns,
   importTableSheet,
   listTableRowsPage,
+  buildTableContextBlock,
 } from './table-store.js';
 import { PERSONAL_SCOPE, projectScope, sheetIdFor } from './table-scope.js';
 
@@ -154,5 +155,26 @@ describe('importTableSheet with column descriptors (B1: friendly headers + badge
       rows.map((r) => r['schedule_status']),
       ['derived', 'solved'],
     );
+  });
+});
+
+// ---------------------------------------------------------------- 大表要指路
+// 造了 table_query 却没有任何地方把 agent 引过去,等于没造:系统提示块写着
+// "call table_get",table_get 的分页提示还在说"再翻下一页" —— 四万九千行会被
+// 老老实实翻 247 次。
+
+describe('大表的指路', () => {
+  it('table_get 在还有很多页时,指向 table_query 而不是继续翻', async () => {
+    const rows = Array.from({ length: 500 }, (_, i) => ({ a: `v${i}` }));
+    importTableSheet(MAIN_ID, [], rows, undefined, [{ key: 'a', name: 'A', type: 'text' }]);
+    const { table_get } = buildTableTools();
+    const page = await table_get.execute!({ offset: 0, limit: 50 }, {} as never);
+    assert.match(page.notice ?? '', /table_query/,
+                 '还有 450 行没看的时候,该说的是"去查",不是"再翻一页"');
+  });
+
+  it('系统提示块里点名 table_query —— agent 只读得到这里', () => {
+    const block = buildTableContextBlock(PERSONAL_SCOPE, null, []);
+    assert.match(block, /table_query/);
   });
 });
