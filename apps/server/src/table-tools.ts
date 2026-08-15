@@ -35,6 +35,7 @@ import { unwrapMcpPayload } from './mcp-payload.js';
 import { resolveCompassServer } from './mcp-scoping.js';
 import { getSelection } from './table-selection.js';
 import { PERSONAL_SCOPE, projectScope, sheetIdFor, type SheetScope } from './table-scope.js';
+import { queryTableRows } from './table-query.js';
 import { fetchCompassData, type CompassRestScope } from './compass-rest.js';
 
 export { unwrapMcpPayload } from './mcp-payload.js';
@@ -1050,6 +1051,62 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       ),
   });
 
+  /**
+   * 查一张表(筛选 / 分组计数),而不是翻它。
+   *
+   * `table_get` 一次最多 200 行 —— 四万九千行的表要翻 247 次,等于读不了。这个
+   * 工具补上 Compass 侧早就有的口径:筛完的真数、写错列名就拒绝、分组计数当作
+   * 认识陌生表的入口。
+   */
+  const tableQuery = createTool({
+    id: 'table_query',
+    description:
+      '查询一张表:按列筛选、分组计数、只取需要的列。**大表要用它,不要用 table_get 翻页**'
+      + '(table_get 一次最多 200 行)。返回的 matched 是筛完的真数,returned 是这次给了几行。'
+      + '不认识一张表时,先用 group_by 看某列有哪些值、各多少行。',
+    inputSchema: z.object({
+      sheet: z.string().optional().describe('sheet id;默认当前主 sheet'),
+      filters: z
+        .array(z.object({
+          column: z.string(),
+          op: z.enum(['eq', 'contains', 'gt', 'lt', 'empty', 'nonempty']),
+          value: z.string().optional(),
+        }))
+        .optional()
+        .describe('多个条件是**且**。列名写错会被拒绝并列出可用列。'),
+      group_by: z.string().optional().describe('按这一列分组计数(降序)'),
+      group_limit: z.coerce.number().int().min(1).optional(),
+      columns: z.array(z.string()).optional().describe('只取这些列(省 token)'),
+      offset: z.coerce.number().int().min(0).optional(),
+      limit: z.coerce.number().int().min(0).max(MAX_TABLE_GET_LIMIT).optional()
+        .describe(`最多给几行(默认 50,上限 ${MAX_TABLE_GET_LIMIT});只想要计数就给 0`),
+    }),
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
+      const meta = getTableSheetMeta(sheet);
+      // 归属与来源的两道判据与 table_get 完全一致 —— 一个事实一个口径。
+      const projectPin = readProjectPin(ctx);
+      const source = meta?.source ?? undefined;
+      if (isProjectPinMismatch(source, projectPin, readTenantProjects(ctx))) {
+        return { sheet, refused: true, message: buildProvenanceWarning(source, projectPin, readTenantProjects(ctx)) ?? '' };
+      }
+      if (isUnscopedProjectData(source, projectPin)) {
+        return { sheet, refused: true, message: buildUnscopedProjectDataWarning(source!) };
+      }
+      const cols = listTableColumns(sheet).map((c) => c.key);
+      const out = queryTableRows(listTableRows(sheet), cols, {
+        filters: input.filters,
+        groupBy: input.group_by,
+        // z.coerce 之后运行时已是 number;Number() 只是把 zod-v4 的 unknown 收窄回来
+        groupLimit: input.group_limit == null ? undefined : Number(input.group_limit),
+        columns: input.columns,
+        offset: input.offset == null ? undefined : Number(input.offset),
+        limit: input.limit == null ? undefined : Number(input.limit),
+      });
+      return { sheet, ...out };
+    },
+  });
+
   const tableChart = createTool({
     id: 'table_chart',
     description:
@@ -1146,5 +1203,6 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     load_compass_workorders: loadCompassWorkorders,
     load_compass_resources: loadCompassResources,
     table_chart: tableChart,
+    table_query: tableQuery,
   };
 }
