@@ -43,7 +43,7 @@ import {
 import { listDispatchableCustomAgentIds } from '../agent-task-runner.js';
 import { scheduleDreamConsolidation } from '../dream-service.js';
 import { cancelThreadSubagentTasks } from '../cancel-thread-tasks.js';
-import { buildTableContextBlock } from '../table-store.js';
+import { buildTableContextBlock, formatProjectFilesBlock } from '../table-store.js';
 import { resolveSheetScope } from '../table-tools.js';
 import { formatTableEditsBlock } from '../table-edit-journal.js';
 import { buildViewer3dContextBlock } from '../viewer3d-store.js';
@@ -855,7 +855,33 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     // 变更事件推进上下文:重新读表只能看到新值,看不到"改过"。放在表格块之后 ——
     // 先说"表里有什么",再说"刚才谁改了什么"(见 table-edit-journal.ts)。
     const tableEdits = planMode ? '' : formatTableEditsBlock(threadId);
-    const tableBlock = [tableBlockBase, tableEdits, editGuidance].filter(Boolean).join('\n\n');
+    // 「文件夹即上下文」:提示块里放的是**清单**,内容按需走 project_file_read。
+    // 放进去几乎不花 token,却让 agent 知道这里有什么 —— 否则它只能猜。
+    let projectFilesBlock = '';
+    if (!planMode && projectPin) {
+      try {
+        const { getProject } = await import('../project-store.js');
+        const folder = (await getProject(ctx.tenantId, projectPin))?.folder;
+        if (folder) {
+          const { listProjectFiles } = await import('../project-context.js');
+          const { scanProjectInbox } = await import('../project-inbox.js');
+          const [archived, inbox] = await Promise.all([
+            listProjectFiles(folder),
+            scanProjectInbox(folder),
+          ]);
+          projectFilesBlock = formatProjectFilesBlock(folder, [
+            ...archived.originals.map((f) => ({ name: f.name, bytes: f.bytes })),
+            ...archived.snapshots.map((f) => ({ name: `快照/${f.name}`, bytes: f.bytes })),
+            ...inbox.pending.map((f) => ({ name: f.name, bytes: f.bytes })),
+          ]);
+        }
+      } catch {
+        /* 读不到文件夹就不放这一段 —— 它是陈述,不该让一轮对话失败 */
+      }
+    }
+
+    const tableBlock = [tableBlockBase, projectFilesBlock, tableEdits, editGuidance]
+      .filter(Boolean).join('\n\n');
     const viewer3dBlock = planMode ? '' : buildViewer3dContextBlock();
     const knowledgeBlock = planMode
       ? ''

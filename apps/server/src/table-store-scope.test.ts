@@ -15,6 +15,7 @@ import {
   resolveTableSheetId,
   sheetBelongsToScope,
   resetTableStore,
+  formatProjectFilesBlock,
   DEFAULT_TABLE_SHEET,
 } from './table-store.js';
 import { PERSONAL_SCOPE, projectScope, sheetIdFor } from './table-scope.js';
@@ -106,5 +107,36 @@ describe('重名', () => {
     assert.ok(createTableSheet('清单', PERSONAL_SCOPE));
     assert.equal(createTableSheet('清单', PERSONAL_SCOPE), null, '同作用域重名');
     assert.ok(createTableSheet('清单', GUOLU), '别的作用域同名是两张表');
+  });
+});
+
+// ---------------------------------------------------------------- 文件夹即上下文
+// **清单进上下文,内容不进** —— 与 table_query 同一个道理,只是从「行」抬到「文件」。
+
+describe('formatProjectFilesBlock', () => {
+  it('列出文件,并且明说内容没被读进来', () => {
+    const block = formatProjectFilesBlock('/p', [
+      { name: '三级计划.xlsx', bytes: 3_000_000 },
+      { name: '说明.docx', bytes: 20_480 },
+    ]);
+    assert.match(block, /三级计划\.xlsx/);
+    // 按 1024 算(与项目页 Context 栏一致)—— 两处口径必须一样,否则同一个文件
+    // 在两个地方显示不同大小,人会怀疑哪个是真的。
+    assert.match(block, /2\.9 MB/);
+    assert.match(block, /内容没有被读进来/, '不说清楚,agent 会以为文件内容已经在手上');
+    assert.match(block, /project_file_read/);
+  });
+
+  it('没绑文件夹就什么都不说(别在提示词里造一个不存在的东西)', () => {
+    assert.equal(formatProjectFilesBlock(undefined, []), '');
+  });
+
+  it('绑了但空的:也说清楚是空的', () => {
+    assert.match(formatProjectFilesBlock('/p', []), /没有文件/);
+  });
+
+  it('文件太多时截断,但把剩下多少说出来', () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({ name: `f${i}.md`, bytes: 10 }));
+    assert.match(formatProjectFilesBlock('/p', many), /另有 10 个文件/);
   });
 });

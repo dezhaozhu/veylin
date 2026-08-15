@@ -1271,3 +1271,31 @@ export async function resetTableStore(): Promise<void> {
     console.error('[table] reset persist failed:', e);
   }
 }
+
+/**
+ * 项目文件夹里有哪些文件 —— 放进提示块的**只有清单**(名字/类型/大小),内容要用时
+ * 才走 `project_file_read`。这就是「文件夹即上下文」的正确形状:知道这里有什么,
+ * 不等于把它们塞进去。
+ */
+export function formatProjectFilesBlock(
+  folder: string | null | undefined,
+  files: Array<{ name: string; bytes: number }>,
+): string {
+  if (!folder) return '';
+  if (files.length === 0) {
+    return `# 项目文件夹\n\n\`${folder}\` —— 目前没有文件。`;
+  }
+  const lines = [
+    '# 项目文件夹',
+    '',
+    `\`${folder}\` 里有这些文件。**这里只是清单,内容没有被读进来** —— 要看内容用 \`project_file_read\`(表格用 \`table_query\`)。`,
+    '',
+  ];
+  for (const f of files.slice(0, 50)) {
+    const size = f.bytes < 1024 ? `${f.bytes} B` : f.bytes < 1024 * 1024
+      ? `${Math.round(f.bytes / 1024)} KB` : `${(f.bytes / 1024 / 1024).toFixed(1)} MB`;
+    lines.push(`- \`${f.name}\` · ${size}`);
+  }
+  if (files.length > 50) lines.push(`- …另有 ${files.length - 50} 个文件`);
+  return lines.join('\n');
+}

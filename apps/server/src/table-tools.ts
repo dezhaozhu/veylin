@@ -36,6 +36,7 @@ import { resolveCompassServer } from './mcp-scoping.js';
 import { getSelection } from './table-selection.js';
 import { PERSONAL_SCOPE, projectScope, sheetIdFor, type SheetScope } from './table-scope.js';
 import { queryTableRows } from './table-query.js';
+import { readProjectFile } from './project-file-read.js';
 import { fetchCompassData, type CompassRestScope } from './compass-rest.js';
 
 export { unwrapMcpPayload } from './mcp-payload.js';
@@ -239,6 +240,17 @@ function readProjectPin(ctx?: TableToolCtx): string | null {
 function readTenantProjects(ctx?: TableToolCtx): Project[] {
   const value = ctx?.requestContext?.get('tenantProjects');
   return Array.isArray(value) ? (value as Project[]) : [];
+}
+
+
+/** 这一轮对话所在项目的文件夹(没绑或不在项目里 → undefined)。 */
+async function folderOfCtx(ctx?: TableToolCtx): Promise<string | undefined> {
+  const pin = readProjectPin(ctx);
+  if (!pin) return undefined;
+  const tenant = (ctx?.requestContext?.get('tenantId') as string | undefined) ?? undefined;
+  if (!tenant) return undefined;
+  const { getProject } = await import('./project-store.js');
+  return (await getProject(tenant, pin))?.folder;
 }
 
 /**
@@ -1112,6 +1124,35 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     },
   });
 
+  /**
+   * 读项目文件夹里的一份文件(按需)。
+   *
+   * **文件夹即上下文 ≠ 把文件塞进 context**:提示块里只有文件清单,内容要用时再取。
+   * 表格只给概览并指向 table_query —— 别让概览被当成全量分析。
+   */
+  const projectFileRead = createTool({
+    id: 'project_file_read',
+    description:
+      '读项目文件夹里的一份文件(路径相对项目文件夹)。文本/Markdown/Word 给正文(可 offset 翻);'
+      + '表格只给概览(页签、表头、行数、前几行)——要筛选统计请把它导入成表再用 table_query。'
+      + '读不了的类型会直说,并给替代做法。',
+    inputSchema: z.object({
+      path: z.string().describe('相对项目文件夹的路径,例如 `分析/瓶颈复盘.md`'),
+      offset: z.coerce.number().int().min(0).optional().describe('文本从第几行开始'),
+      limit: z.coerce.number().int().min(1).optional().describe('给多少行(文本)/多少行数据(表格)'),
+    }),
+    execute: async (input, ctx?: TableToolCtx) => {
+      const folder = await folderOfCtx(ctx);
+      if (!folder) {
+        return { kind: 'refused', notice: '当前项目没有绑定文件夹 —— 没有可读的项目文件。' };
+      }
+      return readProjectFile(folder, input.path, {
+        offset: input.offset == null ? undefined : Number(input.offset),
+        limit: input.limit == null ? undefined : Number(input.limit),
+      });
+    },
+  });
+
   const tableChart = createTool({
     id: 'table_chart',
     description:
@@ -1209,5 +1250,6 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     load_compass_resources: loadCompassResources,
     table_chart: tableChart,
     table_query: tableQuery,
+    project_file_read: projectFileRead,
   };
 }
