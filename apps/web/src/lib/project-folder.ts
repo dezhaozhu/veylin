@@ -6,6 +6,7 @@
  * **选不了的时候说什么**:不能让人点了没反应,更不能假装绑上了。
  */
 import { isTauri } from '@/lib/tauri-web-view';
+import { pickWithTimeout, type PickResult } from '@/lib/project-folder-pick';
 
 export function folderPickAvailability(
   env: { isDesktop: boolean } = { isDesktop: isTauri() },
@@ -13,7 +14,7 @@ export function folderPickAvailability(
   if (env.isDesktop) return { canPick: true };
   return {
     canPick: false,
-    reason: '浏览器里选不了文件夹(拿不到绝对路径),请在桌面端绑定;绑好之后两边都能用。',
+    reason: '浏览器里打不开系统选择框 —— 把文件夹路径粘到下面就行(访达里 ⌘⌥C 复制路径)。',
   };
 }
 
@@ -23,16 +24,19 @@ export function describeFolderState(folder: string | undefined | null): string {
   return '这个项目还没有文件夹 —— 导入的原件不会留档,只存解析出来的行。';
 }
 
-/** 打开系统目录选择框(仅桌面端)。取消返回 null。 */
-export async function pickProjectFolder(): Promise<string | null> {
-  if (!isTauri()) return null;
-  try {
+/**
+ * 打开系统目录选择框(仅桌面端),**带超时**。
+ *
+ * 实测这个原生面板会挂住不返回,把整个应用卡死。所以它只是便利路径:超时/报错
+ * 都如实回报,界面转而请用户把路径粘进来(见 project-folder-pick.ts)。
+ */
+export async function pickProjectFolder(timeoutMs = 15_000): Promise<PickResult> {
+  if (!isTauri()) return { status: 'unavailable' };
+  return pickWithTimeout(async () => {
     const { open } = await import('@tauri-apps/plugin-dialog');
     const picked = await open({ directory: true, multiple: false, title: '选择项目文件夹' });
     return typeof picked === 'string' ? picked : null;
-  } catch {
-    return null;
-  }
+  }, timeoutMs);
 }
 
 /**

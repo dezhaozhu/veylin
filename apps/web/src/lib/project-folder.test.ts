@@ -13,10 +13,12 @@ describe('folderPickAvailability', () => {
     assert.deepEqual(folderPickAvailability({ isDesktop: true }), { canPick: true });
   });
 
-  it('浏览器:不能选,并且给出为什么与替代做法', () => {
+  it('浏览器:打不开系统面板,但要指出**替代做法**而不是把人挡在门外', () => {
+    // 粘路径在浏览器里同样成立 —— 写文件的是本机服务端,绝对路径对它有效。
+    // 原来的文案让人"去桌面端",那是把一条本来走得通的路说死了。
     const out = folderPickAvailability({ isDesktop: false });
     assert.equal(out.canPick, false);
-    assert.match(out.reason ?? '', /桌面端/);
+    assert.match(out.reason ?? '', /粘/);
   });
 });
 

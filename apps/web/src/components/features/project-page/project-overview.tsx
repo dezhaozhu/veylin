@@ -18,6 +18,7 @@ import {
   pickProjectFolder,
   revealPath,
 } from '@/lib/project-folder';
+import { normalizeTypedPath } from '@/lib/project-folder-pick';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
 import { useThreadActivityMap } from '@/lib/use-thread-activity';
 import { startWindowDrag } from '@/lib/window-drag';
@@ -129,17 +130,37 @@ const ProjectOverview: FC = () => {
 const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
   const [folder, setFolder] = useState<string | undefined>(project.folder);
   const [error, setError] = useState<string | null>(null);
+  const [typed, setTyped] = useState('');
+  const [picking, setPicking] = useState(false);
   const availability = folderPickAvailability();
 
   useEffect(() => { setFolder(project.folder); }, [project.folder]);
 
+  const bind = async (path: string) => {
+    const clean = normalizeTypedPath(path);
+    if (!clean) return;
+    const res = await setProjectFolder(project.id, clean);
+    if (res.ok) {
+      setFolder(res.project.folder);
+      setTyped('');
+      setError(null);
+    } else {
+      setError(res.error);
+    }
+  };
+
+  // 原生面板会挂住(实测),所以它只是便利:超时就请用户粘路径,界面不吊死。
   const choose = async () => {
     setError(null);
-    const picked = await pickProjectFolder();
-    if (!picked) return;
-    const res = await setProjectFolder(project.id, picked);
-    if (res.ok) setFolder(res.project.folder);
-    else setError(res.error);
+    setPicking(true);
+    try {
+      const out = await pickProjectFolder();
+      if (out.status === 'picked') await bind(out.path);
+      else if (out.status === 'timeout') setError('系统选择框没有响应 —— 把路径粘到下面就行。');
+      else if (out.status === 'unavailable') setError('打不开系统选择框 —— 把路径粘到下面就行。');
+    } finally {
+      setPicking(false);
+    }
   };
 
   return (
@@ -153,9 +174,10 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
           <button
             type="button"
             onClick={() => void choose()}
-            className="hover:bg-muted shrink-0 rounded-md border px-2 py-1 text-xs"
+            disabled={picking}
+            className="hover:bg-muted shrink-0 rounded-md border px-2 py-1 text-xs disabled:opacity-50"
           >
-            {folder ? '换一个' : '选择文件夹'}
+            {picking ? '选择中…' : folder ? '换一个' : '浏览…'}
           </button>
         ) : null}
         {folder ? (
@@ -167,6 +189,24 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
             在访达中显示
           </button>
         ) : null}
+      </div>
+      {/* 永远留一条不依赖原生面板的路:把路径粘进来(访达 ⌘⌥C 复制路径)。 */}
+      <div className="mt-2 flex items-center gap-2">
+        <input
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void bind(typed); }}
+          placeholder="或者把文件夹路径粘到这里，回车"
+          className="border-border bg-background min-w-0 flex-1 rounded-md border px-2 py-1 text-xs"
+        />
+        <button
+          type="button"
+          onClick={() => void bind(typed)}
+          disabled={!normalizeTypedPath(typed)}
+          className="hover:bg-muted shrink-0 rounded-md border px-2 py-1 text-xs disabled:opacity-40"
+        >
+          使用
+        </button>
       </div>
       {!availability.canPick ? (
         <p className="text-muted-foreground mt-1 text-xs">{availability.reason}</p>
