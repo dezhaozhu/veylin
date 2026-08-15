@@ -885,7 +885,8 @@
     "snapshotDone": "Snapshot written ({{rows}} rows) — frozen from here on",
     "snapshotFailed": "Snapshot failed",
     "inboxPending": "{{count}} file(s) in the folder are not imported yet: {{names}} — use Import to bring them in",
-    "inboxDismiss": "Got it"
+    "inboxDismiss": "Got it",
+    "decisionRecorded": "The evidence for this change was saved to the project’s 证据 folder"
   },
   "rag": {
     "unknownTime": "Unknown time",

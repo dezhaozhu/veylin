@@ -1279,6 +1279,9 @@ export function TableGrid() {
         conflict?: boolean;
         message?: string;
         error?: string;
+        recorded?: boolean;
+        recordPath?: string;
+        recordNote?: string;
       }>(res);
       if (!res.ok || !data.ok) {
         showToast(
@@ -1291,6 +1294,13 @@ export function TableGrid() {
         t('table.commitDone', { committed: data.committed ?? 0, deferred: data.deferred ?? 0 }),
         'success',
       );
+      // 这次提交的依据自动留档了(spec §5.1 第三档)。留成了说落在哪儿,没留成说
+      // 为什么 —— 两种都得说,不能让人以为翻得了账而其实翻不了。
+      if (data.recorded && data.recordPath) {
+        setTimeout(() => showToast(t('table.decisionRecorded'), 'success'), 1200);
+      } else if (data.recordNote) {
+        setTimeout(() => showToast(data.recordNote!, 'error'), 1200);
+      }
       setDraftOps(0);
       setPreviewOpen(false);
       editingUntil.current = 0;

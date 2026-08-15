@@ -885,7 +885,8 @@
     "snapshotDone": "已生成快照（{{rows}} 行），从此不变",
     "snapshotFailed": "快照没生成",
     "inboxPending": "文件夹里有 {{count}} 个还没导入的文件：{{names}} —— 要用它们请从「导入」进来",
-    "inboxDismiss": "知道了"
+    "inboxDismiss": "知道了",
+    "decisionRecorded": "这次变更的依据已存进项目的「证据」里"
   },
   "rag": {
     "unknownTime": "未知时间",

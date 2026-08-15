@@ -43,6 +43,7 @@ import { writeSheetSnapshot } from '../project-snapshot.js';
 import { scanProjectInbox } from '../project-inbox.js';
 import { revealInFileManager } from '../project-reveal.js';
 import { listProjectFiles, summarizeConnectors } from '../project-context.js';
+import { writeDecisionRecord } from '../decision-record.js';
 import { getProject } from '../project-store.js';
 import { isFileSource } from '@veylin/db';
 import { listProjects } from '../project-store.js';
@@ -374,6 +375,25 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code('conflict' in out && out.conflict ? 409 : 503);
       return out;
     }
+    // 提交这一刻,那份预览就**当过依据**了 —— 自动留档(spec §5.1 第三档)。
+    // 不靠人记得点保存:它是这个决定的凭据,将来要能翻账。
+    // 留档失败绝不能翻成错误响应:提交已经发生了。
+    const record = await writeDecisionRecord({
+      folder: scope.projectId
+        ? (await getProject(ctx.tenantId, scope.projectId))?.folder
+        : undefined,
+      title: '排产变更',
+      summary: `提交 ${out.committed} 条改动` + (out.deferred ? `,延后 ${out.deferred} 条` : ''),
+      facts: {
+        提交条数: out.committed,
+        延后条数: out.deferred,
+        结果: out.status,
+        未排: out.unscheduled,
+        run_id: String(out.run_id ?? '—'),
+        提案: (out.proposal_ids ?? []).join('、') || '—',
+      },
+    }).catch((e: unknown) => ({ written: false as const, reason: String(e) }));
+
     // Refresh the schedule sheet from Compass so the grid shows the new run
     // (importTableSheet emits sheetReplace → SSE → client refetch).
     // Best-effort: the commit already happened — never turn a refresh failure into an error response.
@@ -382,7 +402,12 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     } catch {
       /* best-effort refresh; grid converges on next manual load */
     }
-    return out;
+    return {
+      ...out,
+      recorded: record.written,
+      ...(record.written ? { recordPath: record.path } : {}),
+      ...(record.reason ? { recordNote: record.reason } : {}),
+    };
   });
 
   app.post('/api/schedule-edit/discard', async (req, reply) => {
