@@ -704,3 +704,32 @@ describe('身份要带回来', () => {
     assert.equal(out.ok && out.username, undefined);
   });
 });
+
+describe('401 要说清楚是为什么', () => {
+  const expired = (secondsAgo: number) => {
+    const claims = { sub: 'dev', exp: Math.floor(Date.now() / 1000) - secondsAgo };
+    const b64 = Buffer.from(JSON.stringify(claims)).toString('base64url');
+    return `h.${b64}.sig`;
+  };
+
+  it('token 过期了就说过期,并说是什么时候过的', async () => {
+    // 实测:排查这个 401 花了五步(先怀疑 URL 指错、再怀疑吊销),最后发现只是
+    // 昨天过期了。**信息本来就在 token 里**,不说出来是白白让人绕远路。
+    const out = await fetchCompassSources(
+      { url: 'http://x', token: expired(86_400) }, 1000,
+      (async () => ({ ok: false, status: 401 })) as unknown as typeof fetch,
+    );
+    assert.equal(out.ok, false);
+    assert.match(out.ok === false ? out.error : '', /过期/);
+  });
+
+  it('没过期的 401 是另一回事(被吊销/换了密钥),别乱归因', async () => {
+    const good = `h.${Buffer.from(JSON.stringify({
+      sub: 'dev', exp: Math.floor(Date.now() / 1000) + 86_400 })).toString('base64url')}.sig`;
+    const out = await fetchCompassSources(
+      { url: 'http://x', token: good }, 1000,
+      (async () => ({ ok: false, status: 401 })) as unknown as typeof fetch,
+    );
+    assert.match(out.ok === false ? out.error : '', /吊销|密钥/);
+  });
+});

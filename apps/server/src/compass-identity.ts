@@ -79,6 +79,35 @@ export type CompassSourcesResult =
   | { ok: true; sources: string[]; username?: string }
   | { ok: false; error: string };
 
+
+/**
+ * 401 到底是为什么 —— **信息本来就在 token 里,不说出来是白白让人绕远路**。
+ *
+ * 实测:排查一次 401 花了五步(先怀疑 URL 指错、再怀疑被吊销、又去比对两套库),
+ * 最后发现只是昨天过期了。exp 就写在 token 的 payload 里。
+ *
+ * 只解码不验签:我们不是在做鉴权,是在解释一个已经被拒的请求。
+ */
+export function explain401(token: string): string {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return 'token 格式不对';
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+      exp?: number; sub?: string;
+    };
+    const who = claims.sub ? `(${claims.sub})` : '';
+    if (typeof claims.exp === 'number') {
+      const at = new Date(claims.exp * 1000);
+      if (at.getTime() < Date.now()) {
+        return `token 已于 ${at.toLocaleString('zh-CN')} 过期${who} —— 重新签一张即可`;
+      }
+    }
+    return `token 未过期${who},401 多半是被吊销(代数已提)或对面换了签名密钥`;
+  } catch {
+    return 'token 解不开,可能不是一个 JWT';
+  }
+}
+
 /** `GET {url}/my/sources` with the account bearer token — 10s timeout. */
 export async function fetchCompassSources(
   config: CompassIdentityConfig,
@@ -93,6 +122,10 @@ export async function fetchCompassSources(
       signal: controller.signal,
     });
     if (!res.ok) {
+      // 401 单独解释:光说 "HTTP 401" 等于把排查成本原样丢给人
+      if (res.status === 401) {
+        return { ok: false, error: `Compass 拒绝了这个身份:${explain401(config.token)}` };
+      }
       return { ok: false, error: `GET /my/sources returned HTTP ${res.status}` };
     }
     const body = (await res.json()) as { sources?: unknown; username?: unknown };
