@@ -1,6 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { mcpServerInputSchema } from '@veylin/shared';
-import { COMPASS_IDENTITY_GROUP } from '../compass-identity.js';
+import {
+  COMPASS_IDENTITY_GROUP,
+  fetchCompassSources,
+  parseCompassIdentityConfig,
+} from '../compass-identity.js';
 import {
   createRemoteMcpServer,
   deleteRemoteMcpServer,
@@ -148,6 +152,27 @@ export function registerMcpRoutes(app: FastifyInstance, deps: ServerDeps): void 
   // same summary shape as the boot run and the self-scheduling 10-minute tick.
   // No-op (not 404) when VEYLIN_COMPASS_IDENTITY isn't configured, mirroring how
   // the rest of this feature stays silent when off.
+  /**
+   * 当前是以**谁**的身份连着 Compass。
+   *
+   * 一个 install 一份 token —— 同事之间复制了同一份,Compass 眼里就是同一个人。
+   * 不把身份摆到脸上,"权限按人分"就只是架构图上的话,没人会发现它没成立。
+   */
+  app.get('/api/compass-identity/whoami', async () => {
+    const config = parseCompassIdentityConfig();
+    if (!config) return { ok: true, configured: false };
+    const out = await fetchCompassSources(config);
+    if (!out.ok) return { ok: false, configured: true, error: out.error };
+    return {
+      ok: true,
+      configured: true,
+      url: config.url,
+      // 老版本 Compass 不返 username —— 标成未知,不猜
+      username: out.username ?? null,
+      sources: out.sources,
+    };
+  });
+
   app.post('/api/compass-identity/refresh', async () => {
     if (!deps.syncCompassIdentity) {
       return { ok: true, enabled: false, summary: null };

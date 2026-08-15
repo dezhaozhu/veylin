@@ -3,6 +3,7 @@ import { after, before, describe, it } from 'node:test';
 import { closeDb, connectDb } from '@veylin/db';
 import type { McpServer, Project } from '@veylin/shared';
 import {
+  fetchCompassSources,
   COMPASS_ENTRY_NAME,
   COMPASS_IDENTITY_GROUP,
   createCompassIdentitySyncLoop,
@@ -674,5 +675,32 @@ describe('reconcileCompassIdentity — integration against the real embedded sto
     assert.equal(composedAfter?.enabled, true);
     assert.equal(composedAfter?.managed, false);
     assert.deepEqual(composedAfter?.sources, [sourceA, sourceB]);
+  });
+});
+
+// ---------------------------------------------------------------- 你是谁
+// 实测到的洞:一个 install 一份 token,同事之间复制了同一份,Compass 眼里就是
+// 同一个人。界面上不显示身份,这件事永远不会被发现 —— "权限按人分"会变成一句
+// 只在架构图上成立的话。
+
+describe('身份要带回来', () => {
+  it('/my/sources 的 username 被读出来', async () => {
+    const out = await fetchCompassSources(
+      { url: 'http://x', token: 't' }, 1000,
+      (async () => ({
+        ok: true, status: 200,
+        json: async () => ({ username: '张三', sources: ['guolu'] }),
+      })) as unknown as typeof fetch,
+    );
+    assert.equal(out.ok, true);
+    assert.equal(out.ok && out.username, '张三');
+  });
+
+  it('老版本 Compass 不返 username:不猜、不编,标成未知', async () => {
+    const out = await fetchCompassSources(
+      { url: 'http://x', token: 't' }, 1000,
+      (async () => ({ ok: true, status: 200, json: async () => ({ sources: ['guolu'] }) })) as unknown as typeof fetch,
+    );
+    assert.equal(out.ok && out.username, undefined);
   });
 });

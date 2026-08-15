@@ -76,29 +76,36 @@ export function isCompassIdentitySyncEnabled(env: NodeJS.ProcessEnv = process.en
 }
 
 export type CompassSourcesResult =
-  | { ok: true; sources: string[] }
+  | { ok: true; sources: string[]; username?: string }
   | { ok: false; error: string };
 
 /** `GET {url}/my/sources` with the account bearer token — 10s timeout. */
 export async function fetchCompassSources(
   config: CompassIdentityConfig,
   timeoutMs = 10_000,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<CompassSourcesResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${config.url}/my/sources`, {
+    const res = await fetchImpl(`${config.url}/my/sources`, {
       headers: { Authorization: `Bearer ${config.token}` },
       signal: controller.signal,
     });
     if (!res.ok) {
       return { ok: false, error: `GET /my/sources returned HTTP ${res.status}` };
     }
-    const body = (await res.json()) as { sources?: unknown };
+    const body = (await res.json()) as { sources?: unknown; username?: unknown };
     if (!Array.isArray(body.sources)) {
       return { ok: false, error: '/my/sources response missing a "sources" array' };
     }
-    return { ok: true, sources: body.sources.filter((s): s is string => typeof s === 'string') };
+    // username 是后加的:老版本 Compass 不返 —— 那就**标成未知**,不猜也不编。
+    // 界面要能说出"以谁的身份连着",否则同事复制了同一份 token 也没人会发现。
+    return {
+      ok: true,
+      sources: body.sources.filter((s): s is string => typeof s === 'string'),
+      ...(typeof body.username === 'string' && body.username ? { username: body.username } : {}),
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {

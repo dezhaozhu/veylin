@@ -114,6 +114,7 @@ const ProjectOverview: FC = () => {
         title={project.name}
         description={project.sources.map(projectSourceLabel).join(' · ')}
       />
+      <CompassIdentityRow />
       <ProjectFolderRow project={project} />
       <ProjectContextSection project={project} />
       <ProjectCardsGrid project={project} byServer={byServer} />
@@ -215,6 +216,53 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
       ) : null}
       {error ? <p className="text-destructive mt-1 text-xs">{error}</p> : null}
     </section>
+  );
+};
+
+type WhoAmI = { configured: boolean; username?: string | null; sources?: string[]; error?: string };
+
+/**
+ * 以谁的身份连着 Compass。
+ *
+ * 一个 install 一份 token —— 同事之间复制了同一份,Compass 眼里就是同一个人。
+ * 把身份摆到脸上,这件事才可能被发现;否则"权限按人分"只是架构图上的话。
+ * 数据源写在旁边,并说明**这是 Compass 给的**,不是我们的产品只支持这两个厂。
+ */
+const CompassIdentityRow: FC = () => {
+  const [who, setWho] = useState<WhoAmI | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/compass-identity/whoami');
+        const body = (await res.json()) as WhoAmI & { ok?: boolean };
+        if (!cancelled) setWho(body);
+      } catch {
+        /* 取不到就不显示 —— 这是陈述,不该打断人 */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!who?.configured) return null;
+  return (
+    <p className="text-muted-foreground mb-3 text-xs">
+      {who.error ? (
+        <span className="text-destructive">连不上 Compass:{who.error}</span>
+      ) : (
+        <>
+          数据 · Compass —— 以{' '}
+          <span className="text-foreground font-medium">
+            {who.username ?? '未知身份'}
+          </span>{' '}
+          的身份连接
+          {who.sources?.length
+            ? `,Compass 给到你的数据源:${who.sources.join('、')}`
+            : ',但一个数据源都没授权 —— 你会看到空白'}
+        </>
+      )}
+    </p>
   );
 };
 
