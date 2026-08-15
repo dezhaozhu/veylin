@@ -42,6 +42,7 @@ import { archiveImportedFile } from '../table-import-archive.js';
 import { writeSheetSnapshot } from '../project-snapshot.js';
 import { scanProjectInbox } from '../project-inbox.js';
 import { revealInFileManager } from '../project-reveal.js';
+import { listProjectFiles, summarizeConnectors } from '../project-context.js';
 import { getProject } from '../project-store.js';
 import { isFileSource } from '@veylin/db';
 import { listProjects } from '../project-store.js';
@@ -737,6 +738,26 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code(400);
       return { ok: false, message: e instanceof Error ? e.message : String(e) };
     }
+  });
+
+  /**
+   * 项目里到底有什么:文件(原件/快照)+ 连接器(带**上次刷新**)。
+   * 两类分开说 —— 文件不会腐烂,连接器会,所以后者必须报新鲜度。
+   */
+  app.get('/api/project/context', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const { threadId } = req.query as { threadId?: string };
+    const scope = await scopeOfRequest(threadId, ctx);
+    const projectId = scope.kind === 'project' ? scope.id : null;
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    const sheets = listTableSheets(scope).map((m) => ({ name: m.name, source: m.source }));
+    const connectors = summarizeConnectors(sheets);
+    if (!folder) {
+      return { ok: true, folder: null, originals: [], snapshots: [], connectors };
+    }
+    const files = await listProjectFiles(folder);
+    void reply;
+    return { ok: true, folder, ...files, connectors };
   });
 
   /** 在访达里显示项目文件夹里的某个东西(Show in Folder)。只允许文件夹之内。 */

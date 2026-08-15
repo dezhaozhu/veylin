@@ -168,7 +168,7 @@ describe('大表的指路', () => {
     const rows = Array.from({ length: 500 }, (_, i) => ({ a: `v${i}` }));
     importTableSheet(MAIN_ID, [], rows, undefined, [{ key: 'a', name: 'A', type: 'text' }]);
     const { table_get } = buildTableTools();
-    const page = await table_get.execute!({ offset: 0, limit: 50 }, {} as never);
+    const page = (await table_get.execute!({ offset: 0, limit: 50 }, {} as never)) as { notice?: string };
     assert.match(page.notice ?? '', /table_query/,
                  '还有 450 行没看的时候,该说的是"去查",不是"再翻一页"');
   });

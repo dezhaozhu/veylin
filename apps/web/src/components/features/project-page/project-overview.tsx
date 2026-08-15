@@ -19,6 +19,7 @@ import {
   revealPath,
 } from '@/lib/project-folder';
 import { normalizeTypedPath } from '@/lib/project-folder-pick';
+import { describeFreshness } from '@/lib/freshness';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
 import { useThreadActivityMap } from '@/lib/use-thread-activity';
 import { startWindowDrag } from '@/lib/window-drag';
@@ -114,6 +115,7 @@ const ProjectOverview: FC = () => {
         description={project.sources.map(projectSourceLabel).join(' · ')}
       />
       <ProjectFolderRow project={project} />
+      <ProjectContextSection project={project} />
       <ProjectCardsGrid project={project} byServer={byServer} />
       <ProjectThreads projectId={project.id} />
     </div>
@@ -212,6 +214,92 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
         <p className="text-muted-foreground mt-1 text-xs">{availability.reason}</p>
       ) : null}
       {error ? <p className="text-destructive mt-1 text-xs">{error}</p> : null}
+    </section>
+  );
+};
+
+type ProjectContext = {
+  folder: string | null;
+  originals: Array<{ name: string; bytes: number; importedAt: string; seenCount: number }>;
+  snapshots: Array<{ name: string; bytes: number; at: string }>;
+  connectors: Array<{ server: string; tenant?: string; oldestLoadedAt: string; sheets: string[] }>;
+};
+
+const kb = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+/**
+ * 项目里到底有什么(形状取自 Claude 项目页的 Context 栏)。
+ *
+ * **两类分开说**:文件存下来就不变;连接器会腐烂,所以每条都带「上次刷新」——
+ * 那是这条线上最后一个还没露脸的事实。
+ */
+const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
+  const [data, setData] = useState<ProjectContext | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/project/context');
+        const body = (await res.json()) as { ok?: boolean } & ProjectContext;
+        if (!cancelled && body.ok) setData(body);
+      } catch {
+        /* 读不到就不显示这一栏 —— 它是陈述,不该报错打断人 */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [project.id, project.folder]);
+
+  if (!data) return null;
+  const nothing =
+    data.originals.length === 0 && data.snapshots.length === 0 && data.connectors.length === 0;
+  if (nothing) return null;
+
+  return (
+    <section className="border-border mb-4 rounded-md border px-3 py-2 text-sm">
+      <h3 className="text-muted-foreground mb-2 text-xs uppercase tracking-wide">Context</h3>
+
+      {data.connectors.length > 0 ? (
+        <div className="mb-2">
+          <p className="text-muted-foreground mb-1 text-xs">连接器（会变，看刷新时间）</p>
+          <ul className="space-y-1">
+            {data.connectors.map((c) => (
+              <li key={`${c.server}-${c.tenant ?? ''}`} className="flex items-baseline gap-2 text-xs">
+                <span className="font-medium">{c.tenant ?? c.server}</span>
+                <span className="text-muted-foreground min-w-0 flex-1 truncate">
+                  {c.sheets.join('、')}
+                </span>
+                <span className="text-muted-foreground shrink-0">
+                  {describeFreshness(c.oldestLoadedAt)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {data.originals.length > 0 || data.snapshots.length > 0 ? (
+        <div>
+          <p className="text-muted-foreground mb-1 text-xs">文件（存下来就不变）</p>
+          <ul className="space-y-1">
+            {data.originals.map((f) => (
+              <li key={`o-${f.name}-${f.importedAt}`} className="flex items-baseline gap-2 text-xs">
+                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                <span className="text-muted-foreground shrink-0">
+                  原件 · {kb(f.bytes)}
+                  {f.seenCount > 1 ? ` · 用过 ${f.seenCount} 次` : ''}
+                </span>
+              </li>
+            ))}
+            {data.snapshots.map((f) => (
+              <li key={`s-${f.name}`} className="flex items-baseline gap-2 text-xs">
+                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                <span className="text-muted-foreground shrink-0">快照 · {kb(f.bytes)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </section>
   );
 };
