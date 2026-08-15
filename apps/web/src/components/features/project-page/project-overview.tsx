@@ -319,7 +319,8 @@ const ProjectCardsGrid: FC<{
   const { t } = useTranslation();
   const hostUrl = `/api/mcp-apps/host?projectId=${encodeURIComponent(project.id)}`;
   const columns = useMemo(() => sceneCardColumns(byServer), [byServer]);
-  const entries = useSceneCardPayloads(hostUrl, columns, project.sources);
+  const { entries, at, revalidating, refresh } = useSceneCardPayloads(
+    hostUrl, columns, project.sources);
 
   // One page-level loader for the whole area (the calls settle together), so
   // the merge decision is made once instead of flickering through it. Bounded:
@@ -338,6 +339,22 @@ const ProjectCardsGrid: FC<{
   // capability absence, not an error state).
   if (columns.length === 0) return null;
 
+  // 眼前这批卡有多旧 + 一个手动刷新 —— 不定时轮询(用户定的规矩),但要能看出
+  // 它是什么时候的,也要能自己叫它更新。
+  const freshness = (
+    <div className="text-muted-foreground mb-2 flex items-center gap-2 text-xs">
+      <span>{at ? describeFreshness(at).replace('刷新', '更新') : '刚打开'}</span>
+      <button
+        type="button"
+        onClick={refresh}
+        disabled={revalidating}
+        className="hover:text-foreground underline underline-offset-2 disabled:opacity-50"
+      >
+        {revalidating ? '核对中…' : '刷新'}
+      </button>
+    </div>
+  );
+
   const candidates: SceneCandidate[] = entries.map((e) => ({
     source: e.source,
     rows: e.fetched.status === 'ready' ? extractDisplayRows(e.fetched.result) : null,
@@ -351,22 +368,27 @@ const ProjectCardsGrid: FC<{
     // scene's single column needs no qualifier (一个事实一处表达).
     const servers = new Set(entries.map((e) => e.server));
     return (
-      <SceneCardMergeTable
-        scenes={candidates.map((c) => ({ source: c.source, rows: c.rows! }))}
-        serverLabels={
-          servers.size > 1 ? entries.map((e) => e.server) : undefined
-        }
-        narratives={narratives}
-        projectId={project.id}
-      />
+      <div>
+        {freshness}
+        <SceneCardMergeTable
+          scenes={candidates.map((c) => ({ source: c.source, rows: c.rows! }))}
+          serverLabels={
+            servers.size > 1 ? entries.map((e) => e.server) : undefined
+          }
+          narratives={narratives}
+          projectId={project.id}
+        />
+      </div>
     );
   }
 
   return (
-    <div
-      className="mb-8 grid gap-4"
-      style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
-    >
+    <div className="mb-8">
+      {freshness}
+      <div
+        className="grid gap-4"
+        style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
+      >
       {entries.map((entry: SceneCardEntry) => (
         <SceneCardCell
           key={`${entry.source}::${entry.server}`}
@@ -380,6 +402,7 @@ const ProjectCardsGrid: FC<{
           argsKey={entry.argsKey}
         />
       ))}
+      </div>
     </div>
   );
 };

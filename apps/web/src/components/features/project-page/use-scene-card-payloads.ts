@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { mergeAbortSignals } from '@/lib/transport-reconnect';
 import { SCENE_CARD_TOOL, sceneCardArgs, type SceneCardColumn } from './scene-card-grid';
+import { cacheKeyFor, entriesDiffer, readSceneCardCache, writeSceneCardCache } from './scene-card-cache';
 
 /**
  * Fetches EVERY 项目首页 card (source × capability server) in one place.
@@ -92,11 +93,27 @@ export async function fetchSceneCard(
   }
 }
 
+export type SceneCardState = {
+  entries: SceneCardEntry[] | null;
+  /** 眼前这批卡是什么时候取回来的(缓存命中时就是上次那一刻) */
+  at: string | null;
+  /** 后台正在核对(不遮挡已有内容) */
+  revalidating: boolean;
+  refresh: () => void;
+};
+
+/**
+ * **默认吃缓存,打开时后台核对一次,变了才换,不定时轮询**(用户定的规矩)。
+ *
+ * 之前是每次打开都清空再重取 —— 服务端那头 shangzhong 要 2.7s(现已降到 0.3s),
+ * 于是每进一次项目页都干等一次白屏。现在缓存立即上屏,核对在后台走;结果一样就
+ * 什么都不动,免得白闪。
+ */
 export function useSceneCardPayloads(
   hostUrl: string,
   columns: readonly SceneCardColumn[],
   sources: readonly string[],
-): SceneCardEntry[] | null {
+): SceneCardState {
   // Effect identity by VALUE, not array identity — the caller rebuilds these
   // arrays on every render.
   const plan = useMemo(
@@ -118,28 +135,49 @@ export function useSceneCardPayloads(
   const planKey = JSON.stringify(plan);
 
   const [entries, setEntries] = useState<SceneCardEntry[] | null>(null);
+  const [at, setAt] = useState<string | null>(null);
+  const [revalidating, setRevalidating] = useState(false);
+  const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
     const specs = JSON.parse(planKey) as SceneCardSpec[];
     if (specs.length === 0) {
       setEntries([]);
+      setAt(null);
       return;
     }
+    const key = cacheKeyFor(hostUrl, specs);
+    const cached = readSceneCardCache(key);
+    // 缓存立即上屏 —— 不再"清空 → 白屏 → 等几秒"
+    setEntries((cached?.entries as SceneCardEntry[] | undefined) ?? null);
+    setAt(cached?.at ?? null);
+
     let alive = true;
-    // The old cleanup only guarded setState; the requests themselves kept
-    // running (and holding a connection) after the view closed. Cancel them.
     const cancel = new AbortController();
-    setEntries(null);
+    setRevalidating(true);
     void Promise.all(
       specs.map((spec) => fetchSceneCard(hostUrl, spec, { signal: cancel.signal })),
     ).then((settled) => {
-      if (alive) setEntries(settled);
+      if (!alive) return;
+      setRevalidating(false);
+      // 内容一样不换(免得白闪);新结果全失败也不覆盖已有的(网络抖一下 ≠ 没有卡)
+      if (entriesDiffer((cached?.entries as SceneCardEntry[] | undefined) ?? null, settled)) {
+        setEntries(settled);
+        const now = new Date();
+        setAt(now.toISOString());
+        writeSceneCardCache(key, settled, now);
+      } else if (!cached) {
+        writeSceneCardCache(key, settled);
+        setAt(new Date().toISOString());
+      }
     });
     return () => {
       alive = false;
       cancel.abort();
+      setRevalidating(false);
     };
-  }, [hostUrl, planKey]);
+  }, [hostUrl, planKey, nonce]);
 
-  return entries;
+  const refresh = useCallback(() => setNonce((n) => n + 1), []);
+  return { entries, at, revalidating, refresh };
 }
