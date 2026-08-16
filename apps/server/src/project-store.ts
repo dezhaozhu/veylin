@@ -64,6 +64,7 @@ export async function createProject(tenantId: string, input: ProjectInput): Prom
     enabled: input.enabled ?? true,
     migratedFrom: input.migratedFrom,
     ...(input.folder != null ? { folder: input.folder } : {}),
+    ...(input.instructions != null ? { instructions: input.instructions } : {}),
   });
   return rowToProject(row);
 }

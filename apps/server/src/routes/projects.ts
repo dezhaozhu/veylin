@@ -81,7 +81,7 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
 
   app.post('/api/projects', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const body = (req.body ?? {}) as { name?: unknown; sources?: unknown };
+    const body = (req.body ?? {}) as { name?: unknown; sources?: unknown; instructions?: unknown };
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     if (name === '') {
       reply.code(400);
@@ -99,7 +99,13 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
       reply.code(400);
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
-    const project = await createProject(ctx.tenantId, { name, sources });
+    // 建的时候就写的说明也要存 —— 只在 PATCH 里认,会让"新建时填了一段"静默丢掉,
+    // 而对话框那个框看起来完全正常(实测发现)。
+    const instructions =
+      typeof body.instructions === 'string' ? body.instructions.trim() : '';
+    const project = await createProject(ctx.tenantId, {
+      name, sources, ...(instructions ? { instructions } : {}),
+    });
     return { ok: true, project: toApiProject(project) };
   });
 

@@ -363,4 +363,18 @@ describe('project CRUD routes', () => {
     });
     assert.equal(res.statusCode, 200, res.body);
   });
+
+  it('**新建时填的说明要存下来** —— 只在 PATCH 里认会让它静默丢掉', async () => {
+    // 实测发现:对话框那个框看起来完全正常,填了、创建了、什么都没报错,
+    // 但值没进去 —— 而项目说明是要喂给模型的,丢了就是行为悄悄不对。
+    const res = await app.inject({
+      method: 'POST', url: '/api/projects',
+      payload: { name: '带说明新建', sources: [], instructions: '只看锻件分厂。' },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(
+      (res.json() as { project: { instructions?: string } }).project.instructions,
+      '只看锻件分厂。',
+    );
+  });
 });
