@@ -246,3 +246,42 @@ export function resetMcpFlows(): void {
   for (const f of flows.values()) f.close();
   flows.clear();
 }
+
+export type Diagnosis =
+  | { kind: 'ok' }
+  | { kind: 'needs-auth'; detail: string }
+  | { kind: 'unreachable'; detail: string }
+  | { kind: 'http-error'; detail: string };
+
+/**
+ * 一台服务器连不上,到底为什么。
+ *
+ * 为什么需要它:MCP 客户端库把每台服务器的连接错误**吞进了 console** ——
+ * `listToolsets()` 不抛,只是安静地少返回一个。上层于是只知道"它不在里面",
+ * 界面就成了"部分服务连接失败"却什么也展不开、重试也没反应(实测)。
+ *
+ * 与其等库把原因给我们,不如自己去问一次:401 → 需要授权(而且我们能直接给出
+ * 授权入口);连不上 → 说是连不上;别的状态码 → 把数字说出来。
+ */
+export async function diagnoseConnection(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Diagnosis> {
+  let res: Response;
+  try {
+    res = await fetchImpl(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json, text/event-stream' },
+    });
+  } catch (err) {
+    return {
+      kind: 'unreachable',
+      detail: `连不上这个地址(${err instanceof Error ? err.message : String(err)})—— 检查地址,或那边的服务是不是没起。`,
+    };
+  }
+  if (res.status === 401) {
+    return { kind: 'needs-auth', detail: '需要授权 —— 在这一行的菜单里点「授权」。' };
+  }
+  if (res.ok) return { kind: 'ok' };
+  return { kind: 'http-error', detail: `这个地址返回 HTTP ${res.status}。` };
+}

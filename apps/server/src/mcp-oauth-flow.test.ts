@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { exchange, probeNeedsAuth } from './mcp-oauth-flow.js';
+import { diagnoseConnection, exchange, probeNeedsAuth } from './mcp-oauth-flow.js';
 
 const resp = (status: number, headers: Record<string, string> = {}, body: unknown = {}) =>
   new Response(JSON.stringify(body), { status, headers });
@@ -90,5 +90,33 @@ describe('不支持动态注册的服务器', () => {
       /申请一个 OAuth 客户端|client ID/,
     );
     assert.equal(registerClientForTest, undefined);
+  });
+});
+
+describe('连不上时说得出为什么', () => {
+  const f = (h: (u: string) => Response | Promise<Response>) =>
+    (async (u: string | URL | Request) => h(String(u))) as unknown as typeof fetch;
+
+  it('401 → 需要授权,并指向那个动作', async () => {
+    const d = await diagnoseConnection('https://x/mcp', f(() => resp(401)));
+    assert.equal(d.kind, 'needs-auth');
+    if (d.kind === 'needs-auth') assert.match(d.detail, /授权/);
+  });
+
+  it('连不上 → 说是连不上,并给出该查什么', async () => {
+    const boom = (async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
+    const d = await diagnoseConnection('https://x/mcp', boom);
+    assert.equal(d.kind, 'unreachable');
+    if (d.kind === 'unreachable') assert.match(d.detail, /地址|服务/);
+  });
+
+  it('别的状态码 → 把数字说出来,不含糊成"失败"', async () => {
+    const d = await diagnoseConnection('https://x/mcp', f(() => resp(503)));
+    assert.equal(d.kind, 'http-error');
+    if (d.kind === 'http-error') assert.match(d.detail, /503/);
+  });
+
+  it('能连上就是 ok —— 不给没有问题的东西编一个原因', async () => {
+    assert.equal((await diagnoseConnection('https://x/mcp', f(() => resp(200)))).kind, 'ok');
   });
 });

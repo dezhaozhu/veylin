@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { getMcpAuthState, mcpAuthAction, pollMcpFlow, startMcpAuth } from './mcp-oauth.js';
+import {
+  describeDiagnosis,
+  getMcpAuthState,
+  mcpAuthAction,
+  pollMcpFlow,
+  startMcpAuth,
+} from './mcp-oauth.js';
 
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
@@ -47,5 +53,19 @@ describe('轮询', () => {
   it('会话没了要说过期,不能一直显示等待中', async () => {
     const s = await pollMcpFlow('gone', fake(() => new Response('{}', { status: 404 })));
     assert.equal(s.status, 'error');
+  });
+});
+
+describe('连不上时的说法', () => {
+  it('问不出来就承认问不出来 —— 不含糊成"连接失败"', () => {
+    assert.match(describeDiagnosis(null), /没问出原因/);
+  });
+
+  it('401 就直说要授权', () => {
+    assert.match(describeDiagnosis({ kind: 'needs-auth', detail: '需要授权 —— 点「授权」。' }), /授权/);
+  });
+
+  it('地址通但仍然连不上,也要说出来 —— 这时问题在别处', () => {
+    assert.match(describeDiagnosis({ kind: 'ok' }), /握手|凭据/);
   });
 });

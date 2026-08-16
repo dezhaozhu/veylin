@@ -7,7 +7,12 @@
 import type { FastifyInstance } from 'fastify';
 
 import { clearMcpCredential, hasMcpCredential } from '../mcp-credentials.js';
-import { getMcpFlow, probeNeedsAuth, startMcpOAuth } from '../mcp-oauth-flow.js';
+import {
+  diagnoseConnection,
+  getMcpFlow,
+  probeNeedsAuth,
+  startMcpOAuth,
+} from '../mcp-oauth-flow.js';
 
 export type McpOAuthDeps = { dataDir?: () => string | undefined };
 
@@ -23,6 +28,14 @@ export function registerMcpOAuthRoutes(app: FastifyInstance, deps: McpOAuthDeps 
     if (authorized || !url) return { authorized, needsAuth: false };
     const probe = await probeNeedsAuth(url);
     return { authorized, needsAuth: probe.needsAuth };
+  });
+
+  // 连不上时"为什么" —— MCP 客户端库把每台服务器的错误吞进 console,上层只知道
+  // "它不在工具集里"。界面据此才有话可说,而不是一句展不开的"连接失败"。
+  app.get('/api/mcp-oauth/diagnose', async (req, reply) => {
+    const url = ((req.query ?? {}) as Record<string, string>).url ?? '';
+    if (!url) return reply.code(400).send({ error: '缺少 url' });
+    return diagnoseConnection(url);
   });
 
   app.post('/api/mcp-oauth/start', async (req, reply) => {

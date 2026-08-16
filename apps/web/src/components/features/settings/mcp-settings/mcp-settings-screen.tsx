@@ -24,6 +24,7 @@ import {
 } from '../settings-list';
 import { mcpServerIcon } from '@/lib/mcp-icon';
 import { CompassConnectionRow, useCompassIdentity } from './compass-connection-row';
+import { useFailingServers } from './use-failing-servers';
 import { useMcpAuth } from './use-mcp-auth';
 
 // 地址是**实测过的**(2026-08-16 各打了一次:全部按协议回 401 + resource_metadata,
@@ -271,6 +272,7 @@ export function McpSettingsScreen() {
   // Compass 由 CompassConnectionRow 单独代表(它在未连接时也要出现),所以列表里
   // 不再重复渲染那条托管条目。
   const compass = useCompassIdentity();
+  const failing = useFailingServers(health, remote);
   const [clientIdInput, setClientIdInput] = useState('');
   const [lastAuthTarget, setLastAuthTarget] = useState<{ id: string; url: string } | null>(null);
   // 只探远程条目:本地 stdio 的插件/内置服务器没有 401 这回事。
@@ -405,7 +407,19 @@ export function McpSettingsScreen() {
 
       {(health?.lastError || hasConnectionIssues) && (
         <div className="border-destructive/30 bg-destructive/5 mb-6 rounded-lg border px-4 py-3 text-sm">
+          {/* **点名并说原因**。原来只有一句"部分服务连接失败":MCP 客户端库把每台
+              服务器的错误吞进 console,lastError 是空的,于是横幅展不开、重试也
+              没反应(实测)。现在逐台问一次"为什么"。 */}
           <p className="text-destructive font-medium">{t('customize.mcpPage.connectionFailed')}</p>
+          {failing.length > 0 ? (
+            <ul className="text-muted-foreground mt-1 space-y-0.5 text-xs">
+              {failing.map((f) => (
+                <li key={f.name}>
+                  <span className="text-foreground">{f.name}</span> —— {f.reason}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {health?.lastError && (
             <p className="text-muted-foreground mt-1 text-xs">{health.lastError}</p>
           )}
