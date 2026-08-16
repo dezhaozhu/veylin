@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type FC } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FC } from 'react';
+import {
+  disconnectCompass,
+  normalizeToken,
+  saveCompassCredential,
+  validateConnectInput,
+} from '@/lib/compass-credential';
 import { ThreadListPrimitive, useAuiState } from '@assistant-ui/react';
 import { FolderOpen, LoaderIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -230,38 +236,102 @@ type WhoAmI = { configured: boolean; username?: string | null; sources?: string[
  */
 const CompassIdentityRow: FC = () => {
   const [who, setWho] = useState<WhoAmI | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState('http://127.0.0.1:8000');
+  const [token, setToken] = useState('');
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch('/api/compass-identity/whoami');
-        const body = (await res.json()) as WhoAmI & { ok?: boolean };
-        if (!cancelled) setWho(body);
-      } catch {
-        /* 取不到就不显示 —— 这是陈述,不该打断人 */
-      }
-    })();
-    return () => { cancelled = true; };
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/compass-identity/whoami');
+      setWho((await res.json()) as WhoAmI & { ok?: boolean });
+    } catch {
+      /* 取不到就不显示 —— 这是陈述,不该打断人 */
+    }
   }, []);
 
-  if (!who?.configured) return null;
+  useEffect(() => { void load(); }, [load]);
+
+  const connect = async () => {
+    const bad = validateConnectInput(url, token);
+    if (bad) { setError(bad); return; }
+    setBusy(true);
+    const res = await saveCompassCredential({ url, token });
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    setToken('');
+    setEditing(false);
+    setError(null);
+    await load();
+  };
+
+  const disconnect = async () => {
+    setBusy(true);
+    await disconnectCompass();
+    setBusy(false);
+    await load();
+  };
+
+  // 没连接时**也要有入口** —— 之前这里直接不渲染,新装的应用根本没地方连。
+  if (!who?.configured && !editing) {
+    return (
+      <p className="text-muted-foreground mb-3 text-xs">
+        还没连接 Compass —— 项目里只能放你自己的文件。{' '}
+        <button className="underline" onClick={() => setEditing(true)}>连接</button>
+      </p>
+    );
+  }
+
+  if (editing) {
+    return (
+      <section className="mb-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <input className="border-input h-7 w-56 rounded border px-2" value={url}
+                 onChange={(e) => setUrl(e.target.value)} placeholder="http://127.0.0.1:8000" />
+          <input className="border-input h-7 w-72 rounded border px-2" value={token}
+                 onChange={(e) => {
+                   const out = normalizeToken(e.target.value);
+                   setToken(out.token);
+                   setNote(out.note ?? null);
+                 }}
+                 placeholder="粘贴 token" />
+          <button className="underline" disabled={busy} onClick={() => void connect()}>
+            {busy ? '连接中…' : '连接'}
+          </button>
+          <button className="text-muted-foreground underline"
+                  onClick={() => { setEditing(false); setError(null); }}>取消</button>
+        </div>
+        {note ? <p className="text-muted-foreground mt-1">{note}</p> : null}
+        {error ? <p className="text-destructive mt-1">{error}</p> : null}
+        <p className="text-muted-foreground mt-1">
+          连接后立刻生效,不用重启。凭据存在本机数据目录(仅本人可读),不写进 .env。
+        </p>
+      </section>
+    );
+  }
+
   return (
     <p className="text-muted-foreground mb-3 text-xs">
-      {who.error ? (
+      {who?.error ? (
         <span className="text-destructive">连不上 Compass:{who.error}</span>
       ) : (
         <>
           数据 · Compass —— 以{' '}
           <span className="text-foreground font-medium">
-            {who.username ?? '未知身份'}
+            {who?.username ?? '未知身份'}
           </span>{' '}
           的身份连接
-          {who.sources?.length
+          {who?.sources?.length
             ? `,Compass 给到你的数据源:${who.sources.join('、')}`
             : ',但一个数据源都没授权 —— 你会看到空白'}
         </>
-      )}
+      )}{' '}
+      <button className="underline" onClick={() => setEditing(true)}>更换</button>
+      {' · '}
+      <button className="text-muted-foreground underline" disabled={busy}
+              onClick={() => void disconnect()}>断开</button>
     </p>
   );
 };

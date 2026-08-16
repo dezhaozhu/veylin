@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify';
+import { resolveCompassIdentity } from '../compass-credential.js';
 import { mcpServerInputSchema } from '@veylin/shared';
 import {
   COMPASS_IDENTITY_GROUP,
   fetchCompassSources,
-  parseCompassIdentityConfig,
 } from '../compass-identity.js';
 import {
   createRemoteMcpServer,
@@ -159,7 +159,9 @@ export function registerMcpRoutes(app: FastifyInstance, deps: ServerDeps): void 
    * 不把身份摆到脸上,"权限按人分"就只是架构图上的话,没人会发现它没成立。
    */
   app.get('/api/compass-identity/whoami', async () => {
-    const config = parseCompassIdentityConfig();
+    // 用时解析(凭据文件优先, .env 兜底) —— 刚在界面上连好的凭据,
+    // 这里必须马上认,不能等重启。
+    const config = resolveCompassIdentity();
     if (!config) return { ok: true, configured: false };
     const out = await fetchCompassSources(config);
     if (!out.ok) return { ok: false, configured: true, error: out.error };
