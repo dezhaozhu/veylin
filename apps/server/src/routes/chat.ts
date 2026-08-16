@@ -902,6 +902,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         movedFrom: threadRowState?.movedFrom ?? null,
         movedAt: threadRowState?.movedAt ?? null,
       },
+      scope.project?.instructions ?? null,
     );
     const workingMemoryBlock = buildReadOnlyWorkingMemoryBlock(
       threadRowState?.workingMemory ?? null,

@@ -21,6 +21,7 @@ import { RowMenu, RowMenuItem } from '@/components/assistant-ui/thread-list-row-
 import {
   FormField,
   FormInput,
+  FormTextarea,
   SettingsFormDialog,
 } from '@/components/features/settings/settings-form-dialog';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
@@ -246,6 +247,7 @@ const NewProjectDialog: FC<{
   const { t } = useTranslation();
   const [name, setName] = useState('');
   const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [instructions, setInstructions] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -269,6 +271,7 @@ const NewProjectDialog: FC<{
   const reset = useCallback(() => {
     setName('');
     setTicked(new Set());
+    setInstructions('');
     setError(null);
   }, []);
 
@@ -277,7 +280,7 @@ const NewProjectDialog: FC<{
     setSubmitting(true);
     setError(null);
     try {
-      const result = await createProject(name.trim(), Array.from(ticked));
+      const result = await createProject(name.trim(), Array.from(ticked), instructions.trim());
       if (!result.ok) {
         setError(result.error);
         return;
@@ -311,6 +314,16 @@ const NewProjectDialog: FC<{
       {/* **数据源不是必填。** 建项目的那一刻常常还不知道要用哪个;强制选一个等于
           把"项目"降成"数据源的别名" —— 而每个数据源本来就已经有一个默认项目了。
           不选 = 这个项目只用你自己的文件和文件夹,以后随时能加。 */}
+      {/* 这一段**会作为项目级指令喂给模型**(见 chat.ts buildProjectPinBlock),
+          所以提示语要说清楚 —— 不然人会当成备注随手写。 */}
+      <FormField label="这个项目要做什么" hint="会作为这个项目的说明,影响项目里所有对话">
+        <FormTextarea
+          className="min-h-20"
+          placeholder="想达成什么、有什么约定或禁忌…"
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+        />
+      </FormField>
       <FormField
         label={t('threadList.projectSources')}
         hint={sourceOptions.length ? '不选也行 —— 那这个项目只放你自己的文件,以后随时能加' : undefined}

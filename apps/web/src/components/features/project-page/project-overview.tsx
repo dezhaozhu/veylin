@@ -13,6 +13,7 @@ import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { projectSourceLabel } from '@/lib/project-labels';
 import {
   setProjectFolder,
+  setProjectInstructions,
   setProjectSources,
   useProjects,
   type ProjectInfo,
@@ -138,6 +139,7 @@ const ProjectOverview: FC = () => {
         <aside className="hidden w-80 shrink-0 lg:block">
           {/* 一张卡、细线分段 —— 三个孤立的边框看起来就是三块没关系的东西。 */}
           <RailCard>
+            <ProjectInstructionsSection project={project} />
             <ProjectSourcesSection project={project} />
             <ProjectContextSection project={project} />
             <ProjectFolderRow project={project} />
@@ -145,6 +147,56 @@ const ProjectOverview: FC = () => {
         </aside>
       </div>
     </div>
+  );
+};
+
+/**
+ * 项目说明 —— **会作为项目级指令喂给模型**(chat.ts buildProjectPinBlock)。
+ *
+ * 所以它不是备注:提示语必须说清"写进去会影响这个项目里所有对话",否则人会当成
+ * 一句给自己看的注解随手写。
+ */
+const ProjectInstructionsSection: FC<{ project: ProjectInfo }> = ({ project }) => {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(project.instructions ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => { setText(project.instructions ?? ''); }, [project.instructions]);
+
+  const save = async () => {
+    setBusy(true);
+    const res = await setProjectInstructions(project.id, text.trim());
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    setError(null);
+    setEditing(false);
+  };
+
+  return (
+    <RailSection
+      title="项目说明"
+      action={{ label: editing ? '完成' : project.instructions ? '改' : '＋',
+                onClick: () => (editing ? void save() : setEditing(true)) }}
+    >
+      {editing ? (
+        <textarea
+          autoFocus
+          className="border-input min-h-20 w-full resize-none rounded border px-2 py-1.5 text-xs"
+          placeholder="想达成什么、有什么约定或禁忌…"
+          value={text}
+          disabled={busy}
+          onChange={(e) => setText(e.target.value)}
+        />
+      ) : project.instructions ? (
+        <p className="text-muted-foreground text-xs leading-relaxed whitespace-pre-wrap">
+          {project.instructions}
+        </p>
+      ) : (
+        <RailEmpty>写一句这个项目要做什么。<br />它会跟着进这个项目的每一次对话。</RailEmpty>
+      )}
+      {error ? <p className="text-destructive mt-1 text-xs">{error}</p> : null}
+    </RailSection>
   );
 };
 

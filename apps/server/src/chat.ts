@@ -331,10 +331,24 @@ export function projectPinLabel(project: { name: string; sources: string[] }): s
 export function buildProjectPinBlock(
   pinLabel: string | null,
   move?: { movedFrom: string | null; movedAt: string | null } | null,
+  /**
+   * 项目级指令(用户在"这个项目要做什么"里写的)。**这是它存在的意义** ——
+   * 不喂给模型的话,那个输入框就只是个装饰。
+   *
+   * 放在钉定块里而不是另起一节:它和"当前是哪个项目"是同一件事的两半 ——
+   * 项目变了,指令必须跟着变;分成两处迟早会有一处忘了跟。
+   */
+  instructions?: string | null,
 ): string {
   const lines = ['<system-reminder>'];
   if (pinLabel) {
     lines.push(`当前数据项目: ${pinLabel}(本会话所有数据均来自该项目,勿引用其他项目)`);
+    const trimmed = (instructions ?? '').trim();
+    if (trimmed) {
+      // 明确标出这是**用户为这个项目写的**,不是系统规则 —— 两者的权威不同,
+      // 混在一起模型无从判断该以谁为准。
+      lines.push(`该项目的说明(用户写给这个项目的,适用于本项目全部对话):\n${trimmed}`);
+    }
   } else {
     lines.push(
       '当前会话在「个人」区,未绑定任何项目数据源;需要查看工厂数据时,请在侧边栏选择项目新建会话,或用会话菜单将本会话移动到项目。',

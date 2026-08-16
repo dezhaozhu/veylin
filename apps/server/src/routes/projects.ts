@@ -45,7 +45,7 @@ import type { ServerDeps } from './types.js';
 import { isAbsolute } from 'node:path';
 import { stat } from 'node:fs/promises';
 
-type ApiProject = Pick<Project, 'id' | 'name' | 'sources' | 'managed' | 'folder'>;
+type ApiProject = Pick<Project, 'id' | 'name' | 'sources' | 'managed' | 'folder' | 'instructions'>;
 
 function toApiProject(project: Project): ApiProject {
   return {
@@ -55,6 +55,7 @@ function toApiProject(project: Project): ApiProject {
     managed: project.managed,
     // 项目文件夹要能被界面看到 —— 否则"绑没绑"这件事只有服务端知道。
     ...(project.folder ? { folder: project.folder } : {}),
+    ...(project.instructions ? { instructions: project.instructions } : {}),
   };
 }
 
@@ -112,8 +113,10 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
       reply.code(404);
       return { ok: false, error: 'project not found' };
     }
-    const body = (req.body ?? {}) as { name?: unknown; sources?: unknown; folder?: unknown };
-    const patch: { name?: string; sources?: string[]; folder?: string } = {};
+    const body = (req.body ?? {}) as {
+      name?: unknown; sources?: unknown; folder?: unknown; instructions?: unknown;
+    };
+    const patch: { name?: string; sources?: string[]; folder?: string; instructions?: string } = {};
 
     // 项目文件夹既不是身份也不是范围,是**本机偏好** —— 所以 managed 项目
     // (guolu、上重这些默认项目,恰恰是用户真正在用的)也能设。名字与场景仍归
@@ -136,6 +139,16 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
         return { ok: false, error: `folder 不存在或不是目录: ${folder}` };
       }
       patch.folder = folder;
+    }
+
+    // 项目说明和文件夹同类:是**本机偏好/项目意图**,不是身份或范围 —— 所以
+    // managed 项目(guolu、上重这些默认项目,恰恰是人真正在用的)也能写。
+    if (body.instructions !== undefined) {
+      if (typeof body.instructions !== 'string') {
+        reply.code(400);
+        return { ok: false, error: 'instructions must be a string' };
+      }
+      patch.instructions = body.instructions.trim();
     }
 
     if (existing.managed && (body.name !== undefined || body.sources !== undefined)) {
@@ -165,9 +178,12 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
       }
       patch.sources = sources;
     }
-    if (patch.name === undefined && patch.sources === undefined && patch.folder === undefined) {
+    if (
+      patch.name === undefined && patch.sources === undefined &&
+      patch.folder === undefined && patch.instructions === undefined
+    ) {
       reply.code(400);
-      return { ok: false, error: 'name / sources / folder 至少给一个' };
+      return { ok: false, error: 'name / sources / folder / instructions 至少给一个' };
     }
 
     // Only name/sources/folder ever reach the store from here — managed/enabled/

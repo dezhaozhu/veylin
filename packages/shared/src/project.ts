@@ -26,6 +26,11 @@ export interface Project {
    * 没设 = 这个项目还没绑文件夹(旧项目全是这样),导入照旧只存解析结果。
    */
   folder?: string;
+  /**
+   * 这个项目要做什么(用户写的一段话)。**会作为项目级指令喂给模型** ——
+   * 所以它不是备注:写进去的每句话都会影响这个项目里所有对话的行为。
+   */
+  instructions?: string;
   createdAt?: string;
 }
 

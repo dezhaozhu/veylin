@@ -131,6 +131,7 @@ function mapProject(r: Record<string, unknown>): ProjectRow {
     enabled: Boolean(r.enabled ?? true),
     migratedFrom: r.migrated_from ? String(r.migrated_from) : undefined,
     folder: r.folder ? String(r.folder) : undefined,
+    instructions: r.instructions ? String(r.instructions) : undefined,
     createdAt: r.created_at ? String(r.created_at) : undefined,
   };
 }
@@ -741,6 +742,7 @@ export async function insertProjectRow(
     // Set-once identity marker (option<string>): only included when present.
     ...(input.migratedFrom != null ? { migrated_from: input.migratedFrom } : {}),
     ...(input.folder != null ? { folder: input.folder } : {}),
+    ...(input.instructions != null ? { instructions: input.instructions } : {}),
     // Uniqueness key for project_identity_uniq: the marker when this row IS a
     // migration-owned identity, the row's own id otherwise (so unmarked rows
     // never collide with each other). See init-schema's comment.
@@ -762,6 +764,7 @@ export async function updateProjectRow(
     ['managed', 'managed'],
     ['enabled', 'enabled'],
     ['folder', 'folder'],
+    ['instructions', 'instructions'],
   ] as const) {
     const val = patch[key];
     if (val !== undefined) {

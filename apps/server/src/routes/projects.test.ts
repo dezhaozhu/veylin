@@ -333,4 +333,34 @@ describe('project CRUD routes', () => {
     }
     assert.equal((await getProject(TENANT, p.id))!.folder, undefined);
   });
+
+  it('项目说明能写能改 —— 它会作为项目级指令喂给模型', async () => {
+    const created = (await app.inject({
+      method: 'POST', url: '/api/projects',
+      payload: { name: '带说明的项目', sources: [] },
+    })).json() as { project: { id: string } };
+
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/projects/${created.project.id}`,
+      payload: { instructions: '只看锻件分厂,别碰冶铸。' },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(
+      (res.json() as { project: { instructions?: string } }).project.instructions,
+      '只看锻件分厂,别碰冶铸。',
+    );
+  });
+
+  it('**managed 项目也能写说明** —— 它是项目意图,不是身份或范围', async () => {
+    const list = (await app.inject({ method: 'GET', url: '/api/projects' })).json() as {
+      projects: Array<{ id: string; managed: boolean }>;
+    };
+    const managed = list.projects.find((p) => p.managed);
+    if (!managed) return;  // 这套 fixture 里没有 managed 行就跳过
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/projects/${managed.id}`,
+      payload: { instructions: '这个厂的口径…' },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+  });
 });

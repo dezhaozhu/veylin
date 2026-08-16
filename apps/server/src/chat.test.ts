@@ -237,3 +237,25 @@ describe('buildProjectPinBlock (audit fix #3: thread-move boundary marker; 全�
     assert.match(block, /此前的对话内容属于原项目,不可作为当前项目的数据依据/);
   });
 });
+
+describe('项目级指令进系统块', () => {
+  it('**写了就要喂给模型** —— 不喂的话那个输入框只是个装饰', () => {
+    const block = buildProjectPinBlock('上重', null, '只看锻件分厂,别碰冶铸。');
+    assert.match(block, /只看锻件分厂/);
+  });
+
+  it('标明这是用户为这个项目写的 —— 和系统规则的权威不同,混在一起模型无从判断', () => {
+    const block = buildProjectPinBlock('上重', null, '某条约定');
+    assert.match(block, /用户写给这个项目的/);
+  });
+
+  it('没写就什么也不加,不放一个空标题', () => {
+    const block = buildProjectPinBlock('上重', null, '   ');
+    assert.doesNotMatch(block, /该项目的说明/);
+  });
+
+  it('**没钉项目时不带说明** —— 那段话属于项目,不属于这个会话', () => {
+    const block = buildProjectPinBlock(null, null, '某条约定');
+    assert.doesNotMatch(block, /某条约定/);
+  });
+});

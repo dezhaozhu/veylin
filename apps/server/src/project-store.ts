@@ -26,6 +26,7 @@ function rowToProject(row: NonNullable<Awaited<ReturnType<typeof getProjectRow>>
     enabled: row.enabled,
     migratedFrom: row.migratedFrom,
     folder: row.folder,
+    instructions: row.instructions,
     createdAt: row.createdAt,
   };
 }
@@ -51,6 +52,8 @@ export interface ProjectInput {
   migratedFrom?: string;
   /** 项目文件夹绝对路径(用户选)。见 spec 2026-08-14。 */
   folder?: string;
+  /** 项目级指令 —— 会进系统块,影响这个项目里所有对话。 */
+  instructions?: string;
 }
 
 export async function createProject(tenantId: string, input: ProjectInput): Promise<Project> {
@@ -76,6 +79,8 @@ export async function updateProject(
     ...(patch.managed != null ? { managed: patch.managed } : {}),
     ...(patch.enabled != null ? { enabled: patch.enabled } : {}),
     ...(patch.folder != null ? { folder: patch.folder } : {}),
+    // 空串是「有意清空」,不是「没传」—— 所以判 != null 而不是真值。
+    ...(patch.instructions != null ? { instructions: patch.instructions } : {}),
   });
   return row ? rowToProject(row) : null;
 }

@@ -183,6 +183,8 @@ export interface ProjectRow {
   migratedFrom?: string;
   /** 项目文件夹绝对路径(用户选);未设 = 还没绑文件夹。 */
   folder?: string;
+  /** 项目级指令 —— 会进系统块。 */
+  instructions?: string;
   createdAt?: string;
 }
 
