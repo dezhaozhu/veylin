@@ -13,7 +13,6 @@ import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { projectSourceLabel } from '@/lib/project-labels';
 import { setProjectFolder, useProjects, type ProjectInfo } from '@/lib/projects-sync';
 import {
-  describeFolderState,
   folderPickAvailability,
   pickProjectFolder,
   revealPath,
@@ -34,6 +33,7 @@ import {
 } from './scene-card-merge';
 import { SceneCardMergeTable } from './scene-card-merge-table';
 import { ProjectComposer } from './project-composer';
+import { RailCard, RailEmpty, RailInlineInput, RailSection } from './project-rail';
 import { useSceneCardPayloads, type SceneCardEntry } from './use-scene-card-payloads';
 
 /** Workspace shell for the 项目首页 view — same frame pattern as
@@ -116,20 +116,27 @@ const ProjectOverview: FC = () => {
 
   // 两栏:**中间做事,右边"这个项目有什么"**。原来一根竖列,于是"设置""认知"
   // "对话"轮流抢最显眼的位置 —— 而进项目最想做的事(说话)反而没有入口。
+  // 标题**在两栏之上**,不在左列里 —— 放进左列的话,右栏会从标题的高度开始,
+  // 于是右上角那张卡比左边的内容还高一截(实测:看起来就是没对齐)。
   return (
-    <div className="mx-auto flex w-full max-w-6xl gap-6 px-1">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <PageHeader title={project.name} {...(subtitle ? { description: subtitle } : {})} />
-        <ProjectComposer projectId={project.id} projectName={project.name} />
-        <ProjectCardsGrid project={project} byServer={byServer} />
-        <ProjectThreads projectId={project.id} />
+    <div className="mx-auto w-full max-w-6xl px-1">
+      <PageHeader title={project.name} {...(subtitle ? { description: subtitle } : {})} />
+      <div className="flex gap-6">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <ProjectComposer projectId={project.id} projectName={project.name} />
+          <ProjectCardsGrid project={project} byServer={byServer} />
+          <ProjectThreads projectId={project.id} />
+        </div>
+        {/* 右栏是"有什么",不是"做什么":文件夹、上下文这些是配置和素材,
+            它们该在手边,不该挡在路上。 */}
+        <aside className="hidden w-80 shrink-0 lg:block">
+          {/* 一张卡、细线分段 —— 三个孤立的边框看起来就是三块没关系的东西。 */}
+          <RailCard>
+            <ProjectContextSection project={project} />
+            <ProjectFolderRow project={project} />
+          </RailCard>
+        </aside>
       </div>
-      {/* 右栏是"有什么",不是"做什么":文件夹、上下文这些是配置和素材,
-          它们该在手边,不该挡在路上。 */}
-      <aside className="hidden w-80 shrink-0 flex-col lg:flex">
-        <ProjectContextSection project={project} />
-        <ProjectFolderRow project={project} />
-      </aside>
     </div>
   );
 };
@@ -144,8 +151,8 @@ const ProjectOverview: FC = () => {
 const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
   const [folder, setFolder] = useState<string | undefined>(project.folder);
   const [error, setError] = useState<string | null>(null);
-  const [typed, setTyped] = useState('');
   const [picking, setPicking] = useState(false);
+  const [typing, setTyping] = useState(false);
   const availability = folderPickAvailability();
 
   useEffect(() => { setFolder(project.folder); }, [project.folder]);
@@ -156,7 +163,6 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
     const res = await setProjectFolder(project.id, clean);
     if (res.ok) {
       setFolder(res.project.folder);
-      setTyped('');
       setError(null);
     } else {
       setError(res.error);
@@ -170,63 +176,52 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
     try {
       const out = await pickProjectFolder();
       if (out.status === 'picked') await bind(out.path);
-      else if (out.status === 'timeout') setError('系统选择框没有响应 —— 把路径粘到下面就行。');
-      else if (out.status === 'unavailable') setError('打不开系统选择框 —— 把路径粘到下面就行。');
+      else if (out.status === 'timeout') { setError('系统选择框没有响应 —— 把路径粘进来就行。'); setTyping(true); }
+      else if (out.status === 'unavailable') { setError('打不开系统选择框 —— 把路径粘进来就行。'); setTyping(true); }
     } finally {
       setPicking(false);
     }
   };
 
   return (
-    <section className="border-border mb-4 rounded-md border px-3 py-2 text-sm">
-      <div className="flex items-center gap-2">
-        <FolderOpen className="text-muted-foreground size-4 shrink-0" />
-        <span className="text-muted-foreground min-w-0 flex-1 truncate">
-          {describeFolderState(folder)}
-        </span>
-        {availability.canPick ? (
-          <button
-            type="button"
-            onClick={() => void choose()}
-            disabled={picking}
-            className="hover:bg-muted shrink-0 rounded-md border px-2 py-1 text-xs disabled:opacity-50"
-          >
-            {picking ? '选择中…' : folder ? '换一个' : '浏览…'}
-          </button>
-        ) : null}
-        {folder ? (
-          <button
-            type="button"
-            onClick={() => void revealPath(folder)}
-            className="hover:bg-muted shrink-0 rounded-md border px-2 py-1 text-xs"
-          >
-            在访达中显示
-          </button>
-        ) : null}
-      </div>
-      {/* 永远留一条不依赖原生面板的路:把路径粘进来(访达 ⌘⌥C 复制路径)。 */}
-      <div className="mt-2 flex items-center gap-2">
-        <input
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') void bind(typed); }}
-          placeholder="或者把文件夹路径粘到这里，回车"
-          className="border-border bg-background min-w-0 flex-1 rounded-md border px-2 py-1 text-xs"
+    <RailSection
+      title="项目文件夹"
+      action={{
+        label: folder ? '换' : '＋',
+        title: folder ? '换一个文件夹' : '选一个文件夹',
+        onClick: () => (availability.canPick ? void choose() : setTyping(true)),
+      }}
+      {...(folder ? { hint: folder } : {})}
+    >
+      {!folder && !typing ? (
+        // 说的是**没设会怎样**,不是"没设"。而且一句话说完 —— 原来那句长到被截断,
+        // 读者只看到"导入…"。
+        <RailEmpty>
+          设一个文件夹,导入的原件就会留档;<br />不设只存解析出来的行。
+        </RailEmpty>
+      ) : null}
+      {typing || (!availability.canPick && !folder) ? (
+        <RailInlineInput
+          placeholder="把文件夹路径粘到这里"
+          submitLabel="使用"
+          onSubmit={(v) => { void bind(v); setTyping(false); }}
+          onCancel={() => setTyping(false)}
         />
+      ) : null}
+      {folder ? (
         <button
           type="button"
-          onClick={() => void bind(typed)}
-          disabled={!normalizeTypedPath(typed)}
-          className="hover:bg-muted shrink-0 rounded-md border px-2 py-1 text-xs disabled:opacity-40"
+          onClick={() => void revealPath(folder)}
+          className="text-muted-foreground hover:text-foreground text-xs underline"
         >
-          使用
+          在访达中显示
         </button>
-      </div>
-      {!availability.canPick ? (
+      ) : null}
+      {!availability.canPick && !folder ? (
         <p className="text-muted-foreground mt-1 text-xs">{availability.reason}</p>
       ) : null}
       {error ? <p className="text-destructive mt-1 text-xs">{error}</p> : null}
-    </section>
+    </RailSection>
   );
 };
 
@@ -245,8 +240,13 @@ const kb = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round
  * **两类分开说**:文件存下来就不变;连接器会腐烂,所以每条都带「上次刷新」——
  * 那是这条线上最后一个还没露脸的事实。
  */
+/** 少于这个数就不给搜索框:三五个文件用眼睛找更快,多一个空控件只是噪音。 */
+const SEARCH_FROM = 6;
+
 const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
   const [data, setData] = useState<ProjectContext | null>(null);
+  const [q, setQ] = useState('');
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -262,20 +262,45 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
     return () => { cancelled = true; };
   }, [project.id, project.folder]);
 
-  if (!data) return null;
-  const nothing =
-    data.originals.length === 0 && data.snapshots.length === 0 && data.connectors.length === 0;
-  if (nothing) return null;
+  const kw = q.trim().toLowerCase();
+  const hit = (s: string) => !kw || s.toLowerCase().includes(kw);
+  // 搜索是**过滤已经在这儿的东西**,不是去后端再查一遍 —— 这一栏本来就是全量。
+  const connectors = (data?.connectors ?? []).filter(
+    (c) => hit(c.tenant ?? c.server) || c.sheets.some(hit),
+  );
+  const originals = (data?.originals ?? []).filter((f) => hit(f.name));
+  const snapshots = (data?.snapshots ?? []).filter((f) => hit(f.name));
+  const total = data
+    ? data.connectors.length + data.originals.length + data.snapshots.length
+    : 0;
 
   return (
-    <section className="border-border mb-4 rounded-md border px-3 py-2 text-sm">
-      <h3 className="text-muted-foreground mb-2 text-xs uppercase tracking-wide">Context</h3>
+    <RailSection
+      title="上下文"
+      {...(total > SEARCH_FROM
+        ? { action: { label: searching ? '×' : '⌕', title: '搜索', onClick: () => { setSearching((v) => !v); setQ(''); } } }
+        : {})}
+      {...(total === 0 ? {} : { hint: `${total} 项 · 对话里可以直接引用` })}
+    >
+      {total === 0 ? (
+        // 空状态说清**放什么**,而不是整段消失 —— 消失的话人不知道这里可以放东西。
+        <RailEmpty>导入表格、连上数据源,或给项目设一个文件夹,<br />之后在对话里就能直接引用。</RailEmpty>
+      ) : null}
+      {searching ? (
+        <input
+          autoFocus
+          className="border-input mb-2 h-7 w-full rounded border px-2 text-xs"
+          placeholder="搜索这里的文件和数据源…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+      ) : null}
 
-      {data.connectors.length > 0 ? (
+      {connectors.length > 0 ? (
         <div className="mb-2">
           <p className="text-muted-foreground mb-1 text-xs">连接器（会变，看刷新时间）</p>
           <ul className="space-y-1">
-            {data.connectors.map((c) => (
+            {connectors.map((c) => (
               <li key={`${c.server}-${c.tenant ?? ''}`} className="flex items-baseline gap-2 text-xs">
                 <span className="font-medium">{c.tenant ?? c.server}</span>
                 <span className="text-muted-foreground min-w-0 flex-1 truncate">
@@ -290,11 +315,11 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
         </div>
       ) : null}
 
-      {data.originals.length > 0 || data.snapshots.length > 0 ? (
+      {originals.length > 0 || snapshots.length > 0 ? (
         <div>
           <p className="text-muted-foreground mb-1 text-xs">文件（存下来就不变）</p>
           <ul className="space-y-1">
-            {data.originals.map((f) => (
+            {originals.map((f) => (
               <li key={`o-${f.name}-${f.importedAt}`} className="flex items-baseline gap-2 text-xs">
                 <span className="min-w-0 flex-1 truncate">{f.name}</span>
                 <span className="text-muted-foreground shrink-0">
@@ -303,7 +328,7 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
                 </span>
               </li>
             ))}
-            {data.snapshots.map((f) => (
+            {snapshots.map((f) => (
               <li key={`s-${f.name}`} className="flex items-baseline gap-2 text-xs">
                 <span className="min-w-0 flex-1 truncate">{f.name}</span>
                 <span className="text-muted-foreground shrink-0">快照 · {kb(f.bytes)}</span>
@@ -312,7 +337,11 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
           </ul>
         </div>
       ) : null}
-    </section>
+      {/* 搜不到要说一声 —— 空白会被读成"这儿本来就没东西"。 */}
+      {kw && connectors.length + originals.length + snapshots.length === 0 ? (
+        <p className="text-muted-foreground text-xs">没有匹配「{q}」的项</p>
+      ) : null}
+    </RailSection>
   );
 };
 
