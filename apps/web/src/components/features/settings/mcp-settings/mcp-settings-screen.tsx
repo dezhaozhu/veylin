@@ -446,8 +446,14 @@ export function McpSettingsScreen() {
             它不能藏在"有已装服务器才渲染"的分支里 —— 新用户恰恰一个都没有,
             那正是最需要看到入口的时候。托管的 compass 条目由它代表,所以下面
             把那条过滤掉:两行说同一件事就是重复。 */}
-        {mcpAuth.message ? (
-          <p className="text-muted-foreground mb-2 text-xs">{mcpAuth.message}</p>
+        {/* 授权进行中要给得出「取消」—— 否则窗口关不掉、轮询也停不下来(实测)。 */}
+        {mcpAuth.message || mcpAuth.busyId ? (
+          <p className="text-muted-foreground mb-2 text-xs">
+            {mcpAuth.message ?? '等你在浏览器里完成授权…'}{' '}
+            {mcpAuth.busyId ? (
+              <button className="underline" onClick={mcpAuth.cancel}>取消</button>
+            ) : null}
+          </p>
         ) : null}
         <SettingsConnectedList>
           {compassConnected ? (

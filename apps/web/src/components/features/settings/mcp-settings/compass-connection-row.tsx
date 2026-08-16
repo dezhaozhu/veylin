@@ -8,7 +8,7 @@
  * **各种状态只占这一行**:没连接、连上了、连不上 —— 同一行换措辞换动作,而不是
  * 多出几行状态提示(一个事实一处表达)。
  */
-import { useCallback, useEffect, useState, type FC } from 'react';
+import { useCallback, useEffect, useRef, useState, type FC } from 'react';
 
 import {
   compassActionLabel,
@@ -24,7 +24,8 @@ import {
   startOAuthLogin,
   validateConnectInput,
 } from '@/lib/compass-credential';
-import { openWebView } from '@/lib/tauri-web-view';
+import { pollUntilSettled } from '@/lib/oauth-polling';
+import { closeWebView, openWebView } from '@/lib/tauri-web-view';
 import { SettingsListRow } from '@/components/features/settings/settings-list';
 
 /** 身份取一次,放在屏幕层 —— 分区(未连接归 Library、连上归 Connected)和计数都
@@ -43,6 +44,8 @@ export function useCompassIdentity(): { who: WhoAmI | null; reload: () => Promis
   return { who, reload };
 }
 
+const LOGIN_TAB = 'compass-login';
+
 export const CompassConnectionRow: FC<{
   who: WhoAmI | null;
   onChanged?: () => void;
@@ -54,12 +57,30 @@ export const CompassConnectionRow: FC<{
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [flow, setFlow] = useState<string | null>(null);
+  // 取消是**立刻**的:轮询每一跳前后都看它。写成 ref 而不是 state,是因为循环
+  // 拿到的必须是当下的值,不是那次渲染时的快照。
+  const cancelled = useRef(false);
+
+  /** 任何一条出口都要走它:授权用的那个浏览器窗口必须关掉。实测里它关不掉。 */
+  const closeLoginView = () => {
+    void closeWebView(LOGIN_TAB).catch(() => {});
+  };
 
   const finish = async () => {
+    closeLoginView();
     setOpen(false);
     setFlow(null);
     setError(null);
     onChanged?.();
+  };
+
+  const cancel = () => {
+    cancelled.current = true;
+    closeLoginView();
+    setOpen(false);
+    setError(null);
+    setFlow(null);
+    setBusy(false);
   };
 
   const browserLogin = async () => {
@@ -69,24 +90,27 @@ export const CompassConnectionRow: FC<{
     setBusy(true);
     const started = await startOAuthLogin(url);
     if (!started.ok) { setBusy(false); setError(started.error); return; }
+    cancelled.current = false;
     try {
-      await openWebView('compass-login', started.start.authorizeUrl);
+      await openWebView(LOGIN_TAB, started.start.authorizeUrl);
     } catch {
       // 非桌面端开不了内置视图 —— 把链接给他,别让流程卡死。
       setFlow(`在浏览器里打开这个地址完成登录:${started.start.authorizeUrl}`);
     }
-    for (let i = 0; i < 150; i += 1) {
-      const s = await pollOAuthStatus(started.start.flowId);
-      setFlow(describeOAuthStatus(s));
-      if (s.status !== 'pending') {
-        setBusy(false);
-        if (s.status === 'done') await finish();
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 2000));
-    }
+    const out = await pollUntilSettled({
+      poll: () => pollOAuthStatus(started.start.flowId),
+      isPending: (s) => s.status === 'pending',
+      onStatus: (s) => setFlow(describeOAuthStatus(s)),
+      isCancelled: () => cancelled.current,
+    });
     setBusy(false);
-    setFlow('等太久了,没有收到授权结果。可以重试。');
+    if (out.kind === 'cancelled') return;          // cancel() 已经收过尾
+    closeLoginView();                               // 成功/拒绝/失败都要关掉那个窗口
+    if (out.kind === 'timeout') {
+      setFlow('等太久了,没有收到授权结果。可以重试。');
+      return;
+    }
+    if (out.status.status === 'done') await finish();
   };
 
   const pasteConnect = async () => {
@@ -155,10 +179,7 @@ export const CompassConnectionRow: FC<{
             <button className="underline" disabled={busy} onClick={() => void browserLogin()}>
               {busy ? '进行中…' : '用浏览器登录'}
             </button>
-            <button
-              className="text-muted-foreground underline"
-              onClick={() => { setOpen(false); setError(null); setFlow(null); }}
-            >
+            <button className="text-muted-foreground underline" onClick={cancel}>
               取消
             </button>
           </div>
