@@ -339,10 +339,21 @@ export function buildProjectPinBlock(
    * 项目变了,指令必须跟着变;分成两处迟早会有一处忘了跟。
    */
   instructions?: string | null,
+  /** 这个项目一个数据源都没接 —— 只在这种情况下才提示,挂好后这句消失。 */
+  hasNoSources = false,
 ): string {
   const lines = ['<system-reminder>'];
   if (pinLabel) {
     lines.push(`当前数据项目: ${pinLabel}(本会话所有数据均来自该项目,勿引用其他项目)`);
+    // **只在零数据源时说**。挂好之后这句就消失 —— 稳态下不该每轮都在处理一件
+    // 早就解决了的事。
+    if (hasNoSources) {
+      lines.push(
+        '这个项目还没有接任何数据源,所以现在查不到工厂数据。' +
+        '需要时先用 list_my_scenes 看看这个身份有哪些场景,' +
+        '再确认要挂哪一个 —— **用户没有指明就要问,不要替他挑一个**。',
+      );
+    }
     const trimmed = (instructions ?? '').trim();
     if (trimmed) {
       // 明确标出这是**用户为这个项目写的**,不是系统规则 —— 两者的权威不同,

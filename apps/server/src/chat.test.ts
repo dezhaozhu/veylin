@@ -259,3 +259,23 @@ describe('项目级指令进系统块', () => {
     assert.doesNotMatch(block, /某条约定/);
   });
 });
+
+describe('零数据源的项目', () => {
+  it('说明现状,并**要求没指明就问** —— 挂错厂是静默的错', () => {
+    const block = buildProjectPinBlock('我的项目', null, null, true);
+    assert.match(block, /还没有接任何数据源/);
+    assert.match(block, /list_my_scenes/);
+    assert.match(block, /不要替他挑一个/);
+  });
+
+  it('**挂好之后这句就消失** —— 稳态下不该每轮都在处理一件早就解决的事', () => {
+    const block = buildProjectPinBlock('上重', null, null, false);
+    assert.doesNotMatch(block, /还没有接任何数据源/);
+    assert.doesNotMatch(block, /list_my_scenes/);
+  });
+
+  it('没钉项目时也不提 —— 那句话属于"项目没接数据源",不是"没有项目"', () => {
+    const block = buildProjectPinBlock(null, null, null, true);
+    assert.doesNotMatch(block, /还没有接任何数据源/);
+  });
+});
