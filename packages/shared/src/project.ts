@@ -43,5 +43,8 @@ export const PROJECT_SOURCE_LABELS: Record<string, string> = {
 };
 
 export function projectSourceLabel(source: string): string {
+  // 个人工作区的 id 带一段防撞车的指纹(compass: me:<slug>-<sha8>),那是给机器看的。
+  // 把它原样摆给用户,人只会看到一串不认识的东西 —— 而它其实就是"他自己的空间"。
+  if (source.startsWith('me:')) return '我的工作区';
   return PROJECT_SOURCE_LABELS[source] ?? source;
 }

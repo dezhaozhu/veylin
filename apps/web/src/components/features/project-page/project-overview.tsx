@@ -1,13 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FC } from 'react';
-import {
-  describeOAuthStatus,
-  disconnectCompass,
-  normalizeToken,
-  pollOAuthStatus,
-  saveCompassCredential,
-  startOAuthLogin,
-  validateConnectInput,
-} from '@/lib/compass-credential';
+import { useEffect, useMemo, useState, type FC } from 'react';
 import { ThreadListPrimitive, useAuiState } from '@assistant-ui/react';
 import { FolderOpen, LoaderIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -31,7 +22,6 @@ import { normalizeTypedPath } from '@/lib/project-folder-pick';
 import { describeFreshness } from '@/lib/freshness';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
 import { useThreadActivityMap } from '@/lib/use-thread-activity';
-import { openWebView } from '@/lib/tauri-web-view';
 import { startWindowDrag } from '@/lib/window-drag';
 import { SceneCardCell } from './scene-card-cell';
 import { sceneCardColumns, type McpAppToolsByServer } from './scene-card-grid';
@@ -124,7 +114,6 @@ const ProjectOverview: FC = () => {
         title={project.name}
         description={project.sources.map(projectSourceLabel).join(' · ')}
       />
-      <CompassIdentityRow />
       <ProjectFolderRow project={project} />
       <ProjectContextSection project={project} />
       <ProjectCardsGrid project={project} byServer={byServer} />
@@ -226,160 +215,6 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
       ) : null}
       {error ? <p className="text-destructive mt-1 text-xs">{error}</p> : null}
     </section>
-  );
-};
-
-type WhoAmI = { configured: boolean; username?: string | null; sources?: string[]; error?: string };
-
-/**
- * 以谁的身份连着 Compass。
- *
- * 一个 install 一份 token —— 同事之间复制了同一份,Compass 眼里就是同一个人。
- * 把身份摆到脸上,这件事才可能被发现;否则"权限按人分"只是架构图上的话。
- * 数据源写在旁边,并说明**这是 Compass 给的**,不是我们的产品只支持这两个厂。
- */
-const CompassIdentityRow: FC = () => {
-  const [who, setWho] = useState<WhoAmI | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [url, setUrl] = useState('http://127.0.0.1:8000');
-  const [token, setToken] = useState('');
-  const [note, setNote] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [flow, setFlow] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch('/api/compass-identity/whoami');
-      setWho((await res.json()) as WhoAmI & { ok?: boolean });
-    } catch {
-      /* 取不到就不显示 —— 这是陈述,不该打断人 */
-    }
-  }, []);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const connect = async () => {
-    const bad = validateConnectInput(url, token);
-    if (bad) { setError(bad); return; }
-    setBusy(true);
-    const res = await saveCompassCredential({ url, token });
-    setBusy(false);
-    if (!res.ok) { setError(res.error); return; }
-    setToken('');
-    setEditing(false);
-    setError(null);
-    await load();
-  };
-
-  const disconnect = async () => {
-    setBusy(true);
-    await disconnectCompass();
-    setBusy(false);
-    await load();
-  };
-
-  /**
-   * 用内置浏览器走完整的授权码 + PKCE。
-   *
-   * 只在自己发起的这次流程期间轮询,拿到结果就停 —— 不留后台定时器。
-   */
-  const browserLogin = async () => {
-    const bad = validateConnectInput(url, 'placeholder');
-    if (bad) { setError(bad); return; }
-    setError(null);
-    setBusy(true);
-    const started = await startOAuthLogin(url);
-    if (!started.ok) { setBusy(false); setError(started.error); return; }
-    try {
-      await openWebView('compass-login', started.start.authorizeUrl);
-    } catch {
-      // 浏览器里跑(非桌面端)开不了内置视图 —— 那就把链接给他,别让流程卡死。
-      setFlow(`在浏览器里打开这个地址完成登录:${started.start.authorizeUrl}`);
-    }
-    for (let i = 0; i < 150; i += 1) {
-      const s = await pollOAuthStatus(started.start.flowId);
-      setFlow(describeOAuthStatus(s));
-      if (s.status !== 'pending') {
-        setBusy(false);
-        if (s.status === 'done') { setEditing(false); setFlow(null); await load(); }
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    setBusy(false);
-    setFlow('等太久了,没有收到授权结果。可以重试。');
-  };
-
-  // 没连接时**也要有入口** —— 之前这里直接不渲染,新装的应用根本没地方连。
-  if (!who?.configured && !editing) {
-    return (
-      <p className="text-muted-foreground mb-3 text-xs">
-        还没连接 Compass —— 项目里只能放你自己的文件。{' '}
-        <button className="underline" onClick={() => setEditing(true)}>连接</button>
-      </p>
-    );
-  }
-
-  if (editing) {
-    return (
-      <section className="mb-3 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <input className="border-input h-7 w-56 rounded border px-2" value={url}
-                 onChange={(e) => setUrl(e.target.value)} placeholder="http://127.0.0.1:8000" />
-          <button className="underline" disabled={busy} onClick={() => void browserLogin()}>
-            {busy ? '进行中…' : '用浏览器登录'}
-          </button>
-          <button className="text-muted-foreground underline"
-                  onClick={() => { setEditing(false); setError(null); setFlow(null); }}>取消</button>
-        </div>
-        {flow ? <p className="text-muted-foreground mt-1">{flow}</p> : null}
-        {/* 粘贴 token 留作备选:对面 Compass 版本旧、没有 /oauth/* 时,这是唯一的路。 */}
-        <details className="mt-2">
-          <summary className="text-muted-foreground cursor-pointer">或者粘贴一张 token</summary>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <input className="border-input h-7 w-72 rounded border px-2" value={token}
-                   onChange={(e) => {
-                     const out = normalizeToken(e.target.value);
-                     setToken(out.token);
-                     setNote(out.note ?? null);
-                   }}
-                   placeholder="粘贴 token" />
-            <button className="underline" disabled={busy} onClick={() => void connect()}>
-              {busy ? '连接中…' : '连接'}
-            </button>
-          </div>
-          {note ? <p className="text-muted-foreground mt-1">{note}</p> : null}
-        </details>
-        {error ? <p className="text-destructive mt-1">{error}</p> : null}
-        <p className="text-muted-foreground mt-1">
-          连接后立刻生效,不用重启。凭据存在本机数据目录(仅本人可读),不写进 .env。
-        </p>
-      </section>
-    );
-  }
-
-  return (
-    <p className="text-muted-foreground mb-3 text-xs">
-      {who?.error ? (
-        <span className="text-destructive">连不上 Compass:{who.error}</span>
-      ) : (
-        <>
-          数据 · Compass —— 以{' '}
-          <span className="text-foreground font-medium">
-            {who?.username ?? '未知身份'}
-          </span>{' '}
-          的身份连接
-          {who?.sources?.length
-            ? `,Compass 给到你的数据源:${who.sources.join('、')}`
-            : ',但一个数据源都没授权 —— 你会看到空白'}
-        </>
-      )}{' '}
-      <button className="underline" onClick={() => setEditing(true)}>更换</button>
-      {' · '}
-      <button className="text-muted-foreground underline" disabled={busy}
-              onClick={() => void disconnect()}>断开</button>
-    </p>
   );
 };
 

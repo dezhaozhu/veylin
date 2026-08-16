@@ -23,6 +23,7 @@ import {
   SettingsListRow,
 } from '../settings-list';
 import { mcpServerIcon } from '@/lib/mcp-icon';
+import { CompassConnectionRow, useCompassIdentity } from './compass-connection-row';
 
 const LIBRARY = [
   {
@@ -228,6 +229,16 @@ export function McpSettingsScreen() {
       })),
   ].filter((item) => !q || item.name.toLowerCase().includes(q) || item.detail.toLowerCase().includes(q));
 
+  // Compass 由 CompassConnectionRow 单独代表(它在未连接时也要出现),所以列表里
+  // 不再重复渲染那条托管条目。
+  const compass = useCompassIdentity();
+  const otherInstalled = installedItems.filter(
+    (item) => !(item.managed && item.name === 'compass'),
+  );
+  // 没连上的 Compass 归"库"(和 GitHub 一样是"可以加的东西"),连上了才进"已连接"。
+  // 计数跟着走 —— 一个说"已连接 1"而其实没连上的数字,是最容易磨掉信任的那种小谎。
+  const compassConnected = Boolean(compass.who?.configured);
+
   const libraryItems = LIBRARY.filter(
     (item) =>
       !q || item.name.toLowerCase().includes(q) || t(item.descriptionKey).toLowerCase().includes(q),
@@ -410,27 +421,38 @@ export function McpSettingsScreen() {
       <section className="mb-8">
         <SectionHeading
           title={t('customize.mcpPage.connected')}
-          count={installedItems.length}
+          count={otherInstalled.length + (compassConnected ? 1 : 0)}
         />
-        {installedItems.length > 0 ? (
-          <SettingsConnectedList>
-            {installedItems.map((item) => (
-              <InstalledRow
-                key={item.key}
-                item={item}
-                health={healthByName.get(item.name)}
-                onToggle={(on) => void toggleInstalled(item, on)}
-                onDelete={item.source === 'remote' ? () => setDeleteTarget(item) : undefined}
-              />
-            ))}
-          </SettingsConnectedList>
-        ) : (
-          <p className="text-muted-foreground mb-6 text-sm">{t('customize.mcpPage.connectedEmpty')}</p>
-        )}
+        {/* Compass 这一行**永远在**:没连接 / 连上了 / 连不上,同一行换措辞换动作。
+            它不能藏在"有已装服务器才渲染"的分支里 —— 新用户恰恰一个都没有,
+            那正是最需要看到入口的时候。托管的 compass 条目由它代表,所以下面
+            把那条过滤掉:两行说同一件事就是重复。 */}
+        <SettingsConnectedList>
+          {compassConnected ? (
+            <CompassConnectionRow who={compass.who} onChanged={() => { void compass.reload(); void load(); }} />
+          ) : null}
+          {otherInstalled.map((item) => (
+            <InstalledRow
+              key={item.key}
+              item={item}
+              health={healthByName.get(item.name)}
+              onToggle={(on) => void toggleInstalled(item, on)}
+              onDelete={item.source === 'remote' ? () => setDeleteTarget(item) : undefined}
+            />
+          ))}
+        </SettingsConnectedList>
       </section>
 
       <section className="mb-8">
-        <SectionHeading title={t('customize.mcpPage.libraryTitle')} count={libraryItems.length} />
+        <SectionHeading
+          title={t('customize.mcpPage.libraryTitle')}
+          count={libraryItems.length + (compassConnected ? 0 : 1)}
+        />
+        <SettingsConnectedList>
+          {compassConnected ? null : (
+            <CompassConnectionRow who={compass.who} onChanged={() => { void compass.reload(); void load(); }} />
+          )}
+        </SettingsConnectedList>
         {libraryItems.length > 0 ? (
           <SettingsConnectedList>
             {libraryItems.map((item) => {
