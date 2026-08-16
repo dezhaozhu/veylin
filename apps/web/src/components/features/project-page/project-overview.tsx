@@ -33,6 +33,7 @@ import {
   type SceneNarrative,
 } from './scene-card-merge';
 import { SceneCardMergeTable } from './scene-card-merge-table';
+import { ProjectComposer } from './project-composer';
 import { useSceneCardPayloads, type SceneCardEntry } from './use-scene-card-payloads';
 
 /** Workspace shell for the 项目首页 view — same frame pattern as
@@ -108,16 +109,27 @@ const ProjectOverview: FC = () => {
     );
   }
 
+  // 副标题只在**说了新东西**时才给:数据源标签常常和项目同名(上重/上重),
+  // 那样第二行是纯噪音。
+  const sourceLabel = project.sources.map(projectSourceLabel).join(' · ');
+  const subtitle = sourceLabel && sourceLabel !== project.name ? sourceLabel : undefined;
+
+  // 两栏:**中间做事,右边"这个项目有什么"**。原来一根竖列,于是"设置""认知"
+  // "对话"轮流抢最显眼的位置 —— 而进项目最想做的事(说话)反而没有入口。
   return (
-    <div className="mx-auto flex max-w-4xl flex-col">
-      <PageHeader
-        title={project.name}
-        description={project.sources.map(projectSourceLabel).join(' · ')}
-      />
-      <ProjectFolderRow project={project} />
-      <ProjectContextSection project={project} />
-      <ProjectCardsGrid project={project} byServer={byServer} />
-      <ProjectThreads projectId={project.id} />
+    <div className="mx-auto flex w-full max-w-6xl gap-6 px-1">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <PageHeader title={project.name} {...(subtitle ? { description: subtitle } : {})} />
+        <ProjectComposer projectId={project.id} projectName={project.name} />
+        <ProjectCardsGrid project={project} byServer={byServer} />
+        <ProjectThreads projectId={project.id} />
+      </div>
+      {/* 右栏是"有什么",不是"做什么":文件夹、上下文这些是配置和素材,
+          它们该在手边,不该挡在路上。 */}
+      <aside className="hidden w-80 shrink-0 flex-col lg:flex">
+        <ProjectContextSection project={project} />
+        <ProjectFolderRow project={project} />
+      </aside>
     </div>
   );
 };
