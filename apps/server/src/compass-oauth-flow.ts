@@ -100,7 +100,7 @@ export async function ensureClient(
 export async function exchangeCode(
   args: { baseUrl: string; clientId: string; code: string; verifier: string; redirectUri: string },
   fetchImpl: typeof fetch = fetch,
-): Promise<string> {
+): Promise<{ accessToken: string; refreshToken?: string }> {
   const res = await fetchImpl(`${args.baseUrl}/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -114,6 +114,7 @@ export async function exchangeCode(
   });
   const body = (await res.json().catch(() => ({}))) as {
     access_token?: string;
+    refresh_token?: string;
     error_description?: string;
     error?: string;
   };
@@ -121,7 +122,10 @@ export async function exchangeCode(
     // 把对面的话原样带出来:换 token 失败的原因(码过期、对不上)只有它知道。
     throw new Error(body.error_description ?? body.error ?? `换 token 失败(HTTP ${res.status})`);
   }
-  return body.access_token;
+  return {
+    accessToken: body.access_token,
+    ...(body.refresh_token ? { refreshToken: body.refresh_token } : {}),
+  };
 }
 
 export type FlowStatus =
@@ -197,8 +201,17 @@ export async function startOAuthFlow(
       { baseUrl: base, clientId: reg.clientId, code: outcome.code, verifier, redirectUri },
       opts.fetchImpl ?? fetch,
     )
-      .then(async (token) => {
-        writeCompassCredential({ url: base, token }, opts.dataDir);
+      .then(async (pair) => {
+        writeCompassCredential(
+          {
+            url: base,
+            token: pair.accessToken,
+            // 续期票必须存:漏存等于下次到期只能重新登录,而 OAuth 的意义
+            // 一半就在于此。
+            ...(pair.refreshToken ? { refreshToken: pair.refreshToken } : {}),
+          },
+          opts.dataDir,
+        );
         reply('连上了', '可以关掉这个页面,回到 Veylin。');
         settle(flowId, { status: 'done' });
         await opts.onConnected?.();

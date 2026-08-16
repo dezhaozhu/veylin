@@ -40,6 +40,8 @@ import {
   reconcileCompassIdentity,
 } from './compass-identity';
 import { resolveCompassIdentity } from './compass-credential';
+import { readClientRegistration } from './compass-oauth-flow';
+import { refreshIfNeeded } from './compass-refresh';
 import { startupCheckpoint } from './startup-profiler';
 import { ensureDevTenant, DEV_TENANT_ID } from './tenant';
 import { refreshAgentPackages, isAgentHotReloadEnabled } from './agent-packages-sync';
@@ -265,6 +267,22 @@ async function main() {
   const compassIdentitySyncOn = isCompassIdentitySyncEnabled();
 
   async function syncCompassIdentity(tenantId: string) {
+    // 每次同步前顺手看一眼要不要续期。放在这里而不是另起一个定时器:同步本来就
+    // 是"把身份的现状对齐"的那一跳,而且续期成功后紧接着的这次同步会把新 token
+    // 物化进 MCP 条目 —— 两件事必须挨着,否则条目里还是旧的那张。
+    // 续不了不阻断同步:凭据还在,能连就继续连(见 compass-refresh.ts)。
+    try {
+      const reg = readClientRegistration(resolveCompassIdentity()?.url ?? '');
+      if (reg) {
+        const outcome = await refreshIfNeeded({ clientId: reg.clientId });
+        if (outcome === 'refreshed') app.log.info('[compass-identity] access token 已自动续期');
+        if (outcome === 'needs-login') {
+          app.log.warn('[compass-identity] 续期被拒 —— 需要重新登录(凭据未清除)');
+        }
+      }
+    } catch (err) {
+      app.log.warn({ err }, '[compass-identity] 续期检查失败,继续用现有凭据');
+    }
     const compassIdentityConfig = resolveCompassIdentity();
     if (!compassIdentityConfig) {
       return {

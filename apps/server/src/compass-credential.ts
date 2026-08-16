@@ -19,6 +19,9 @@ import path from 'node:path';
 import { ensureDataDir } from '@veylin/db';
 
 import type { CompassIdentityConfig } from './compass-identity.js';
+
+/** 凭据 = 身份 + (走 OAuth 时)那张用来续期的票。手贴的 token 没有后者。 */
+export type StoredCredential = CompassIdentityConfig & { refreshToken?: string };
 import { parseCompassIdentityConfig } from './compass-identity.js';
 
 const FILE = 'compass-identity.json';
@@ -27,16 +30,20 @@ export function credentialPath(dataDir?: string): string {
   return path.join(dataDir ?? ensureDataDir(), FILE);
 }
 
-export function readCompassCredential(dataDir?: string): CompassIdentityConfig | null {
+export function readCompassCredential(dataDir?: string): StoredCredential | null {
   try {
     const raw = fs.readFileSync(credentialPath(dataDir), 'utf8');
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== 'object') return null;
-    const { url, token } = parsed as Record<string, unknown>;
+    const { url, token, refreshToken } = parsed as Record<string, unknown>;
     // 半份凭据(只有 url 或只有 token)比完全没有更难查 —— 一律当没有。
     if (typeof url !== 'string' || !url.trim()) return null;
     if (typeof token !== 'string' || !token.trim()) return null;
-    return { url: url.trim().replace(/\/+$/, ''), token: token.trim() };
+    return {
+      url: url.trim().replace(/\/+$/, ''),
+      token: token.trim(),
+      ...(typeof refreshToken === 'string' && refreshToken ? { refreshToken } : {}),
+    };
   } catch {
     // 文件不存在、读不了、坏了 —— 都当作"没配",不让它把应用带下去。
     return null;
@@ -44,7 +51,7 @@ export function readCompassCredential(dataDir?: string): CompassIdentityConfig |
 }
 
 export function writeCompassCredential(
-  config: CompassIdentityConfig,
+  config: StoredCredential,
   dataDir?: string,
 ): void {
   const file = credentialPath(dataDir);

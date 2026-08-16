@@ -96,7 +96,7 @@ describe('换 token', () => {
 
   it('按 form 编码发,并带上 verifier', async () => {
     const { impl, calls } = fake(() => json({ access_token: 'tok' }));
-    assert.equal(await exchangeCode(args, impl), 'tok');
+    assert.deepEqual(await exchangeCode(args, impl), { accessToken: 'tok' });
     const body = new URLSearchParams(String(calls[0]?.init?.body));
     assert.equal(body.get('grant_type'), 'authorization_code');
     assert.equal(body.get('code_verifier'), 'v'.repeat(64));
@@ -105,6 +105,11 @@ describe('换 token', () => {
   it('失败时把对面的话原样带出来 —— 原因只有它知道', async () => {
     const { impl } = fake(() => json({ error_description: '授权码无效、已过期,或已经用过了' }, 400));
     await assert.rejects(() => exchangeCode(args, impl), /已经用过/);
+  });
+
+  it('把轮换出来的 refresh 一并带回 —— 漏了就等于下次只能重新登录', async () => {
+    const { impl } = fake(() => json({ access_token: 'a', refresh_token: 'r' }));
+    assert.deepEqual(await exchangeCode(args, impl), { accessToken: 'a', refreshToken: 'r' });
   });
 
   it('200 但没有 token 也算失败,不返回 undefined', async () => {
