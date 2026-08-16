@@ -1,3 +1,4 @@
+import { readProjectFile } from '../project-file-read.js';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import {
   addTableColumn,
@@ -771,9 +772,11 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
    */
   app.get('/api/project/context', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const { threadId } = req.query as { threadId?: string };
+    const { threadId, projectId: asked } = req.query as { threadId?: string; projectId?: string };
+    // **项目页问的是它正在显示的那个项目**,不是当前线程钉着的那个 —— 后者会让
+    // 页面显示另一个项目的上下文,而且看起来完全正常(实测)。
     const scope = await scopeOfRequest(threadId, ctx);
-    const projectId = scope.kind === 'project' ? scope.id : null;
+    const projectId = asked ?? (scope.kind === 'project' ? scope.id : null);
     const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
     const sheets = listTableSheets(scope).map((m) => ({ name: m.name, source: m.source }));
     const connectors = summarizeConnectors(sheets);
@@ -783,6 +786,31 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     const files = await listProjectFiles(folder);
     void reply;
     return { ok: true, folder, ...files, connectors };
+  });
+
+  /**
+   * 预览项目文件夹里的一个文件。
+   *
+   * 只读、只在这个项目的文件夹之内(readProjectFile 自己做路径包含校验)。
+   * 表格类只回概览 —— 要筛选统计得导入后用 table_query,那才是能回答问题的形状;
+   * 把几万行塞进预览面板既慢又没人读。
+   */
+  app.get('/api/project/file', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const { threadId, name, projectId: asked } = req.query as {
+      threadId?: string; name?: string; projectId?: string;
+    };
+    if (!name) return reply.code(400).send({ error: '缺少 name' });
+    const scope = await scopeOfRequest(threadId, ctx);
+    const projectId = asked ?? (scope.kind === 'project' ? scope.id : null);
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    // 没有文件夹时不是"读失败",是**这个项目根本没有本地文件**。说清楚。
+    if (!folder) return reply.code(404).send({ error: '这个项目还没有文件夹' });
+    try {
+      return { ok: true, ...(await readProjectFile(folder, name, { limit: 400 })) };
+    } catch (err) {
+      return reply.code(404).send({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   /** 在访达里显示项目文件夹里的某个东西(Show in Folder)。只允许文件夹之内。 */

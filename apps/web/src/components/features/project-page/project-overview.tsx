@@ -33,6 +33,7 @@ import {
 } from './scene-card-merge';
 import { SceneCardMergeTable } from './scene-card-merge-table';
 import { ProjectComposer } from './project-composer';
+import { ContextPanel, flattenContext } from './context-panel';
 import { RailCard, RailEmpty, RailInlineInput, RailSection } from './project-rail';
 import { useSceneCardPayloads, type SceneCardEntry } from './use-scene-card-payloads';
 
@@ -246,13 +247,14 @@ const SEARCH_FROM = 6;
 const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
   const [data, setData] = useState<ProjectContext | null>(null);
   const [q, setQ] = useState('');
-  const [searching, setSearching] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch('/api/project/context');
+        // 问的是**这一页正在显示的项目**,不是当前线程钉着的那个。
+        const res = await fetch(`/api/project/context?projectId=${encodeURIComponent(project.id)}`);
         const body = (await res.json()) as { ok?: boolean } & ProjectContext;
         if (!cancelled && body.ok) setData(body);
       } catch {
@@ -277,8 +279,8 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
   return (
     <RailSection
       title="上下文"
-      {...(total > SEARCH_FROM
-        ? { action: { label: searching ? '×' : '⌕', title: '搜索', onClick: () => { setSearching((v) => !v); setQ(''); } } }
+      {...(total > 0
+        ? { action: { label: '全部', title: '打开上下文面板(搜索 + 预览)', onClick: () => setPanelOpen(true) } }
         : {})}
       {...(total === 0 ? {} : { hint: `${total} 项 · 对话里可以直接引用` })}
     >
@@ -286,13 +288,20 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
         // 空状态说清**放什么**,而不是整段消失 —— 消失的话人不知道这里可以放东西。
         <RailEmpty>导入表格、连上数据源,或给项目设一个文件夹,<br />之后在对话里就能直接引用。</RailEmpty>
       ) : null}
-      {searching ? (
+      {/* 侧栏里超过一屏就没法看了 —— 多的交给面板,这里只给搜索当快筛。 */}
+      {total > SEARCH_FROM ? (
         <input
-          autoFocus
           className="border-input mb-2 h-7 w-full rounded border px-2 text-xs"
-          placeholder="搜索这里的文件和数据源…"
+          placeholder="搜索…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
+        />
+      ) : null}
+      {panelOpen && data ? (
+        <ContextPanel
+          items={flattenContext(data)}
+          projectId={project.id}
+          onClose={() => setPanelOpen(false)}
         />
       ) : null}
 
