@@ -185,4 +185,24 @@ describe('表格变更块', () => {
     assert.match(block, /用户把 `orders` 的 `T-221523002` 的「交期」从 2026-07-05 → 2026-08-01/);
     assert.match(block, /代表\*\*他的决定\*\*/, '不能让 agent 把人的决定当成系统状态改回去');
   });
+
+  it('**文件、表格、compass 三样同时在同一次请求里** —— 这是"一起理解"的判据', async () => {
+    // 单独测每一块都在,不等于它们会同时到场。而"一起读取然后一起理解"要求的
+    // 恰恰是同时:模型手里同时有项目说明、本地表格、和 compass 的接地信息,才谈得上
+    // 拿两边对照。任何一块被别的挤掉,表现都是"它好像没看那份文件" —— 而这种失败
+    // 在单块测试里永远看不出来。
+    const blocks = await buildChatSystemBlocks({
+      skillsCatalog: '', skillBlock: '', rulesBlock: '', planModeBlock: '',
+      goalBlock: '', loopBlock: '',
+      tableBlock: '<TABLE>本地表: orders(3 行)</TABLE>',
+      knowledgeBlock: '', workspacePanelBlock: '', reminderBlock: '',
+      orchestrationBlock: '', localeBlock: '', attachedBrowserBlock: '',
+      projectPinBlock: '<PIN>当前数据项目: 上重 · 该项目的说明:只看锻件分厂</PIN>',
+      compassGroundingBlock: '<GROUND>compass 接地</GROUND>',
+    });
+    assert.match(blocks, /本地表: orders/, '本地表格没进去');
+    assert.match(blocks, /当前数据项目: 上重/, '项目钉定没进去');
+    assert.match(blocks, /该项目的说明/, '项目说明没进去 —— 它是跟着钉定块走的');
+    assert.match(blocks, /compass 接地/, 'compass 接地没进去');
+  });
 });
