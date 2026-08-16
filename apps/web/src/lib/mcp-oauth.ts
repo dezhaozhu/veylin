@@ -21,15 +21,24 @@ export async function getMcpAuthState(
   }
 }
 
+/**
+ * 参数用对象而不是位置参数:这里插过一个中间参数,把调用方的 fetch 挤成了
+ * clientId —— 位置参数每加一个,所有旧调用都可能悄悄错位。
+ */
 export async function startMcpAuth(
   serverId: string,
   url: string,
-  fetchImpl: typeof fetch = fetch,
+  opts: {
+    /** 对面不支持自动注册时(实测:GitHub),由人到那边申请后填进来。 */
+    clientId?: string;
+    fetchImpl?: typeof fetch;
+  } = {},
 ): Promise<{ ok: true; flowId: string; authorizeUrl: string } | { ok: false; error: string }> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
   const res = await fetchImpl('/api/mcp-oauth/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ serverId, url }),
+    body: JSON.stringify({ serverId, url, ...(opts.clientId ? { clientId: opts.clientId } : {}) }),
   });
   const body = (await res.json().catch(() => ({}))) as {
     flowId?: string; authorizeUrl?: string; error?: string;

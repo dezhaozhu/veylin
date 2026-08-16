@@ -597,7 +597,9 @@
       "library": {
         "github": "Review PRs, triage issues, and post summaries from repository events.",
         "slack": "Send automation digests and alerts to channels your team already uses.",
-        "notion": "Publish reports and structured notes to shared team workspaces."
+        "notion": "Publish reports and structured notes to shared team workspaces.",
+        "linear": "Read issues, update status, turn discussion into tasks.",
+        "sentry": "Read errors and stack traces; pinpoint the latest regression."
       },
       "addMcp": "Add MCP"
     }

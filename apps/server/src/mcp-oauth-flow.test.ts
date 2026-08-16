@@ -63,3 +63,32 @@ describe('换 token', () => {
     );
   });
 });
+
+describe('不支持动态注册的服务器', () => {
+  it('**报错要说得出下一步** —— 否则那类服务器就是死胡同(实测:GitHub 就不支持)', async () => {
+    const { registerClientForTest } = await import('./mcp-oauth-flow.js') as never as {
+      registerClientForTest?: unknown;
+    };
+    // 注册函数不导出,这里通过整条流程验:没有注册端点又没给 clientId → 报错带指引
+    const { startMcpOAuth } = await import('./mcp-oauth-flow.js');
+    const meta = {
+      'https://api.x/.well-known/oauth-protected-resource': { authorization_servers: ['https://as.x'] },
+      'https://as.x/.well-known/oauth-authorization-server': {
+        issuer: 'https://as.x',
+        authorization_endpoint: 'https://as.x/authorize',
+        token_endpoint: 'https://as.x/token',
+        code_challenge_methods_supported: ['S256'],
+      },
+    } as Record<string, unknown>;
+    const f = (async (u: string | URL | Request) => {
+      const b = meta[String(u)];
+      return new Response(JSON.stringify(b ?? {}), { status: b ? 200 : 404 });
+    }) as unknown as typeof fetch;
+
+    await assert.rejects(
+      () => startMcpOAuth('s', 'https://api.x/mcp/', { fetchImpl: f, dataDir: '/tmp' }),
+      /申请一个 OAuth 客户端|client ID/,
+    );
+    assert.equal(registerClientForTest, undefined);
+  });
+});

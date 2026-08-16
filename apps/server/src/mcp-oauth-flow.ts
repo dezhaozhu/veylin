@@ -51,11 +51,16 @@ async function registerClient(
   endpoints: AuthServerEndpoints,
   redirectUri: string,
   f: typeof fetch,
+  givenClientId?: string,
 ): Promise<string> {
+  // 人已经给了就直接用 —— 有些授权服务器(实测:GitHub)不支持动态注册,只能去
+  // 它那边先申请一个。没有这条路的话,那类服务器就是死胡同。
+  if (givenClientId) return givenClientId;
   if (!endpoints.registrationEndpoint) {
-    // 不支持动态注册就只能由人去那边申请一个 client_id。说清楚,别假装能自动。
     throw new Error(
-      '这个授权服务器不支持动态注册(RFC 7591),需要你先在它那边申请一个客户端 ID。',
+      '这个授权服务器不支持自动注册(RFC 7591)。请到它那边申请一个 OAuth 客户端,' +
+      `把回调地址填成 ${new URL(redirectUri).origin.replace(/:\d+$/, '')}/callback(端口任意),` +
+      '再把 client ID 填到这里。',
     );
   }
   const res = await f(endpoints.registrationEndpoint, {
@@ -132,6 +137,8 @@ function settle(id: string, next: McpFlowStatus): void {
 
 export type StartMcpOAuthOptions = {
   dataDir?: string;
+  /** 对面不支持动态注册时,由人提供。 */
+  clientId?: string;
   fetchImpl?: typeof fetch;
   wwwAuthenticate?: string | null;
   onConnected?: () => unknown | Promise<unknown>;
@@ -206,7 +213,7 @@ export async function startMcpOAuth(
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as AddressInfo).port;
   const redirectUri = `http://127.0.0.1:${port}/callback`;
-  const clientId = await registerClient(endpoints, redirectUri, f).catch((err: unknown) => {
+  const clientId = await registerClient(endpoints, redirectUri, f, opts.clientId).catch((err: unknown) => {
     server.close();
     throw err;
   });

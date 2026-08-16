@@ -29,11 +29,13 @@ export function registerMcpOAuthRoutes(app: FastifyInstance, deps: McpOAuthDeps 
     const body = (req.body ?? {}) as Record<string, unknown>;
     const serverId = typeof body.serverId === 'string' ? body.serverId : '';
     const url = typeof body.url === 'string' ? body.url.trim() : '';
+    const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
     if (!serverId || !url) return reply.code(400).send({ error: '缺少 serverId 或 url' });
     const probe = await probeNeedsAuth(url);
     try {
       const out = await startMcpOAuth(serverId, url, {
         dataDir: dir(),
+        ...(clientId ? { clientId } : {}),
         wwwAuthenticate: probe.needsAuth ? probe.wwwAuthenticate : null,
       });
       return out;

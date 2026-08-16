@@ -25,7 +25,9 @@ export type McpAuthController = {
   actionFor: (id: string) => AuthAction;
   busyId: string | null;
   message: string | null;
-  authorize: (id: string, url: string) => Promise<void>;
+  authorize: (id: string, url: string, clientId?: string) => Promise<void>;
+  /** 上一次失败是不是「要你自己填 client ID」 —— 界面据此给出输入框。 */
+  needsClientId: boolean;
   revoke: (id: string) => Promise<void>;
   /** 中止正在进行的那次授权,并关掉浏览器窗口。 */
   cancel: () => void;
@@ -52,11 +54,20 @@ export function useMcpAuth(
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const authorize = async (id: string, url: string) => {
+  const [needsClientId, setNeedsClientId] = useState(false);
+
+  const authorize = async (id: string, url: string, clientId = '') => {
     setBusyId(id);
     setMessage(null);
-    const started = await startMcpAuth(id, url);
-    if (!started.ok) { setBusyId(null); setMessage(started.error); return; }
+    const started = await startMcpAuth(id, url, clientId ? { clientId } : {});
+    if (!started.ok) {
+      setBusyId(null);
+      setMessage(started.error);
+      // 这类失败**人自己能解决** —— 给他一个填的地方,而不是只把错误摆在那里。
+      setNeedsClientId(/client ID|自动注册/.test(started.error));
+      return;
+    }
+    setNeedsClientId(false);
     cancelled.current = false;
     try {
       await openWebView(LOGIN_TAB, started.authorizeUrl);
@@ -91,6 +102,7 @@ export function useMcpAuth(
     busyId,
     message,
     authorize,
+    needsClientId,
     revoke,
     cancel: () => {
       cancelled.current = true;

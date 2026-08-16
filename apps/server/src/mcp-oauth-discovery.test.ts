@@ -8,7 +8,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  authServerMetadataCandidates,
   defaultResourceMetadataUrl,
+  resourceMetadataCandidates,
   discoverAuthServer,
   endpointUsable,
   resourceMetadataUrl,
@@ -173,5 +175,35 @@ describe('discoverAuthServer', () => {
       }),
     });
     assert.equal(out.ok, true, out.ok ? '' : out.reason);
+  });
+});
+
+// —— 真实服务器暴露出来的:带路径的 issuer ————————————————
+
+describe('元数据地址的拼法(RFC 8414 §3.1 / RFC 9728 §3)', () => {
+  it('**issuer 带路径时,well-known 要插在 host 和 path 之间**', () => {
+    // 实测:GitHub 的 issuer 是 https://github.com/login/oauth。按 origin 拼会
+    // 得到 https://github.com/.well-known/… —— 读不到,发现就在这里断了。
+    assert.deepEqual(
+      authServerMetadataCandidates('https://github.com/login/oauth')[0],
+      'https://github.com/.well-known/oauth-authorization-server/login/oauth',
+    );
+  });
+
+  it('也试"直接拼在后面"这种常见写法 —— 现实里两种都有', () => {
+    const c = authServerMetadataCandidates('https://github.com/login/oauth');
+    assert.ok(c.includes('https://github.com/login/oauth/.well-known/oauth-authorization-server'));
+  });
+
+  it('没有路径的 issuer,两种拼法归一', () => {
+    const c = authServerMetadataCandidates('https://as.x');
+    assert.equal(c[0], 'https://as.x/.well-known/oauth-authorization-server');
+  });
+
+  it('资源元数据同理:带路径的资源要试路径形态', () => {
+    // 实测:GitHub/Sentry 只在 /.well-known/oauth-protected-resource/mcp/ 上提供。
+    const c = resourceMetadataCandidates('https://api.githubcopilot.com/mcp/');
+    assert.ok(c.some((u) => u.includes('/.well-known/oauth-protected-resource/mcp')));
+    assert.ok(c.includes('https://api.githubcopilot.com/.well-known/oauth-protected-resource'));
   });
 });

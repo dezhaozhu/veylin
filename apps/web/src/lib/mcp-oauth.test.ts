@@ -31,13 +31,13 @@ describe('探测', () => {
 
 describe('开始授权', () => {
   it('拿到授权链接', async () => {
-    const r = await startMcpAuth('s', 'https://x', fake(() => json({ flowId: 'f', authorizeUrl: 'https://as/a' })));
+    const r = await startMcpAuth('s', 'https://x', { fetchImpl: fake(() => json({ flowId: 'f', authorizeUrl: 'https://as/a' })) });
     assert.equal(r.ok, true);
   });
 
   it('失败时把服务端的原话带出来 —— 那是唯一能查下去的线索', async () => {
-    const r = await startMcpAuth('s', 'https://x', fake(() =>
-      json({ error: '这个授权服务器不支持 PKCE(S256)' }, 502)));
+    const r = await startMcpAuth('s', 'https://x', { fetchImpl: fake(() =>
+      json({ error: '这个授权服务器不支持 PKCE(S256)' }, 502)) });
     assert.equal(r.ok, false);
     if (!r.ok) assert.match(r.error, /PKCE/);
   });

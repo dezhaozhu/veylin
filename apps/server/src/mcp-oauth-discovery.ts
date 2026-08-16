@@ -64,15 +64,40 @@ export function sameOrigin(a: string, b: string): boolean {
   }
 }
 
-/** 没有 WWW-Authenticate 时的回退:资源自己的 well-known 路径(RFC 9728 §3)。 */
+/**
+ * `.well-known` 地址的几种拼法,按该试的顺序。
+ *
+ * **实测出来的**:RFC 8414 §3.1 / RFC 9728 §3 规定 well-known 段要**插在 host 和
+ * path 之间**(`https://h/.well-known/xxx/some/path`),但现实里"直接拼在后面"
+ * (`https://h/some/path/.well-known/xxx`)和根路径两种也都有服务器在用。
+ *
+ * 一开始我只拼了根路径 —— GitHub(issuer 带路径 `/login/oauth`)和 Sentry
+ * (资源元数据只在 `/.well-known/oauth-protected-resource/mcp/`)就都发现不了。
+ */
+function wellKnownCandidates(base: string, name: string): string[] {
+  const u = new URL(base);
+  const path = u.pathname.replace(/\/+$/, '');
+  const root = `${u.origin}/.well-known/${name}`;
+  if (!path) return [root];
+  return [
+    `${u.origin}/.well-known/${name}${path}`,   // 规范形态
+    `${u.origin}${path}/.well-known/${name}`,   // 现实里也常见
+    root,
+  ];
+}
+
+export function resourceMetadataCandidates(resourceUrl: string): string[] {
+  return wellKnownCandidates(resourceUrl, 'oauth-protected-resource');
+}
+
+export function authServerMetadataCandidates(issuer: string): string[] {
+  return wellKnownCandidates(issuer, 'oauth-authorization-server');
+}
+
+/** 没有 WWW-Authenticate 时的回退(取最规范的那一个,用于同源校验)。 */
 export function defaultResourceMetadataUrl(resourceUrl: string): string {
   const u = new URL(resourceUrl);
   return `${u.origin}/.well-known/oauth-protected-resource`;
-}
-
-export function authServerMetadataUrl(issuer: string): string {
-  const u = new URL(issuer);
-  return `${u.origin}/.well-known/oauth-authorization-server`;
 }
 
 async function getJson(url: string, f: typeof fetch): Promise<Record<string, unknown> | null> {
@@ -97,16 +122,22 @@ export async function discoverAuthServer(
 ): Promise<DiscoveryResult> {
   const f = opts.fetchImpl ?? fetch;
   const declared = resourceMetadataUrl(opts.wwwAuthenticate ?? null);
-  const metaUrl = declared ?? defaultResourceMetadataUrl(resourceUrl);
+  // 服务器**明说了**就只用它(并校验同源);没说才按几种拼法去试。
+  const candidates = declared ? [declared] : resourceMetadataCandidates(resourceUrl);
 
-  if (!sameOrigin(metaUrl, resourceUrl)) {
+  const offsite = candidates.find((u) => !sameOrigin(u, resourceUrl));
+  if (offsite) {
     return {
       ok: false,
-      reason: `这个服务器把授权信息指向了另一个站点(${new URL(metaUrl).origin}),不予采信 —— 否则它可以把你引到一个假的登录页。`,
+      reason: `这个服务器把授权信息指向了另一个站点(${new URL(offsite).origin}),不予采信 —— 否则它可以把你引到一个假的登录页。`,
     };
   }
 
-  const resourceMeta = await getJson(metaUrl, f);
+  let resourceMeta: Record<string, unknown> | null = null;
+  for (const u of candidates) {
+    resourceMeta = await getJson(u, f);
+    if (resourceMeta) break;
+  }
   if (!resourceMeta) {
     return { ok: false, reason: '这个服务器要求授权,但没有说明该去哪里登录(读不到它的授权元数据)。' };
   }
@@ -116,7 +147,11 @@ export async function discoverAuthServer(
     return { ok: false, reason: '这个服务器的授权元数据里没有写授权服务器。' };
   }
 
-  const asMeta = await getJson(authServerMetadataUrl(issuer), f);
+  let asMeta: Record<string, unknown> | null = null;
+  for (const u of authServerMetadataCandidates(issuer)) {
+    asMeta = await getJson(u, f);
+    if (asMeta) break;
+  }
   if (!asMeta) {
     return { ok: false, reason: `读不到授权服务器(${issuer})的元数据。` };
   }

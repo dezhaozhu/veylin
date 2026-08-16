@@ -26,24 +26,49 @@ import { mcpServerIcon } from '@/lib/mcp-icon';
 import { CompassConnectionRow, useCompassIdentity } from './compass-connection-row';
 import { useMcpAuth } from './use-mcp-auth';
 
+// 地址是**实测过的**(2026-08-16 各打了一次:全部按协议回 401 + resource_metadata,
+// 且我们的发现逻辑都能走通)。填真地址的意义是"点一下就能用" —— 留空的话,人得
+// 自己去翻文档找 URL,而那正是"开箱可用"这件事卡住的地方。
+//
+// 地址会变。所以它只是**预填**:添加对话框里看得见、改得动,而不是写死在连接里 ——
+// 一个悄悄失效的地址会表现成"连不上",没人查得到是我们填错了。
 const LIBRARY = [
   {
     id: 'github',
     name: 'GitHub',
     transport: 'HTTP',
+    url: 'https://api.githubcopilot.com/mcp/',
     descriptionKey: 'customize.mcpPage.library.github',
-  },
-  {
-    id: 'slack',
-    name: 'Slack',
-    transport: 'HTTP',
-    descriptionKey: 'customize.mcpPage.library.slack',
+    // 实测:GitHub 不支持自动注册,授权时要自己填一个 client ID(界面会说)。
   },
   {
     id: 'notion',
     name: 'Notion',
     transport: 'HTTP',
+    url: 'https://mcp.notion.com/mcp',
     descriptionKey: 'customize.mcpPage.library.notion',
+  },
+  {
+    id: 'linear',
+    name: 'Linear',
+    transport: 'HTTP',
+    url: 'https://mcp.linear.app/mcp',
+    descriptionKey: 'customize.mcpPage.library.linear',
+  },
+  {
+    id: 'sentry',
+    name: 'Sentry',
+    transport: 'HTTP',
+    url: 'https://mcp.sentry.dev/mcp',
+    descriptionKey: 'customize.mcpPage.library.sentry',
+  },
+  {
+    // Slack 没有我能核实的官方远程 MCP 端点 —— **不编一个**。留空,点进去自己填。
+    id: 'slack',
+    name: 'Slack',
+    transport: 'HTTP',
+    url: '',
+    descriptionKey: 'customize.mcpPage.library.slack',
   },
 ] as const;
 
@@ -246,6 +271,8 @@ export function McpSettingsScreen() {
   // Compass 由 CompassConnectionRow 单独代表(它在未连接时也要出现),所以列表里
   // 不再重复渲染那条托管条目。
   const compass = useCompassIdentity();
+  const [clientIdInput, setClientIdInput] = useState('');
+  const [lastAuthTarget, setLastAuthTarget] = useState<{ id: string; url: string } | null>(null);
   // 只探远程条目:本地 stdio 的插件/内置服务器没有 401 这回事。
   const mcpAuth = useMcpAuth(
     remote.filter((r) => !r.managed).map((r) => ({ id: r.id, url: r.url })),
@@ -319,8 +346,10 @@ export function McpSettingsScreen() {
     }
   };
 
-  const openLibraryAdd = (name: string, transport: 'sse' | 'http' = 'http') => {
-    setForm({ name: name.toLowerCase(), transport, url: '', headers: '' });
+  const openLibraryAdd = (name: string, url = '', transport: 'sse' | 'http' = 'http') => {
+    // 预填地址,但仍然让人看得见改得动 —— 地址会变,写死在连接里的话,失效时
+    // 只会表现成"连不上"。
+    setForm({ name: name.toLowerCase(), transport, url, headers: '' });
     setDialogOpen(true);
   };
 
@@ -448,12 +477,33 @@ export function McpSettingsScreen() {
             把那条过滤掉:两行说同一件事就是重复。 */}
         {/* 授权进行中要给得出「取消」—— 否则窗口关不掉、轮询也停不下来(实测)。 */}
         {mcpAuth.message || mcpAuth.busyId ? (
-          <p className="text-muted-foreground mb-2 text-xs">
-            {mcpAuth.message ?? '等你在浏览器里完成授权…'}{' '}
-            {mcpAuth.busyId ? (
-              <button className="underline" onClick={mcpAuth.cancel}>取消</button>
+          <div className="text-muted-foreground mb-2 text-xs">
+            <p>
+              {mcpAuth.message ?? '等你在浏览器里完成授权…'}{' '}
+              {mcpAuth.busyId ? (
+                <button className="underline" onClick={mcpAuth.cancel}>取消</button>
+              ) : null}
+            </p>
+            {/* 这类失败人自己能解决 —— 给个填的地方,而不是只把错误摆在那里。 */}
+            {mcpAuth.needsClientId && lastAuthTarget ? (
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <input
+                  className="border-input h-7 w-72 rounded border px-2"
+                  placeholder="粘贴 client ID"
+                  value={clientIdInput}
+                  onChange={(e) => setClientIdInput(e.target.value)}
+                />
+                <button
+                  className="underline"
+                  onClick={() =>
+                    void mcpAuth.authorize(lastAuthTarget.id, lastAuthTarget.url, clientIdInput)
+                  }
+                >
+                  用这个 client ID 再试
+                </button>
+              </div>
             ) : null}
-          </p>
+          </div>
         ) : null}
         <SettingsConnectedList>
           {compassConnected ? (
@@ -469,7 +519,12 @@ export function McpSettingsScreen() {
               auth={item.remoteId ? mcpAuth.actionFor(item.remoteId) : null}
               authBusy={mcpAuth.busyId === item.remoteId}
               onAuthorize={
-                item.remoteId ? () => mcpAuth.authorize(item.remoteId!, item.detail) : undefined
+                item.remoteId
+                  ? () => {
+                      setLastAuthTarget({ id: item.remoteId!, url: item.detail });
+                      return mcpAuth.authorize(item.remoteId!, item.detail);
+                    }
+                  : undefined
               }
               onRevoke={item.remoteId ? () => mcpAuth.revoke(item.remoteId!) : undefined}
             />
@@ -495,7 +550,7 @@ export function McpSettingsScreen() {
                 <SettingsListRow
                   key={item.id}
                   asButton={!installed}
-                  onClick={() => !installed && openLibraryAdd(item.name)}
+                  onClick={() => !installed && openLibraryAdd(item.name, item.url)}
                   icon={
                     <SettingsListIcon className="text-[10px] font-semibold">
                       <span>{item.name.slice(0, 2).toUpperCase()}</span>
