@@ -37,6 +37,8 @@ import { getSelection } from './table-selection.js';
 import { PERSONAL_SCOPE, projectScope, sheetIdFor, type SheetScope } from './table-scope.js';
 import { queryTableRows } from './table-query.js';
 import { readProjectFile } from './project-file-read.js';
+import { getProject, updateProject } from './project-store.js';
+import { DEV_TENANT_ID } from './tenant.js';
 import { fetchCompassData, type CompassRestScope } from './compass-rest.js';
 
 export { unwrapMcpPayload } from './mcp-payload.js';
@@ -1233,6 +1235,51 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       importCompassResourceSheet(getMcpToolsets, getMcpGroups, compassScopeFromCtx(ctx)),
   });
 
+  /**
+   * 把一个数据源挂到当前项目上。
+   *
+   * 这是"用了才进 context"那条路的**动作**那一半:agent 撞到"这个项目没接数据源"
+   * 之后,由它把用户指名的那个挂上去,之后就和一直挂着一样(零开销)。
+   *
+   * 三条守住:
+   * - **必须已授权**。这里只从 Compass 给你的场景里挑,挂不出新权限。
+   * - **必须钉了项目**。没钉就没有"这个项目"可言,拒绝比找一个默认的强。
+   * - **不替用户挑**。工具只接受明确的 source;"用户没说清楚就要问"由系统块
+   *   和这条描述共同要求 —— 挂错厂的后果是他对着另一个工厂的数据做决定,
+   *   而界面上看起来完全正常。
+   */
+  const attachProjectSource = createTool({
+    id: 'attach_project_source',
+    description:
+      '把一个数据源(场景)挂到当前项目上,之后这个项目的对话就能读它的数据。' +
+      '只能挂你已被授权的场景(先用 list_my_scenes 看有哪些)。' +
+      '**用户没有明确指定用哪个时,先问,不要替他挑一个。**',
+    inputSchema: z.object({
+      source: z.string().describe('场景代号,例如 guolu —— 必须来自 list_my_scenes 的结果'),
+    }),
+    execute: async (input: { source: string }, ctx?: TableToolCtx) => {
+      const scope = compassScopeFromCtx(ctx);
+      const projectId = scope?.projectId ?? null;
+      if (!projectId) {
+        return { ok: false, error: '这个会话没有钉定项目,没有"当前项目"可挂。' };
+      }
+      const tenantId = (ctx?.requestContext?.get('tenantId') as string | undefined) ?? DEV_TENANT_ID;
+      const project = await getProject(tenantId, projectId);
+      if (!project) return { ok: false, error: '找不到当前项目。' };
+      if (project.sources.includes(input.source)) {
+        return { ok: true, sources: project.sources, note: '这个数据源本来就挂着,没有改动。' };
+      }
+      const next = [...project.sources, input.source];
+      try {
+        const updated = await updateProject(tenantId, projectId, { sources: next });
+        return { ok: true, sources: updated?.sources ?? next };
+      } catch (err) {
+        // 未授权的场景会在这里被拒 —— 挂载不能凭空造出权限。
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  });
+
   return {
     table_get: tableGet,
     table_update_row: tableUpdateRow,
@@ -1248,6 +1295,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     load_compass_orders: loadCompassOrders,
     load_compass_workorders: loadCompassWorkorders,
     load_compass_resources: loadCompassResources,
+    attach_project_source: attachProjectSource,
     table_chart: tableChart,
     table_query: tableQuery,
     project_file_read: projectFileRead,
