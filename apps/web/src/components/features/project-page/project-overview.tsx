@@ -11,7 +11,12 @@ import { useWorkspaceCollapsedInset } from '@/components/features/workspace-view
 import { WorkspaceMain } from '@/components/features/workspace-main';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { projectSourceLabel } from '@/lib/project-labels';
-import { setProjectFolder, useProjects, type ProjectInfo } from '@/lib/projects-sync';
+import {
+  setProjectFolder,
+  setProjectSources,
+  useProjects,
+  type ProjectInfo,
+} from '@/lib/projects-sync';
 import {
   folderPickAvailability,
   pickProjectFolder,
@@ -133,6 +138,7 @@ const ProjectOverview: FC = () => {
         <aside className="hidden w-80 shrink-0 lg:block">
           {/* 一张卡、细线分段 —— 三个孤立的边框看起来就是三块没关系的东西。 */}
           <RailCard>
+            <ProjectSourcesSection project={project} />
             <ProjectContextSection project={project} />
             <ProjectFolderRow project={project} />
           </RailCard>
@@ -141,6 +147,94 @@ const ProjectOverview: FC = () => {
     </div>
   );
 };
+
+/**
+ * 这个项目用哪些数据源。
+ *
+ * 建项目时**不必选**(见 project-list.tsx 的说明),所以那句"以后随时能加"要在这里
+ * 落地。看得到什么取决于你在 Compass 那边被授权的场景 —— 这里只是从中挑。
+ */
+const ProjectSourcesSection: FC<{ project: ProjectInfo }> = ({ project }) => {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const granted = useGrantedSources();
+  const picked = new Set(project.sources);
+
+  const toggle = async (source: string) => {
+    if (busy) return;
+    const next = new Set(picked);
+    if (next.has(source)) next.delete(source);
+    else next.add(source);
+    setBusy(true);
+    const res = await setProjectSources(project.id, [...next]);
+    setBusy(false);
+    if (!res.ok) setError(res.error);
+    else setError(null);
+  };
+
+  return (
+    <RailSection
+      title="数据源"
+      action={
+        granted.length
+          ? { label: editing ? '完成' : '改', onClick: () => setEditing((v) => !v) }
+          : undefined
+      }
+      {...(project.sources.length
+        ? { hint: project.sources.map(projectSourceLabel).join('、') }
+        : {})}
+    >
+      {project.sources.length === 0 && !editing ? (
+        // 说的是**没选会怎样**,而不是"没选"。
+        <RailEmpty>
+          这个项目只用你自己的文件。<br />接上数据源后,对话里就能直接查排产数据。
+        </RailEmpty>
+      ) : null}
+      {editing ? (
+        <div className="flex flex-col gap-1.5">
+          {granted.map((s) => (
+            <label key={s} className="flex cursor-pointer items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                className="accent-primary size-3.5"
+                checked={picked.has(s)}
+                disabled={busy}
+                onChange={() => void toggle(s)}
+              />
+              <span>{projectSourceLabel(s)}</span>
+            </label>
+          ))}
+          {granted.length === 0 ? (
+            <p className="text-muted-foreground text-xs">
+              Compass 还没给你任何数据源 —— 先在 设置 → MCP 里连接。
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {error ? <p className="text-destructive mt-1 text-xs">{error}</p> : null}
+    </RailSection>
+  );
+};
+
+/** 这个账号在 Compass 被授权的场景 —— 项目只能从中挑,不能自己扩。 */
+function useGrantedSources(): string[] {
+  const [sources, setSources] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch('/api/compass-identity/whoami');
+        const body = (await res.json()) as { sources?: string[] };
+        if (alive && Array.isArray(body.sources)) setSources(body.sources);
+      } catch {
+        /* 取不到就当没有 —— 这一段是陈述,不该报错打断人 */
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+  return sources;
+}
 
 /**
  * 项目文件夹(spec 2026-08-14 §2)。
@@ -198,7 +292,8 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
         // 说的是**没设会怎样**,不是"没设"。而且一句话说完 —— 原来那句长到被截断,
         // 读者只看到"导入…"。
         <RailEmpty>
-          设一个文件夹,导入的原件就会留档;<br />不设只存解析出来的行。
+          文件夹给的是<b>读的权限</b>:需要时才去看,不会整个塞进上下文。<br />
+          真正算上下文的,是你导入时留档的那些原件。
         </RailEmpty>
       ) : null}
       {typing || (!availability.canPick && !folder) ? (

@@ -118,16 +118,29 @@ describe('project CRUD routes', () => {
     }
   });
 
-  it('POST rejects empty sources with 400', async () => {
+  it('**零数据源的项目是合法的** —— 只用自己的文件,以后随时能加', async () => {
+    // 原来强制至少选一个,等于把"项目"降成"数据源的别名" —— 而每个数据源本来就
+    // 已经有一个默认项目;人自己建项目是为了"我要做的事"。而且建的那一刻常常还
+    // 不知道要用哪个数据源。
     const res = await app.inject({
       method: 'POST',
       url: '/api/projects',
-      payload: { name: '空项目', sources: [] },
+      payload: { name: '只放我自己的文件', sources: [] },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    const body = res.json() as { ok: boolean; project: { sources: string[] } };
+    assert.equal(body.ok, true);
+    assert.deepEqual(body.project.sources, []);
+  });
+
+  it('但没授权的数据源仍然拒 —— 空集放开的是"必填",不是"随便填"', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      payload: { name: 'x', sources: ['nope'] },
     });
     assert.equal(res.statusCode, 400);
-    const body = res.json() as { ok: boolean; error: string };
-    assert.equal(body.ok, false);
-    assert.match(body.error, /at least one source/);
+    assert.match((res.json() as { error: string }).error, /nope/);
   });
 
   it('POST rejects an ungranted source with 400 naming it (disabled default ⇒ not granted)', async () => {

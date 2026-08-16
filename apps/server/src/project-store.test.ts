@@ -186,7 +186,10 @@ describe('project store', () => {
     });
 
     it('throws on empty sources', () => {
-      assert.throws(() => assertSourcesGranted([], granted), /at least one source/);
+      // **零数据源是合法的**:一个只用你自己文件/文件夹的项目。原来强制至少选一个,
+      // 等于把"项目"降成"数据源的别名" —— 而每个数据源本来就已经有默认项目了。
+      // 用户自己建项目是为了"我要做的事",不是"我要看哪个厂"。
+      assert.doesNotThrow(() => assertSourcesGranted([], granted));
     });
 
     it('throws when any source is ungranted', () => {

@@ -308,7 +308,13 @@ const NewProjectDialog: FC<{
           autoFocus
         />
       </FormField>
-      <FormField label={t('threadList.projectSources')} required>
+      {/* **数据源不是必填。** 建项目的那一刻常常还不知道要用哪个;强制选一个等于
+          把"项目"降成"数据源的别名" —— 而每个数据源本来就已经有一个默认项目了。
+          不选 = 这个项目只用你自己的文件和文件夹,以后随时能加。 */}
+      <FormField
+        label={t('threadList.projectSources')}
+        hint={sourceOptions.length ? '不选也行 —— 那这个项目只放你自己的文件,以后随时能加' : undefined}
+      >
         <div className="flex flex-col gap-1.5">
           {sourceOptions.map((source) => (
             <label key={source} className="flex cursor-pointer items-center gap-2 text-sm">

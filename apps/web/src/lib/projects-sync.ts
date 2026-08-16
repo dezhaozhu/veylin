@@ -107,6 +107,28 @@ export async function createProject(
  * managed 项目也能绑:文件夹既不是身份也不是范围,是本机偏好,而默认项目
  * (锅炉厂、上重)恰恰是最需要它的那些。名字与场景仍归 reconciler 管。
  */
+/** 事后改这个项目用哪些数据源 —— 建项目时不必选,那句"以后随时能加"得有地方落。 */
+export async function setProjectSources(
+  id: string,
+  sources: string[],
+): Promise<{ ok: true; project: ProjectInfo } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sources }),
+    });
+    const body = (await res.json()) as { ok?: boolean; project?: ProjectInfo; error?: string };
+    if (!res.ok || !body.ok || !body.project) {
+      return { ok: false, error: body.error ?? `保存失败(HTTP ${res.status})` };
+    }
+    invalidateProjects();
+    return { ok: true, project: body.project };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function setProjectFolder(
   id: string,
   folder: string,

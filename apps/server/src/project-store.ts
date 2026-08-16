@@ -151,15 +151,15 @@ export async function resolvePinnedProjectScope(
 }
 
 /**
- * Guard for compose/pin time: a project's sources must be a non-empty subset
- * of the tenant's granted Compass sources. Throws otherwise — callers map the
- * error to a 400/deny. (Compass re-validates per call regardless; this is the
- * server-side UX boundary, not the security boundary.)
+ * 项目的数据源必须是本租户已授权集合的**子集**。不是子集就抛,调用方映射成 400。
+ * (Compass 每次调用都会再验一遍;这里是服务端的 UX 边界,不是安全边界。)
+ *
+ * **空集合法**:一个零数据源的项目 = 只用你自己的文件和文件夹。原来强制至少选
+ * 一个,等于把"项目"降成"数据源的别名" —— 而每个数据源本来就已经有一个默认项目;
+ * 人自己建项目是为了"我要做的事",不是"我要看哪个厂"。而且建项目的那一刻,常常
+ * 还不知道要用哪个数据源。
  */
 export function assertSourcesGranted(sources: string[], granted: string[]): void {
-  if (sources.length === 0) {
-    throw new Error('project must include at least one source');
-  }
   const grantedSet = new Set(granted);
   const ungranted = sources.filter((s) => !grantedSet.has(s));
   if (ungranted.length > 0) {
