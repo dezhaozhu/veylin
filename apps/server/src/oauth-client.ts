@@ -1,9 +1,11 @@
 /**
- * Veylin 作为 Compass 的 OAuth 客户端(授权码 + PKCE)。
+ * OAuth 客户端的**判据**那一半(授权码 + PKCE):PKCE 怎么生成、授权链接怎么拼、
+ * 回调回来算不算数。
  *
- * 对应 Compass 侧 spec 2026-08-15 §2。这里是**判据**那一半:PKCE 怎么生成、
- * 授权链接怎么拼、回调回来算不算数。有状态的部分(起监听、换 token)在
- * compass-oauth-flow.ts。
+ * 通用的 —— Compass 和任何一个需要授权的 MCP 服务器走的都是这一套。原本只为
+ * Compass 写,后来做通用 MCP 授权时发现两条路的这一半完全一样;与其各写一份
+ * (然后其中一份慢慢长出自己的 bug),不如共用。有状态的部分分别在
+ * compass-oauth-flow.ts 和 mcp-oauth-flow.ts。
  *
  * 客户端这一侧真正能自己把自己坑掉的只有两处:
  *
@@ -33,7 +35,8 @@ export function createState(): string {
 }
 
 export type AuthorizeParams = {
-  baseUrl: string;
+  /** 完整的授权端点 —— 通用路径下它来自对方元数据,不能靠拼路径猜出来。 */
+  authorizationEndpoint: string;
   clientId: string;
   redirectUri: string;
   challenge: string;
@@ -41,7 +44,7 @@ export type AuthorizeParams = {
 };
 
 export function authorizeUrl(p: AuthorizeParams): string {
-  const u = new URL(`${p.baseUrl.replace(/\/+$/, '')}/oauth/authorize`);
+  const u = new URL(p.authorizationEndpoint);
   u.searchParams.set('response_type', 'code');
   u.searchParams.set('client_id', p.clientId);
   u.searchParams.set('redirect_uri', p.redirectUri);

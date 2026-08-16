@@ -1,7 +1,6 @@
 {
   "name": "compass-scheduler",
   "version": "1.0.0",
-  "description": "Compass 智能排产：真实多厂数据、治理编辑（propose→preview→commit）、增量重排、鼓点/资源负荷分析。远程 MCP，需填入你的 project token。",
-  "author": "Compass",
-  "mcpServers": "./.mcp.json"
+  "description": "Compass 智能排产的用法知识:治理编辑(propose→preview→commit)、增量重排、鼓点/资源负荷分析,以及「数据诚实」的判读方式。连接与授权在 设置 → MCP 里完成,这个包不含凭据。",
+  "author": "Compass"
 }

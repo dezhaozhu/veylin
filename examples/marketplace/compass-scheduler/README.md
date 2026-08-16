@@ -1,42 +1,37 @@
 # compass-scheduler — Compass 智能排产插件
 
-把 [Compass](https://mcp.compass-work.com) 排产引擎接入 Veylin：真实多厂数据、治理编辑（propose→preview→commit）、增量重排、鼓点/资源负荷分析，共 14 个 MCP 工具。
+把 [Compass](https://mcp.compass-work.com) 排产引擎接入 Veylin：真实多厂数据、治理编辑（propose→preview→commit）、增量重排、鼓点/资源负荷分析，共 14 个 MCP 工具。**本包只装用法知识,连接与授权在 设置 → MCP 里完成。**
 
-## 安装（两步）
+## 安装
 
-1. 在 Veylin 设置 → 插件 → Marketplace 安装 **compass-scheduler**。
-2. 打开安装目录下的 `.mcp.json`，把 `COMPASS_MCP_TOKEN` 换成你的 **project token**，重启会话即可。
+在 Veylin 设置 → 插件 → Marketplace 安装 **compass-scheduler**。就这一步 ——
+**这个包不含凭据,也不需要你往任何文件里贴 token**。
 
-## project token 是什么？从哪来？
+## 那怎么连上 Compass？
 
-一个 project = 你在 Compass 上的一个排产数据集绑定（单厂，或人为配置的多厂只读视图）。token 由 Compass 自助开通接口签发：
+在 **设置 → MCP** 里连接一次,整个应用共用:
 
-```bash
-# 用你的 account token（找管理员开通）创建一个 project：
-curl -X POST https://mcp.compass-work.com/projects \
-  -H "Authorization: Bearer $ACCOUNT_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name": "我的排产", "sources": ["guolu"]}'
-# 响应里的 mcp_token 就是要填进 .mcp.json 的值
-```
+1. Compass 那一行点「连接」,填地址;
+2. 「用浏览器登录」—— 走标准 OAuth(授权码 + PKCE),同意页上会写明这次授权了什么;
+3. 连上之后,你在 Compass 有权限的数据源就会出现,项目里直接可选。
 
-要点：
+**为什么不再往文件里贴 token**:凭据写进可分发的文件会被复制、会过期,而过期时的
+表现是"工具都在、一调就 401" —— 最难查的一类故障。而且"以谁的身份"是**应用级**
+的事,不该每装一个插件重来一遍。
 
-- **token 即边界**。一个 token 只能看/改它绑定的 project，切 project = 换 token（在 Compass 侧完成，agent 无法切换——这是有意的安全设计）。
-- token 可随时**轮换/吊销**（`POST /projects/{id}/token` / `DELETE /projects/{id}`），旧 token 立即失效。
-- 多厂 project 是只读对比视图；要写入请用单厂 project。
+看得到什么取决于你在 Compass 那边被授权的场景;新账号只有自己的工作区。
+授权可随时在同一行撤销,Compass 侧也可即时吊销。
 
 ## 结构
 
 ```
-.mcp.json            MCP 声明（本地 stdio 桥 → 远程 Compass）
-mcp/bridge.cjs       stdio↔HTTP 转发桥（零依赖，Node ≥18）
-references/          agent 行为手册：治理循环 / 工具速查 / 数据诚实
+references/          agent 行为手册:治理循环 / 工具速查 / 数据诚实
 ```
 
-桥的存在是因为 Veylin 插件目前只支持 stdio MCP；待支持远程条目后可删桥改为 `url` 声明。
+只剩知识。原来这里还有一份 `.mcp.json` 和一个 stdio↔HTTP 转发桥 —— 那是"Veylin
+插件只支持 stdio MCP"时代的绕法,代价是**凭据要写进包里的文件**。现在远程 MCP
+条目和通用授权都有了,桥和声明一并删掉:插件管知识,连接与授权管连接与授权。
 
 ## 测试
 
-```bash
-node --test examples/marketplace/compass-scheduler/mcp/bridge.test.cjs
-```
+本包只有文档,没有可执行代码,因此没有测试。

@@ -9,6 +9,7 @@ import { registerPluginsRoutes } from './plugins.js';
 import { registerRulesRoutes } from './rules.js';
 import { registerMcpRoutes } from './mcp.js';
 import { registerCompassCredentialRoutes } from './compass-credential.js';
+import { registerMcpOAuthRoutes } from './mcp-oauth.js';
 import { registerAutomationsRoutes } from './automations.js';
 import { registerWorkflowsRoutes } from './workflows.js';
 import { registerWebhooksRoutes } from './webhooks.js';
@@ -33,6 +34,7 @@ export async function registerApiRoutes(app: FastifyInstance, deps: ServerDeps):
   registerRulesRoutes(app, deps);
   registerMcpRoutes(app, deps);
   registerCompassCredentialRoutes(app, { syncCompassIdentity: deps.syncCompassIdentity });
+  registerMcpOAuthRoutes(app);
   registerAutomationsRoutes(app, deps);
   registerWorkflowsRoutes(app, deps);
   registerWebhooksRoutes(app, deps);

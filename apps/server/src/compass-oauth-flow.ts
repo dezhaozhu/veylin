@@ -25,7 +25,7 @@ import {
   createPkce,
   createState,
   readCallback,
-} from './compass-oauth.js';
+} from './oauth-client.js';
 
 const CLIENT_FILE = 'compass-oauth-client.json';
 /** 用户要去浏览器里登录 —— 给足时间,但不是无限。 */
@@ -227,7 +227,10 @@ export async function startOAuthFlow(
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as AddressInfo).port;
   const redirectUri = `http://127.0.0.1:${port}/callback`;
-  const url = authorizeUrl({ baseUrl: base, clientId: reg.clientId, redirectUri, challenge, state });
+  const url = authorizeUrl({
+    authorizationEndpoint: `${base}/oauth/authorize`,
+    clientId: reg.clientId, redirectUri, challenge, state,
+  });
 
   let closed = false;
   const close = () => {

@@ -8,7 +8,7 @@ import {
   createPkce,
   createState,
   readCallback,
-} from './compass-oauth.js';
+} from './oauth-client.js';
 
 describe('PKCE', () => {
   it('challenge 确实是 verifier 的 S256(否则服务端永远说对不上)', () => {
@@ -37,7 +37,7 @@ describe('PKCE', () => {
 
 describe('授权链接', () => {
   const p = {
-    baseUrl: 'http://127.0.0.1:8000/',
+    authorizationEndpoint: 'http://127.0.0.1:8000/oauth/authorize',
     clientId: 'cid',
     redirectUri: 'http://127.0.0.1:51234/callback',
     challenge: 'CH',
@@ -58,8 +58,9 @@ describe('授权链接', () => {
     assert.equal(u.searchParams.get('redirect_uri'), 'http://127.0.0.1:51234/callback');
   });
 
-  it('base 末尾多个斜杠不会拼出 //oauth', () => {
-    assert.ok(!authorizeUrl(p).includes('//oauth'));
+  it('授权端点原样使用 —— 通用路径下它来自对方元数据,拼路径猜是错的', () => {
+    const u = new URL(authorizeUrl({ ...p, authorizationEndpoint: 'https://as.x/custom/authz' }));
+    assert.equal(u.origin + u.pathname, 'https://as.x/custom/authz');
   });
 });
 

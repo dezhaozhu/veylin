@@ -24,6 +24,7 @@ import {
 } from '../settings-list';
 import { mcpServerIcon } from '@/lib/mcp-icon';
 import { CompassConnectionRow, useCompassIdentity } from './compass-connection-row';
+import { useMcpAuth } from './use-mcp-auth';
 
 const LIBRARY = [
   {
@@ -81,11 +82,19 @@ function InstalledRow({
   health,
   onToggle,
   onDelete,
+  auth = null,
+  authBusy = false,
+  onAuthorize,
+  onRevoke,
 }: {
   item: InstalledItem;
   health?: McpServerHealth;
   onToggle: (enabled: boolean) => void;
   onDelete?: () => void;
+  auth?: 'authorize' | 'revoke' | null;
+  authBusy?: boolean;
+  onAuthorize?: () => void | Promise<void>;
+  onRevoke?: () => void | Promise<void>;
 }) {
   const { t } = useTranslation();
 
@@ -113,6 +122,11 @@ function InstalledRow({
 
   const subtitle = statusLine ? `${item.detail} · ${statusLine}` : item.detail;
   const menuItems = [
+    // 通用授权:只有对方真的要授权(401)或已经授权过时才出现 —— 不给用不上的按钮。
+    ...(auth === 'authorize'
+      ? [{ label: authBusy ? '授权中…' : '授权', onClick: () => void onAuthorize?.() }]
+      : []),
+    ...(auth === 'revoke' ? [{ label: '撤销授权', onClick: () => void onRevoke?.() }] : []),
     {
       label: item.enabled ? t('common.disable') : t('common.enable'),
       onClick: () => onToggle(!item.enabled),
@@ -232,6 +246,11 @@ export function McpSettingsScreen() {
   // Compass 由 CompassConnectionRow 单独代表(它在未连接时也要出现),所以列表里
   // 不再重复渲染那条托管条目。
   const compass = useCompassIdentity();
+  // 只探远程条目:本地 stdio 的插件/内置服务器没有 401 这回事。
+  const mcpAuth = useMcpAuth(
+    remote.filter((r) => !r.managed).map((r) => ({ id: r.id, url: r.url })),
+    () => void load(),
+  );
   const otherInstalled = installedItems.filter(
     (item) => !(item.managed && item.name === 'compass'),
   );
@@ -427,6 +446,9 @@ export function McpSettingsScreen() {
             它不能藏在"有已装服务器才渲染"的分支里 —— 新用户恰恰一个都没有,
             那正是最需要看到入口的时候。托管的 compass 条目由它代表,所以下面
             把那条过滤掉:两行说同一件事就是重复。 */}
+        {mcpAuth.message ? (
+          <p className="text-muted-foreground mb-2 text-xs">{mcpAuth.message}</p>
+        ) : null}
         <SettingsConnectedList>
           {compassConnected ? (
             <CompassConnectionRow who={compass.who} onChanged={() => { void compass.reload(); void load(); }} />
@@ -438,6 +460,12 @@ export function McpSettingsScreen() {
               health={healthByName.get(item.name)}
               onToggle={(on) => void toggleInstalled(item, on)}
               onDelete={item.source === 'remote' ? () => setDeleteTarget(item) : undefined}
+              auth={item.remoteId ? mcpAuth.actionFor(item.remoteId) : null}
+              authBusy={mcpAuth.busyId === item.remoteId}
+              onAuthorize={
+                item.remoteId ? () => mcpAuth.authorize(item.remoteId!, item.detail) : undefined
+              }
+              onRevoke={item.remoteId ? () => mcpAuth.revoke(item.remoteId!) : undefined}
             />
           ))}
         </SettingsConnectedList>
