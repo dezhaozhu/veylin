@@ -5,6 +5,8 @@
  * x-compass-source composed from the pinned project's scene set.
  */
 
+import { explain401 } from './compass-identity.js';
+
 export type CompassRestScope = { baseUrl: string; headers: Record<string, string> };
 
 /** MCP entry url (`…/mcp/`) → REST base (`…`). */
@@ -34,7 +36,15 @@ export async function fetchCompassData(
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? BULK_FETCH_TIMEOUT_MS);
   try {
     const res = await f(url, { headers: rest.headers, signal: controller.signal });
-    if (!res.ok) return { ok: false, error: `GET ${path} returned HTTP ${res.status}` };
+    if (!res.ok) {
+      // 401 单独解释,和身份那条走同一个解释器:同一张过期 token 会让 /my/sources
+      // 和 /data/* 一起 401,两边给的话不一样就等于让人排查两遍。
+      const bearer = rest.headers.Authorization?.replace(/^Bearer\s+/i, '');
+      if (res.status === 401 && bearer) {
+        return { ok: false, error: `Compass 拒绝了这个身份:${explain401(bearer)}` };
+      }
+      return { ok: false, error: `GET ${path} returned HTTP ${res.status}` };
+    }
     const body = (await res.json()) as unknown;
     if (body == null || typeof body !== 'object' || Array.isArray(body)) {
       return { ok: false, error: `GET ${path} returned a non-object body` };

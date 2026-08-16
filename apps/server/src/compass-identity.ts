@@ -99,7 +99,12 @@ export function explain401(token: string): string {
     if (typeof claims.exp === 'number') {
       const at = new Date(claims.exp * 1000);
       if (at.getTime() < Date.now()) {
-        return `token 已于 ${at.toLocaleString('zh-CN')} 过期${who} —— 重新签一张即可`;
+        // "重新签一张即可"曾经把人带偏:token 是**进程启动时**读一次的,换了 .env
+        // 而不重启,401 照旧 —— 人会以为自己签错了,再签一次,还是不通。
+        return (
+          `token 已于 ${at.toLocaleString('zh-CN')} 过期${who} —— ` +
+          `重新签一张后**要重启 Veylin**(token 在启动时读入,改 .env 不会热生效)`
+        );
       }
     }
     return `token 未过期${who},401 多半是被吊销(代数已提)或对面换了签名密钥`;
