@@ -10,6 +10,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 
+import { getFlow, startOAuthFlow } from '../compass-oauth-flow.js';
 import {
   clearCompassCredential,
   maskToken,
@@ -20,6 +21,8 @@ import {
 export type CompassCredentialDeps = {
   /** 测试注入用;生产走 ensureDataDir()。 */
   dataDir?: () => string | undefined;
+  /** 连上之后立刻同步一次 —— 数据源和默认项目当场出来。 */
+  syncCompassIdentity?: () => Promise<unknown>;
 };
 
 export function registerCompassCredentialRoutes(
@@ -52,6 +55,43 @@ export function registerCompassCredentialRoutes(
     }
     writeCompassCredential({ url, token }, dir());
     return { ok: true };
+  });
+
+  // —— 用浏览器登录(授权码 + PKCE)————————————————————————
+  //
+  // token **不经过前端**:回调直接落到服务端进程,换完就写进凭据文件。让它在
+  // 浏览器和前端之间过一道,只是多了几个它可能泄露的地方。前端只拿到一个
+  // authorizeUrl(去内置浏览器里打开)和一个 flowId(用来问结果)。
+  app.post('/api/compass-identity/oauth/start', async (req, reply) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const url = typeof body.url === 'string' ? body.url.trim() : '';
+    if (!url) return reply.code(400).send({ error: '缺少 url' });
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return reply.code(400).send({ error: `url 必须是 http(s): ${parsed.protocol}` });
+      }
+    } catch {
+      return reply.code(400).send({ error: `url 解析不了: ${url}` });
+    }
+    try {
+      const out = await startOAuthFlow(url, {
+        dataDir: dir(),
+        onConnected: deps.syncCompassIdentity,
+      });
+      return out;
+    } catch (err) {
+      // 注册不上多半是地址写错或那台 Compass 版本旧(没有 /oauth/register)——
+      // 把原话带出来,别只回一个 500。
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.get('/api/compass-identity/oauth/status', async (req, reply) => {
+    const flowId = (req.query as Record<string, string>)?.flowId ?? '';
+    const flow = getFlow(flowId);
+    if (!flow) return reply.code(404).send({ error: '没有这次登录(可能已经超时)' });
+    return flow;
   });
 
   app.delete('/api/compass-identity/credential', async () => {

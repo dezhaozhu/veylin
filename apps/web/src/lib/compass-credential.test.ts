@@ -7,6 +7,9 @@ import {
   normalizeToken,
   saveCompassCredential,
   validateConnectInput,
+  startOAuthLogin,
+  pollOAuthStatus,
+  describeOAuthStatus,
 } from './compass-credential.js';
 
 const ok = (body: unknown) =>
@@ -88,5 +91,37 @@ describe('贴进来的东西先看一眼', () => {
 
   it('都对就没有话说', () => {
     assert.equal(validateConnectInput('http://127.0.0.1:8000', 'tok'), null);
+  });
+});
+
+describe('用浏览器登录', () => {
+  it('开始登录拿到授权链接和 flowId', async () => {
+    const { impl } = fake(() => ok({ flowId: 'f1', authorizeUrl: 'http://c/oauth/authorize?x=1' }));
+    const res = await startOAuthLogin('http://c:8000', impl);
+    assert.equal(res.ok, true);
+    if (res.ok) assert.equal(res.start.flowId, 'f1');
+  });
+
+  it('开始失败时把服务端的话带出来 —— 多半是地址写错或那台 Compass 太旧', async () => {
+    const { impl } = fake(() => new Response(JSON.stringify({ error: '注册客户端失败' }), { status: 502 }));
+    const res = await startOAuthLogin('http://c:8000', impl);
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.match(res.error, /注册客户端失败/);
+  });
+
+  it('**会话没了要说过期,不能一直显示等待中**', async () => {
+    const { impl } = fake(() => new Response('{}', { status: 404 }));
+    const s = await pollOAuthStatus('gone', impl);
+    assert.equal(s.status, 'error');
+    if (s.status === 'error') assert.match(s.error, /过期/);
+  });
+
+  it('拒绝是一种正常结果,措辞不该像出错', () => {
+    assert.match(describeOAuthStatus({ status: 'denied' }), /拒绝/);
+    assert.doesNotMatch(describeOAuthStatus({ status: 'denied' }), /失败|错误/);
+  });
+
+  it('等待中的话要说清楚在等什么', () => {
+    assert.match(describeOAuthStatus({ status: 'pending' }), /浏览器/);
   });
 });

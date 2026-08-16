@@ -85,3 +85,59 @@ export function validateConnectInput(url: string, token: string): string | null 
   }
   return null;
 }
+
+// —— 用浏览器登录(授权码 + PKCE)——————————————————————————
+//
+// token **不经过前端**:回调直接落到服务端进程,换完写进凭据文件。这里只负责
+// 把授权页打开、然后问结果。
+
+export type OAuthStart = { flowId: string; authorizeUrl: string };
+
+export async function startOAuthLogin(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: true; start: OAuthStart } | { ok: false; error: string }> {
+  const res = await fetchImpl('/api/compass-identity/oauth/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: url.trim() }),
+  });
+  const body = (await res.json().catch(() => ({}))) as OAuthStart & { error?: string };
+  if (!res.ok) return { ok: false, error: body.error ?? `无法开始登录(HTTP ${res.status})` };
+  return { ok: true, start: { flowId: body.flowId, authorizeUrl: body.authorizeUrl } };
+}
+
+export type OAuthStatus =
+  | { status: 'pending' }
+  | { status: 'done' }
+  | { status: 'denied' }
+  | { status: 'error'; error: string };
+
+export async function pollOAuthStatus(
+  flowId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<OAuthStatus> {
+  const res = await fetchImpl(
+    `/api/compass-identity/oauth/status?flowId=${encodeURIComponent(flowId)}`,
+  );
+  if (res.status === 404) {
+    // 会话不在了 —— 多半是超时被清掉。说清楚,别显示成永远 pending。
+    return { status: 'error', error: '这次登录已经过期,请重新开始。' };
+  }
+  const body = (await res.json().catch(() => ({}))) as OAuthStatus;
+  return body.status ? body : { status: 'error', error: '读不到登录状态' };
+}
+
+/** 登录还没结束时,界面该说什么。 */
+export function describeOAuthStatus(s: OAuthStatus): string {
+  switch (s.status) {
+    case 'pending':
+      return '等你在浏览器里登录并授权…';
+    case 'done':
+      return '连上了';
+    case 'denied':
+      return '你在浏览器里拒绝了这次授权。';
+    default:
+      return s.error;
+  }
+}

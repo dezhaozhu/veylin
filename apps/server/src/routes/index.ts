@@ -32,7 +32,7 @@ export async function registerApiRoutes(app: FastifyInstance, deps: ServerDeps):
   registerPluginsRoutes(app, deps);
   registerRulesRoutes(app, deps);
   registerMcpRoutes(app, deps);
-  registerCompassCredentialRoutes(app);
+  registerCompassCredentialRoutes(app, { syncCompassIdentity: deps.syncCompassIdentity });
   registerAutomationsRoutes(app, deps);
   registerWorkflowsRoutes(app, deps);
   registerWebhooksRoutes(app, deps);

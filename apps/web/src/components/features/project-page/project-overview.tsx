@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type FC } from 'react';
 import {
+  describeOAuthStatus,
   disconnectCompass,
   normalizeToken,
+  pollOAuthStatus,
   saveCompassCredential,
+  startOAuthLogin,
   validateConnectInput,
 } from '@/lib/compass-credential';
 import { ThreadListPrimitive, useAuiState } from '@assistant-ui/react';
@@ -28,6 +31,7 @@ import { normalizeTypedPath } from '@/lib/project-folder-pick';
 import { describeFreshness } from '@/lib/freshness';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
 import { useThreadActivityMap } from '@/lib/use-thread-activity';
+import { openWebView } from '@/lib/tauri-web-view';
 import { startWindowDrag } from '@/lib/window-drag';
 import { SceneCardCell } from './scene-card-cell';
 import { sceneCardColumns, type McpAppToolsByServer } from './scene-card-grid';
@@ -242,6 +246,7 @@ const CompassIdentityRow: FC = () => {
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [flow, setFlow] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -274,6 +279,38 @@ const CompassIdentityRow: FC = () => {
     await load();
   };
 
+  /**
+   * 用内置浏览器走完整的授权码 + PKCE。
+   *
+   * 只在自己发起的这次流程期间轮询,拿到结果就停 —— 不留后台定时器。
+   */
+  const browserLogin = async () => {
+    const bad = validateConnectInput(url, 'placeholder');
+    if (bad) { setError(bad); return; }
+    setError(null);
+    setBusy(true);
+    const started = await startOAuthLogin(url);
+    if (!started.ok) { setBusy(false); setError(started.error); return; }
+    try {
+      await openWebView('compass-login', started.start.authorizeUrl);
+    } catch {
+      // 浏览器里跑(非桌面端)开不了内置视图 —— 那就把链接给他,别让流程卡死。
+      setFlow(`在浏览器里打开这个地址完成登录:${started.start.authorizeUrl}`);
+    }
+    for (let i = 0; i < 150; i += 1) {
+      const s = await pollOAuthStatus(started.start.flowId);
+      setFlow(describeOAuthStatus(s));
+      if (s.status !== 'pending') {
+        setBusy(false);
+        if (s.status === 'done') { setEditing(false); setFlow(null); await load(); }
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    setBusy(false);
+    setFlow('等太久了,没有收到授权结果。可以重试。');
+  };
+
   // 没连接时**也要有入口** —— 之前这里直接不渲染,新装的应用根本没地方连。
   if (!who?.configured && !editing) {
     return (
@@ -290,20 +327,30 @@ const CompassIdentityRow: FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <input className="border-input h-7 w-56 rounded border px-2" value={url}
                  onChange={(e) => setUrl(e.target.value)} placeholder="http://127.0.0.1:8000" />
-          <input className="border-input h-7 w-72 rounded border px-2" value={token}
-                 onChange={(e) => {
-                   const out = normalizeToken(e.target.value);
-                   setToken(out.token);
-                   setNote(out.note ?? null);
-                 }}
-                 placeholder="粘贴 token" />
-          <button className="underline" disabled={busy} onClick={() => void connect()}>
-            {busy ? '连接中…' : '连接'}
+          <button className="underline" disabled={busy} onClick={() => void browserLogin()}>
+            {busy ? '进行中…' : '用浏览器登录'}
           </button>
           <button className="text-muted-foreground underline"
-                  onClick={() => { setEditing(false); setError(null); }}>取消</button>
+                  onClick={() => { setEditing(false); setError(null); setFlow(null); }}>取消</button>
         </div>
-        {note ? <p className="text-muted-foreground mt-1">{note}</p> : null}
+        {flow ? <p className="text-muted-foreground mt-1">{flow}</p> : null}
+        {/* 粘贴 token 留作备选:对面 Compass 版本旧、没有 /oauth/* 时,这是唯一的路。 */}
+        <details className="mt-2">
+          <summary className="text-muted-foreground cursor-pointer">或者粘贴一张 token</summary>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input className="border-input h-7 w-72 rounded border px-2" value={token}
+                   onChange={(e) => {
+                     const out = normalizeToken(e.target.value);
+                     setToken(out.token);
+                     setNote(out.note ?? null);
+                   }}
+                   placeholder="粘贴 token" />
+            <button className="underline" disabled={busy} onClick={() => void connect()}>
+              {busy ? '连接中…' : '连接'}
+            </button>
+          </div>
+          {note ? <p className="text-muted-foreground mt-1">{note}</p> : null}
+        </details>
         {error ? <p className="text-destructive mt-1">{error}</p> : null}
         <p className="text-muted-foreground mt-1">
           连接后立刻生效,不用重启。凭据存在本机数据目录(仅本人可读),不写进 .env。
