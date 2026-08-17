@@ -1336,6 +1336,95 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     },
   });
 
+  /**
+   * 当前项目的文件夹,**拿不到时说清是哪一种拿不到**:"没钉项目"和"项目没绑
+   * 文件夹"是两回事,该做的下一步也不同。(上面那个 folderOfCtx 把两者并成了
+   * undefined,调用处只好一律说"没绑文件夹" —— 那句话在没钉项目时是错的。)
+   */
+  const folderOrReason = async (ctx?: TableToolCtx) => {
+    const projectId = compassScopeFromCtx(ctx)?.projectId ?? null;
+    if (!projectId) return { error: '这个会话没有钉定项目,不知道该在哪个项目文件夹里找。' };
+    const tenantId = (ctx?.requestContext?.get('tenantId') as string | undefined) ?? DEV_TENANT_ID;
+    const folder = (await getProject(tenantId, projectId))?.folder;
+    if (!folder) return { error: '这个项目还没有绑定本地文件夹。先在项目页绑一个。' };
+    return { folder };
+  };
+
+  /**
+   * 改一份文档。**改发生在副本上,原件一个字节不动。**
+   *
+   * 为什么不原地改 docx:Word 会把一句话拆进好几个 `<w:r>`,选中的那段在文件里
+   * 很可能不是连续存着的 —— 保格式改 docx 是一整块最容易出错的代码。
+   *
+   * 锚点必须**一字不差且唯一**:找不到、有多处,都拒绝并说出下一步。不做模糊
+   * 匹配 —— 猜着改会改到别处,而且改完看不出来,人只会去看他以为改了的那一处。
+   */
+  const documentEdit = createTool({
+    id: 'document_edit',
+    description:
+      '改一份项目文档(Word/PPT/markdown 等)。**不改原件** —— 第一次改会自动从原件建一份' +
+      '可编辑副本(文稿/xxx.md),之后改都落在副本上,每次一个版本、可回退。' +
+      'find 必须是文档里一字不差的原文,而且只出现一处;不唯一时把它写长一点。' +
+      '改完把 diff 给用户看,由他确认 —— 不要替他决定改得对不对。',
+    inputSchema: z.object({
+      name: z.string().describe('原件文件名,例如 工艺说明.docx'),
+      find: z.string().describe('要替换的原文,一字不差'),
+      replace: z.string().describe('替换成什么'),
+      note: z.string().optional().describe('这次改的原因,记进版本历史'),
+    }),
+    execute: async (
+      input: { name: string; find: string; replace: string; note?: string },
+      ctx?: TableToolCtx,
+    ) => {
+      const got = await folderOrReason(ctx);
+      if (!got.folder) return { ok: false, error: got.error };
+      const { applyAnchoredEdit, openCopy, saveRevision } = await import('./document-copy.js');
+      try {
+        const copy = await openCopy(got.folder, input.name);
+        const out = applyAnchoredEdit(copy.text, input.find, input.replace);
+        if (!out.ok) return { ok: false, error: out.reason, created_copy: copy.created };
+        const rev = await saveRevision(got.folder, input.name, out.text, input.note ?? '按原文替换');
+        return {
+          ok: true,
+          copy: `文稿/${copy.path.split('/').pop()}`,
+          revision: rev.n,
+          diff: out.diff,
+          note: copy.created
+            ? '第一次改:已从原件建了可编辑副本,原件没有改动。'
+            : '改在副本上,原件没有改动。',
+        };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  });
+
+  /** 版本历史 / 回退。**回退是追加一版,不抹掉中间那几版。** */
+  const documentRevisions = createTool({
+    id: 'document_revisions',
+    description:
+      '看一份文档副本的版本历史;给了 rollback_to 就回退到那一版' +
+      '(回退是追加一个新版本,历史不会被抹掉)。',
+    inputSchema: z.object({
+      name: z.string().describe('原件文件名'),
+      rollback_to: z.number().optional().describe('要回到第几版'),
+    }),
+    execute: async (input: { name: string; rollback_to?: number }, ctx?: TableToolCtx) => {
+      const got = await folderOrReason(ctx);
+      if (!got.folder) return { ok: false, error: got.error };
+      const { listRevisions, rollbackTo } = await import('./document-copy.js');
+      try {
+        if (input.rollback_to != null) {
+          const rev = await rollbackTo(got.folder, input.name, input.rollback_to);
+          return { ok: true, revision: rev.n, note: rev.note };
+        }
+        return { ok: true, revisions: await listRevisions(got.folder, input.name) };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  });
+
   return {
     table_get: tableGet,
     table_update_row: tableUpdateRow,
@@ -1356,5 +1445,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     table_query: tableQuery,
     project_file_read: projectFileRead,
     create_document: createDocument,
+    document_edit: documentEdit,
+    document_revisions: documentRevisions,
   };
 }

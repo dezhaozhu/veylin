@@ -20,6 +20,7 @@
     "@mastra/fastembed": "^1.2.0",
     "@mastra/mcp": "^1.11.0",
     "@napi-rs/canvas": "^0.1.100",
+    "@types/turndown": "^5.0.6",
     "@veylin/agent-package": "*",
     "@veylin/db": "*",
     "@veylin/hooks": "*",
@@ -42,6 +43,7 @@
     "node-cron": "^4.5.0",
     "p-queue": "^9.3.0",
     "pptxgenjs": "^4.0.1",
+    "turndown": "^7.2.4",
     "unpdf": "^1.6.2",
     "xlsx": "^0.18.5",
     "zod": "^4.4.3"
