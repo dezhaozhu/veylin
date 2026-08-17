@@ -1425,6 +1425,77 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     },
   });
 
+  /**
+   * 把一份文档和**系统里在跑的规则**逐条对照。
+   *
+   * 起因很具体:改完文档,系统里的规则一个字没动 —— 文档和系统对不上,两边看起来
+   * 都正常,没人知道。这个工具就是回答"你要改的是这份文档,还是它描述的那件事"
+   * 之前必须先摆出来的事实。
+   *
+   * **模型提名、代码判定**:断言由模型从文档里抽(带原文引述),对照是纯函数,
+   * 判据确定。**"系统里查不到"单独一档** —— 那是我们不知道,不是文档错了。
+   */
+  const reconcileDocument = createTool({
+    id: 'reconcile_document',
+    description:
+      '把一份项目文档里写的做法,和排产系统里实际在跑的规则逐条对照,' +
+      '给出「一致 / 对不上 / 部分对上 / 查不到」。' +
+      '在用户想按文档改系统、或改完文档之后,用它确认两边是否同步。' +
+      '需要 Compass 数据源(工序资格、资源产能)——没挂数据源时会照实说,不会瞎比。',
+    inputSchema: z.object({
+      name: z.string().describe('文档文件名,例如 工艺说明.docx(会优先读它的可编辑副本)'),
+    }),
+    execute: async (input: { name: string }, ctx?: TableToolCtx) => {
+      const got = await folderOrReason(ctx);
+      if (!got.folder) return { ok: false, error: got.error };
+
+      const [{ readCopy }, { readProjectFile }, { reconcile }, docAssertions] = await Promise.all([
+        import('./document-copy.js'),
+        import('./project-file-read.js'),
+        import('./doc-rule-reconcile.js'),
+        import('./doc-assertions.js'),
+      ]);
+      // 有副本就读副本 —— 人改过的那一版才是"文档现在说的"。
+      const copy = await readCopy(got.folder, input.name);
+      const text = copy ?? (await readProjectFile(got.folder, input.name, { limit: 4000 })).text;
+      if (!text?.trim()) {
+        return { ok: false, error: `读不到「${input.name}」的正文,没法对照。` };
+      }
+
+      const { extractAssertions, factsFromCompass, summarizeReconcile } = docAssertions;
+      const tenantId = (ctx?.requestContext?.get('tenantId') as string | undefined) ?? DEV_TENANT_ID;
+      let assertions; let dropped = 0;
+      try {
+        ({ assertions, dropped } = await extractAssertions(tenantId, text));
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      // 丢了几条要说 —— 悄悄丢等于谎报覆盖面。
+      const droppedNote = dropped ? `(另有 ${dropped} 条提名不合规,已丢弃)` : '';
+      if (!assertions.length) {
+        return { ok: true, summary: summarizeReconcile([]) + droppedNote, verdicts: [] };
+      }
+
+      // 事实从 Compass 来。**拿不到就说拿不到** —— 空事实会把每一条都判成
+      // "查不到",看起来像做过对照,其实一条也没核对。
+      const facts = factsFromCompass(
+        (ctx?.requestContext?.get('compassFacts') as Record<string, never> | undefined) ?? {},
+      );
+      if (!facts.length) {
+        return {
+          ok: false,
+          assertions,
+          error:
+            `从文档里抽到 ${assertions.length} 条可核对的断言,但**没拿到系统侧的事实**` +
+            '(工序资格 / 资源产能)。请先确认这个项目挂了 Compass 数据源,' +
+            '或用 get_resources / 资格视图 取到事实后再对照。',
+        };
+      }
+      const verdicts = reconcile(assertions, facts);
+      return { ok: true, summary: summarizeReconcile(verdicts) + droppedNote, verdicts };
+    },
+  });
+
   return {
     table_get: tableGet,
     table_update_row: tableUpdateRow,
@@ -1447,5 +1518,6 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     create_document: createDocument,
     document_edit: documentEdit,
     document_revisions: documentRevisions,
+    reconcile_document: reconcileDocument,
   };
 }
