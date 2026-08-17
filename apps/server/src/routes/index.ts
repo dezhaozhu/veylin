@@ -35,7 +35,9 @@ export async function registerApiRoutes(app: FastifyInstance, deps: ServerDeps):
   registerRulesRoutes(app, deps);
   registerMcpRoutes(app, deps);
   registerCompassCredentialRoutes(app, { syncCompassIdentity: deps.syncCompassIdentity });
-  registerMcpOAuthRoutes(app);
+  // 诊断要按租户查这台服务器配了什么头 —— 不给 resolveContext 的话,
+  // compass 这种"凭据在登记里"的服务器又会被探成 401(即误报"需要授权")。
+  registerMcpOAuthRoutes(app, { resolveContext: deps.resolveContext as never });
   registerAutomationsRoutes(app, deps);
   registerWorkflowsRoutes(app, deps);
   registerWebhooksRoutes(app, deps);

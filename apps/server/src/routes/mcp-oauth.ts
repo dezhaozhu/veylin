@@ -7,6 +7,8 @@
 import type { FastifyInstance } from 'fastify';
 
 import { clearMcpCredential, hasMcpCredential } from '../mcp-credentials.js';
+import { listRemoteMcpServers } from '../mcp-store.js';
+import { readMcpCredential } from '../mcp-credentials.js';
 import {
   diagnoseConnection,
   getMcpFlow,
@@ -14,7 +16,11 @@ import {
   startMcpOAuth,
 } from '../mcp-oauth-flow.js';
 
-export type McpOAuthDeps = { dataDir?: () => string | undefined };
+export type McpOAuthDeps = {
+  dataDir?: () => string | undefined;
+  /** 解析租户 —— 诊断要按租户去查这台服务器配了什么头(Authorization 等)。 */
+  resolveContext?: (headers: never) => Promise<{ tenantId: string }>;
+};
 
 export function registerMcpOAuthRoutes(app: FastifyInstance, deps: McpOAuthDeps = {}): void {
   const dir = () => deps.dataDir?.();
@@ -33,9 +39,30 @@ export function registerMcpOAuthRoutes(app: FastifyInstance, deps: McpOAuthDeps 
   // 连不上时"为什么" —— MCP 客户端库把每台服务器的错误吞进 console,上层只知道
   // "它不在工具集里"。界面据此才有话可说,而不是一句展不开的"连接失败"。
   app.get('/api/mcp-oauth/diagnose', async (req, reply) => {
-    const url = ((req.query ?? {}) as Record<string, string>).url ?? '';
+    const q = (req.query ?? {}) as Record<string, string>;
+    const url = q.url ?? '';
+    const serverId = q.serverId ?? '';
     if (!url) return reply.code(400).send({ error: '缺少 url' });
-    return diagnoseConnection(url);
+
+    // **带上这台服务器的凭据再探。** 不带的话任何需要凭据的服务器都回 401,
+    // 界面就常年挂着"compass 需要授权" —— 而 compass 一直在正常用(用户反复撞到)。
+    // 两个来源:登记里配的 headers(compass 的 token 在这儿),以及 OAuth 凭据仓
+    // (走 MCP OAuth 的那些服务器在这儿)。
+    const headers: Record<string, string> = {};
+    if (serverId) {
+      try {
+        const ctx = await deps.resolveContext?.(req.headers as never);
+        const server = ctx
+          ? (await listRemoteMcpServers(ctx.tenantId)).find((s) => s.name === serverId)
+          : undefined;
+        Object.assign(headers, server?.headers ?? {});
+      } catch {
+        // 取不到登记不影响探测本身 —— 顶多退回"没带凭据"的老行为。
+      }
+      const cred = readMcpCredential(serverId, dir());
+      if (cred?.accessToken) headers.Authorization = `Bearer ${cred.accessToken}`;
+    }
+    return diagnoseConnection(url, fetch, { headers });
   });
 
   app.post('/api/mcp-oauth/start', async (req, reply) => {

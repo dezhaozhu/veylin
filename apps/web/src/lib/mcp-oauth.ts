@@ -94,10 +94,17 @@ export type Diagnosis =
  */
 export async function diagnoseMcp(
   url: string,
+  /**
+   * 这台服务器的名字。**必须给** —— 服务端要靠它取凭据再探;不给的话,任何需要
+   * 凭据的服务器都回 401,界面就常年挂着「compass 需要授权」,而 compass 一直在
+   * 正常用(用户反复撞到)。实测:compass 裸 GET = 401,带凭据 = 200。
+   */
+  serverId?: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<Diagnosis | null> {
   try {
-    const res = await fetchImpl(`/api/mcp-oauth/diagnose?url=${encodeURIComponent(url)}`);
+    const q = new URLSearchParams({ url, ...(serverId ? { serverId } : {}) });
+    const res = await fetchImpl(`/api/mcp-oauth/diagnose?${q.toString()}`);
     if (!res.ok) return null;
     return (await res.json()) as Diagnosis;
   } catch {

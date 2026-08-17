@@ -29,7 +29,8 @@ export function useFailingServers(
       for (const name of down) {
         const entry = remote.find((r) => r.name === name);
         // 本地条目没有地址可问 —— 说"问不出来",不编。
-        const d = entry?.url ? await diagnoseMcp(entry.url) : null;
+        // 带上服务器名 —— 服务端要靠它取凭据再探,否则一律误报「需要授权」。
+        const d = entry?.url ? await diagnoseMcp(entry.url, name) : null;
         out.push({ name, reason: describeDiagnosis(d) });
       }
       if (alive) setFailing(out);

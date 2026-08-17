@@ -266,12 +266,20 @@ export type Diagnosis =
 export async function diagnoseConnection(
   url: string,
   fetchImpl: typeof fetch = fetch,
+  /** 这台服务器配置里/凭据仓里的头(Authorization 等)。**不带就是误诊。** */
+  auth?: { headers?: Record<string, string> },
 ): Promise<Diagnosis> {
   let res: Response;
   try {
     res = await fetchImpl(url, {
       method: 'GET',
-      headers: { Accept: 'application/json, text/event-stream' },
+      headers: {
+        Accept: 'application/json, text/event-stream',
+        // **必须带上凭据。** 不带的话,任何需要凭据的服务器都回 401,于是界面
+        // 常年挂着"compass 需要授权",而 compass 一直在正常用(用户反复撞到)。
+        // 实测:compass 裸 GET = 401,带凭据 = 200。
+        ...(auth?.headers ?? {}),
+      },
     });
   } catch (err) {
     return {
@@ -282,6 +290,8 @@ export async function diagnoseConnection(
   if (res.status === 401) {
     return { kind: 'needs-auth', detail: '需要授权 —— 在这一行的菜单里点「授权」。' };
   }
-  if (res.ok) return { kind: 'ok' };
+  // **405/406 不是故障**:MCP 的 streamable-HTTP 端点完全可以只接 POST。
+  // 把"不接受 GET"报成连接失败,是拿探测方式的局限当对方的毛病。
+  if (res.ok || res.status === 405 || res.status === 406) return { kind: 'ok' };
   return { kind: 'http-error', detail: `这个地址返回 HTTP ${res.status}。` };
 }

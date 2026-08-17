@@ -120,3 +120,45 @@ describe('连不上时说得出为什么', () => {
     assert.equal((await diagnoseConnection('https://x/mcp', f(() => resp(200)))).kind, 'ok');
   });
 });
+
+/**
+ * 用户反复撞到的:界面常年挂着「部分 MCP 服务连接失败 —— compass 需要授权」,
+ * 而 compass 明明一直在正常用。
+ *
+ * 根因:诊断那条路**不带凭据**去探,于是任何需要凭据的服务器都回 401,
+ * 一律被判成"需要授权"。实测:compass 裸 GET = 401,带凭据 = 200。
+ */
+describe('诊断要带上这台服务器的凭据', () => {
+  const mk = (status: number, seen: { headers?: Record<string, string> }) =>
+    (async (_u: string | URL | Request, init?: RequestInit) => {
+      seen.headers = (init?.headers ?? {}) as Record<string, string>;
+      return new Response('', { status });
+    }) as unknown as typeof fetch;
+
+  it('**带上配置的 headers** —— 不带就把好服务器判成需要授权', async () => {
+    const seen: { headers?: Record<string, string> } = {};
+    const out = await diagnoseConnection('https://x/mcp/', mk(200, seen), {
+      headers: { Authorization: 'Bearer tok' },
+    });
+    assert.equal(out.kind, 'ok');
+    assert.equal(seen.headers!.Authorization, 'Bearer tok');
+  });
+
+  it('带了凭据还 401 → 才是真的需要授权', async () => {
+    const out = await diagnoseConnection('https://x/mcp/', mk(401, {}), {
+      headers: { Authorization: 'Bearer 过期了' },
+    });
+    assert.equal(out.kind, 'needs-auth');
+  });
+
+  it('**405/406 不是故障** —— MCP 端点本来就可以拒绝 GET,它只是不接受这个方法', async () => {
+    for (const s of [405, 406]) {
+      const out = await diagnoseConnection('https://x/mcp/', mk(s, {}), { headers: {} });
+      assert.equal(out.kind, 'ok', `HTTP ${s} 被当成故障了`);
+    }
+  });
+
+  it('没有凭据可带时照旧探 —— 行为不变', async () => {
+    assert.equal((await diagnoseConnection('https://x/mcp/', mk(401, {}))).kind, 'needs-auth');
+  });
+});
