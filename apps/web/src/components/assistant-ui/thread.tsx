@@ -30,6 +30,7 @@ import {
 import { ModelPicker } from "@/components/assistant-ui/model-picker";
 import { ThreadQuestionRail } from "@/components/assistant-ui/thread-question-rail";
 import { ThreadSelectionAskToolbar } from "@/components/assistant-ui/thread-selection-ask-toolbar";
+import { CrystallizeMessageAction } from "@/components/assistant-ui/crystallize-message-action";
 import { MessageTimestamp } from "@/components/assistant-ui/message-timestamp";
 import { MessageKnowledgeCitations } from "@/components/assistant-ui/message-knowledge-citations";
 import { Button } from "@/components/ui/button";
@@ -661,6 +662,7 @@ const AssistantActionBar: FC = () => {
       className="aui-assistant-action-bar-root text-muted-foreground/50 animate-in fade-in col-start-3 row-start-2 -ms-1 flex items-center gap-1 duration-200"
     >
       <MessageCopyButton />
+      <CrystallizeMessageAction />
       <MessageTimestamp className="ms-0.5" align="start" inline />
     </ActionBarPrimitive.Root>
   );

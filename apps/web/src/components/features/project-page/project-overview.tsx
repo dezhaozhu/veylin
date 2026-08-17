@@ -143,10 +143,67 @@ const ProjectOverview: FC = () => {
             <ProjectSourcesSection project={project} />
             <ProjectContextSection project={project} />
             <ProjectFolderRow project={project} />
+            <ProjectWorkflowsSection project={project} />
           </RailCard>
         </aside>
       </div>
     </div>
+  );
+};
+
+/**
+ * 这个项目里的工作流(含定时)。
+ *
+ * 和 Claude 的 Instructions / Context / Scheduled 同一层:工作流属于项目,所以
+ * **场景是继承的** —— 一个"找瓶颈"的工作流在上重项目里就是上重的,不用把工厂
+ * 抽象成参数(用户定的)。
+ *
+ * 空状态说的是**它从哪来**:工作流不是在这里从零写的,是从一段对话结晶出来的。
+ */
+const ProjectWorkflowsSection: FC<{ project: ProjectInfo }> = ({ project }) => {
+  const [items, setItems] = useState<Array<{ id: string; name: string; cron?: string }> | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch('/api/workflows');
+        const body = (await res.json()) as { workflows?: Array<{ id: string; name: string; cron?: string }> };
+        if (alive) setItems(body.workflows ?? []);
+      } catch {
+        /* 取不到就当没有 —— 这一段是陈述,不该报错打断人 */
+      }
+    })();
+    return () => { alive = false; };
+  }, [project.id]);
+
+  const list = items ?? [];
+  const scheduled = list.filter((w) => w.cron);
+
+  return (
+    <RailSection
+      title="工作流"
+      {...(list.length
+        ? { hint: `${list.length} 个${scheduled.length ? ` · ${scheduled.length} 个有定时` : ''}` }
+        : {})}
+    >
+      {list.length === 0 ? (
+        <RailEmpty>
+          聊出一套做法之后,在那条消息上点<br />「结晶成工作流」,下次一键重跑。
+        </RailEmpty>
+      ) : (
+        <ul className="space-y-1">
+          {list.slice(0, 6).map((w) => (
+            <li key={w.id} className="flex items-baseline gap-2 text-xs">
+              <span className="min-w-0 flex-1 truncate">{w.name}</span>
+              {/* 定时和工作流不分成两段:一个有定时的工作流仍然是同一个东西,
+                  拆开会让人以为要建两次。 */}
+              {w.cron ? <span className="text-muted-foreground shrink-0">定时</span> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </RailSection>
   );
 };
 

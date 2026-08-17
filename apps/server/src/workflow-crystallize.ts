@@ -108,6 +108,58 @@ export function draftToWorkflowInput(draft: CrystallizedDraft): {
 }
 
 /**
+ * 草案 → **真能跑的节点图**(start → 每步一个 run_agent → end)。
+ *
+ * 两条不能让步的:
+ *
+ * 1. **会变的值不写成占位符。** 今天的运行器没有"这次跑用什么参数"的入口(手动
+ *    运行只给 `{manual:true}`),`{{ start.资源 }}` 会插值成空字符串 —— 那一步
+ *    照跑,参数没了,还看不出来。所以带上上次的值,并要求它**先声明按什么在跑**。
+ *    等运行器支持按次输入了,这里再改成真的入参。
+ * 2. **结论一个字都不进提示词。** 进去就成了下次的预设答案:换个时间重放,
+ *    它会把上次的结论当成这次的发现。结论只留在 description 里,并注明出处。
+ */
+export function draftToDefinition(draft: CrystallizedDraft): {
+  nodes: Array<{ id: string; kind: string; position: { x: number; y: number }; data: Record<string, unknown> }>;
+  edges: Array<{ id: string; source: string; target: string }>;
+} {
+  const fixed = draft.values.filter((v) => !v.varies);
+  const varying = draft.values.filter((v) => v.varies);
+  const preamble: string[] = [];
+  if (fixed.length) {
+    preamble.push('固定参数:' + fixed.map((v) => `${v.label}=${v.value}`).join('、'));
+  }
+  if (varying.length) {
+    preamble.push(
+      '下面这些每次可能不同,方括号里是上次的值:' +
+      varying.map((v) => `${v.label}[${v.value}]`).join('、') +
+      '。如果这次该换,先说明你按什么值在跑,再继续。',
+    );
+  }
+
+  const ids = ['start', ...draft.steps.map((_, i) => `step${i + 1}`), 'end'];
+  const nodes = [
+    { id: 'start', kind: 'start', position: { x: 0, y: 0 }, data: {} },
+    ...draft.steps.map((s, i) => ({
+      id: `step${i + 1}`,
+      kind: 'run_agent',
+      position: { x: 220 * (i + 1), y: 0 },
+      data: {
+        // 参数只挂在第一步:后面的步骤读得到上一步的输出,重复交代反而会让
+        // 模型把参数当成每一步都要重新确认的东西。
+        prompt: [...(i === 0 ? preamble : []), s.detail ? `${s.title} —— ${s.detail}` : s.title]
+          .join('\n'),
+      },
+    })),
+    { id: 'end', kind: 'end', position: { x: 220 * (draft.steps.length + 1), y: 0 }, data: {} },
+  ];
+  const edges = ids.slice(0, -1).map((source, i) => ({
+    id: `e${i}`, source, target: ids[i + 1]!,
+  }));
+  return { nodes, edges };
+}
+
+/**
  * 调模型把对话结晶成草案。
  *
  * 校验失败就抛,**不返回一个半成品** —— 一个字段缺失的草案会让确认页显示成
