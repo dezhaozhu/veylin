@@ -495,7 +495,12 @@ export function tryResolveTableSheetId(
 ): string | null {
   if (value === undefined || value === '') {
     const id = sheetIdFor(scope, DEFAULT_TABLE_SHEET);
-    return sheetStore.has(id) ? id : null;
+    if (sheetStore.has(id)) return id;
+    // **没有「主表」不等于这个项目的表打不开。** 项目里的表完全可以没有 main
+    // (agent 建的叫「组件」、导入的叫「开发组件」),从前这里直接 null → 404,
+    // 整个项目的表在面板里都取不到 —— 实测是改钉到这种项目时撞上的。
+    // 退到这个作用域里已有的第一张;**不跨作用域**,别的项目有表不算数。
+    return listTableSheets(scope)[0]?.id ?? null;
   }
   if (sheetStore.has(value)) return sheetBelongsToScope(value, scope) ? value : null;
   const byShortName = sheetIdFor(scope, value);

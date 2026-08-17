@@ -22,6 +22,7 @@ const PROJECT = 'E2E 组件';
 const XLSX_NAME = '开发组件.xlsx';
 const DOCX_NAME = '技术交流.docx';
 const PPTX_NAME = '汇报.pptx';
+const PDF_NAME = '标书.pdf';
 
 /** 真文件,不是占位符 —— 抽取器读不了假 zip。 */
 async function makeFixtureFolder(): Promise<string> {
@@ -65,8 +66,47 @@ async function makeFixtureFolder(): Promise<string> {
       '<a:p><a:r><a:t>产线扩产方案</a:t></a:r></a:p></p:sld>',
   );
   writeFileSync(join(dir, PPTX_NAME), await pptx.generateAsync({ type: 'nodebuffer' }));
+  writeFileSync(join(dir, PDF_NAME), minimalPdf('Compass boundary test'));
 
   return dir;
+}
+
+/**
+ * 一份最小但**真能渲染**的 PDF(一页 + Helvetica 一行字)。
+ * 假 PDF 没意义:卡片封面和文档面板走的是真渲染(unpdf + canvas),
+ * 喂个空壳只能测到"没崩",测不到"画出来了"。
+ */
+function minimalPdf(text: string, pages = 2): Buffer {
+  // 至少两页:单页 PDF 在文档面板里走的是"预览"而不是分页 —— 想测分页那条路,
+  // 样本就得真有第二页(第一版一页,断言"画出第 1 页"直接落空)。
+  const kids = Array.from({ length: pages }, (_, i) => `${3 + i * 2} 0 R`).join(' ');
+  const objs: Array<string | null> = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    `<< /Type /Pages /Kids [${kids}] /Count ${pages} >>`,
+  ];
+  const fontObj = 3 + pages * 2;
+  for (let i = 0; i < pages; i++) {
+    const contentObj = 4 + i * 2;
+    objs.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 150] `
+        + `/Resources << /Font << /F1 ${fontObj} 0 R >> >> /Contents ${contentObj} 0 R >>`,
+    );
+    const stream = `BT /F1 18 Tf 20 80 Td (${text} p${i + 1}) Tj ET`;
+    objs.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+  }
+  objs.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+
+  let out = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objs.forEach((body, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) out += `${String(off).padStart(10, '0')} 00000 n \n`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
 }
 
 async function openSidebar(page: Page): Promise<void> {
@@ -110,18 +150,13 @@ test('新建项目 → 放进办公文件 → context 认得出来', async ({ pa
   await page.getByText(PROJECT, { exact: true }).first().click();
   await expect(page.getByRole('heading', { name: PROJECT })).toBeVisible({ timeout: 15_000 });
 
-  // 上下文改成卡片之后,**文件夹合成一张卡**(形状取自 Claude 的 Context 栏):
-  // 卡上写清有几项,点进去才是具体哪几份。两层都要断言 —— 只看卡会漏掉
-  // "点进去其实是空的",只看清单又测不到卡。
-  await expect(page.getByText('3 项', { exact: false }).first()).toBeVisible({ timeout: 20_000 });
-  const folderCard = page.getByRole('button', { name: /项$/ }).first();
-  await expect(folderCard, '文件夹没有合成一张卡').toBeVisible({ timeout: 20_000 });
-  await folderCard.click();
-
-  for (const name of [XLSX_NAME, DOCX_NAME, PPTX_NAME]) {
+  // 上下文改成卡片之后:**少量文件一张张摆**(能看到类型/大小/PDF 封面),
+  // 多了才折叠成一张文件夹卡。这里放了四份,所以四张卡都该在。
+  await expect(page.getByText('4 项', { exact: false }).first()).toBeVisible({ timeout: 20_000 });
+  for (const name of [XLSX_NAME, DOCX_NAME, PPTX_NAME, PDF_NAME]) {
     await expect(
-      page.getByText(name, { exact: false }).first(),
-      `点开文件夹卡之后仍然看不到 ${name}`,
+      page.getByRole('button', { name: new RegExp(name) }).first(),
+      `context 里没有 ${name} 这张卡`,
     ).toBeVisible({ timeout: 20_000 });
   }
 });
@@ -550,4 +585,37 @@ test('改钉到别的项目,表格面板跟着换作用域', async ({ page, requ
       { timeout: 30_000, intervals: [1000] },
     )
     .toMatch(new RegExp([...names].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')));
+});
+
+/**
+ * **PDF 那两条今天发出去、却一次都没真跑过的路**:
+ * 上下文卡片的封面,和文档面板里按页渲染。
+ *
+ * 判据要看到**画出来的像素**:卡片里得有一张 img,文档面板里也得有。
+ * 只断言"没报错"会把"封面永远是空白"放过去 —— 那正是它最可能坏的样子。
+ */
+test('PDF:卡片出封面,文档面板画得出第一页', async ({ page, request }) => {
+  const folder = await makeFixtureFolder();
+  const name = `PDF 边界-${Date.now()}`;
+
+  const created = await request.post(`${API}/api/projects`, { data: { name, sources: [] } });
+  const project = (await created.json()).project as { id: string };
+  await request.patch(`${API}/api/projects/${project.id}`, { data: { folder } });
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 });
+
+  // 卡片封面:滚到跟前才取,所以先让它进视野
+  const card = page.getByRole('button', { name: new RegExp(PDF_NAME) }).first();
+  await expect(card, 'PDF 没有单独的卡片(被折叠了?)').toBeVisible({ timeout: 20_000 });
+  await card.scrollIntoViewIfNeeded();
+  await expect(card.locator('img'), '卡片上没有封面 —— 封面那段代码等于白写')
+    .toBeVisible({ timeout: 30_000 });
+
+  // 文档面板:点开这份 PDF,要真画出第一页
+  await card.click();
+  const pageImage = page.locator('img[alt*="第 1 页"], img[alt*="page 1"]').first();
+  await expect(pageImage, '文档面板没把第 1 页画出来').toBeVisible({ timeout: 60_000 });
 });

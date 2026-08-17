@@ -5,8 +5,10 @@
  * 名字被挤成一截,类型只能靠后缀猜。卡片给名字两行、把类型做成角标、PDF 直接
  * 出封面 —— 人是**认出**文件,不是读一列文本。
  *
- * **文件夹合成一张卡**(和参考一致):文件夹里躺着多少份就写多少项,点开进面板。
- * 它们本来就是"需要时才去看"的那一类,一份一张卡会把真正留了档的东西淹掉。
+ * **文件夹里的文件:少就一张张摆,多才折叠成一张文件夹卡。**
+ * 折叠是为了不让"需要时才去看"的一堆文件淹掉真正留了档的东西;可一旦无脑折叠,
+ * 三五个文件的项目就只剩一个文件夹图标 —— 类型、封面、大小全没了,而 PDF 封面
+ * 这类东西恰恰只在一张张摆的时候才有意义(否则那段代码等于白写)。
  */
 export type ContextCard =
   | { kind: 'folder'; key: string; name: string; count: number }
@@ -29,7 +31,7 @@ type ContextData = {
   files?: Array<{ name: string; bytes: number; where: 'folder' | 'generated' | 'draft' }>;
 };
 
-const WHERE = { generated: '生成的', draft: '文稿' } as const;
+const WHERE_ALL = { folder: '文件夹里', generated: '生成的', draft: '文稿' } as const;
 
 export const humanBytes = (n: number): string =>
   n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
@@ -45,11 +47,15 @@ export function folderLabel(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+/** 文件夹里超过这么多份才折叠 —— 少的时候一张张摆更有用。 */
+export const FOLDER_FOLD_FROM = 5;
+
 export function toContextCards(data: ContextData): ContextCard[] {
   const cards: ContextCard[] = [];
 
   const inFolder = (data.files ?? []).filter((f) => f.where === 'folder');
-  if (data.folder && inFolder.length > 0) {
+  const foldFolder = inFolder.length >= FOLDER_FOLD_FROM;
+  if (data.folder && foldFolder) {
     cards.push({
       kind: 'folder',
       key: 'folder',
@@ -72,10 +78,10 @@ export function toContextCards(data: ContextData): ContextCard[] {
     });
   }
   for (const f of data.files ?? []) {
-    if (f.where === 'folder') continue; // 已经并进那张文件夹卡了
+    if (f.where === 'folder' && foldFolder) continue; // 已经并进那张文件夹卡了
     cards.push({
       kind: 'file', key: `f-${f.name}`, name: f.name, badge: badgeOf(f.name),
-      meta: `${WHERE[f.where]} · ${humanBytes(f.bytes)}`, cover: /\.pdf$/i.test(f.name),
+      meta: `${WHERE_ALL[f.where]} · ${humanBytes(f.bytes)}`, cover: /\.pdf$/i.test(f.name),
     });
   }
   return cards;

@@ -1158,14 +1158,31 @@ export function TableGrid() {
         if (data.sheet) selectSheet(data.sheet);
         lastSerialized.current = '';
         applyPayload(data, true);
-      } catch {
-        /* 取不到就维持现状:下一次 SSE 或手动切换会再试 */
+      } catch (err) {
+        // **不能静默维持现状。** 这一屏已经属于新作用域了,取不到就意味着屏幕上
+        // 摆着的是**上一个项目的表** —— 人在这儿的编辑会落到旧项目。实测这次取数
+        // 偶发会失败(改钉之后紧接着请求),从前被这句空 catch 吞掉,表现成"面板
+        // 没跟过来",查不出原因。重试一次,还不行就说出来。
+        if (cancelled) return;
+        try {
+          const retry = await fetchSchedule(undefined, threadId);
+          if (cancelled) return;
+          resetSheetUiState();
+          setSheets(retry.sheets ?? []);
+          if (retry.sheet) selectSheet(retry.sheet);
+          lastSerialized.current = '';
+          applyPayload(retry, true);
+        } catch {
+          // 下一次 SSE / 手动切换还会再试,但这一刻必须让人知道屏幕不可信。
+          lastScopeThread.current = '';
+          showToast(t('table.loadError', { error: err instanceof Error ? err.message : String(err) }), 'error');
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [threadId, scopeKey, bootstrapped, applyPayload, resetSheetUiState, selectSheet]);
+  }, [threadId, scopeKey, bootstrapped, applyPayload, resetSheetUiState, selectSheet, showToast, t]);
 
   // 进到一个项目(或换了会话)时看一眼文件夹里有没有没见过的文件。**只看不吸收**:
   // 顺手放一份 ≠ 它就是项目数据(spec §6)。
