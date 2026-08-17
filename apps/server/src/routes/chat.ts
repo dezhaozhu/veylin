@@ -22,7 +22,7 @@ import {
   type VeylinContextUsage,
 } from '@veylin/runtime';
 import { setThreadPlanMode } from '@veylin/tools';
-import { stripInterruptedAssistantTurnsForAgent, clampLoopWakeupSeconds, isGoalActive, isLoopActive, parseIntervalToSeconds, LOOP_WAKEUP_MIN_SECONDS, buildReadOnlyWorkingMemoryBlock } from '@veylin/shared';
+import { stripInterruptedAssistantTurnsForAgent, stripUnansweredToolCallsForAgent, clampLoopWakeupSeconds, isGoalActive, isLoopActive, parseIntervalToSeconds, LOOP_WAKEUP_MIN_SECONDS, buildReadOnlyWorkingMemoryBlock } from '@veylin/shared';
 import {
   createUiStreamRepairState,
   formatAgentStreamError,
@@ -820,6 +820,11 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         }
       }
       agentInputMessages = stripInterruptedAssistantTurnsForAgent(agentInputMessages);
+      // **前端工具挂起、而用户直接打字回复**时,把那条悬空的工具调用摘掉。
+      // 不摘的话,每次调模型都带着一个没有结果的 tool call,之后每一轮 assistant
+      // 都只产出一个空 step —— 界面上就是"我说了话,它不理我",而且永远不会自己恢复
+      // (实测:ask_user_question 挂起后用户回"好了,我绑好文件夹了",连续两轮全空)。
+      agentInputMessages = stripUnansweredToolCallsForAgent(agentInputMessages);
       agentMessages = await toAgentMessages(
         agentInputMessages as Parameters<typeof toAgentMessages>[0],
         modelSupportsImages(effectiveModel),
@@ -1088,6 +1093,11 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
           toolCallId: resume.toolCallId ?? consumedSuspended.toolCallId,
         } as never);
       } else {
+        // 用户没走 resume 而是直接发了新消息 —— 那条挂起已经作废了。不清掉的话
+        // 它会一直挂在线程状态上,而对应的 tool call 永远等不到答案。
+        if (threadRowState?.suspendedRun) {
+          await setThreadSuspendedRun(threadId, null).catch(() => undefined);
+        }
         stream = await agent.stream(agentMessages as never, streamOptions as never);
       }
     } catch (err) {

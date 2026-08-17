@@ -5,6 +5,7 @@ import {
   INTERRUPTED_TURN_NOTE,
   isInterruptedAssistantMessage,
   stripInterruptedAssistantTurnsForAgent,
+  stripUnansweredToolCallsForAgent,
 } from './interrupted-turn.js';
 
 describe('interrupted-turn', () => {
@@ -103,5 +104,64 @@ describe('interrupted-turn', () => {
     ];
     const stripped = stripInterruptedAssistantTurnsForAgent(messages);
     assert.equal((stripped[0]!.parts![0] as { text: string }).text, '正常回复');
+  });
+});
+
+/**
+ * 实测卡死的场景:agent 用 ask_user_question 问了一句(挂起),用户没点那个问题
+ * 而是**直接打字回复**。之后每一轮 assistant 都只产出一个空 step —— 界面上就是
+ * "我说了话,它不理我",而且永远不会自己恢复。
+ *
+ * 根因:那条没被回答的 tool call 一直留在历史里,后面每次调模型都带着它。
+ * 上面那条 stripper 只管客户端标了 `interrupted` 的 turn,不管这种。
+ */
+describe('没被回答的前端工具调用', () => {
+  const suspended = (id = 'a1') => ({
+    id, role: 'assistant',
+    parts: [
+      { type: 'text', text: '我先问一下' },
+      { type: 'tool-ask_user_question', toolCallId: 't1', state: 'input-available' },
+      { type: 'data-tool-call-suspended', data: { runId: 'r1', toolCallId: 't1' } },
+    ],
+  });
+
+  it('**用户改用打字回复之后,悬空的工具调用要摘掉**', () => {
+    const out = stripUnansweredToolCallsForAgent([
+      suspended(), { id: 'u2', role: 'user', parts: [{ type: 'text', text: '好了,我绑好了' }] },
+    ]);
+    const kinds = (out[0]!.parts ?? []).map((p) => (p as { type: string }).type);
+    assert.ok(!kinds.includes('tool-ask_user_question'), `悬空调用还在:${kinds.join(',')}`);
+  });
+
+  it('**要告诉模型那个问题没被回答** —— 否则它不知道该重新问还是接着做', () => {
+    const out = stripUnansweredToolCallsForAgent([
+      suspended(), { id: 'u2', role: 'user', parts: [{ type: 'text', text: '好了' }] },
+    ]);
+    const text = (out[0]!.parts ?? [])
+      .filter((p): p is { type: string; text: string } => (p as { type: string }).type === 'text')
+      .map((p) => p.text).join(' ');
+    assert.match(text, /没有回答|直接回复|未回答/);
+  });
+
+  it('原来的正文留着 —— 那是它已经说过的话', () => {
+    const out = stripUnansweredToolCallsForAgent([
+      suspended(), { id: 'u2', role: 'user', parts: [{ type: 'text', text: '好了' }] },
+    ]);
+    assert.match(JSON.stringify(out[0]), /我先问一下/);
+  });
+
+  it('**没有后续用户消息就不动** —— 那是正常在等人回答,不是卡住', () => {
+    const msgs = [suspended()];
+    assert.deepEqual(stripUnansweredToolCallsForAgent(msgs), msgs);
+  });
+
+  it('已经有结果的工具调用不碰', () => {
+    const done = {
+      id: 'a1', role: 'assistant',
+      parts: [{ type: 'tool-ask_user_question', toolCallId: 't1', state: 'output-available',
+                output: { answers: {} } }],
+    };
+    const msgs = [done, { id: 'u2', role: 'user', parts: [{ type: 'text', text: 'x' }] }];
+    assert.deepEqual(stripUnansweredToolCallsForAgent(msgs), msgs);
   });
 });
