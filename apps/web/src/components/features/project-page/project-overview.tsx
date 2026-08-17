@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FC } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FC } from 'react';
 import { ThreadListPrimitive, useAuiState } from '@assistant-ui/react';
 import { FolderOpen, LoaderIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -42,6 +42,8 @@ import {
 import { SceneCardMergeTable } from './scene-card-merge-table';
 import { ProjectComposer } from './project-composer';
 import { ContextPanel, flattenContext } from './context-panel';
+import { ContextCards } from './context-cards';
+import { toContextCards } from '@/lib/context-cards';
 import { RailCard, RailEmpty, RailInlineInput, RailSection } from './project-rail';
 import { useSceneCardPayloads, type SceneCardEntry } from './use-scene-card-payloads';
 
@@ -524,6 +526,21 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
   const total = data
     ? data.connectors.length + data.originals.length + data.snapshots.length + (data.files?.length ?? 0)
     : 0;
+  // 过滤在卡片之前做完 —— 搜索是筛"已经在这儿的东西",卡片只管怎么摆。
+  const cards = useMemo(
+    () => (data ? toContextCards({ ...data, originals, snapshots, files }) : []),
+    [data, originals, snapshots, files],
+  );
+
+  // 卡片和上下文面板里的「在右侧打开」是同一件事,别写两份。
+  const openInRightPanel = useCallback(
+    (name: string) => {
+      openDocument({ projectId: project.id, name });
+      setRightOpen(true);
+      closeWorkspace();
+    },
+    [openDocument, project.id, setRightOpen, closeWorkspace],
+  );
 
   return (
     <RailSection
@@ -556,14 +573,9 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
           items={flattenContext(data)}
           projectId={project.id}
           onClose={() => setPanelOpen(false)}
-          onOpenInPanel={(name) => {
-            openDocument({ projectId: project.id, name });
-            // 右栏是收起的时候,只加一个 tab 等于什么也没发生 —— 人点了「在右侧
-            // 打开」,项目页关掉了,右边一片空白(实测)。要连着把右栏展开。
-            setRightOpen(true);
-            // 项目页是盖住全屏的:不让位,右侧那个 tab 打开了也看不见。
-            closeWorkspace();
-          }}
+          // 右栏收起时只加一个 tab 等于什么也没发生 —— 人点了「在右侧打开」,
+          // 项目页关掉了,右边一片空白(实测)。要连着展开右栏并给项目页让位。
+          onOpenInPanel={openInRightPanel}
         />
       ) : null}
 
@@ -586,38 +598,17 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
         </div>
       ) : null}
 
-      {originals.length > 0 || snapshots.length > 0 || files.length > 0 ? (
-        <div>
-          <p className="text-muted-foreground mb-1 text-xs">文件（存下来就不变）</p>
-          <ul className="space-y-1">
-            {originals.map((f) => (
-              <li key={`o-${f.name}-${f.importedAt}`} className="flex items-baseline gap-2 text-xs">
-                <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                <span className="text-muted-foreground shrink-0">
-                  原件 · {kb(f.bytes)}
-                  {f.seenCount > 1 ? ` · 用过 ${f.seenCount} 次` : ''}
-                </span>
-              </li>
-            ))}
-            {snapshots.map((f) => (
-              <li key={`s-${f.name}`} className="flex items-baseline gap-2 text-xs">
-                <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                <span className="text-muted-foreground shrink-0">快照 · {kb(f.bytes)}</span>
-              </li>
-            ))}
-            {files.map((f) => (
-              <li key={`f-${f.name}`} className="flex items-baseline gap-2 text-xs">
-                <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                <span className="text-muted-foreground shrink-0">
-                  {FILE_WHERE[f.where]} · {kb(f.bytes)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      {cards.length > 0 ? (
+        <ContextCards
+          cards={cards}
+          projectId={project.id}
+          onOpenFile={openInRightPanel}
+          onOpenFolder={() => setPanelOpen(true)}
+        />
       ) : null}
+
       {/* 搜不到要说一声 —— 空白会被读成"这儿本来就没东西"。 */}
-      {kw && connectors.length + originals.length + snapshots.length + files.length === 0 ? (
+      {kw && connectors.length + cards.length === 0 ? (
         <p className="text-muted-foreground text-xs">没有匹配「{q}」的项</p>
       ) : null}
     </RailSection>

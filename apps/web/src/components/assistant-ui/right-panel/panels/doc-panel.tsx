@@ -11,10 +11,13 @@
  * **只有 PDF 分页**。Word 转出来的 HTML 是连续的流,给它编页码是编的,人会拿着
  * "第 3 页"去对原文然后发现对不上。
  */
+import { useAuiState } from '@assistant-ui/react';
 import { useEffect, useState, type FC } from 'react';
 
 import { DocumentPreview } from '@/components/features/document-preview';
+import { flattenContext } from '@/components/features/project-page/context-panel';
 import type { PreviewPayload } from '@/lib/document-preview';
+import { useThreadProjectsOrNull } from '@/lib/thread-projects-sync';
 import type { PanelContentProps } from '../panel-types';
 
 type DocState = { projectId?: string; name?: string };
@@ -74,7 +77,12 @@ const PdfPage: FC<{ projectId: string; name: string; page: number }> = ({ projec
 };
 
 export const DocPanel: FC<PanelContentProps> = ({ tab }) => {
-  const { projectId, name } = (tab.state ?? {}) as DocState;
+  const fromTab = (tab.state ?? {}) as DocState;
+  // 面板自己挑的那一份只活在这一次打开里 —— 不写回 tab.state,免得把
+  // "用户明确在右侧打开的那份"覆盖掉。
+  const [picked, setPicked] = useState<DocState | null>(null);
+  const projectId = fromTab.projectId ?? picked?.projectId;
+  const name = fromTab.name ?? picked?.name;
   const [load, setLoad] = useState<Load>({ state: 'idle' });
 
   useEffect(() => {
@@ -96,13 +104,10 @@ export const DocPanel: FC<PanelContentProps> = ({ tab }) => {
     return () => { alive = false; };
   }, [projectId, name]);
 
-  if (!projectId || !name) {
-    return (
-      <p className="text-muted-foreground p-6 text-sm">
-        在项目的上下文清单里选一份文件,点「在右侧打开」。
-      </p>
-    );
-  }
+  // 没选文件时**把这个项目的文档摆出来**,而不是叫人去别处点一遍。
+  // 刚生成的稿子明明就在上下文里,却要人绕回项目页 —— 那一句提示是把
+  // 自己的活推给了用户(用户实测:"文档里也没有内容展示")。
+  if (!projectId || !name) return <DocPicker onPick={setPicked} />;
   if (load.state === 'loading' || load.state === 'idle') {
     return <p className="text-muted-foreground p-6 text-sm">读取中…</p>;
   }
@@ -125,6 +130,85 @@ export const DocPanel: FC<PanelContentProps> = ({ tab }) => {
       ) : (
         <DocumentPreview name={name} payload={load.payload} />
       )}
+    </div>
+  );
+};
+
+/**
+ * 还没选文件时的样子:**把当前项目的文档直接摆出来**。
+ *
+ * 从前这里只有一句"去项目的上下文清单里选一份文件,点「在右侧打开」" —— 刚生成
+ * 的稿子明明就在上下文里,却要人绕回项目页再点一遍。面板知道自己属于哪个项目,
+ * 那就自己去问。
+ */
+const DocPicker: FC<{ onPick: (doc: { projectId: string; name: string }) => void }> = ({ onPick }) => {
+  const localThreadId = useAuiState((s) => s.threadListItem.id);
+  const remoteThreadId = useAuiState((s) => s.threadListItem.remoteId ?? s.threadListItem.externalId);
+  const threadId = remoteThreadId ?? localThreadId ?? undefined;
+  const threadProjects = useThreadProjectsOrNull();
+  const projectId = threadId ? threadProjects?.[threadId] : undefined;
+  const [docs, setDocs] = useState<Array<{ name: string; detail: string }> | null>(null);
+
+  useEffect(() => {
+    if (!projectId) { setDocs([]); return; }
+    let alive = true;
+    void (async () => {
+      const res = await fetch(
+        `/api/project/context?projectId=${encodeURIComponent(projectId)}`,
+      ).catch(() => null);
+      const body = (await res?.json().catch(() => null)) as
+        Parameters<typeof flattenContext>[0] | null;
+      // **平铺,不按项目页那样把文件夹合成一张卡** —— 这里要选的就是具体某一份,
+      // 分组会把文件夹里的文件整个吞掉(实测:项目明明有三份文件,这儿说"还没有文档")。
+      if (alive) {
+        setDocs(
+          body
+            ? flattenContext(body)
+                .filter((i) => i.kind === 'file')
+                .map((i) => ({ name: i.name, detail: i.detail }))
+            : [],
+        );
+      }
+    })();
+    return () => { alive = false; };
+  }, [projectId]);
+
+  if (!projectId) {
+    return (
+      <p className="text-muted-foreground p-6 text-sm leading-relaxed">
+        这条对话还没归到项目里。归进项目之后,项目里的文档会列在这儿。
+      </p>
+    );
+  }
+  if (docs === null) return <p className="text-muted-foreground p-6 text-sm">读取中…</p>;
+
+  if (docs.length === 0) {
+    return (
+      <p className="text-muted-foreground p-6 text-sm leading-relaxed">
+        这个项目还没有文档。给项目设一个文件夹,或者把文件拖进对话里。
+      </p>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-auto p-4">
+      <p className="text-muted-foreground mb-2 text-xs">这个项目里的文档</p>
+      <ul className="space-y-1">
+        {docs.map((doc) => (
+          <li key={doc.name}>
+            <button
+              type="button"
+              onClick={() => onPick({ projectId, name: doc.name })}
+              className="hover:bg-muted/50 flex w-full items-baseline gap-2 rounded px-2 py-1.5 text-left"
+            >
+              <span className="min-w-0 flex-1 truncate text-sm">{doc.name.replace(/^.*\//, '')}</span>
+              <span className="text-muted-foreground shrink-0 text-[11px]">
+                {doc.detail}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 };

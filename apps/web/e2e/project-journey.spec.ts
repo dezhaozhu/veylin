@@ -110,12 +110,18 @@ test('新建项目 → 放进办公文件 → context 认得出来', async ({ pa
   await page.getByText(PROJECT, { exact: true }).first().click();
   await expect(page.getByRole('heading', { name: PROJECT })).toBeVisible({ timeout: 15_000 });
 
-  // 连文件名带后缀一起断言,并且数量要对得上 —— 只匹配半个名字太容易蒙混过关。
+  // 上下文改成卡片之后,**文件夹合成一张卡**(形状取自 Claude 的 Context 栏):
+  // 卡上写清有几项,点进去才是具体哪几份。两层都要断言 —— 只看卡会漏掉
+  // "点进去其实是空的",只看清单又测不到卡。
   await expect(page.getByText('3 项', { exact: false }).first()).toBeVisible({ timeout: 20_000 });
+  const folderCard = page.getByRole('button', { name: /项$/ }).first();
+  await expect(folderCard, '文件夹没有合成一张卡').toBeVisible({ timeout: 20_000 });
+  await folderCard.click();
+
   for (const name of [XLSX_NAME, DOCX_NAME, PPTX_NAME]) {
     await expect(
       page.getByText(name, { exact: false }).first(),
-      `context 里看不到 ${name}`,
+      `点开文件夹卡之后仍然看不到 ${name}`,
     ).toBeVisible({ timeout: 20_000 });
   }
 });
