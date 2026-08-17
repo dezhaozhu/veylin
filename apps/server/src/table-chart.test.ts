@@ -44,7 +44,7 @@ describe('table_chart', () => {
     const { id, cols } = await sheetWithColumns('chart-bad-cols');
     const tools = buildTableTools();
     const out = (await tools.table_chart.execute!(
-      { sheet: id, columns: [cols[0], 'nonexistent'] },
+      { sheet: id, columns: [cols[0], 'nonexistent'] }, {} as never,
     )) as { ok: boolean; error?: string };
     assert.equal(out.ok, false);
     assert.match(out.error ?? '', /nonexistent/);
@@ -56,7 +56,7 @@ describe('table_chart', () => {
     const { events, stop } = captureEvents();
     const tools = buildTableTools();
     const out = (await tools.table_chart.execute!(
-      { sheet: id, columns: [...cols, 'ghost'] },
+      { sheet: id, columns: [...cols, 'ghost'] }, {} as never,
     )) as { ok: boolean };
     stop();
     assert.equal(out.ok, false, '有一列不认识就该整个拒绝,不能画剩下的');
@@ -68,7 +68,7 @@ describe('table_chart', () => {
     const { events, stop } = captureEvents();
     const tools = buildTableTools();
     const out = (await tools.table_chart.execute!(
-      { sheet: id, columns: cols, chart_type: 'bar' },
+      { sheet: id, columns: cols, chart_type: 'bar' }, {} as never,
     )) as { ok: boolean; chart?: string };
     stop();
     assert.equal(out.ok, true);
@@ -84,7 +84,7 @@ describe('table_chart', () => {
     const { id, cols } = await sheetWithColumns('chart-default');
     const { events, stop } = captureEvents();
     const tools = buildTableTools();
-    await tools.table_chart.execute!({ sheet: id, columns: cols });
+    await tools.table_chart.execute!({ sheet: id, columns: cols }, {} as never);
     stop();
     const chart = events.find((e) => e.type === 'chart') as { chartType: string } | undefined;
     assert.equal(chart?.chartType, 'column');
