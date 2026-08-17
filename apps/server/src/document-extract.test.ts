@@ -213,3 +213,23 @@ describe('分页', () => {
     assert.equal(await renderPdfPage(makePdfFixture('HELLO'), 0), null);
   });
 });
+
+describe('讲者备注的噪声', () => {
+  it('**页码不算备注** —— 有的生成器把页号写进备注位,读出来就成了「[备注] 3」', async () => {
+    const JSZipMod = (await import('jszip')).default;
+    const zip = new JSZipMod();
+    zip.file('ppt/slides/slide3.xml', '<p:sld xmlns:a="a"><a:p><a:r><a:t>正文</a:t></a:r></a:p></p:sld>');
+    zip.file('ppt/notesSlides/notesSlide3.xml', '<p:notes xmlns:a="a"><a:p><a:r><a:t>3</a:t></a:r></a:p></p:notes>');
+    const out = await extractDocument('x.pptx', (await zip.generateAsync({ type: 'nodebuffer' })) as Buffer);
+    assert.ok(!/\[备注\]/.test(out.text ?? ''), '把页码当成备注读出来了');
+  });
+
+  it('真备注照旧带出来', async () => {
+    const JSZipMod = (await import('jszip')).default;
+    const zip = new JSZipMod();
+    zip.file('ppt/slides/slide2.xml', '<p:sld xmlns:a="a"><a:p><a:r><a:t>正文</a:t></a:r></a:p></p:sld>');
+    zip.file('ppt/notesSlides/notesSlide2.xml', '<p:notes xmlns:a="a"><a:p><a:r><a:t>内部口径:实际到9月</a:t></a:r></a:p></p:notes>');
+    const out = await extractDocument('x.pptx', (await zip.generateAsync({ type: 'nodebuffer' })) as Buffer);
+    assert.match(out.text ?? '', /实际到9月/);
+  });
+});

@@ -129,7 +129,10 @@ async function extractPptx(bytes: Buffer): Promise<Extracted> {
     const notes = zip.files[`ppt/notesSlides/notesSlide${n}.xml`];
     if (notes) {
       // 讲者备注常常是承诺和口径的真正所在,但它没在台上讲过 —— 标明来源。
-      const text = runsOf(await notes.async('string'));
+      const text = runsOf(await notes.async('string'))
+        // 页码不算备注:有的生成器(pptxgenjs 就是)把页号写进备注位,读出来
+        // 就成了「[备注] 3」—— 一句凭空多出来的话。
+        .filter((t) => t.trim() !== String(n));
       if (text.length) lines.push(`  [备注] ${text.join(' ')}`);
     }
   }

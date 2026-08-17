@@ -1280,6 +1280,62 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     },
   });
 
+  /**
+   * 生成一份 Word / PPT,落进项目文件夹的 `生成/`。
+   *
+   * 三条:
+   * - **输入是 markdown**:模型本来就写 markdown,再发明一套结构只会让它填错格子。
+   * - **生成物不是原件**:进 `生成/`、只读、文件名带生成时间。原件仓一个字不动 ——
+   *   这一条不是这里的规矩,是 immutable-originals 的规矩,生成也得守。
+   * - **没绑文件夹就说没绑**,不悄悄找一个地方放 —— 人会以为文件生成好了,
+   *   然后哪儿也找不到。
+   */
+  const createDocument = createTool({
+    id: 'create_document',
+    description:
+      '按 markdown 生成一份 Word(docx)或 PPT(pptx),存进当前项目文件夹的「生成/」目录。' +
+      '用于交付一份汇报/说明文档。支持标题、段落、列表、表格、引用、代码块;' +
+      'PPT 按一级/二级标题或 `---` 分页。**不会改动任何已有文件。**',
+    inputSchema: z.object({
+      format: z.enum(['docx', 'pptx']).describe('docx=Word,pptx=PPT'),
+      title: z.string().describe('文档标题,也用作文件名'),
+      markdown: z.string().describe('正文,markdown'),
+    }),
+    execute: async (
+      input: { format: 'docx' | 'pptx'; title: string; markdown: string },
+      ctx?: TableToolCtx,
+    ) => {
+      const scope = compassScopeFromCtx(ctx);
+      const projectId = scope?.projectId ?? null;
+      if (!projectId) {
+        return { ok: false, error: '这个会话没有钉定项目,不知道该把文件放进哪个项目文件夹。' };
+      }
+      const tenantId = (ctx?.requestContext?.get('tenantId') as string | undefined) ?? DEV_TENANT_ID;
+      const folder = (await getProject(tenantId, projectId))?.folder;
+      if (!folder) {
+        return {
+          ok: false,
+          error: '这个项目还没有绑定本地文件夹,生成的文件没地方放。先在项目页绑一个。',
+        };
+      }
+      const { generateDocx, generatePptx, saveGenerated } = await import('./document-generate.js');
+      try {
+        const bytes = input.format === 'pptx'
+          ? await generatePptx(input.title, input.markdown)
+          : await generateDocx(input.title, input.markdown);
+        const saved = await saveGenerated(folder, input.title, input.format, bytes, new Date());
+        return {
+          ok: true,
+          name: saved.name,
+          bytes: bytes.length,
+          note: '已生成(只读)。在项目页的上下文清单里可以「在右侧打开」看它。',
+        };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  });
+
   return {
     table_get: tableGet,
     table_update_row: tableUpdateRow,
@@ -1299,5 +1355,6 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     table_chart: tableChart,
     table_query: tableQuery,
     project_file_read: projectFileRead,
+    create_document: createDocument,
   };
 }
