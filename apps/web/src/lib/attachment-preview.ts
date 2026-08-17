@@ -7,11 +7,13 @@
  * 失败一律**说出原话**:一个转圈转到空白的预览,比一句"这类文件看不了,用
  * Office 另存为 .docx 再来"更让人不知道该干嘛。
  */
+import type { PreviewPayload } from './document-preview.js';
+
 export type PreviewState =
   | { state: 'idle' }
   | { state: 'loading' }
-  | { state: 'text'; body: string; note?: string }
-  | { state: 'note'; body: string };
+  | { state: 'text'; body: string; note?: string; payload: PreviewPayload }
+  | { state: 'note'; body: string; payload: PreviewPayload };
 
 export async function previewAttachment(
   name: string,
@@ -21,9 +23,10 @@ export async function previewAttachment(
   if (!data) {
     // 消息里的附件不一定还带着字节(历史线程只留了引用)。这不是错误,
     // 但也不能转圈等一个永远不来的响应。
-    return { state: 'note', body: '这个附件的内容已经不在本地了,看不了。' };
+    const body = '这个附件的内容已经不在本地了,看不了。';
+    return { state: 'note', body, payload: { note: body } };
   }
-  let body: { text?: string; overview?: string; note?: string; error?: string };
+  let body: PreviewPayload & { error?: string };
   try {
     const res = await fetchImpl('/api/attachment/preview', {
       method: 'POST',
@@ -31,12 +34,20 @@ export async function previewAttachment(
       body: JSON.stringify({ name, data }),
     });
     body = (await res.json().catch(() => ({}))) as typeof body;
-    if (!res.ok) return { state: 'note', body: body.error ?? `读不了(HTTP ${res.status})` };
+    if (!res.ok) {
+      const note = body.error ?? `读不了(HTTP ${res.status})`;
+      return { state: 'note', body: note, payload: { note } };
+    }
   } catch (err) {
-    return { state: 'note', body: err instanceof Error ? err.message : String(err) };
+    const note = err instanceof Error ? err.message : String(err);
+    return { state: 'note', body: note, payload: { note } };
   }
   // 表格没有 text,只有 overview —— 少看一个字段,表格就会显示成"没有内容"。
+  // 缩略图/HTML 也一并带出去,由 document-preview 决定怎么显示。
+  const payload: PreviewPayload = body;
   const text = body.text ?? body.overview ?? '';
-  if (!text) return { state: 'note', body: body.note ?? body.error ?? '这个文件没有可直接预览的内容。' };
-  return { state: 'text', body: text, ...(body.note ? { note: body.note } : {}) };
+  if (!text && !body.html && !body.thumbnail) {
+    return { state: 'note', body: body.note ?? body.error ?? '这个文件没法在这里打开。', payload };
+  }
+  return { state: 'text', body: text, payload, ...(body.note ? { note: body.note } : {}) };
 }

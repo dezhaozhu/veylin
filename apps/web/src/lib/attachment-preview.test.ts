@@ -49,3 +49,18 @@ describe('previewAttachment', () => {
     assert.equal(called, false);
   });
 });
+
+describe('可视预览一路带到界面', () => {
+  it('**缩略图和 HTML 不能在这一层被丢掉** —— 丢了就退回纯文字,版式白抽了', async () => {
+    const out = await previewAttachment('a.pdf', 'data:x;base64,eA==',
+      res({ ok: true, kind: 'doc', text: '正文', thumbnail: 'data:image/png;base64,q' }));
+    assert.equal(out.state, 'text');
+    if (out.state === 'text') assert.equal(out.payload.thumbnail, 'data:image/png;base64,q');
+  });
+
+  it('只有缩略图、没有文字也算看得了 —— 扫描件正是这样', async () => {
+    const out = await previewAttachment('a.pdf', 'data:x;base64,eA==',
+      res({ ok: true, kind: 'doc', text: '', thumbnail: 'data:image/png;base64,q', note: '扫描件' }));
+    assert.equal(out.state, 'text');
+  });
+});

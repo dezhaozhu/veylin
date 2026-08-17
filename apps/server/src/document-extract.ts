@@ -25,6 +25,13 @@ export type Extracted = {
   totalLines?: number;
   /** 表格的人读版概览 —— 预览面板直接显示这一段。 */
   overview?: string;
+  /**
+   * 有版式的预览(Word / 表格)。**渲染方必须放进沙箱 iframe** —— 它来自
+   * 用户的文件,不是我们写的模板。
+   */
+  html?: string;
+  /** 首页缩略图(PDF)。data URL。 */
+  thumbnail?: string;
   sheets?: string[];
   columns?: string[];
   rows?: Array<Record<string, unknown>>;
@@ -69,6 +76,12 @@ export function planExtract(name: string): ExtractPlan {
 
 const DEFAULT_LINES = 200;
 const DEFAULT_ROWS = 5;
+
+function esc(v: unknown): string {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 /** `<a:t>…</a:t>` 里的文字。OOXML 的文字全在这一个标签里。 */
 function runsOf(xml: string): string[] {
@@ -118,6 +131,24 @@ async function extractPptx(bytes: Buffer): Promise<Extracted> {
   return { kind: 'slides', text: lines.join('\n'), totalLines: lines.length };
 }
 
+/**
+ * 首页缩略图。**失败只是少一张图** —— 正文照给,不能因为画不出来就整份读不了。
+ * (扫描件更要给:它只有图能看。)
+ */
+async function pdfThumbnail(pdf: unknown): Promise<{ thumbnail?: string }> {
+  try {
+    const { renderPageAsImage } = await import('unpdf');
+    const url = (await renderPageAsImage(pdf as never, 1, {
+      canvasImport: () => import('@napi-rs/canvas'),
+      scale: 1.2,
+      toDataURL: true,
+    })) as string;
+    return url?.startsWith('data:') ? { thumbnail: url } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function extractPdf(bytes: Buffer): Promise<Extracted> {
   try {
     const { extractText, getDocumentProxy } = await import('unpdf');
@@ -130,11 +161,17 @@ async function extractPdf(bytes: Buffer): Promise<Extracted> {
       return {
         kind: 'doc',
         text: '',
+        ...(await pdfThumbnail(pdf)),
         notice: `这份 PDF 没有可提取的文字层(多半是扫描件,共 ${pdf.numPages} 页)。` +
           '把它拖进对话框、并切到能看图的模型,才读得了。',
       };
     }
-    return { kind: 'doc', text: body, totalLines: body.split('\n').length };
+    return {
+      kind: 'doc',
+      text: body,
+      totalLines: body.split('\n').length,
+      ...(await pdfThumbnail(pdf)),
+    };
   } catch (e) {
     return { kind: 'unsupported', notice: `读不了这份 PDF:${e instanceof Error ? e.message : String(e)}` };
   }
@@ -144,6 +181,12 @@ async function extractDocx(bytes: Buffer, opts: { offset?: number; limit?: numbe
   try {
     const mammoth = await import('mammoth');
     const { value } = await mammoth.extractRawText({ buffer: bytes });
+    // 纯文字会把 Word 里的表格拍平成一行一格,人会以为原文就长这样。
+    // HTML 保住标题层级和表格 —— 失败了只是少一个更好的预览,不影响正文。
+    const html = await mammoth
+      .convertToHtml({ buffer: bytes })
+      .then((r) => r.value as string)
+      .catch(() => undefined);
     const all = value.split('\n');
     const offset = Math.max(0, opts.offset ?? 0);
     const limit = Math.max(1, opts.limit ?? DEFAULT_LINES);
@@ -152,6 +195,7 @@ async function extractDocx(bytes: Buffer, opts: { offset?: number; limit?: numbe
     return {
       kind: 'doc',
       text: slice.join('\n'),
+      ...(html ? { html } : {}),
       totalLines: all.length,
       ...(rest > 0 ? { notice: `还有 ${rest} 行没给 —— 用 offset 继续读。` } : {}),
     };
@@ -178,8 +222,17 @@ async function extractSheet(bytes: Buffer, opts: { limit?: number }): Promise<Ex
     '',
     ...shown.map((r, i) => `${i + 1}. ` + columns.map((c) => `${c}=${String(r[c] ?? '')}`).join('  ')),
   ].join('\n');
+  // 有版式的预览:行列关系是表格的全部意义,拍成文字就没了。
+  // **每个格子都转义** —— 单元格里可以躺着一段 `<script>`,而这段 HTML 会被
+  // 渲染出来(渲染方另外还会放进沙箱 iframe,两层都要有)。
+  const html =
+    '<table><thead><tr>' + columns.map((c) => `<th>${esc(c)}</th>`).join('') +
+    '</tr></thead><tbody>' +
+    shown.map((r) => '<tr>' + columns.map((c) => `<td>${esc(r[c])}</td>`).join('') + '</tr>').join('') +
+    '</tbody></table>';
   return {
     kind: 'sheet',
+    html,
     overview,
     sheets: wb.SheetNames,
     columns,

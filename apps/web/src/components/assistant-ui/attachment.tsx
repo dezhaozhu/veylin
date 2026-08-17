@@ -31,6 +31,7 @@ import {
   previewAttachment,
   type PreviewState,
 } from "@/lib/attachment-preview";
+import { DocumentPreview } from "@/components/features/document-preview";
 
 function fileTypeLabel(name: string, contentType?: string): string {
   if (contentType === "application/pdf" || name.toLowerCase().endsWith(".pdf")) {
@@ -245,6 +246,7 @@ const DocumentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
   const { data, file } = useDocumentData();
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<PreviewState>({ state: "idle" });
+  const [dataUrl, setDataUrl] = useState<string | undefined>(undefined);
   const bounds = useChatColumnBounds(open);
 
   useEffect(() => {
@@ -262,6 +264,7 @@ const DocumentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
     setPreview({ state: "loading" });
     void (async () => {
       const url = data ?? (file ? await fileToDataUrl(file) : undefined);
+      if (alive) setDataUrl(url);
       const out = await previewAttachment(name, url);
       if (alive) setPreview(out);
     })();
@@ -297,24 +300,27 @@ const DocumentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
                 </button>
               </header>
               <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-                {preview.state === "loading" ? (
+                {preview.state === "loading" || preview.state === "idle" ? (
                   <p className="text-muted-foreground text-sm">读取中…</p>
-                ) : null}
-                {preview.state === "note" ? (
-                  <p className="text-muted-foreground text-sm leading-relaxed">{preview.body}</p>
-                ) : null}
-                {preview.state === "text" ? (
-                  <pre className="text-foreground/90 font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                    {preview.body}
-                  </pre>
-                ) : null}
+                ) : (
+                  <DocumentPreview
+                    name={name}
+                    payload={preview.payload}
+                    action={
+                      dataUrl ? (
+                        // 打不开也走得下去 —— 这正是"没有可预览的内容"缺的那一步。
+                        <a
+                          href={dataUrl}
+                          download={name}
+                          className="text-foreground inline-flex items-center gap-1.5 text-xs underline underline-offset-4"
+                        >
+                          下载原件
+                        </a>
+                      ) : null
+                    }
+                  />
+                )}
               </div>
-              {preview.state === "text" && preview.note ? (
-                // 概览就说是概览 —— 不说,人会把前几行当成全部。
-                <footer className="text-muted-foreground border-t px-4 py-2 text-xs">
-                  {preview.note}
-                </footer>
-              ) : null}
             </div>
           </div>,
           document.body,

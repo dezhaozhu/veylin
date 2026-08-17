@@ -13,7 +13,9 @@
  */
 import { useEffect, useState, type FC } from 'react';
 
+import { DocumentPreview } from '@/components/features/document-preview';
 import { describeFreshness } from '@/lib/freshness';
+import type { PreviewPayload } from '@/lib/document-preview';
 
 export type ContextItem =
   | { kind: 'file'; name: string; detail: string }
@@ -22,8 +24,10 @@ export type ContextItem =
 type Preview =
   | { state: 'idle' }
   | { state: 'loading' }
-  | { state: 'text'; body: string; note?: string }
-  | { state: 'note'; body: string };
+  /** 读到了 —— 怎么显示(图/版式/文字/文件卡)由 DocumentPreview 决定 */
+  | { state: 'ready'; payload: PreviewPayload }
+  /** 压根不该去读(连接器)、或读失败 */
+  | { state: 'note'; payload: PreviewPayload };
 
 export const ContextPanel: FC<{
   items: ContextItem[];
@@ -44,7 +48,9 @@ export const ContextPanel: FC<{
     if (picked.kind === 'connector') {
       setPreview({
         state: 'note',
-        body: '这是一条数据源连接,不是一个文件 —— 它的内容随时会变。要看具体的行,在对话里问,或者用表格工具筛。',
+        payload: {
+          note: '这是一条数据源连接,不是一个文件 —— 它的内容随时会变。要看具体的行,在对话里问,或者用表格工具筛。',
+        },
       });
       return;
     }
@@ -55,19 +61,20 @@ export const ContextPanel: FC<{
         const res = await fetch(
           `/api/project/file?projectId=${encodeURIComponent(projectId)}&name=${encodeURIComponent(picked.name)}`,
         );
-        const body = (await res.json()) as {
-          ok?: boolean; text?: string; overview?: string; error?: string; note?: string;
-        };
+        const body = (await res.json()) as PreviewPayload & { ok?: boolean; error?: string };
         if (!alive) return;
-        if (!res.ok || body.error) { setPreview({ state: 'note', body: body.error ?? '读不到这个文件' }); return; }
-        const text = body.text ?? body.overview ?? '';
-        setPreview(
-          text
-            ? { state: 'text', body: text, ...(body.note ? { note: body.note } : {}) }
-            : { state: 'note', body: '这个文件没有可直接预览的文本内容。' },
-        );
+        if (!res.ok || body.error) {
+          setPreview({ state: 'note', payload: { note: body.error ?? '读不到这个文件' } });
+          return;
+        }
+        // 缩略图 / 带版式的 HTML 一并交给 DocumentPreview —— 从前这里只取 text,
+        // 于是一份 xlsx(只有结构化字段、没有 text)永远显示成"没有可预览的
+        // 文本内容",而我们其实读到了。
+        setPreview({ state: 'ready', payload: body });
       } catch (err) {
-        if (alive) setPreview({ state: 'note', body: err instanceof Error ? err.message : String(err) });
+        if (alive) {
+          setPreview({ state: 'note', payload: { note: err instanceof Error ? err.message : String(err) } });
+        }
       }
     })();
     return () => { alive = false; };
@@ -132,18 +139,29 @@ export const ContextPanel: FC<{
             {preview.state === 'loading' ? (
               <p className="text-muted-foreground text-sm">读取中…</p>
             ) : null}
-            {preview.state === 'note' ? (
-              <p className="text-muted-foreground text-sm leading-relaxed">{preview.body}</p>
-            ) : null}
-            {preview.state === 'text' ? (
-              <>
-                {preview.note ? (
-                  <p className="text-muted-foreground mb-2 text-xs">{preview.note}</p>
-                ) : null}
-                <pre className="text-foreground/90 font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                  {preview.body}
-                </pre>
-              </>
+            {picked && (preview.state === 'ready' || preview.state === 'note') ? (
+              <DocumentPreview
+                name={picked.name}
+                payload={preview.payload}
+                action={
+                  picked.kind === 'file' ? (
+                    // 打不开也走得下去:文件本来就躺在项目文件夹里,让人去拿。
+                    <button
+                      type="button"
+                      className="text-foreground text-xs underline underline-offset-4"
+                      onClick={() => {
+                        void fetch('/api/project/reveal', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ path: picked.name }),
+                        });
+                      }}
+                    >
+                      在访达中显示
+                    </button>
+                  ) : null
+                }
+              />
             ) : null}
           </div>
         </div>

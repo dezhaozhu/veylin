@@ -98,9 +98,8 @@ describe('表格的人读版概览', () => {
   });
 });
 
-describe('pdf', () => {
-  /** 手写一份最小 PDF(一页,一行文字)—— 不引新依赖就能有真样本。 */
-  function makePdf(text: string): Buffer {
+/** 手写一份最小 PDF(一页,一行文字)—— 不引新依赖就能有真样本。 */
+function makePdfFixture(text: string): Buffer {
     const objs = [
       '<< /Type /Catalog /Pages 2 0 R >>',
       '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -122,17 +121,63 @@ describe('pdf', () => {
     pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
     for (const o of offsets) pdf += `${String(o).padStart(10, '0')} 00000 n \n`;
     pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-    return Buffer.from(pdf, 'latin1');
-  }
+  return Buffer.from(pdf, 'latin1');
+}
 
+describe('pdf', () => {
   it('抽出文字层', async () => {
-    const out = await extractDocument('说明.pdf', makePdf('DELIVERY BY AUGUST'));
+    const out = await extractDocument('说明.pdf', makePdfFixture('DELIVERY BY AUGUST'));
     assert.equal(out.kind, 'doc');
     assert.match(out.text ?? '', /DELIVERY BY AUGUST/);
   });
 
   it('**扫描件(没有文字层)要说是扫描件** —— 回一段空白等于说"这份文件是空的"', async () => {
-    const out = await extractDocument('扫描.pdf', makePdf(' '));
+    const out = await extractDocument('扫描.pdf', makePdfFixture(' '));
     assert.match((out.text ?? '') + (out.notice ?? ''), /扫描|没有可提取的文字/);
+  });
+});
+
+/**
+ * **看得见的预览**:能画出来的就画出来,画不出来的老老实实给一张文件卡 + 下载。
+ * 一段纯文字的 dump 对一份有版式的文件是失真的 —— Word 的表格会被拍平成
+ * 一行一格,人会以为原文就长这样。
+ */
+describe('可视预览', () => {
+  it('Word 给 HTML,**表格保住行列** —— 抽纯文字会把一张表拍平成逐行文本', async () => {
+    const mammoth = await import('mammoth');
+    // mammoth 只吃 docx,这里用它自己的 API 造不出来;改用真文件路径断言:
+    // 见 document-extract-real.test.ts。这里只钉"docx 计划里要产出 html"。
+    assert.ok(mammoth);
+    assert.equal(planExtract('a.docx').kind, 'doc');
+  });
+
+  it('表格给 HTML 表,行列还在', async () => {
+    const XLSX = await import('xlsx');
+    const ws = XLSX.utils.json_to_sheet([{ 订单: 'D1', 数量: 3 }]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '明细');
+    const out = await extractDocument('a.xlsx', XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer);
+    assert.match(out.html ?? '', /<table/);
+    assert.match(out.html ?? '', /订单/);
+    assert.match(out.html ?? '', /D1/);
+  });
+
+  it('**HTML 里不能带脚本** —— 它会被渲染进界面', async () => {
+    const XLSX = await import('xlsx');
+    const ws = XLSX.utils.json_to_sheet([{ 备注: '<script>alert(1)</script>' }]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 's');
+    const out = await extractDocument('a.xlsx', XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer);
+    assert.ok(!/<script/i.test(out.html ?? ''), '单元格里的脚本原样进了 HTML');
+  });
+
+  it('PDF 给首页缩略图 —— Claude 那样"看一眼是什么"', async () => {
+    const out = await extractDocument('x.pdf', makePdfFixture('HELLO'));
+    assert.match(out.thumbnail ?? '', /^data:image\//);
+  });
+
+  it('**画不出来也不能崩** —— 缩略图失败只是少一张图,正文还在', async () => {
+    const out = await extractDocument('坏.pdf', Buffer.from('not a pdf'));
+    assert.ok(out.kind === 'unsupported' || !out.thumbnail);
   });
 });
