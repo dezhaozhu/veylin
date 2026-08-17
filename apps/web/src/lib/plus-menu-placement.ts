@@ -4,6 +4,11 @@
  * 从前写死向上(`bottom: innerHeight - rect.top`)—— 聊天页输入框在底部,那是对的。
  * 项目页把同一个输入框搬到了**页面顶部**,菜单就顶出屏幕外:用户看到被切掉半截
  * 的一列。同一个组件换个位置就露馅,说明方向本来就不该写死。
+ *
+ * **只管方向,不做裁剪。** 第一版顺手加了 maxHeight + overflow-y,结果更糟:
+ * CSS 里一轴非 visible 会把另一轴一并强制成 auto,而面板固定 280px 宽、外层定位
+ * 容器只有按钮那么宽 —— 面板当场被横向切掉,「技能 / MCP」向右飞出的子菜单也会
+ * 一起没。菜单本来就只有几行,装不下不是真问题;裁才是。
  */
 export type PlusMenuRect = { top: number; bottom: number; left: number; width: number };
 
@@ -14,8 +19,6 @@ export type PlusMenuPlacement = {
   bottom?: number;
   /** 向下弹时用(距视口顶部);向上弹时为 undefined。 */
   top?: number;
-  /** 不管往哪弹都给上限 —— 超出就在菜单内部滚,而不是被窗口切掉。 */
-  maxHeight: number;
 };
 
 const GAP = 8;
@@ -33,11 +36,7 @@ export function plusMenuPlacement(
 
   // 空间大的那边赢:聊天页(底部输入框)照旧向上,项目页(顶部输入框)向下。
   if (spaceBelow > spaceAbove) {
-    return { ...base, top: rect.bottom + GAP, maxHeight: Math.max(0, spaceBelow) };
+    return { ...base, top: rect.bottom + GAP };
   }
-  return {
-    ...base,
-    bottom: viewportHeight - rect.top + GAP,
-    maxHeight: Math.max(0, spaceAbove),
-  };
+  return { ...base, bottom: viewportHeight - rect.top + GAP };
 }

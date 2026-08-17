@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { decideCompassLoad } from '@/lib/compass-schedule-load';
+import { shouldApplyPayload } from '@/lib/sheet-payload-guard';
+import { useProjectsOrNull } from '@/lib/projects-sync';
+import { useThreadProjectsOrNull } from '@/lib/thread-projects-sync';
 import { createPortal } from 'react-dom';
 import { useAuiState } from '@assistant-ui/react';
 import { useAui } from '@assistant-ui/store';
@@ -591,7 +595,9 @@ export function TableGrid() {
   const [rows, setRows] = useState<TableRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [bootstrapped, setBootstrapped] = useState(false);
-  const [compassLoading, setCompassLoading] = useState(true);
+  const [compassLoading, setCompassLoading] = useState(false);
+  const projects = useProjectsOrNull();
+  const threadProjects = useThreadProjectsOrNull();
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   // Rows actually shown after AG-Grid's column filters (the search box pre-filters
@@ -616,6 +622,9 @@ export function TableGrid() {
   // load() 是 useCallback 且不该因为换会话就重建(SSE 订阅挂在它上面),
   // 所以当前 threadId 走 ref 读。
   const threadIdRef = useRef<string | undefined>(threadId);
+  // 迟到的响应要能认出自己是哪张表的 —— applyPayload 的依赖是空数组,
+  // 只能靠 ref 读到此刻在看的是哪张表。
+  const activeSheetIdRef = useRef<string>('main');
   const sseErrorNotified = useRef(false);
   // Agent-requested chart waiting for the target sheet's rows to be on screen
   const pendingChartRef = useRef<{
@@ -761,6 +770,10 @@ export function TableGrid() {
   }, [rows]);
 
   useEffect(() => {
+    activeSheetIdRef.current = activeSheetId;
+  }, [activeSheetId]);
+
+  useEffect(() => {
     threadIdRef.current = threadId;
   }, [threadId]);
 
@@ -840,12 +853,17 @@ export function TableGrid() {
   }, []);
 
   const applyPayload = useCallback((data: SchedulePayload, initial: boolean) => {
+    // **迟到的响应不许盖住当前这张表。** 切表会重建 SSE,旧连接的 onopen 会用
+    // 过期闭包再拉一次上一张表;不挡的话,你点了开发组件、屏幕上却是 Sheet 1 的
+    // 空表 —— 用户看到的就是「点不动」(实测日志:08:12:49 点开发组件,
+    // 08:12:50 被 sheet_1 的响应盖了回去)。
+    if (!shouldApplyPayload(data.sheet, activeSheetIdRef.current)) return;
     // 空数组也要照收:换到一个还没装过表的项目时,页签就该空掉,而不是留着
     // 上一个作用域的页签(那正是"个人区看得见项目的表"那个病的另一半)。
     if (data.sheets) setSheets(data.sheets);
     if (data.columns) setColumnDefs(data.columns);
     const next = data.rows ?? [];
-    if (initial) setLoading(false);
+    setLoading(false);
     if (Date.now() < editingUntil.current) return;
     const serialized = JSON.stringify(next);
     if (serialized === lastSerialized.current) return;
@@ -992,6 +1010,19 @@ export function TableGrid() {
   // from the closure so whichever thread is open when the panel first loads
   // resolves Compass through that thread's project pin.
   useEffect(() => {
+    // **先知道这个项目有没有接 Compass,再决定说什么。** 从前无条件拉,于是在
+    // 和 Compass 无关的项目里先闪一句"正在从 Compass 加载",再弹一个"未加载"
+    // 的错误 —— 一个根本不成立的故事。
+    const decision = decideCompassLoad({
+      threadId,
+      projects,
+      threadProjects,
+    });
+    if (decision === 'wait') return;
+    if (decision === 'skip') {
+      setBootstrapped(true);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       setCompassLoading(true);
@@ -1027,7 +1058,7 @@ export function TableGrid() {
     return () => {
       cancelled = true;
     };
-  }, [showToast, t]);
+  }, [showToast, t, threadId, projects, threadProjects]);
 
   // Live sync: SSE push + row-level deltas replaces the old 4s full-sheet poll, so
   // update cost is independent of sheet size (loading the full 30k-row schedule is cheap).

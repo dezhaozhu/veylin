@@ -30,10 +30,14 @@ describe('plusMenuPlacement', () => {
     assert.equal(p.top, 300 + 32 + 8, '上方更挤却仍然向上弹');
   });
 
-  it('**不管往哪弹都给出高度上限** —— 超出就在菜单内部滚,而不是被窗口切掉', () => {
+  it('**不返回任何裁剪相关的量** —— 第一版加了 maxHeight+overflow,反而把面板横向切了', () => {
+    // 面板固定 280px 宽,外层定位容器只有按钮那么宽;一旦有 overflow,
+    // CSS 会把横轴一并强制成 auto,面板和向右飞出的子菜单当场被切。
     for (const r of [rect(700), rect(24)]) {
-      const p = plusMenuPlacement(r, 800);
-      assert.ok(p.maxHeight > 0 && p.maxHeight <= 800, `没有高度上限:${JSON.stringify(p)}`);
+      assert.deepEqual(
+        Object.keys(plusMenuPlacement(r, 800)).filter((k) => /height|overflow/i.test(k)),
+        [],
+      );
     }
   });
 

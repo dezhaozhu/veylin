@@ -64,6 +64,18 @@ export function subscribeProjects(listener: () => void): () => void {
   };
 }
 
+/**
+ * 和 useProjects 的区别只在**"还没加载"和"真的一个项目都没有"要分得开** ——
+ * 前者返回 EMPTY,两种情况长得一样,依赖它做判断会把该做的事跳过去。
+ */
+export function useProjectsOrNull(): ProjectInfo[] | null {
+  return useSyncExternalStore(
+    subscribeProjects,
+    () => cached,
+    () => null,
+  );
+}
+
 /** Force a refetch and notify subscribers — call after any project mutation
  * (新建项目 dialog create, future rename/delete). */
 export function invalidateProjects(): void {

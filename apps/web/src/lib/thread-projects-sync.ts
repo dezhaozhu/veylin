@@ -77,6 +77,15 @@ export function removeThreadProjectPin(threadId: string): void {
 
 /** Reactive thread→project map for the sidebar; subscribes once per mounted
  * consumer and shares the underlying fetch/cache. */
+/** 同 useProjectsOrNull:把"还没加载"和"真的没有钉过"分开。 */
+export function useThreadProjectsOrNull(): ThreadProjectMap | null {
+  return useSyncExternalStore(
+    subscribeThreadProjects,
+    () => cached,
+    () => null,
+  );
+}
+
 export function useThreadProjects(): ThreadProjectMap {
   return useSyncExternalStore(subscribeThreadProjects, readCachedThreadProjects, () => EMPTY);
 }

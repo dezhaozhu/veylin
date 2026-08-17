@@ -213,8 +213,6 @@ export const ComposerPlusMenu: FC = () => {
                 width: anchor.width,
                 ...(anchor.top === undefined ? {} : { top: anchor.top }),
                 ...(anchor.bottom === undefined ? {} : { bottom: anchor.bottom }),
-                maxHeight: anchor.maxHeight,
-                overflowY: 'auto',
               }}
               onClick={(e) => e.stopPropagation()}
               onPointerMove={armHoverOnPointerMove}
