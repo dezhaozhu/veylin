@@ -67,8 +67,7 @@ function toApiProject(project: Project): ApiProject {
  * Validate a client-supplied sources value: must be an array of non-empty
  * strings. Returns the canonical form — de-duped and sorted, matching the
  * migration's composed-project convention and `sceneSetKey`'s semantics — or
- * null when malformed. `[]` is well-formed here; `assertSourcesGranted`
- * rejects emptiness with its own message.
+ * null when malformed. `[]` is well-formed (source-less project folders).
  */
 function parseSources(raw: unknown): string[] | null {
   if (!Array.isArray(raw)) return null;

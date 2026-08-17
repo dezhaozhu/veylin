@@ -16,7 +16,8 @@ const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const env = {
   ...process.env,
   VEYLIN_REPO_ROOT: repoRoot,
-  VEYLIN_DATA_DIR: process.env.VEYLIN_DATA_DIR ?? './data',
+  // Absolute path: workspace `npm -w` cwd is apps/server; keep data under that package.
+  VEYLIN_DATA_DIR: process.env.VEYLIN_DATA_DIR ?? resolve(repoRoot, 'apps/server/data'),
   // Dev-only: faster cold start; chat still calls ensureMcpForTenant on demand.
   VEYLIN_LAZY_MCP_BOOT: process.env.VEYLIN_LAZY_MCP_BOOT ?? '1',
   // Dev-only: reload agent.yaml from disk on each chat; customize APIs always force-sync.

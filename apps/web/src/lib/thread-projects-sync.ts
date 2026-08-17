@@ -59,6 +59,22 @@ export function invalidateThreadProjects(): void {
   void fetchThreadProjects(true);
 }
 
+/** Optimistic sidebar pin (no network). Used so a just-created thread does
+ * not flash under 个人 while POST /api/project is in flight. */
+export function upsertThreadProjectPin(threadId: string, projectId: string): void {
+  cached = { ...(cached ?? EMPTY), [threadId]: projectId };
+  notify();
+}
+
+/** Drop an optimistic pin (rollback when create/pin fails). */
+export function removeThreadProjectPin(threadId: string): void {
+  if (!cached || !(threadId in cached)) return;
+  const next = { ...cached };
+  delete next[threadId];
+  cached = next;
+  notify();
+}
+
 /** Reactive thread→project map for the sidebar; subscribes once per mounted
  * consumer and shares the underlying fetch/cache. */
 export function useThreadProjects(): ThreadProjectMap {

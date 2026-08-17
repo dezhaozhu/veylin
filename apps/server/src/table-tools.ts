@@ -655,7 +655,13 @@ export async function importCompassOrderSheet(
   const srcColumns = (payload['columns'] as Array<Record<string, unknown>> | undefined) ?? [];
   const srcSem = srcColumns.find((c) => c['key'] === 'schedule_status')?.['semantics'];
   const statusSemantics =
-    srcSem && typeof srcSem === 'object' ? (srcSem as Record<string, string>) : undefined;
+    srcSem && typeof srcSem === 'object'
+      ? (srcSem as Record<string, string>)
+      : {
+          solved: 'positive',
+          derived: 'info',
+          unscheduled: 'neutral',
+        };
   const descriptors = [
     { key: 'order_id', name: '订单号', type: 'text' as const },
     { key: 'product_class', name: '产品', type: 'text' as const },

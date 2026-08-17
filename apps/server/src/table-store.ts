@@ -329,11 +329,17 @@ export async function initTableStore(): Promise<void> {
       sheetStore.set(mainId, initial.get(mainId)!);
       await persistSheet(mainId);
     }
+    // Do NOT force-reseed empty Sheet 1 when other sheets already exist —
+    // Compass imports (orders/resources) should not leave a blank default tab.
     let migrated = false;
     for (const sheet of sheetStore.values()) {
       if (migrateLegacyEmptySheet(sheet)) migrated = true;
     }
     if (migrated) await persistAll();
+    // 每个作用域各剪一次 —— 剪枝是"这个作用域里"的事。
+    for (const scope of new Set([...sheetStore.values()].map((x) => scopeOfSheet(x.meta)))) {
+      pruneEmptyDefaultSheet(scope);
+    }
   }
   tableHydrated = true;
 }
@@ -1009,6 +1015,7 @@ export function createTableSheet(name: string, scope: SheetScope): TableSheetMet
   });
   tablePersist(id);
   emitTable({ type: 'sheetsChange' });
+  pruneEmptyDefaultSheet(scope);
   return { ...meta };
 }
 
@@ -1064,6 +1071,48 @@ async function ensureAtLeastOneSheet(scope: SheetScope = PERSONAL_SCOPE): Promis
   const initial = buildInitialStore();
   sheetStore.set(id, initial.get(id)!);
   await persistSheet(id);
+}
+
+/** True when the builtin Sheet 1 is still an unused blank canvas. */
+function isPrunableEmptyDefaultSheet(sheet: SheetState, mainId: string): boolean {
+  if (sheet.meta.id !== mainId) return false;
+  if (sheet.columns.length > 0 && !isLegacyDefaultColumns(sheet.columns)) return false;
+  return sheetHasNoCellData(sheet);
+}
+
+/** 同一作用域内,除默认表之外还有没有装了东西的表。 */
+function otherSheetHasContent(scope: SheetScope, mainId: string): boolean {
+  for (const [id, sheet] of sheetStore) {
+    if (id === mainId) continue;
+    // **必须限定作用域**:从 ggshr9 搬过来的原版扫的是全部表 —— 在他们那条线上
+    // 表 id 不带作用域前缀,所以没问题;搬到这里就成了"别的项目有内容,就把你
+    // 个人区的 Sheet 1 删了"。
+    if (!sheetBelongsToScope(id, scope)) continue;
+    if (sheet.columns.length > 0 || !sheetHasNoCellData(sheet)) return true;
+  }
+  return false;
+}
+
+/**
+ * 某个作用域里的空白 Sheet 1,在同作用域另一张表装了真内容之后就删掉
+ * (典型场景:Compass 导入订单/资源之后,不该留一个空白默认页签)。
+ * 用户只是又开了一张空白表时不删。
+ *
+ * 搬运自 ggshr9(fix(table): prune empty Sheet 1 after import)。原版用的是裸
+ * `DEFAULT_TABLE_SHEET`,而我们这条线的表 id 带作用域前缀 —— 照搬的话这段既
+ * **找不到任何表**(等于失效),`otherSheetHasContent` 还会跨作用域扫。
+ */
+function pruneEmptyDefaultSheet(scope: SheetScope): void {
+  const mainId = sheetIdFor(scope, DEFAULT_TABLE_SHEET);
+  const main = sheetStore.get(mainId);
+  if (!main || sheetStore.size <= 1) return;
+  if (!isPrunableEmptyDefaultSheet(main, mainId)) return;
+  if (!otherSheetHasContent(scope, mainId)) return;
+  sheetStore.delete(mainId);
+  void deleteTableSheetDb(mainId).catch((e) => {
+    console.error('[table] prune empty default sheet failed:', e);
+  });
+  emitTable({ type: 'sheetsChange' });
 }
 
 export function addTableRow(sheetId: string): TableRowData | null {
@@ -1254,6 +1303,8 @@ export function importTableSheet(
 
   tablePersist(resolved);
   emitTable({ type: 'sheetReplace', sheet: resolved });
+  // 导入进哪个作用域,就剪哪个作用域的空白默认表。
+  pruneEmptyDefaultSheet(scopeOfSheet(fresh.meta));
 
   return {
     columns: fresh.columns.map((c) => ({ ...c })),
@@ -1298,4 +1349,10 @@ export function formatProjectFilesBlock(
   }
   if (files.length > 50) lines.push(`- …另有 ${files.length - 50} 个文件`);
   return lines.join('\n');
+}
+
+/** In-memory only reset for unit tests (no DB). */
+export function resetTableStoreMemory(): void {
+  sheetStore = buildInitialStore();
+  tableHydrated = false;
 }

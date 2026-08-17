@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Veylin",
+        "width": 1280,
+        "height": 832,
+        "minWidth": 960,
+        "minHeight": 600,
+        "visible": false,
+        "decorations": false,
+        "dragDropEnabled": false
+      }
+    ]
+  }
+}

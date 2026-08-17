@@ -122,6 +122,17 @@
   -webkit-app-region: drag;
 }
 
+/*
+ * WebView2 maps app-region:drag to OS non-client hit-testing. Fixed titlebar
+ * controls (caption buttons, "+") sit outside drag nodes, so they must opt out
+ * globally — the descendant-only rule below is not enough for them.
+ */
+[data-no-window-drag],
+[data-no-window-drag] * {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
 [data-tauri-drag-region] :is(a, button, input, select, textarea, [role="button"], [data-no-window-drag]) {
   app-region: no-drag;
   -webkit-app-region: no-drag;
@@ -173,13 +184,54 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
   transition: none !important;
 }
 
-/* Schedule grid (AG-Grid) cell overrides — Task 3 will do these via the Theming API params */
+/* Schedule grid polish — pairs with themeQuartz params in table-grid.tsx */
 
-/* Master-detail: inset the 三级 detail panel so it reads as a child of its 二级
-   row (left indent aligns it under the expander chevron). Pairs with
-   detailRowAutoHeight so the panel hugs its content instead of a fixed box. */
-.ag-details-row {
+/* Expand chevron: arrow only — kill AG Grid focus/hover square around the icon. */
+.ag-cell[col-id='__expand__'],
+.ag-cell[col-id='__expand__'].ag-cell-focus,
+.ag-cell[col-id='__expand__'].ag-cell-range-selected {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.ag-cell[col-id='__expand__'] .ag-group-expanded .ag-icon,
+.ag-cell[col-id='__expand__'] .ag-group-contracted .ag-icon,
+.ag-cell[col-id='__expand__'] .ag-group-expanded .ag-icon:hover,
+.ag-cell[col-id='__expand__'] .ag-group-contracted .ag-icon:hover,
+.ag-cell[col-id='__expand__'] .ag-group-expanded .ag-icon:focus,
+.ag-cell[col-id='__expand__'] .ag-group-contracted .ag-icon:focus,
+.ag-cell[col-id='__expand__'] .ag-group-expanded .ag-icon:active,
+.ag-cell[col-id='__expand__'] .ag-group-contracted .ag-icon:active {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+
+/* Master-detail: no second “card” chrome — detail sits flush under the row. */
+.ag-details-row,
+.ag-details-row:hover {
   padding: 0;
+  background-color: transparent;
+  box-shadow: none !important;
+}
+
+.ag-details-row .ag-details-grid,
+.ag-details-row .ag-cell {
+  border: none !important;
+  background: transparent !important;
+}
+
+/* Floating filter row: quieter than body text so headers stay primary. */
+.ag-floating-filter input,
+.ag-floating-filter .ag-input-field-input {
+  font-size: 11px !important;
+}
+
+.ag-header-cell-text {
+  letter-spacing: 0.01em;
 }
 
 /* Governed-edit cells: a quiet affordance on hover so planners see what's editable
@@ -205,6 +257,22 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
   100% {
     transform: translateX(280%);
   }
+}
+
+/* Scene-summary chart tones — aligned with Compass scene-card widget. */
+:root {
+  --tone-positive: #2e7d32;
+  --tone-info: #1976d2;
+  --tone-warning: #b8860b;
+  --tone-negative: #c62828;
+  --tone-neutral: #6b7280;
+}
+.dark {
+  --tone-positive: #4caf50;
+  --tone-info: #42a5f5;
+  --tone-warning: #d0a230;
+  --tone-negative: #e57373;
+  --tone-neutral: #9aa0a6;
 }
 
 /* Brand wordmark — geometric bold sans (square i-dot, open tracking). */

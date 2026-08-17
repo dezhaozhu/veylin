@@ -316,7 +316,7 @@ export function ModelsSettingsScreen() {
               {t('settings.models.confirmDeleteModel', { name: deleteTarget?.label ?? '' })}
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"

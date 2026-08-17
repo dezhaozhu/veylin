@@ -16,6 +16,8 @@ import {
   addTableColumn,
   importTableSheet,
   createTableSheet,
+  listTableSheets,
+  resetTableStoreMemory,
   type TableEvent,
 } from './table-store.js';
 
@@ -77,5 +79,29 @@ describe('table-store change events', () => {
     off();
     addTableRow(MAIN);
     assert.equal(events.length, 0);
+  });
+
+  it('importing content into a non-main sheet prunes empty default Sheet 1', () => {
+    resetTableStoreMemory();
+    assert.ok(listTableSheets().some((s) => s.id === MAIN));
+
+    const created = createTableSheet(`orders-prune-${Date.now()}`, PERSONAL_SCOPE);
+    assert.ok(created);
+    // Blank sibling should NOT prune Sheet 1 yet.
+    assert.ok(listTableSheets().some((s) => s.id === MAIN));
+
+    importTableSheet(created!.id, ['订单号'], [{ 订单号: 'T-1' }]);
+    assert.equal(
+      listTableSheets().some((s) => s.id === MAIN),
+      false,
+      'empty Sheet 1 should be removed once another sheet has content',
+    );
+    assert.ok(listTableSheets().some((s) => s.id === created!.id));
+  });
+
+  it('keeps empty Sheet 1 when the user only adds another blank sheet', () => {
+    resetTableStoreMemory();
+    createTableSheet(`blank-${Date.now()}`, PERSONAL_SCOPE);
+    assert.ok(listTableSheets().some((s) => s.id === MAIN));
   });
 });
