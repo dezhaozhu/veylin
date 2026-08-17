@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { isFileSource, type TableSheetSource } from '@veylin/db';
+import { checkSourcesChange } from './project-sources-immutable.js';
 import type { Project } from '@veylin/shared';
 import {
   addTableColumn,
@@ -1269,7 +1270,11 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       if (project.sources.includes(input.source)) {
         return { ok: true, sources: project.sources, note: '这个数据源本来就挂着,没有改动。' };
       }
+      // 这个工具只**加**,天然不违反"数据源不能换"(见 project-sources-immutable)。
+      // 仍然过一遍同一个判据,免得以后有人给它加个 replace 参数。
       const next = [...project.sources, input.source];
+      const blocked = checkSourcesChange(project.sources, next);
+      if (blocked) return { ok: false, error: blocked };
       try {
         const updated = await updateProject(tenantId, projectId, { sources: next });
         return { ok: true, sources: updated?.sources ?? next };

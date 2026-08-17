@@ -164,7 +164,7 @@ describe('project CRUD routes', () => {
     assert.equal(res.statusCode, 400);
   });
 
-  it('PATCH renames and re-ticks a user project (and ignores immutable fields in the body)', async () => {
+  it('PATCH renames a user project (and ignores immutable fields in the body)', async () => {
     const created = await createProject(TENANT, { name: '改前', sources: ['guolu', 'shangzhong'] });
     const res = await app.inject({
       method: 'PATCH',
@@ -172,7 +172,8 @@ describe('project CRUD routes', () => {
       // managed/enabled/migratedFrom in the body must be structurally inert.
       payload: {
         name: ' 改后 ',
-        sources: ['guolu'],
+        // **加宽是允许的,摘掉不是** —— 见下一条。这里原样提交,只改名字。
+        sources: ['guolu', 'shangzhong'],
         managed: true,
         enabled: false,
         migratedFrom: 'compass-对比',
@@ -183,7 +184,7 @@ describe('project CRUD routes', () => {
       project: { name: string; sources: string[]; managed: boolean };
     };
     assert.equal(project.name, '改后');
-    assert.deepEqual(project.sources, ['guolu']);
+    assert.deepEqual(project.sources, ['guolu', 'shangzhong']);
     assert.equal(project.managed, false);
 
     const stored = await getProject(TENANT, created.id);
@@ -191,6 +192,25 @@ describe('project CRUD routes', () => {
     assert.equal(stored.managed, false);
     assert.equal(stored.enabled, true);
     assert.equal(stored.migratedFrom, undefined);
+  });
+
+  it('**PATCH 摘掉数据源 → 400**:项目里已有的对话是照旧数据源得出的结论,换掉就对不上了', async () => {
+    const created = await createProject(TENANT, { name: 'p', sources: ['guolu', 'shangzhong'] });
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/projects/${created.id}`, payload: { sources: ['guolu'] },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.match((res.json() as { error: string }).error, /只能加|新建/);
+    // 而且**不能落一半** —— 拒了就一个字节都不动。
+    assert.deepEqual((await getProject(TENANT, created.id))?.sources, ['guolu', 'shangzhong']);
+  });
+
+  it('PATCH 再挂一个数据源 → 允许(加宽不会让老结论失真)', async () => {
+    const created = await createProject(TENANT, { name: 'p', sources: ['guolu'] });
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/projects/${created.id}`, payload: { sources: ['guolu', 'shangzhong'] },
+    });
+    assert.equal(res.statusCode, 200);
   });
 
   it('PATCH re-validates sources against granted (400) without applying a partial patch', async () => {

@@ -10,7 +10,10 @@
  *   default projects (`grantedSourcesSorted`) — the same definition the boot
  *   migration uses. `assertSourcesGranted` failures map to 400; this is the
  *   UX boundary, not the security boundary (Compass re-validates per call).
- * - `PATCH /api/projects/:id` renames/re-ticks USER-COMPOSED projects only.
+ * - `PATCH /api/projects/:id` renames USER-COMPOSED projects, and may only ADD
+ *   data sources — never swap or drop them (project-sources-immutable.ts: the
+ *   project's sources are its identity; changing them makes every earlier
+ *   conversation in the project disagree with the data it now reads).
  *   Managed rows are reconciler-owned → 403. Only `name`/`sources` are ever
  *   forwarded to the store, so `managed`/`enabled`/`migratedFrom` are
  *   structurally unpatchable from HTTP regardless of what the body carries.
@@ -41,6 +44,7 @@ import {
   listProjects,
   updateProject,
 } from '../project-store.js';
+import { checkSourcesChange } from '../project-sources-immutable.js';
 import type { ServerDeps } from './types.js';
 import { isAbsolute } from 'node:path';
 import { stat } from 'node:fs/promises';
@@ -174,6 +178,15 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
       if (!sources) {
         reply.code(400);
         return { ok: false, error: 'sources must be an array of source codes' };
+      }
+      // **数据源只能加,不能换/删。** 不是权限问题,是历史会失真:项目里之前的
+      // 对话是照着旧数据源的数据得出的结论,换掉之后那些结论和数据对不上,而对话
+      // 还留在这个项目里 —— 看起来像同一个项目的连续记录。见
+      // project-sources-immutable.ts。
+      const blocked = checkSourcesChange(existing.sources, sources);
+      if (blocked) {
+        reply.code(400);
+        return { ok: false, error: blocked };
       }
       const granted = grantedSourcesSorted(await listProjects(ctx.tenantId));
       try {
