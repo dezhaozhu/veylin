@@ -66,6 +66,23 @@ export async function renderProjectFilePage(
   }
 }
 
+/**
+ * 原始字节(带同一道"只能在项目文件夹里"的守卫)。
+ * 给 table_import_file 用 —— 那条路要自己解析整张表,拿概览不够。
+ */
+export async function readProjectFileBytes(
+  folder: string,
+  name: string,
+): Promise<Buffer | null> {
+  const target = insideFolder(folder, name);
+  if (!target) return null;
+  try {
+    return await readFile(target);
+  } catch {
+    return null;
+  }
+}
+
 export async function readProjectFile(
   folder: string,
   name: string,

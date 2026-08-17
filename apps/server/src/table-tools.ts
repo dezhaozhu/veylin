@@ -37,7 +37,8 @@ import { resolveCompassServer } from './mcp-scoping.js';
 import { getSelection } from './table-selection.js';
 import { PERSONAL_SCOPE, projectScope, sheetIdFor, type SheetScope } from './table-scope.js';
 import { queryTableRows } from './table-query.js';
-import { readProjectFile } from './project-file-read.js';
+import { readProjectFile, readProjectFileBytes } from './project-file-read.js';
+import { parseSpreadsheet } from './spreadsheet-to-rows.js';
 import { getProject, updateProject } from './project-store.js';
 import { DEV_TENANT_ID } from './tenant.js';
 import { fetchCompassData, type CompassRestScope } from './compass-rest.js';
@@ -1162,6 +1163,74 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     },
   });
 
+  /**
+   * **把项目文件夹里的一张表整表导进表格面板。**
+   *
+   * 从前没有这条路:agent 只有 project_file_read,而那个对表格**只给概览
+   * (前几行)**。于是"把这张表导进来"必然卡住 —— 用户实测里它说的是
+   * 「概览只给了前 5 行,原始文件共 9 行,后 4 行需要你补充后我再录入」。
+   * 人能用界面的「导入」按钮,agent 不能;缺的是工具,不是本事。
+   */
+  const tableImportFile = createTool({
+    id: 'table_import_file',
+    description:
+      '把项目文件夹里的一份表格文件(xlsx/xls/csv)**整表**导入表格面板的某张 sheet。'
+      + '要对文件里的数据做筛选/统计,先用这个导进来再 table_query —— '
+      + 'project_file_read 对表格只给概览(前几行),不足以录入。'
+      + '目标 sheet 不存在会新建;已存在则整表替换(想保留旧数据就换个名字)。',
+    inputSchema: z.object({
+      path: z.string().describe('相对项目文件夹的路径,例如 `开发组件.xlsx`'),
+      sheet: z.string().optional().describe('目标 sheet 名(默认取文件名)'),
+      source_sheet: z.string().optional().describe('文件里的哪个页签(默认第一个)'),
+    }),
+    execute: async (input, ctx?: TableToolCtx) => {
+      const folder = await folderOfCtx(ctx);
+      if (!folder) {
+        return { ok: false, message: '当前项目没有绑定文件夹 —— 没有可导的项目文件。' };
+      }
+      const bytes = await readProjectFileBytes(folder, input.path);
+      if (!bytes) return { ok: false, message: `读不到这个文件:${input.path}` };
+
+      let parsed;
+      try {
+        parsed = parseSpreadsheet(bytes, input.source_sheet);
+      } catch (err) {
+        // 损坏/不是表格文件 —— 说清楚是哪一步不行,而不是抛一个栈给模型。
+        return {
+          ok: false,
+          message: `这个文件解析不了(可能不是表格或已损坏):${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        };
+      }
+      if (parsed.columns.length === 0) {
+        return { ok: false, message: `「${input.path}」里没有表头,导不出列。` };
+      }
+
+      const scope = scopeFromCtx(ctx);
+      const wanted = input.sheet ?? input.path.replace(/^.*\//, '').replace(/\.[^.]+$/, '');
+      const existing = listTableSheets(scope).find((s) => s.name === wanted);
+      const target = existing ?? createTableSheet(wanted, scope);
+      if (!target) return { ok: false, message: `建不出 sheet:${wanted}` };
+
+      const done = importTableSheet(target.id, parsed.columns, parsed.rows);
+      if (!done) return { ok: false, message: '导入失败' };
+      await flushTablePersist();
+
+      return {
+        ok: true,
+        sheet: { id: target.id, name: target.name },
+        imported: parsed.rows.length,
+        columns: parsed.columns,
+        // 拿到的是哪一份、还有哪些没导 —— 不说的话人会以为整个工作簿都进来了。
+        source_sheet: parsed.sheet,
+        ...(parsed.others.length > 0 ? { other_sheets: parsed.others } : {}),
+        ...(parsed.notice ? { notice: parsed.notice } : {}),
+        message: `已把「${input.path}」的 ${parsed.rows.length} 行导入 sheet「${target.name}」`,
+      };
+    },
+  });
+
   const tableChart = createTool({
     id: 'table_chart',
     description:
@@ -1692,6 +1761,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     table_chart: tableChart,
     table_query: tableQuery,
     project_file_read: projectFileRead,
+    table_import_file: tableImportFile,
     create_document: createDocument,
     document_edit: documentEdit,
     document_revisions: documentRevisions,

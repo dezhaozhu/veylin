@@ -34,8 +34,22 @@ export default defineConfig({
   reporter: 'list',
   // 真模型 + 真附件抽取,一轮对话几十秒起步。
   timeout: 15 * 60_000,
-  use: { baseURL, trace: 'retain-on-failure', actionTimeout: 30_000 },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  use: {
+    baseURL,
+    trace: 'retain-on-failure',
+    actionTimeout: 30_000,
+    // 桌面端真实窗口大小。默认的 1280×720 里右栏的开关会被挤到视口外,
+    // 点不到 —— 那是测试环境的假故障,不是产品的。
+    viewport: { width: 1600, height: 1000 },
+  },
+  // 视口写在 project 里:devices['Desktop Chrome'] 自带 1280×720,
+  // 放在顶层 use 会被它盖回去(白排查了一轮)。
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1600, height: 1000 } },
+    },
+  ],
   webServer: [
     {
       command: 'npx tsx apps/server/src/server.ts',

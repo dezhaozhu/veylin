@@ -156,6 +156,15 @@ test('带附件问两轮,第二轮不许是空白', async ({ page, request }) =>
   const first = await waitForAssistantText(page, 1);
   expect(first.length, `第一轮就是空的:${first}`).toBeGreaterThan(0);
 
+  // 这个项目没接数据源,右侧表格面板就不该讲 Compass 的故事
+  // (从前无条件 POST load-compass-schedule,还会在这种项目里真建一张工序表)。
+  await openTablePanel(page);
+  await page.waitForTimeout(3000);
+  await expect(
+    page.getByText('Compass', { exact: false }),
+    '没接数据源的项目里出现了 Compass 字样',
+  ).toHaveCount(0);
+
   // **先确认这一轮真的把附件送进了历史。** 附件没进去,这条测试就等于没测到那个
   // bug 却照样变绿 —— 今天已经吃过一次"断言看着过了、其实没测到"的亏。
   const threadId = await latestThreadId(request);
@@ -187,6 +196,24 @@ async function latestThreadId(request: APIRequestContext): Promise<string> {
 
 async function historyOf(request: APIRequestContext, threadId: string): Promise<unknown> {
   return (await request.get(`${API}/api/threads/${threadId}/messages`)).json();
+}
+
+/** 打开右侧的表格面板(右栏收起时先展开)。 */
+async function openTablePanel(page: Page): Promise<void> {
+  const tableTab = page.getByRole('button', { name: 'Table' }).first();
+  if (((await tableTab.boundingBox().catch(() => null))?.x ?? 0) <= 0) {
+    const toggles = await page.getByRole('button', { name: 'Toggle Sidebar' }).all();
+    const boxes = await Promise.all(
+      toggles.map(async (t) => [t, (await t.boundingBox())?.x ?? -1] as const),
+    );
+    // 右栏展开后自己还有一个 toggle,坐标在视口外 —— 用**真实视口宽度**过滤,
+    // 别写死(写死过 1280,视口一改就把该点的那个排除了)。
+    const width = page.viewportSize()?.width ?? 1280;
+    const inView = boxes.filter(([, x]) => x > 0 && x < width).sort((a, b) => b[1] - a[1]);
+    if (inView[0]) await inView[0][0].click();
+    await page.waitForTimeout(1200);
+  }
+  await tableTab.click();
 }
 
 /**
@@ -286,4 +313,77 @@ test('同项目新开对话,还能接着改上一轮建的表', async ({ page, r
   ).json();
   const columns = (data.columns as Array<{ name: string }>).map((c) => c.name);
   expect(columns, `列没加上,现有列:${columns.join('/')}`).toContain('日期');
+});
+
+/**
+ * **本地项目文件 + Compass 云端,两张表能不能一起读。**
+ *
+ * 真实工作里最常见的一种:一半事实在云端排产库(工序表),一半在你自己电脑上的
+ * 一份 xlsx。如果 agent 只够得到其中一张,"项目"这个容器就是假的。
+ *
+ * 判据不看它嘴上说什么:直接查这个作用域里到底有没有两张表、各自有没有行。
+ */
+test('本地表 + Compass 云端表,能一起读', async ({ page, request }) => {
+  const folder = await makeFixtureFolder();
+
+  // 锅炉厂是带 compass 数据源的托管项目 —— 再给它绑一个本地文件夹,
+  // 于是同一个项目里既有云端的工序表,也有本地的 xlsx。
+  const listed = await (await request.get(`${API}/api/projects`)).json();
+  const guolu = (listed.projects as Array<{ id: string; name: string; sources: string[] }>)
+    .find((p) => p.sources.includes('guolu'));
+  test.skip(!guolu, '这台机器上没有接 guolu 的项目');
+  await request.patch(`${API}/api/projects/${guolu!.id}`, { data: { folder } });
+
+  await page.goto('/');
+  await openSidebar(page);
+  // 走项目页那个输入框:侧栏的「新对话」只建线程、不跳转,进不了对话页。
+  await page.getByText(guolu!.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: guolu!.name })).toBeVisible({ timeout: 15_000 });
+
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+  await composer.fill('把项目文件夹里的 开发组件.xlsx 导入表格面板,建一张新表。');
+  await composer.press('Enter');
+  expect((await waitForAssistantText(page, 1)).length, '第一轮没答上').toBeGreaterThan(0);
+
+  // 云端那张是**表格面板挂载时**去拉的。这一步走接口(和绑文件夹一样标注清楚):
+  // 面板本身的开关有另一条测试盯着,这条的正题是"两张表能不能一起读"。
+  const threadIdForLoad = await latestThreadId(request);
+  const loaded = await request.post(`${API}/api/table/load-compass-schedule`, {
+    data: { threadId: threadIdForLoad },
+  });
+  const loadBody = await loaded.json();
+  expect(loadBody.ok, `云端表没拉下来:${JSON.stringify(loadBody).slice(0, 200)}`).toBeTruthy();
+
+  // 正题:一个问题要同时够到两张表。
+  await composer.fill('表格面板里现在有哪些表?工序表有多少行?刚导入那张有多少行?');
+  await composer.press('Enter');
+  const reply = await waitForAssistantText(page, 2);
+
+  const threadId = await latestThreadId(request);
+  const sheets = (
+    await (await request.get(`${API}/api/table/sheets?threadId=${threadId}`)).json()
+  ).sheets as Array<{ id: string; name: string; source?: { server?: string } }>;
+  const names = sheets.map((s) => s.name).join('/');
+
+  const fromCloud = sheets.find((s) => s.source?.server === 'compass');
+  // **必须是这一次导进来的那张**。第一版写成"任何一张没有 source 的表",
+  // 结果被上一轮跑剩下的旧表蒙混过关:那一轮 agent 其实只建了个空壳,
+  // 断言却是绿的 —— 弱断言和没测一样。
+  const fromLocal = sheets.find((s) => s.name === XLSX_NAME.replace(/\.[^.]+$/, ''));
+  expect(fromCloud, `作用域里没有云端表,现有:${names}`).toBeTruthy();
+  expect(fromLocal, `没有「开发组件」这张本地表,现有:${names}`).toBeTruthy();
+
+  // 两张都真有行,才谈得上"读得到"。
+  for (const sheet of [fromCloud!, fromLocal!]) {
+    const data = await (
+      await request.get(
+        `${API}/api/table?sheet=${encodeURIComponent(sheet.id)}&threadId=${threadId}`,
+      )
+    ).json();
+    expect((data.rows as unknown[]).length, `「${sheet.name}」是空的`).toBeGreaterThan(0);
+  }
+
+  expect(reply.length, '一句话都没答上').toBeGreaterThan(0);
 });
