@@ -1,5 +1,10 @@
 import { recallOrEmpty } from '../memory-recall.js';
 import { persistAskAnswer } from '../ask-answer-record.js';
+import {
+  EMPTY_TURN_NOTICE,
+  isVisibleStreamPart,
+  shouldReportEmptyTurn,
+} from '../empty-turn-notice.js';
 import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
@@ -1166,6 +1171,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
 
     const from = 'agent';
     let sawSuspension = false;
+    let sawVisibleOutput = false;
+    let sawStreamError = false;
     const uiMessageStream = createUIMessageStream({
       originalMessages: originalUiMessages as never,
       onFinish: () => {
@@ -1357,9 +1364,26 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
               writer.write(repaired as never);
             }
             const partType = (observedPart as { type?: string }).type;
+            if (isVisibleStreamPart({ ...(partType ? { type: partType } : {}) })) {
+              sawVisibleOutput = true;
+            }
+            if (partType === 'error') sawStreamError = true;
             if (partType === 'finish-step' || partType === 'finish') {
               writeContextUsageIfNeeded(lastStepUsage);
             }
+          }
+          // 流正常走完却一个字都没有 —— Mastra 把模型侧的错误 log 完就 return,
+          // 下面那个 catch 根本不触发,用户只看到空白(实测两次都是这样)。
+          if (
+            shouldReportEmptyTurn({
+              sawVisibleOutput,
+              sawSuspension,
+              sawError: sawStreamError,
+              aborted: runAbort.signal.aborted,
+            })
+          ) {
+            req.log.warn({ threadId }, 'turn produced no visible output');
+            writer.write({ type: 'error', errorText: EMPTY_TURN_NOTICE } as never);
           }
         } catch (err) {
           req.log.warn({ err, threadId }, 'agent stream failed');

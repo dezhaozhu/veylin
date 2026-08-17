@@ -295,12 +295,57 @@ function messageHasModelToolParts(messages: UiMessage[]): boolean {
  * When tool UI parts are present, use AI SDK conversion so calls/results keep
  * their native provider protocol instead of becoming synthetic user text.
  */
+/**
+ * 把 provider 不认的附件在**重放**时也抽成文本。
+ *
+ * 两条分支从前只有一条在滤:第一轮走 fileParts(每个附件都抽成文本/图片),
+ * 一旦历史里出现 tool call 就改走 convertToModelMessages,**原样**把 file part
+ * 递给 provider —— xlsx/docx 的 mediaType 常常是 application/octet-stream,
+ * AI SDK 当场抛 UnsupportedFunctionalityError,那一轮变成空白。
+ *
+ * 于是附件成了历史里的一颗毒丸:只要它还在,之后每一轮都死,而用户只看到空白。
+ * 图片留着不动 —— 那是 provider 认的。
+ */
+function imageContentToUiPart(image: unknown): { type: 'file'; url: string; mediaType: string } {
+  const url = String(image);
+  const mediaType = /^data:([^;,]+)/.exec(url)?.[1] ?? 'image/png';
+  return { type: 'file', url, mediaType };
+}
+
+async function inlineUnsupportedFilesForReplay(
+  messages: UiMessage[],
+  vision: boolean,
+): Promise<UiMessage[]> {
+  const isUnsupported = (p: { type?: string; mediaType?: string; url?: string }) =>
+    p.type === 'file' && Boolean(p.url) && !(p.mediaType ?? '').startsWith('image/');
+
+  return Promise.all(
+    messages.map(async (m) => {
+      const parts = m.parts ?? [];
+      if (!parts.some((p) => isUnsupported(p as never))) return m;
+      const out: unknown[] = [];
+      for (const p of parts) {
+        if (!isUnsupported(p as never)) {
+          out.push(p);
+          continue;
+        }
+        for (const converted of await fileParts({ ...m, parts: [p] } as UiMessage, vision)) {
+          if (converted.type === 'text') out.push({ type: 'text', text: converted.text });
+          else if (converted.type === 'image') out.push(imageContentToUiPart(converted.image));
+        }
+      }
+      return { ...m, parts: out } as UiMessage;
+    }),
+  );
+}
+
 export async function toAgentMessages(
   messages: UiMessage[],
   vision = false,
 ): Promise<{ role: string; content: string | ContentPart[] | unknown }[]> {
   if (messageHasModelToolParts(messages)) {
-    const modelMessages = await convertToModelMessages(messages as UIMessage[], {
+    const replayable = await inlineUnsupportedFilesForReplay(messages, vision);
+    const modelMessages = await convertToModelMessages(replayable as UIMessage[], {
       ignoreIncompleteToolCalls: true,
     });
     return modelMessages.map((m) => ({

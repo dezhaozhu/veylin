@@ -1,4 +1,5 @@
 import { useComposerAddAttachment } from '@assistant-ui/core/react';
+import { plusMenuPlacement, type PlusMenuPlacement } from '@/lib/plus-menu-placement';
 import {
   BookOpenIcon,
   CrosshairIcon,
@@ -38,12 +39,11 @@ import {
   useProjectScope,
 } from '@/lib/use-composer-settings';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
-import type { MenuAnchor } from '@/components/assistant-ui/composer-mention/composer-menu-shared';
 
 type Submenu = 'skills' | 'mcp' | null;
 
 function usePlusMenuAnchor(open: boolean, anchorRef: RefObject<HTMLElement | null>) {
-  const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
+  const [anchor, setAnchor] = useState<PlusMenuPlacement | null>(null);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -55,11 +55,8 @@ function usePlusMenuAnchor(open: boolean, anchorRef: RefObject<HTMLElement | nul
       const el = anchorRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      setAnchor({
-        left: rect.left,
-        width: Math.max(240, rect.width),
-        bottom: window.innerHeight - rect.top + 8,
-      });
+      // 方向按可用空间选 —— 聊天页输入框在底部(向上),项目页在顶部(向下)。
+      setAnchor(plusMenuPlacement(rect, window.innerHeight));
     };
 
     updateAnchor();
@@ -214,7 +211,10 @@ export const ComposerPlusMenu: FC = () => {
               style={{
                 left: anchor.left,
                 width: anchor.width,
-                bottom: anchor.bottom,
+                ...(anchor.top === undefined ? {} : { top: anchor.top }),
+                ...(anchor.bottom === undefined ? {} : { bottom: anchor.bottom }),
+                maxHeight: anchor.maxHeight,
+                overflowY: 'auto',
               }}
               onClick={(e) => e.stopPropagation()}
               onPointerMove={armHoverOnPointerMove}
