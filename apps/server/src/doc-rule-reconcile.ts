@@ -63,14 +63,40 @@ const pct = (n: number) => `${Math.round(n * 100)}%`;
 const splitCombo = (s: string) =>
   norm(s).split(/[/、,,;;+]/).map((x) => x.trim()).filter(Boolean);
 
+/**
+ * 系统里名字相近的工序 —— **给线索,不替他认定**。
+ *
+ * 真数据实测:上重 11 个文档工序名只有 2 个一字不差对得上("锻造"vs"焊后热处理"、
+ * "性能热处理"vs"性能热处理-冶铸")。只回一句"查不到"是条死胡同,而系统里明明
+ * 有相近的。判定仍然是"查不到" —— 相近**不是**同一道工序,这条线不能越。
+ *
+ * 判据故意保守:一方包含另一方(「性能热处理」⊂「性能热处理-冶铸」)才算,
+ * 不做编辑距离 —— 凑出来的线索会把人带偏,比没有线索更坏。
+ */
+function nearMisses(subject: string, facts: Fact[]): string[] {
+  const q = norm(subject);
+  if (q.length < 2) return [];
+  return facts
+    .filter((f): f is Extract<Fact, { kind: 'op_resource' }> => f.kind === 'op_resource')
+    .map((f) => f.op)
+    .filter((op) => {
+      const o = norm(op);
+      return o !== q && (o.includes(q) || q.includes(o));
+    })
+    .slice(0, 3);
+}
+
 function checkOpResource(a: Assertion, facts: Fact[]): Verdict {
   const fact = facts.find((f) => f.kind === 'op_resource' && norm(f.op) === norm(a.subject));
   if (!fact || fact.kind !== 'op_resource') {
+    const near = nearMisses(a.subject, facts);
     return {
       assertion: a,
       status: 'not_found',
       // 措辞要守住第 1 条:说的是我们查不到,不是文档不对。
-      detail: `系统里查不到「${a.subject}」这道工序的历史记录 —— 无法核对(不代表文档写错了)。`,
+      detail:
+        `系统里查不到「${a.subject}」这道工序的历史记录 —— 无法核对(不代表文档写错了)。` +
+        (near.length ? `系统里有名字相近的:${near.join('、')} —— 是不是同一道,得你来认。` : ''),
     };
   }
   const names = fact.resources.map((r) => norm(r.name));

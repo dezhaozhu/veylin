@@ -77,13 +77,19 @@ export function parseAssertions(raw: unknown): { assertions: Assertion[]; droppe
   return { assertions: out, dropped };
 }
 
+type ElgRow = {
+  op_code?: string;
+  op_name?: string;
+  // compass 的领域词是 `resource`;`name` 只是宽容一下别的来源。
+  equipment?: Array<{ resource?: string; name?: string; share?: number }>;
+  flexibility?: string;
+};
+
 type CompassPayload = {
-  /** op_eligibility 视图:每道工序历史上在哪些设备/部门跑过 */
-  eligibility?: Array<{
-    op_code?: string;
-    equipment?: Array<{ name?: string; share?: number }>;
-    flexibility?: string;
-  }>;
+  /** get_op_eligibility 的回参就叫 `rows` */
+  rows?: ElgRow[];
+  /** 别名,给手工拼装的调用方 */
+  eligibility?: ElgRow[];
   /** get_resources:每个资源的并行 K */
   resources?: Array<{ name?: string; k?: number; source?: string }>;
 };
@@ -94,16 +100,20 @@ type CompassPayload = {
  */
 export function factsFromCompass(payload: CompassPayload): Fact[] {
   const out: Fact[] = [];
-  for (const e of payload.eligibility ?? []) {
+  for (const e of [...(payload.rows ?? []), ...(payload.eligibility ?? [])]) {
     const resources = (e.equipment ?? [])
-      .filter((x) => x?.name && typeof x.share === 'number')
-      .map((x) => ({ name: String(x.name), share: Number(x.share) }));
-    if (!e.op_code || !resources.length) continue;
+      .map((x) => ({ name: String(x?.resource ?? x?.name ?? ''), share: Number(x?.share) }))
+      .filter((x) => x.name && Number.isFinite(x.share));
+    if (!resources.length) continue;
     const flexibility =
       e.flexibility === 'locked' || e.flexibility === 'limited' || e.flexibility === 'flexible'
         ? e.flexibility
         : 'flexible';
-    out.push({ kind: 'op_resource', op: String(e.op_code), resources, flexibility });
+    // **代号和名称各出一条事实**:文档里写的通常是「粗加工」,库里存的可能是
+    // 「CJ1」—— 只按其中一个建索引,另一种写法就会被判成"查不到"。
+    for (const key of new Set([e.op_code, e.op_name].filter(Boolean) as string[])) {
+      out.push({ kind: 'op_resource', op: String(key), resources, flexibility });
+    }
   }
   for (const r of payload.resources ?? []) {
     if (!r?.name || typeof r.k !== 'number' || !Number.isFinite(r.k)) continue;

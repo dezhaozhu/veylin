@@ -141,3 +141,39 @@ describe('提名结果的容错', () => {
     assert.equal(out.dropped, 2);
   });
 });
+
+/**
+ * 对接 compass 的真实回参形状。
+ *
+ * compass 那边字段叫 `resource`(它的领域词),我这边一开始只读 `name` ——
+ * 两边各自都"对",接起来一条事实也认不出来。这种错不会有任何报错。
+ */
+describe('认 compass 的真实字段名', () => {
+  it('**equipment[].resource 要认** —— compass 的 op_eligibility 就是这么回的', async () => {
+    const { factsFromCompass } = await import('./doc-assertions.js');
+    const facts = factsFromCompass({
+      eligibility: [{
+        op_code: '粗加工', flexibility: 'limited',
+        equipment: [{ resource: '金工分厂', count: 3, share: 0.75 }],
+      }] as never,
+    });
+    assert.equal(facts.length, 1);
+    if (facts[0]!.kind === 'op_resource') assert.equal(facts[0]!.resources[0]!.name, '金工分厂');
+  });
+
+  it('rows 也认 —— 工具回的是 { rows: [...] } 而不是 { eligibility: [...] }', async () => {
+    const { factsFromCompass } = await import('./doc-assertions.js');
+    const facts = factsFromCompass({
+      rows: [{ op_code: '锻造', flexibility: 'locked', equipment: [{ resource: '锻件分厂', share: 1 }] }],
+    } as never);
+    assert.equal(facts.length, 1);
+  });
+
+  it('op_name 也能当 key —— 文档里写的是名字,库里存的可能是代号', async () => {
+    const { factsFromCompass } = await import('./doc-assertions.js');
+    const facts = factsFromCompass({
+      rows: [{ op_code: 'CJ1', op_name: '粗加工', flexibility: 'locked', equipment: [{ resource: '金工分厂', share: 1 }] }],
+    } as never);
+    assert.equal(facts.length, 2, '代号和名称应各出一条事实,两种写法都对得上');
+  });
+});

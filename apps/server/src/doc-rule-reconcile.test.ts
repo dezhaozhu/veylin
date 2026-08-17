@@ -146,3 +146,45 @@ describe('对上了,但对的是次要的那个', () => {
     assert.equal(v!.status, 'agree');
   });
 });
+
+/**
+ * 真数据实测:上重的 11 个文档工序名里,只有 2 个和系统里的名字**一字不差**。
+ * 文档说「锻造」「最终验收」,系统里是「焊后热处理」「最终检验」、还有
+ * 「性能热处理」和「性能热处理-冶铸」两个变体。
+ *
+ * 判成"查不到"是对的(判成冲突就会一次冒出 9 条假警报)。但**光说查不到是条
+ * 死胡同** —— 系统里明明有名字相近的,应该指给人看。这不是静默模糊匹配:
+ * 结论仍然是"查不到",只是多给一条可查的线索。
+ */
+describe('查不到的时候给线索', () => {
+  const facts: Fact[] = [
+    { kind: 'op_resource', op: '性能热处理-冶铸', resources: [{ name: 'YZ0803-5', share: 0.45 }], flexibility: 'flexible' },
+    { kind: 'op_resource', op: '最终检验', resources: [{ name: 'YZ0201-2', share: 1 }], flexibility: 'locked' },
+  ];
+
+  it('**名字相近的要点出来** —— 「性能热处理」查不到,但系统里有「性能热处理-冶铸」', () => {
+    const [v] = reconcile(
+      [{ kind: 'op_resource', subject: '性能热处理', object: 'x', quote: 'q' }],
+      facts,
+    );
+    assert.equal(v!.status, 'not_found');
+    assert.match(v!.detail, /性能热处理-冶铸/);
+  });
+
+  it('**给线索不等于替他认定** —— 状态照旧是查不到', () => {
+    const [v] = reconcile(
+      [{ kind: 'op_resource', subject: '性能热处理', object: 'YZ0803-5', quote: 'q' }],
+      facts,
+    );
+    assert.equal(v!.status, 'not_found');
+  });
+
+  it('八竿子打不着的就别硬凑 —— 凑出来的线索会把人带偏', () => {
+    const [v] = reconcile(
+      [{ kind: 'op_resource', subject: '钢锭加热', object: 'x', quote: 'q' }],
+      facts,
+    );
+    assert.equal(v!.status, 'not_found');
+    assert.ok(!/性能热处理|最终检验/.test(v!.detail), `不该给线索却给了:${v!.detail}`);
+  });
+});

@@ -1476,19 +1476,41 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         return { ok: true, summary: summarizeReconcile([]) + droppedNote, verdicts: [] };
       }
 
-      // 事实从 Compass 来。**拿不到就说拿不到** —— 空事实会把每一条都判成
-      // "查不到",看起来像做过对照,其实一条也没核对。
-      const facts = factsFromCompass(
-        (ctx?.requestContext?.get('compassFacts') as Record<string, never> | undefined) ?? {},
-      );
-      if (!facts.length) {
+      // 事实从 Compass 取。**只问文档提到的那几道工序** —— 上百道全端回来既慢
+      // 又没用,而且 not_found 会淹掉真正要看的几条。
+      const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, compassScopeFromCtx(ctx));
+      if (!compass) {
         return {
           ok: false,
           assertions,
           error:
-            `从文档里抽到 ${assertions.length} 条可核对的断言,但**没拿到系统侧的事实**` +
-            '(工序资格 / 资源产能)。请先确认这个项目挂了 Compass 数据源,' +
-            '或用 get_resources / 资格视图 取到事实后再对照。',
+            `从文档里抽到 ${assertions.length} 条可核对的断言,但这个项目**没挂 Compass 数据源** ——` +
+            '没有系统侧的事实可比。先挂上数据源再对照。',
+        };
+      }
+      const ops = [...new Set(assertions.filter((x) => x.kind === 'op_resource').map((x) => x.subject))];
+      const payload: Record<string, unknown> = {};
+      try {
+        if (ops.length && compass.toolset['get_op_eligibility']) {
+          Object.assign(payload, await compass.toolset['get_op_eligibility']!.execute({ ops }));
+        }
+        if (assertions.some((x) => x.kind === 'capacity_k') && compass.toolset['get_resources']) {
+          Object.assign(payload, await compass.toolset['get_resources']!.execute({}));
+        }
+      } catch (err) {
+        return { ok: false, error: `取系统事实失败:${err instanceof Error ? err.message : String(err)}` };
+      }
+
+      const facts = factsFromCompass(payload as never);
+      if (!facts.length) {
+        // 拿不到事实就照实说。拿空事实去比,会把每一条都判成"查不到" ——
+        // 看起来像做过对照,其实一条也没核对。
+        return {
+          ok: false,
+          assertions,
+          error:
+            `从文档里抽到 ${assertions.length} 条断言,但从 Compass 没取到可比对的事实` +
+            '(工序资格 / 资源产能都是空的)。这份场景可能还没有三级工序历史。',
         };
       }
       const verdicts = reconcile(assertions, facts);
