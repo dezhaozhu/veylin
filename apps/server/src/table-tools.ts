@@ -1410,9 +1410,14 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         // **改完那一问**:这一句在系统里是什么?改了文档,系统可没跟着改。
         // 只在这次会话已经对照过、且这一句确实对得上某条结论时才问 ——
         // 没对照过就问,是在假装知道(见 doc-change-intent.ts)。
-        const { attachIntent, recallVerdicts } = await import('./doc-change-intent.js');
+        const { attachIntent, recallVerdicts, rememberEditedQuote } =
+          await import('./doc-change-intent.js');
         const pid = compassScopeFromCtx(ctx)?.projectId ?? '';
-        return attachIntent(base, input.find, recallVerdicts(pid, input.name));
+        const withIntent = attachIntent(base, input.find, recallVerdicts(pid, input.name));
+        // 改完引述就变了。**这一刻我们恰好知道动的是哪一条**,把改后的文本也
+        // 登记成别名 —— 否则随后要提规则提案时,拿新原文查不到那条结论(真跑踩到)。
+        rememberEditedQuote(pid, input.name, input.find, input.replace);
+        return withIntent;
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }

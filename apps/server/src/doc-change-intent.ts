@@ -123,3 +123,34 @@ export function recallVerdicts(projectId: string, name: string): Verdict[] {
   }
   return hit.verdicts;
 }
+
+/**
+ * 改完之后,把**改后的文本**也登记成同一条结论的别名。
+ *
+ * 真跑抓到的:改完引述就变了,随后要提规则提案时拿新原文去查,查不到 ——
+ * 模型只好重跑一次对照才成功。能 work,但多一轮,而且它未必每次都想得到重跑。
+ *
+ * **是加别名,不是替换**:旧引述照样要查得到(比如人回头拿文档原句来问)。
+ * 别名条目里的 `assertion` 仍然是**文档原来说的那句** —— 提案要提的是原始声明。
+ */
+export function rememberEditedQuote(
+  projectId: string,
+  name: string,
+  oldQuote: string,
+  newQuote: string,
+): void {
+  const key = cacheKey(projectId, name);
+  const hit = verdictCache.get(key);
+  if (!hit) return;
+  const q = oldQuote.trim();
+  const match = hit.verdicts.find((v) => {
+    const vq = v.assertion.quote.trim();
+    return vq === q || vq.includes(q) || q.includes(vq);
+  });
+  // 没对上就什么也不做 —— 凭空造一条别名,等于把一条不相干的结论绑到这次修改上。
+  if (!match || !newQuote.trim()) return;
+  hit.verdicts = [
+    ...hit.verdicts,
+    { ...match, assertion: { ...match.assertion, quote: newQuote.trim() } },
+  ];
+}
