@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { closeWebView, hideWebView, isTauri } from '@/lib/tauri-web-view';
 import {
   emptyPanelTabsState,
+  findDocTab,
   loadThreadPanelTabs,
   migrateThreadPanelTabs,
   saveThreadPanelTabs,
@@ -69,6 +70,11 @@ export interface PanelTabsApi {
    * Opens the 'table' panel exactly like open('table'), then stashes the filter
    * for the grid to apply client-side once its rows are loaded. */
   focusScheduleFilter: (filter: OpenGridFilter) => void | Promise<void>;
+  /**
+   * 在右侧打开一份项目文件(只读)。同名文件**复用已开的那个 tab** —— 连点三次
+   * 开出三个一模一样的 tab,是把"我已经打开它了"这件事讲成了三份。
+   */
+  openDocument: (doc: { projectId: string; name: string }) => void;
   /** The pending schedule-grid drill (null when none), read by TableGrid. */
   scheduleFilter: PendingScheduleFilter | null;
   /** Drop the pending drill once TableGrid has consumed it. */
@@ -299,9 +305,27 @@ export function usePanelTabsState(): PanelTabsApi {
     [open],
   );
 
+  const openDocument = useCallback(
+    (doc: { projectId: string; name: string }) => {
+      const current = stateRef.current;
+      const existing = findDocTab(current.tabs, doc);
+      if (existing) {
+        commit({ ...current, activeId: existing.id });
+        return;
+      }
+      const tab = createTab('doc');
+      tab.state = { ...doc };
+      // tab 上显示文件名而不是"文档" —— 开着两份文件时,两个都叫"文档"等于没标。
+      tab.title = doc.name;
+      commit({ tabs: [...current.tabs, tab], activeId: tab.id });
+    },
+    [commit],
+  );
+
   const clearScheduleFilter = useCallback(() => setScheduleFilter(null), []);
 
   return {
+    openDocument,
     tabs: state.tabs,
     activeId: state.activeId,
     activeTab,

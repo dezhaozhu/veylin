@@ -32,6 +32,11 @@ export type Extracted = {
   html?: string;
   /** 首页缩略图(PDF)。data URL。 */
   thumbnail?: string;
+  /**
+   * 总页数。**只有 PDF 有** —— Word 转出来的 HTML 是连续的流,给它编页码是编的,
+   * 人会拿着"第 3 页"去对原文然后发现对不上。
+   */
+  pageCount?: number;
   sheets?: string[];
   columns?: string[];
   rows?: Array<Record<string, unknown>>;
@@ -149,6 +154,26 @@ async function pdfThumbnail(pdf: unknown): Promise<{ thumbnail?: string }> {
   }
 }
 
+/**
+ * 按页渲染 PDF。**越界返回 null,不返回别的页** —— 静默给错的一页,比报个错坏得多:
+ * 人会以为自己看的是第 99 页。
+ */
+export async function renderPdfPage(bytes: Buffer, page: number): Promise<string | null> {
+  try {
+    const { getDocumentProxy, renderPageAsImage } = await import('unpdf');
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    if (!Number.isInteger(page) || page < 1 || page > (pdf.numPages as number)) return null;
+    const url = (await renderPageAsImage(pdf, page, {
+      canvasImport: () => import('@napi-rs/canvas'),
+      scale: 1.6,
+      toDataURL: true,
+    })) as string;
+    return url?.startsWith('data:') ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 async function extractPdf(bytes: Buffer): Promise<Extracted> {
   try {
     const { extractText, getDocumentProxy } = await import('unpdf');
@@ -161,6 +186,7 @@ async function extractPdf(bytes: Buffer): Promise<Extracted> {
       return {
         kind: 'doc',
         text: '',
+        pageCount: pdf.numPages as number,
         ...(await pdfThumbnail(pdf)),
         notice: `这份 PDF 没有可提取的文字层(多半是扫描件,共 ${pdf.numPages} 页)。` +
           '把它拖进对话框、并切到能看图的模型,才读得了。',
@@ -170,6 +196,7 @@ async function extractPdf(bytes: Buffer): Promise<Extracted> {
       kind: 'doc',
       text: body,
       totalLines: body.split('\n').length,
+      pageCount: pdf.numPages as number,
       ...(await pdfThumbnail(pdf)),
     };
   } catch (e) {

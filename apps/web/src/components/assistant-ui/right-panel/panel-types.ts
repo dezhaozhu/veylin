@@ -1,7 +1,7 @@
 import type { FC, ReactNode } from 'react';
 
 /** Content type a right-panel tab can host. */
-export type PanelKind = 'table' | 'web' | 'rag' | 'workflow' | '3d';
+export type PanelKind = 'table' | 'web' | 'rag' | 'workflow' | '3d' | 'doc';
 
 /** A single open tab in the right panel. */
 export interface PanelTab {

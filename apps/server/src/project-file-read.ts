@@ -14,6 +14,7 @@ import { relative, resolve } from 'node:path';
 import {
   extractDocument,
   planExtract,
+  renderPdfPage,
   type ExtractPlan,
   type Extracted,
 } from './document-extract.js';
@@ -28,18 +29,50 @@ import {
 export type ReadPlan = ExtractPlan;
 export const planFileRead = planExtract;
 
-export type ReadResult = Extracted & { kind: Extracted['kind'] | 'refused' | 'missing' };
+/**
+ * 读到的东西,或者两种"没读成":越界、不存在。
+ *
+ * 这两种和"读了但没内容"必须分开 —— 前者是我们拒绝/找不到,后者是文件本身。
+ */
+export type ReadResult = Omit<Extracted, 'kind'> & {
+  kind: Extracted['kind'] | 'refused' | 'missing';
+};
+
+/**
+ * 只许读项目文件夹之内 —— 与 Show in Folder 同一条边界。越界返回 null。
+ * 抽出来是因为**渲染接口和读接口必须共用它**:一个能画文件夹外文件的渲染接口,
+ * 就是一个读任意文件的接口。
+ */
+function insideFolder(folder: string, name: string): string | null {
+  const root = resolve(folder);
+  const target = resolve(folder, name);
+  const rel = relative(root, target);
+  if (rel.startsWith('..') || resolve(root, rel) !== target) return null;
+  return target;
+}
+
+/** 右侧文档面板按页取图。画不出来回 null —— 空图会被当成"这一页是白的"。 */
+export async function renderProjectFilePage(
+  folder: string,
+  name: string,
+  page: number,
+): Promise<string | null> {
+  const target = insideFolder(folder, name);
+  if (!target) return null;
+  try {
+    return await renderPdfPage(await readFile(target), page);
+  } catch {
+    return null;
+  }
+}
 
 export async function readProjectFile(
   folder: string,
   name: string,
   opts: { offset?: number; limit?: number } = {},
 ): Promise<ReadResult> {
-  const root = resolve(folder);
-  const target = resolve(folder, name);
-  // 只许读项目文件夹之内 —— 与 Show in Folder 同一条边界
-  const rel = relative(root, target);
-  if (rel.startsWith('..') || resolve(root, rel) !== target) {
+  const target = insideFolder(folder, name);
+  if (!target) {
     return { kind: 'refused', notice: '只能读项目文件夹里的文件' };
   }
   try {

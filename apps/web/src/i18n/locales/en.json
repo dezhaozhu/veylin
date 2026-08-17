@@ -29,6 +29,10 @@
       "label": "Workflow",
       "desc": "Visual workflow orchestration"
     },
+    "doc": {
+      "label": "Document",
+      "desc": "Word / PPT / PDF — read-only, side by side with the chat"
+    },
     "3d": {
       "label": "3D",
       "desc": "CAD model viewer with face picking and result overlay"

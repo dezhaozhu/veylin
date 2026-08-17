@@ -103,3 +103,25 @@ describe('readProjectFile', () => {
     assert.equal(out.text, 'hello');
   });
 });
+
+describe('renderProjectFilePage —— 右侧面板一页一页翻', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'docpage-')); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('**边界和读文件是同一条**:逃出项目文件夹一律拒绝', async () => {
+    const { renderProjectFilePage } = await import('./project-file-read.js');
+    assert.equal(await renderProjectFilePage(dir, '../../etc/passwd', 1), null);
+  });
+
+  it('画不出来回 null,不回一张空图 —— 空图会被当成"这页是白的"', async () => {
+    const { renderProjectFilePage } = await import('./project-file-read.js');
+    writeFileSync(join(dir, '假.pdf'), 'not a pdf');
+    assert.equal(await renderProjectFilePage(dir, '假.pdf', 1), null);
+  });
+
+  it('文件不在也回 null', async () => {
+    const { renderProjectFilePage } = await import('./project-file-read.js');
+    assert.equal(await renderProjectFilePage(dir, '没有这个.pdf', 1), null);
+  });
+});

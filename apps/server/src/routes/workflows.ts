@@ -4,7 +4,7 @@ import { workflowInputSchema } from '@veylin/shared';
 import {
   crystallizedDraftSchema,
   crystallizeConversation,
-  draftToDefinition,
+  draftToCreateInput,
 } from '../workflow-crystallize.js';
 import {
   registerWorkflowSchedule,
@@ -260,16 +260,17 @@ export function registerWorkflowsRoutes(app: FastifyInstance, deps: ServerDeps):
       return { ok: false, message: '草案格式不对' };
     }
     const draft = parsed.data;
-    const created = await createWorkflow(ctx.tenantId, {
-      name: draft.name,
-      threadId,
-      kind: body.cron ? 'cron' : 'manual',
-      enabled: true,
-      timezone: 'UTC',
-      ...(body.cron ? { cron: body.cron } : {}),
-      definition: draftToDefinition(draft),
-    } as never);
-    if (body.cron) await registerWorkflowSchedule(deps.queue, created);
+    const created = await createWorkflow(
+      ctx.tenantId,
+      ctx.userId,
+      draftToCreateInput(draft, threadId, body.cron) as never,
+    );
+    if (created.enabled && created.kind === 'cron' && created.cron) {
+      await registerWorkflowSchedule(
+        deps.queue, created.id, created.cron, created.timezone ?? 'UTC',
+        { tenantId: ctx.tenantId, workflowId: created.id, eventContext: {} },
+      );
+    }
     return { ok: true, workflow: created };
   });
 

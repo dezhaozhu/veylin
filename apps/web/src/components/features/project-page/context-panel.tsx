@@ -32,8 +32,10 @@ type Preview =
 export const ContextPanel: FC<{
   items: ContextItem[];
   projectId: string;
+  /** 在右侧文档面板打开这份文件。没给就不显示那个按钮。 */
+  onOpenInPanel?: (name: string) => void;
   onClose: () => void;
-}> = ({ items, projectId, onClose }) => {
+}> = ({ items, projectId, onClose, onOpenInPanel }) => {
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState<ContextItem | null>(null);
   const [preview, setPreview] = useState<Preview>({ state: 'idle' });
@@ -145,6 +147,18 @@ export const ContextPanel: FC<{
                 payload={preview.payload}
                 action={
                   picked.kind === 'file' ? (
+                    <div className="flex items-center gap-3">
+                      {onOpenInPanel ? (
+                        // 摊在旁边看 —— 一份工艺说明的用处是对照着排产结果读,
+                        // 不是看一眼就关掉。
+                        <button
+                          type="button"
+                          className="text-foreground text-xs underline underline-offset-4"
+                          onClick={() => { onOpenInPanel(picked.name); onClose(); }}
+                        >
+                          在右侧打开
+                        </button>
+                      ) : null}
                     // 打不开也走得下去:文件本来就躺在项目文件夹里,让人去拿。
                     <button
                       type="button"
@@ -159,6 +173,7 @@ export const ContextPanel: FC<{
                     >
                       在访达中显示
                     </button>
+                    </div>
                   ) : null
                 }
               />

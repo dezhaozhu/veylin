@@ -14,6 +14,8 @@ export type PreviewPayload = {
   html?: string;
   thumbnail?: string;
   note?: string;
+  /** 总页数 —— **只有 PDF 有**(见 document-extract)。 */
+  pageCount?: number;
 };
 
 export type PreviewMode = 'image' | 'html' | 'text' | 'none';

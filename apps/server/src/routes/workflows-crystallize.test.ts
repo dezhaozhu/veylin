@@ -59,13 +59,18 @@ describe('POST /api/workflows/from-draft', () => {
     assert.match((res.json() as { message: string }).message, /至少要有一步/);
   });
 
-  it('前端不许自带节点图 —— 图由服务端从草案生成,一处口径', async () => {
-    const res = await build([]).inject({
-      method: 'POST',
-      url: '/api/workflows/from-draft',
-      payload: { threadId: 't1', draft, definition: { nodes: [], edges: [] } },
-    });
-    // 存进去的是生成的图,不是传进来的空图。
-    assert.notEqual(res.statusCode, 400);
+  it('**存进去的形状要真能存** —— 只断言"不是 400" 会把 500 也放过去(实测踩过)', async () => {
+    const [{ draftToCreateInput }, { workflowInputSchema }] = await Promise.all([
+      import('../workflow-crystallize.js'),
+      import('@veylin/shared'),
+    ]);
+    const parsed = workflowInputSchema.safeParse(draftToCreateInput(draft, 't1'));
+    assert.equal(parsed.success, true, parsed.success ? '' : JSON.stringify(parsed.error.issues.slice(0, 3)));
+  });
+
+  it('前端自带的节点图不作数 —— 图由服务端从草案生成,一处口径', async () => {
+    const { draftToCreateInput } = await import('../workflow-crystallize.js');
+    const input = draftToCreateInput(draft, 't1');
+    assert.ok(input.definition.nodes.length > 2, '没有从草案生成图');
   });
 });

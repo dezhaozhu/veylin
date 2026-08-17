@@ -231,3 +231,18 @@ export function readWorkspacePanelContext():
   }
   return ctx;
 }
+
+/**
+ * 已经开着的同一份文档 tab。**同一份 = 同项目 + 同文件名** —— 同名但不同项目
+ * 不是同一份(两个项目里可以各有一份「工艺.docx」)。
+ */
+export function findDocTab(
+  tabs: ReadonlyArray<PanelTab>,
+  doc: { projectId: string; name: string },
+): PanelTab | undefined {
+  return tabs.find((t) => {
+    if (t.kind !== 'doc') return false;
+    const st = t.state as { projectId?: string; name?: string } | undefined;
+    return st?.projectId === doc.projectId && st?.name === doc.name;
+  });
+}

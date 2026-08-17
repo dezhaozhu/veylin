@@ -9,6 +9,7 @@ import {
 import { PageHeader, SectionHeading } from '@/components/features/settings/page-header';
 import { useWorkspaceCollapsedInset } from '@/components/features/workspace-view-frame';
 import { WorkspaceMain } from '@/components/features/workspace-main';
+import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { projectSourceLabel } from '@/lib/project-labels';
 import {
@@ -449,6 +450,8 @@ const kb = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round
 const SEARCH_FROM = 6;
 
 const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
+  const { openDocument } = usePanelTabs();
+  const { closeWorkspace } = useSettingsPanel();
   const [data, setData] = useState<ProjectContext | null>(null);
   const [q, setQ] = useState('');
   const [panelOpen, setPanelOpen] = useState(false);
@@ -506,6 +509,11 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
           items={flattenContext(data)}
           projectId={project.id}
           onClose={() => setPanelOpen(false)}
+          onOpenInPanel={(name) => {
+            openDocument({ projectId: project.id, name });
+            // 项目页是盖住全屏的:不让位,右侧那个 tab 打开了也看不见。
+            closeWorkspace();
+          }}
         />
       ) : null}
 

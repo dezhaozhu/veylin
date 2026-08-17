@@ -203,3 +203,25 @@ describe('panel-tabs-storage per-thread', () => {
     assert.equal(loadThreadPanelTabs('t-table-title').tabs[0]?.title, 'panels.table.label');
   });
 });
+
+describe('在右侧打开一份文档', () => {
+  const tabs = [
+    { id: 't1', kind: 'table' as const, title: '表格' },
+    { id: 'd1', kind: 'doc' as const, title: '工艺.docx', state: { projectId: 'p', name: '工艺.docx' } },
+  ];
+
+  it('**同一份文件复用已开的 tab** —— 连点三次开出三个一模一样的 tab,是把"我已经打开它了"讲成三份', async () => {
+    const { findDocTab } = await import('./panel-tabs-storage.js');
+    assert.equal(findDocTab(tabs, { projectId: 'p', name: '工艺.docx' })?.id, 'd1');
+  });
+
+  it('同名但不同项目不算同一份 —— 两个项目里可以各有一份「工艺.docx」', async () => {
+    const { findDocTab } = await import('./panel-tabs-storage.js');
+    assert.equal(findDocTab(tabs, { projectId: 'q', name: '工艺.docx' }), undefined);
+  });
+
+  it('别的 kind 的 tab 不会被当成文档 tab', async () => {
+    const { findDocTab } = await import('./panel-tabs-storage.js');
+    assert.equal(findDocTab(tabs, { projectId: 'p', name: '表格' }), undefined);
+  });
+});

@@ -181,3 +181,35 @@ describe('可视预览', () => {
     assert.ok(out.kind === 'unsupported' || !out.thumbnail);
   });
 });
+
+/**
+ * 右侧文档面板要能一页一页翻 —— **只有 PDF 有"页"这个东西**。
+ * Word 转出来的 HTML 是连续的流,给它编上页码是编的,人会拿着"第 3 页"去对原文
+ * 然后发现对不上。
+ */
+describe('分页', () => {
+  it('PDF 报总页数', async () => {
+    const out = await extractDocument('x.pdf', makePdfFixture('HELLO'));
+    assert.equal(out.pageCount, 1);
+  });
+
+  it('**Word / 表格不报页数** —— 它们没有页,编出来的页码对不上原文', async () => {
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ a: 1 }]), 's');
+    const out = await extractDocument('x.xlsx', XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer);
+    assert.equal(out.pageCount, undefined);
+  });
+
+  it('按页渲染:第 1 页出图', async () => {
+    const { renderPdfPage } = await import('./document-extract.js');
+    const url = await renderPdfPage(makePdfFixture('HELLO'), 1);
+    assert.match(url ?? '', /^data:image\//);
+  });
+
+  it('**越界的页不返回上一页的图** —— 静默给错的一页比报错更坏', async () => {
+    const { renderPdfPage } = await import('./document-extract.js');
+    assert.equal(await renderPdfPage(makePdfFixture('HELLO'), 99), null);
+    assert.equal(await renderPdfPage(makePdfFixture('HELLO'), 0), null);
+  });
+});

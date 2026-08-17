@@ -159,6 +159,26 @@ export function draftToDefinition(draft: CrystallizedDraft): {
   return { nodes, edges };
 }
 
+/** 认过的草案 → createWorkflow 要的入参。图由这里生成,前端不拼。 */
+export function draftToCreateInput(
+  draft: CrystallizedDraft,
+  threadId: string,
+  cron?: string,
+): {
+  name: string; threadId: string; kind: 'manual' | 'cron'; enabled: boolean;
+  timezone: string; cron?: string; definition: ReturnType<typeof draftToDefinition>;
+} {
+  return {
+    name: draft.name,
+    threadId,
+    kind: cron ? 'cron' : 'manual',
+    enabled: true,
+    timezone: 'UTC',
+    ...(cron ? { cron } : {}),
+    definition: draftToDefinition(draft),
+  };
+}
+
 /**
  * 调模型把对话结晶成草案。
  *

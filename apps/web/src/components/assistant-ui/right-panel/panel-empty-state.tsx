@@ -1,4 +1,4 @@
-import { BookOpen, Box, Globe, Table, Workflow } from 'lucide-react';
+import { BookOpen, Box, FileText, Globe, Table, Workflow } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { PANEL_KINDS } from './panel-registry';
@@ -9,6 +9,7 @@ const EMPTY_ICONS: Record<PanelKind, typeof Table> = {
   web: Globe,
   rag: BookOpen,
   workflow: Workflow,
+  doc: FileText,
   '3d': Box,
 };
 

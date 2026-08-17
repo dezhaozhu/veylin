@@ -1,4 +1,4 @@
-import { readProjectFile } from '../project-file-read.js';
+import { readProjectFile, renderProjectFilePage } from '../project-file-read.js';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import {
   addTableColumn,
@@ -811,6 +811,27 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     } catch (err) {
       return reply.code(404).send({ error: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  /**
+   * 右侧文档面板按页取 PDF 图。**边界和 /api/project/file 共用一个函数** ——
+   * 一个能画文件夹外文件的渲染接口,就是一个读任意文件的接口。
+   */
+  app.get('/api/project/file/page', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const { threadId, name, projectId: asked, page } = req.query as {
+      threadId?: string; name?: string; projectId?: string; page?: string;
+    };
+    const n = Number(page);
+    if (!name || !Number.isInteger(n)) return reply.code(400).send({ error: '缺少 name 或 page' });
+    const scope = await scopeOfRequest(threadId, ctx);
+    const projectId = asked ?? (scope.kind === 'project' ? scope.id : null);
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    if (!folder) return reply.code(404).send({ error: '这个项目还没有文件夹' });
+    const dataUrl = await renderProjectFilePage(folder, name, n);
+    // 画不出来就 404 —— 回一张空图会被当成"这一页是白的"。
+    if (!dataUrl) return reply.code(404).send({ error: `画不出第 ${n} 页` });
+    return { ok: true, dataUrl };
   });
 
   /** 在访达里显示项目文件夹里的某个东西(Show in Folder)。只允许文件夹之内。 */
