@@ -5,13 +5,15 @@
  * - `GET /api/projects` lists ENABLED projects only (the sidebar/pin-picker
  *   gate). Disabled rows — revoked defaults, user-deleted compositions — stay
  *   in the store for the reconciler/shim but are invisible to clients.
- * - `POST /api/projects` composes a user project (`managed: false`) from zero
- *   or more granted sources (empty sources = source-less folder). "Granted" =
- *   the sources of the ENABLED reconciler-managed default projects
- *   (`grantedSourcesSorted`) — the same definition the boot migration uses.
- *   `assertSourcesGranted` failures map to 400; this is the UX boundary, not
- *   the security boundary (Compass re-validates per call).
- * - `PATCH /api/projects/:id` renames/re-ticks USER-COMPOSED projects only.
+ * - `POST /api/projects` composes a user project (`managed: false`) from the
+ *   granted sources. "Granted" = the sources of the ENABLED reconciler-managed
+ *   default projects (`grantedSourcesSorted`) — the same definition the boot
+ *   migration uses. `assertSourcesGranted` failures map to 400; this is the
+ *   UX boundary, not the security boundary (Compass re-validates per call).
+ * - `PATCH /api/projects/:id` renames USER-COMPOSED projects, and may only ADD
+ *   data sources — never swap or drop them (project-sources-immutable.ts: the
+ *   project's sources are its identity; changing them makes every earlier
+ *   conversation in the project disagree with the data it now reads).
  *   Managed rows are reconciler-owned → 403. Only `name`/`sources` are ever
  *   forwarded to the store, so `managed`/`enabled`/`migratedFrom` are
  *   structurally unpatchable from HTTP regardless of what the body carries.
@@ -42,9 +44,12 @@ import {
   listProjects,
   updateProject,
 } from '../project-store.js';
+import { checkSourcesChange } from '../project-sources-immutable.js';
 import type { ServerDeps } from './types.js';
+import { isAbsolute } from 'node:path';
+import { stat } from 'node:fs/promises';
 
-type ApiProject = Pick<Project, 'id' | 'name' | 'sources' | 'managed'>;
+type ApiProject = Pick<Project, 'id' | 'name' | 'sources' | 'managed' | 'folder' | 'instructions'>;
 
 function toApiProject(project: Project): ApiProject {
   return {
@@ -52,6 +57,9 @@ function toApiProject(project: Project): ApiProject {
     name: project.name,
     sources: project.sources,
     managed: project.managed,
+    // 项目文件夹要能被界面看到 —— 否则"绑没绑"这件事只有服务端知道。
+    ...(project.folder ? { folder: project.folder } : {}),
+    ...(project.instructions ? { instructions: project.instructions } : {}),
   };
 }
 
@@ -76,7 +84,7 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
 
   app.post('/api/projects', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const body = (req.body ?? {}) as { name?: unknown; sources?: unknown };
+    const body = (req.body ?? {}) as { name?: unknown; sources?: unknown; instructions?: unknown };
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     if (name === '') {
       reply.code(400);
@@ -94,7 +102,13 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
       reply.code(400);
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
-    const project = await createProject(ctx.tenantId, { name, sources });
+    // 建的时候就写的说明也要存 —— 只在 PATCH 里认,会让"新建时填了一段"静默丢掉,
+    // 而对话框那个框看起来完全正常(实测发现)。
+    const instructions =
+      typeof body.instructions === 'string' ? body.instructions.trim() : '';
+    const project = await createProject(ctx.tenantId, {
+      name, sources, ...(instructions ? { instructions } : {}),
+    });
     return { ok: true, project: toApiProject(project) };
   });
 
@@ -108,13 +122,48 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
       reply.code(404);
       return { ok: false, error: 'project not found' };
     }
-    if (existing.managed) {
+    const body = (req.body ?? {}) as {
+      name?: unknown; sources?: unknown; folder?: unknown; instructions?: unknown;
+    };
+    const patch: { name?: string; sources?: string[]; folder?: string; instructions?: string } = {};
+
+    // 项目文件夹既不是身份也不是范围,是**本机偏好** —— 所以 managed 项目
+    // (guolu、上重这些默认项目,恰恰是用户真正在用的)也能设。名字与场景仍归
+    // reconciler 管。见 docs/specs/2026-08-14-project-folder-immutable-originals.md。
+    if (body.folder !== undefined) {
+      const folder = typeof body.folder === 'string' ? body.folder.trim() : '';
+      if (!folder || !isAbsolute(folder)) {
+        reply.code(400);
+        return { ok: false, error: 'folder 必须是绝对路径' };
+      }
+      let isDir = false;
+      try {
+        isDir = (await stat(folder)).isDirectory();
+      } catch {
+        isDir = false;
+      }
+      if (!isDir) {
+        // 早失败:绑一个不存在的目录,用户会以为绑好了,而原件一份也不会落下来。
+        reply.code(400);
+        return { ok: false, error: `folder 不存在或不是目录: ${folder}` };
+      }
+      patch.folder = folder;
+    }
+
+    // 项目说明和文件夹同类:是**本机偏好/项目意图**,不是身份或范围 —— 所以
+    // managed 项目(guolu、上重这些默认项目,恰恰是人真正在用的)也能写。
+    if (body.instructions !== undefined) {
+      if (typeof body.instructions !== 'string') {
+        reply.code(400);
+        return { ok: false, error: 'instructions must be a string' };
+      }
+      patch.instructions = body.instructions.trim();
+    }
+
+    if (existing.managed && (body.name !== undefined || body.sources !== undefined)) {
       reply.code(403);
       return { ok: false, error: 'managed projects cannot be modified' };
     }
-
-    const body = (req.body ?? {}) as { name?: unknown; sources?: unknown };
-    const patch: { name?: string; sources?: string[] } = {};
     if (body.name !== undefined) {
       const name = typeof body.name === 'string' ? body.name.trim() : '';
       if (name === '') {
@@ -129,6 +178,15 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
         reply.code(400);
         return { ok: false, error: 'sources must be an array of source codes' };
       }
+      // **数据源只能加,不能换/删。** 不是权限问题,是历史会失真:项目里之前的
+      // 对话是照着旧数据源的数据得出的结论,换掉之后那些结论和数据对不上,而对话
+      // 还留在这个项目里 —— 看起来像同一个项目的连续记录。见
+      // project-sources-immutable.ts。
+      const blocked = checkSourcesChange(existing.sources, sources);
+      if (blocked) {
+        reply.code(400);
+        return { ok: false, error: blocked };
+      }
       const granted = grantedSourcesSorted(await listProjects(ctx.tenantId));
       try {
         assertSourcesGranted(sources, granted);
@@ -138,12 +196,15 @@ export function registerProjectsRoutes(app: FastifyInstance, deps: ServerDeps): 
       }
       patch.sources = sources;
     }
-    if (patch.name === undefined && patch.sources === undefined) {
+    if (
+      patch.name === undefined && patch.sources === undefined &&
+      patch.folder === undefined && patch.instructions === undefined
+    ) {
       reply.code(400);
-      return { ok: false, error: 'name or sources is required' };
+      return { ok: false, error: 'name / sources / folder / instructions 至少给一个' };
     }
 
-    // Only name/sources ever reach the store from here — managed/enabled/
+    // Only name/sources/folder ever reach the store from here — managed/enabled/
     // migratedFrom stay structurally out of HTTP reach.
     const updated = await updateProject(ctx.tenantId, id, patch);
     if (!updated) {

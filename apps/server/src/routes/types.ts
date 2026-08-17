@@ -53,6 +53,12 @@ export interface ServerDeps {
   mcpHealthByTenant: Map<string, McpHealthSnapshot>;
   RAG_UPLOAD_MAX_BYTES: number;
   /** Present only when VEYLIN_COMPASS_IDENTITY is configured — undefined = feature off (404-equivalent no-op). */
+  /** 读一段对话的消息(结晶成工作流用)。注入而不是直接 import:路由层不该知道
+   *  memory 的召回细节,而且测试要能不起 memory 就跑。 */
+  readThreadMessages?: (
+    threadId: string,
+    ctx: { tenantId: string },
+  ) => Promise<Array<{ role: string; content: string }>>;
   syncCompassIdentity?: () => Promise<CompassIdentitySummary>;
 }
 

@@ -4,6 +4,7 @@ import {
   type AskQuestion,
   type AskUserResult,
 } from '@/lib/ask-user-question-session';
+import { registerAskUserResultSubmitter } from '@/lib/ask-user-submit-bridge';
 import { recoverDesktopInteraction } from '@/lib/use-desktop-interaction-guard';
 
 let currentThreadId: string | undefined;
@@ -35,13 +36,21 @@ export function installDevTestHooks(): void {
         throw new Error('dev ask panel: thread id not ready');
       }
       lastAskResult = null;
+      const threadId = currentThreadId;
+      // Mirror production: panel submit goes through the thread-scoped bridge.
+      registerAskUserResultSubmitter(threadId, async (_toolCallId, result) => {
+        lastAskResult = result;
+        clearAskUserSession(threadId, 'dev-e2e-ask');
+        registerAskUserResultSubmitter(threadId, null);
+      });
       setAskUserSession({
-        threadId: currentThreadId,
+        threadId,
         toolCallId: 'dev-e2e-ask',
         questions,
         addResult: (result) => {
           lastAskResult = result;
-          clearAskUserSession(currentThreadId!, 'dev-e2e-ask');
+          clearAskUserSession(threadId, 'dev-e2e-ask');
+          registerAskUserResultSubmitter(threadId, null);
         },
       });
     },

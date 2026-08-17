@@ -3,12 +3,14 @@ import { after, before, describe, it } from 'node:test';
 import { closeDb, connectDb } from '@veylin/db';
 import type { McpServer, Project } from '@veylin/shared';
 import {
+  fetchCompassSources,
   COMPASS_ENTRY_NAME,
   COMPASS_IDENTITY_GROUP,
   createCompassIdentitySyncLoop,
   desiredCompassEntries,
   desiredDefaultProjectsVsCurrent,
   desiredVsCurrent,
+  explain401,
   isCompassIdentitySyncEnabled,
   parseCompassIdentityConfig,
   reconcileCompassIdentity,
@@ -674,5 +676,96 @@ describe('reconcileCompassIdentity — integration against the real embedded sto
     assert.equal(composedAfter?.enabled, true);
     assert.equal(composedAfter?.managed, false);
     assert.deepEqual(composedAfter?.sources, [sourceA, sourceB]);
+  });
+});
+
+// ---------------------------------------------------------------- 你是谁
+// 实测到的洞:一个 install 一份 token,同事之间复制了同一份,Compass 眼里就是
+// 同一个人。界面上不显示身份,这件事永远不会被发现 —— "权限按人分"会变成一句
+// 只在架构图上成立的话。
+
+describe('身份要带回来', () => {
+  it('/my/sources 的 username 被读出来', async () => {
+    const out = await fetchCompassSources(
+      { url: 'http://x', token: 't' }, 1000,
+      (async () => ({
+        ok: true, status: 200,
+        json: async () => ({ username: '张三', sources: ['guolu'] }),
+      })) as unknown as typeof fetch,
+    );
+    assert.equal(out.ok, true);
+    assert.equal(out.ok && out.username, '张三');
+  });
+
+  it('老版本 Compass 不返 username:不猜、不编,标成未知', async () => {
+    const out = await fetchCompassSources(
+      { url: 'http://x', token: 't' }, 1000,
+      (async () => ({ ok: true, status: 200, json: async () => ({ sources: ['guolu'] }) })) as unknown as typeof fetch,
+    );
+    assert.equal(out.ok && out.username, undefined);
+  });
+});
+
+describe('401 要说清楚是为什么', () => {
+  const expired = (secondsAgo: number) => {
+    const claims = { sub: 'dev', exp: Math.floor(Date.now() / 1000) - secondsAgo };
+    const b64 = Buffer.from(JSON.stringify(claims)).toString('base64url');
+    return `h.${b64}.sig`;
+  };
+
+  it('token 过期了就说过期,并说是什么时候过的', async () => {
+    // 实测:排查这个 401 花了五步(先怀疑 URL 指错、再怀疑吊销),最后发现只是
+    // 昨天过期了。**信息本来就在 token 里**,不说出来是白白让人绕远路。
+    const out = await fetchCompassSources(
+      { url: 'http://x', token: expired(86_400) }, 1000,
+      (async () => ({ ok: false, status: 401 })) as unknown as typeof fetch,
+    );
+    assert.equal(out.ok, false);
+    assert.match(out.ok === false ? out.error : '', /过期/);
+  });
+
+  it('没过期的 401 是另一回事(被吊销/换了密钥),别乱归因', async () => {
+    const good = `h.${Buffer.from(JSON.stringify({
+      sub: 'dev', exp: Math.floor(Date.now() / 1000) + 86_400 })).toString('base64url')}.sig`;
+    const out = await fetchCompassSources(
+      { url: 'http://x', token: good }, 1000,
+      (async () => ({ ok: false, status: 401 })) as unknown as typeof fetch,
+    );
+    assert.match(out.ok === false ? out.error : '', /吊销|密钥/);
+  });
+});
+
+describe('explain401 —— 401 到底为什么', () => {
+  const jwt = (claims: Record<string, unknown>) =>
+    `x.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.y`;
+
+  it('过期就说过期,并带上是谁', () => {
+    const msg = explain401(jwt({ sub: 'dev-nategu', exp: Math.floor(Date.now() / 1000) - 60 }));
+    assert.match(msg, /过期/);
+    assert.match(msg, /dev-nategu/);
+  });
+
+  it('**过期时要说重启** —— 这是实测里真正缺的那半句', () => {
+    // 真实经过:换了 .env 里的 token,401 照旧。因为 token 在**进程启动时**读入
+    // 一次,跑了 14 小时的 dev 进程手里还是那张旧的。只说"重新签一张即可",人
+    // 会以为自己签错了,再签一次 —— 还是不通。
+    const msg = explain401(jwt({ sub: 'u', exp: Math.floor(Date.now() / 1000) - 60 }));
+    assert.match(msg, /重启/);
+  });
+
+  it('没过期就不猜是过期,给出另外两种可能', () => {
+    const msg = explain401(jwt({ sub: 'u', exp: Math.floor(Date.now() / 1000) + 9999 }));
+    assert.doesNotMatch(msg, /已于/);
+    assert.match(msg, /吊销|密钥/);
+  });
+
+  it('不是 JWT 就直说,不假装看懂了', () => {
+    assert.match(explain401('not-a-jwt'), /解不开|格式/);
+  });
+
+  it('只解码不验签 —— 签名是假的也要能解释', () => {
+    // 我们不是在鉴权,是在解释一个已经被拒的请求;要求签名有效等于什么也解释不了。
+    const msg = explain401(jwt({ sub: 'u', exp: Math.floor(Date.now() / 1000) - 1 }));
+    assert.match(msg, /过期/);
   });
 });

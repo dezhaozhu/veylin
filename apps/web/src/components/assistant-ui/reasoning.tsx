@@ -36,6 +36,10 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import {
+  reasoningSegmentDurationMs,
+  type AssistantTurnTiming,
+} from "@/lib/assistant-turn-timing";
 
 const ANIMATION_DURATION = 200;
 const STREAMING_MAX_HEIGHT = "max-h-36";
@@ -279,6 +283,23 @@ function ReasoningText({
 
 const ReasoningImpl: ReasoningMessagePartComponent = () => <MarkdownText />;
 
+function usePersistedReasoningSeconds(indices: readonly number[]): number | undefined {
+  return useAuiState((s) => {
+    const timing = (
+      s.message.metadata as
+        | { custom?: { turnTiming?: AssistantTurnTiming } }
+        | undefined
+    )?.custom?.turnTiming;
+    if (!timing) return undefined;
+    const durationMs = indices.reduce(
+      (sum, index) =>
+        sum + (reasoningSegmentDurationMs(timing, s.message.parts, index) ?? 0),
+      0,
+    );
+    return durationMs > 0 ? Math.max(1, Math.round(durationMs / 1000)) : undefined;
+  });
+}
+
 const ReasoningGroupImpl: ReasoningGroupComponent = ({
   children,
   startIndex,
@@ -292,7 +313,13 @@ const ReasoningGroupImpl: ReasoningGroupComponent = ({
     if (lastType !== "reasoning") return false;
     return lastIndex >= startIndex && lastIndex <= endIndex;
   });
-  const duration = useStreamingDuration(isReasoningStreaming);
+  const liveDuration = useStreamingDuration(isReasoningStreaming);
+  const indices = Array.from(
+    { length: Math.max(0, endIndex - startIndex + 1) },
+    (_, offset) => startIndex + offset,
+  );
+  const persistedDuration = usePersistedReasoningSeconds(indices);
+  const duration = liveDuration ?? persistedDuration;
 
   return (
     <ReasoningRoot streaming={isReasoningStreaming}>
@@ -328,7 +355,9 @@ export const ReasoningGroupBlock: FC<
   PropsWithChildren<{ indices: readonly number[] }>
 > = ({ indices, children }) => {
   const streaming = useGroupStreaming(indices);
-  const duration = useStreamingDuration(streaming);
+  const liveDuration = useStreamingDuration(streaming);
+  const persistedDuration = usePersistedReasoningSeconds(indices);
+  const duration = liveDuration ?? persistedDuration;
 
   return (
     <ReasoningRoot variant="ghost" streaming={streaming}>

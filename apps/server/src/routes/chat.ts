@@ -43,9 +43,12 @@ import {
 import { listDispatchableCustomAgentIds } from '../agent-task-runner.js';
 import { scheduleDreamConsolidation } from '../dream-service.js';
 import { cancelThreadSubagentTasks } from '../cancel-thread-tasks.js';
-import { buildTableContextBlock } from '../table-store.js';
+import { buildTableContextBlock, formatProjectFilesBlock } from '../table-store.js';
+import { resolveSheetScope } from '../table-tools.js';
+import { formatTableEditsBlock } from '../table-edit-journal.js';
 import { buildViewer3dContextBlock } from '../viewer3d-store.js';
 import { scheduleEditGuidanceBlock } from '../schedule-edit.js';
+import { compassGroundingBlock as buildCompassGroundingBlock } from '../compass-grounding.js';
 import {
   activateSkill,
   activateAndPinSkill,
@@ -61,6 +64,7 @@ import {
   setTodos as setThreadTodosDb,
   setThreadGoal,
   setThreadLoop,
+  setThreadSuspendedRun,
   syncWorkingMemory,
   restoreTodosFromHistoryIfEmpty,
   requireThreadOwnership,
@@ -80,10 +84,12 @@ import { isMemoryStoreFailure, syncThreadMessagesFromClient } from '../thread-sy
 import { isDatastoreFailure, withDatastoreFallback } from '../store-errors.js';
 import {
   mastraMessagesToAgentContext,
+  mastraMessagesToUi,
   mergeAgentContextMessages,
   type UiMessage,
 } from '../message-sync.js';
 import { filterExternalToolsets } from '../toolsets.js';
+import { restrictSourcelessToolset } from '../compass-sourceless.js';
 import {
   bindActiveStream,
   captureSseToResumable,
@@ -122,14 +128,22 @@ import {
 import {
   getCompassToolIndexEntries,
   getPooledCompassToolsets,
+  sceneSetKey,
   type CompassPoolDeps,
 } from '../compass-pool.js';
+import { compassRestBase } from '../compass-rest.js';
 import { applyTenantModelSettings } from '../model-settings-store.js';
 import { buildKnowledgeContextBlock } from '../rag-store.js';
 import { getHookBus, reloadHooksForTenant } from '../hooks-service.js';
 import { wrapToolsetsWithHooks } from '../tool-hooks.js';
 import { wrapToolsetsWithAudit } from '../tool-audit.js';
 import { getEnterprisePorts } from '../ports/index.js';
+import {
+  consumeSuspendedRun,
+  observeSuspensionChunk,
+  registerSuspendedRun,
+  type SuspendedRunRecord,
+} from '../chat-suspension-registry.js';
 import type { ServerDeps } from './types.js';
 
 /**
@@ -304,7 +318,16 @@ export async function resolveChatMcpScope(
       deps.poolDeps ?? {},
     );
     if (pooled != null) {
-      compassOverlay = { [scope.entryPin]: pooled[scope.entryPin] ?? {} };
+      // **没挂数据源的项目只留发现类工具。** 空 sources 发出去的场景头是空串,
+      // 而非 account 的旧式 token 会忽略场景头、落回它自己烘焙的租户 —— 实测:
+      // 一个写着"只用你自己的文件"的项目,agent 在里面回答了整页另一个厂的排产
+      // 数据,界面上还完全正常。见 compass-sourceless.ts。
+      compassOverlay = {
+        [scope.entryPin]: restrictSourcelessToolset(
+          (pooled[scope.entryPin] ?? {}) as Record<string, unknown>,
+          scope.sources,
+        ),
+      };
     } else {
       // Honest refusal: the pool could not produce a connection for THIS
       // scene set, so compass vanishes from the request — active list, tool
@@ -345,33 +368,43 @@ export async function resolveChatMcpScope(
 }
 
 export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void {
-  app.post('/api/resume', async (req) => {
-    const ctx = await deps.resolveContext(req.headers);
-    await applyTenantModelSettings(ctx.tenantId);
-    const body = req.body as { runId?: string; resumeData?: unknown; agentId?: string };
-    const agent = deps.runtime.getAgent(body.agentId ?? DEFAULT_AGENT_ID) as unknown as {
-      resumeStream?: (data: unknown, opts: { runId: string }) => Promise<unknown>;
-    };
-    if (!body.runId || !agent?.resumeStream) {
-      return { ok: false, error: 'runId and resumeStream required' };
-    }
-    const stream = await agent.resumeStream(body.resumeData, { runId: body.runId });
-    return { ok: true, stream: stream != null };
-  });
-
   app.post('/api/chat', async (req, reply) => {
     const body = parseChatBody(req.body);
+    const ctx = await deps.resolveContext(req.headers);
+    const resume = body.resume;
+    const isResume = resume != null;
     const messages = body.messages ?? [];
-    if (messages.length === 0) {
+    if (!isResume && messages.length === 0) {
       return reply.status(400).send({ error: 'messages required' });
     }
+    if (
+      isResume &&
+      (typeof resume !== 'object' ||
+        typeof resume.runId !== 'string' ||
+        !resume.runId.trim() ||
+        (resume.toolCallId != null &&
+          (typeof resume.toolCallId !== 'string' || !resume.toolCallId.trim())) ||
+        !Object.prototype.hasOwnProperty.call(resume, 'resumeData'))
+    ) {
+      return reply.status(400).send({ error: 'invalid_resume' });
+    }
+    const requestedThreadId = body.id ?? body.threadId;
+    if (
+      (requestedThreadId != null &&
+        (typeof requestedThreadId !== 'string' || !requestedThreadId.trim())) ||
+      (isResume && typeof requestedThreadId !== 'string')
+    ) {
+      return reply.status(400).send({ error: 'invalid_thread_id' });
+    }
+    if (body.agentId != null && (typeof body.agentId !== 'string' || !body.agentId.trim())) {
+      return reply.status(400).send({ error: 'invalid_agent_id' });
+    }
 
-    const ctx = await deps.resolveContext(req.headers);
     await applyTenantModelSettings(ctx.tenantId);
     await deps.ensureMcpForTenant(ctx.tenantId);
     await reloadHooksForTenant(ctx.tenantId);
     const hookBus = getHookBus(ctx.tenantId);
-    const threadId = body.id ?? body.threadId ?? `thread-${ctx.userId}`;
+    const threadId = requestedThreadId ?? `thread-${ctx.userId}`;
     const agentId = body.agentId ?? DEFAULT_AGENT_ID;
     const identity = {
       threadId,
@@ -385,8 +418,25 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     try {
       const before = await getThreadState(threadId);
       isNewSession = !before;
-      threadRow = await ensureThreadState(identity);
-      await touchThreadActivity(threadId);
+      if (isResume) {
+        if (before) {
+          try {
+            threadRow = await requireThreadOwnership(threadId, ctx);
+          } catch (err) {
+            if (deps.isForbiddenError(err)) {
+              return reply.status(403).send({ error: 'forbidden' });
+            }
+            throw err;
+          }
+        } else {
+          // A prior ephemeral turn may have suspended while the datastore was
+          // unavailable. The process-local run registry remains authoritative.
+          threadRow = ephemeralThreadState(identity);
+        }
+      } else {
+        threadRow = await ensureThreadState(identity);
+      }
+      if (before) await touchThreadActivity(threadId);
     } catch (err) {
       if (!isDatastoreFailure(err)) throw err;
       threadStoreOk = false;
@@ -400,8 +450,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       { source: isNewSession ? 'startup' : 'resume', thread_id: threadId, agent_id: agentId },
       { threadId },
     );
-    await stopChatStream({ threadId }).catch(() => undefined);
-    if (threadStoreOk) {
+    if (!isResume) {
+      await stopChatStream({ threadId }).catch(() => undefined);
+    }
+    if (threadStoreOk && !isResume) {
       await withDatastoreFallback(
         () => restoreTodosFromHistoryIfEmpty(threadId, messages as never),
         undefined,
@@ -428,7 +480,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const planMode = body.planMode === true || (threadRowState?.planMode ?? false);
 
     await refreshAgentPackages(deps.runtime);
-    const agent = requireAgent(deps.runtime, agentId);
+    const agent = deps.runtime.getAgent(agentId);
+    if (!agent) {
+      return reply.status(404).send({ error: 'agent_not_found' });
+    }
     const modelKey = (body.model ?? 'default') as ModelKey;
     const modelConfig = getModelConfig(modelKey);
     if (!modelConfig.apiKey.trim()) {
@@ -438,7 +493,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       });
     }
 
-    if (threadStoreOk && !threadRow.title?.trim()) {
+    if (!isResume && threadStoreOk && !threadRow.title?.trim()) {
       void ensureThreadTitleIfMissing(threadId, messages, {
         memory: deps.runtime.memory,
         resourceId: ctx.userId,
@@ -541,6 +596,18 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
             name: scope.project.name,
             sources: scope.sources,
             entryPin: scope.entryPin,
+            // REST data-plane scope for the SAME pin (Task 6) — null when the
+            // pin resolved to a project but no enabled compass entry (no
+            // scene set to bind a REST call to, mirrors entryPin === null).
+            rest: scope.entry
+              ? {
+                  baseUrl: compassRestBase(scope.entry.url),
+                  headers: {
+                    ...scope.entry.headers,
+                    'x-compass-source': sceneSetKey(scope.sources),
+                  },
+                }
+              : null,
           }
         : null,
     );
@@ -682,26 +749,28 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     );
     let skillBlock = getSkillMemoryBlock(activatedSkills);
 
-    let useThreadMemory = threadStoreOk;
-    try {
-      await syncThreadMessagesFromClient({
-        memory: deps.runtime.memory,
-        identity,
-        clientMessages: messages as never,
-        forceReplace: body.forceReplace,
-      });
-      if (threadStoreOk) {
-        threadRowState = (await getThreadState(threadId)) ?? threadRowState;
-      }
-    } catch (err) {
-      if (isMemoryStoreFailure(err)) {
-        useThreadMemory = false;
-        app.log.warn(
-          { err, threadId },
-          'message sync failed (memory store); continuing chat without thread memory',
-        );
-      } else {
-        throw err;
+    let useThreadMemory = threadStoreOk && !isResume;
+    if (!isResume) {
+      try {
+        await syncThreadMessagesFromClient({
+          memory: deps.runtime.memory,
+          identity,
+          clientMessages: messages as never,
+          forceReplace: body.forceReplace,
+        });
+        if (threadStoreOk) {
+          threadRowState = (await getThreadState(threadId)) ?? threadRowState;
+        }
+      } catch (err) {
+        if (isMemoryStoreFailure(err)) {
+          useThreadMemory = false;
+          app.log.warn(
+            { err, threadId },
+            'message sync failed (memory store); continuing chat without thread memory',
+          );
+        } else {
+          throw err;
+        }
       }
     }
 
@@ -731,30 +800,33 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     requestContext.set('scopedMcpToolsets', agentMcp);
 
     const effectiveModel = body.model ?? deps.runtime.definitions.get(agentId)?.definition.model;
-    let agentInputMessages = messages as UiMessage[];
-    if (useThreadMemory) {
-      try {
-        const recalled = await recallOrEmpty(deps.runtime.memory, {
-          threadId,
-          resourceId: ctx.userId,
-          perPage: false,
-        });
-        const recalledForAgent = mastraMessagesToAgentContext(recalled.messages ?? []);
-        agentInputMessages = mergeAgentContextMessages(
-          messages as UiMessage[],
-          recalledForAgent,
-        );
-      } catch (err) {
-        app.log.warn({ err, threadId }, 'agent context merge failed; using client messages');
+    let agentMessages: Awaited<ReturnType<typeof toAgentMessages>> = [];
+    if (!isResume) {
+      let agentInputMessages = messages as UiMessage[];
+      if (useThreadMemory) {
+        try {
+          const recalled = await recallOrEmpty(deps.runtime.memory, {
+            threadId,
+            resourceId: ctx.userId,
+            perPage: false,
+          });
+          const recalledForAgent = mastraMessagesToAgentContext(recalled.messages ?? []);
+          agentInputMessages = mergeAgentContextMessages(
+            messages as UiMessage[],
+            recalledForAgent,
+          );
+        } catch (err) {
+          app.log.warn({ err, threadId }, 'agent context merge failed; using client messages');
+        }
       }
-    }
-    agentInputMessages = stripInterruptedAssistantTurnsForAgent(agentInputMessages);
-    let agentMessages = await toAgentMessages(
-      agentInputMessages as Parameters<typeof toAgentMessages>[0],
-      modelSupportsImages(effectiveModel),
-    );
-    if (body.pendingLoop === true && !isLoopActive(threadRowState?.loop)) {
-      agentMessages = appendPendingLoopTurnNote(agentMessages);
+      agentInputMessages = stripInterruptedAssistantTurnsForAgent(agentInputMessages);
+      agentMessages = await toAgentMessages(
+        agentInputMessages as Parameters<typeof toAgentMessages>[0],
+        modelSupportsImages(effectiveModel),
+      );
+      if (body.pendingLoop === true && !isLoopActive(threadRowState?.loop)) {
+        agentMessages = appendPendingLoopTurnNote(agentMessages);
+      }
     }
 
     const rules = await withDatastoreFallback(
@@ -774,7 +846,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     // Live workspace awareness (table + knowledge base + right-panel focus).
     const tableBlockBase = planMode
       ? ''
-      : buildTableContextBlock(threadId, projectPin, tenantProjects);
+      : buildTableContextBlock(resolveSheetScope(threadId, projectPin), projectPin, tenantProjects);
     // Thread-tied (unlike the workspace grid's own schedule-edit HTTP routes,
     // see mcp-scoping.ts's module docstring): this request already resolved
     // its final per-request toolsets (`agentMcp`, pooled compass included)
@@ -785,7 +857,41 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const editGuidance = planMode
       ? ''
       : scheduleEditGuidanceBlock(() => agentMcp, mcpServerGroups, scope.entryPin);
-    const tableBlock = [tableBlockBase, editGuidance].filter(Boolean).join('\n\n');
+    // 与 editGuidance 同源同参:本轮真实的 agentMcp + entry pin,所以"是否连上
+    // compass"的判断与本轮真正能调的工具一致。planMode 下同样跳过。
+    const compassGrounding = planMode
+      ? ''
+      : buildCompassGroundingBlock(() => agentMcp, mcpServerGroups, scope.entryPin);
+    // 变更事件推进上下文:重新读表只能看到新值,看不到"改过"。放在表格块之后 ——
+    // 先说"表里有什么",再说"刚才谁改了什么"(见 table-edit-journal.ts)。
+    const tableEdits = planMode ? '' : formatTableEditsBlock(threadId);
+    // 「文件夹即上下文」:提示块里放的是**清单**,内容按需走 project_file_read。
+    // 放进去几乎不花 token,却让 agent 知道这里有什么 —— 否则它只能猜。
+    let projectFilesBlock = '';
+    if (!planMode && projectPin) {
+      try {
+        const { getProject } = await import('../project-store.js');
+        const folder = (await getProject(ctx.tenantId, projectPin))?.folder;
+        if (folder) {
+          const { listProjectFiles } = await import('../project-context.js');
+          const { scanProjectInbox } = await import('../project-inbox.js');
+          const [archived, inbox] = await Promise.all([
+            listProjectFiles(folder),
+            scanProjectInbox(folder),
+          ]);
+          projectFilesBlock = formatProjectFilesBlock(folder, [
+            ...archived.originals.map((f) => ({ name: f.name, bytes: f.bytes })),
+            ...archived.snapshots.map((f) => ({ name: `快照/${f.name}`, bytes: f.bytes })),
+            ...inbox.pending.map((f) => ({ name: f.name, bytes: f.bytes })),
+          ]);
+        }
+      } catch {
+        /* 读不到文件夹就不放这一段 —— 它是陈述,不该让一轮对话失败 */
+      }
+    }
+
+    const tableBlock = [tableBlockBase, projectFilesBlock, tableEdits, editGuidance]
+      .filter(Boolean).join('\n\n');
     const viewer3dBlock = planMode ? '' : buildViewer3dContextBlock();
     const knowledgeBlock = planMode
       ? ''
@@ -806,6 +912,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         movedFrom: threadRowState?.movedFrom ?? null,
         movedAt: threadRowState?.movedAt ?? null,
       },
+      scope.project?.instructions ?? null,
+      Boolean(scope.project) && (scope.project?.sources.length ?? 0) === 0,
     );
     const workingMemoryBlock = buildReadOnlyWorkingMemoryBlock(
       threadRowState?.workingMemory ?? null,
@@ -836,6 +944,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       attachedBrowserBlock,
       workingMemoryBlock,
       projectPinBlock,
+      compassGroundingBlock: compassGrounding,
     });
     if (systemBlocks) {
       agentMessages = [{ role: 'system', content: systemBlocks } as never, ...agentMessages];
@@ -878,26 +987,28 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       { threadId, tenantId: ctx.tenantId, userId: ctx.userId },
     );
 
-    const promptSubmit = await hookBus.emit(
-      'UserPromptSubmit',
-      {
-        prompt: lastUserText(messages),
-        thread_id: threadId,
-        agent_id: agentId,
-      },
-      { threadId },
-    );
-    if (promptSubmit.decision === 'deny') {
-      return reply.status(400).send({
-        error: 'prompt_blocked',
-        message: promptSubmit.reason ?? 'Prompt blocked by hook',
-      });
-    }
-    if (promptSubmit.additionalContext) {
-      agentMessages = [
-        { role: 'system', content: promptSubmit.additionalContext } as never,
-        ...agentMessages,
-      ];
+    if (!isResume) {
+      const promptSubmit = await hookBus.emit(
+        'UserPromptSubmit',
+        {
+          prompt: lastUserText(messages),
+          thread_id: threadId,
+          agent_id: agentId,
+        },
+        { threadId },
+      );
+      if (promptSubmit.decision === 'deny') {
+        return reply.status(400).send({
+          error: 'prompt_blocked',
+          message: promptSubmit.reason ?? 'Prompt blocked by hook',
+        });
+      }
+      if (promptSubmit.additionalContext) {
+        agentMessages = [
+          { role: 'system', content: promptSubmit.additionalContext } as never,
+          ...agentMessages,
+        ];
+      }
     }
 
     await hookBus.emit(
@@ -913,6 +1024,13 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     requestContext.set('runAbortSignal', runAbort.signal);
 
     const attachments = collectLangfuseAttachments(messages);
+    const suspensionOwner = {
+      threadId,
+      tenantId: ctx.tenantId,
+      userId: ctx.userId,
+      agentId,
+    };
+    let consumedSuspended: SuspendedRunRecord | null = null;
     let stream;
     try {
       // Do NOT pass `memory` into agent.stream. Mastra's SaveQueue / MessageHistory
@@ -921,7 +1039,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       // concat-content shows the turn as duplicated. Thread context is already
       // recalled above; WM is injected via systemBlocks; persistence is
       // client-authoritative via syncThreadMessagesFromClient.
-      stream = await agent.stream(agentMessages as never, {
+      const streamOptions = {
         maxSteps: 25,
         abortSignal: runAbort.signal,
         requestContext,
@@ -938,7 +1056,40 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
             ...(attachments.length > 0 ? { attachments } : {}),
           },
         },
-      } as never);
+      };
+      if (resume) {
+        const persisted = threadRowState?.suspendedRun;
+        if (
+          persisted?.runId === resume.runId &&
+          persisted.toolCallId === resume.toolCallId &&
+          persisted.agentId === agentId
+        ) {
+          registerSuspendedRun({
+            ...suspensionOwner,
+            ...persisted,
+          });
+        }
+        consumedSuspended = consumeSuspendedRun(
+          suspensionOwner,
+          resume.runId,
+          resume.toolCallId,
+        );
+        if (!consumedSuspended) {
+          unregisterRunAbort(streamId);
+          return reply.status(409).send({ error: 'invalid_or_consumed_resume' });
+        }
+        // Validate and reserve the exact suspended run before touching any live
+        // stream. A duplicate resume must return 409 without aborting the first.
+        await stopChatStream({ threadId }).catch(() => undefined);
+        await setThreadSuspendedRun(threadId, null);
+        stream = await agent.resumeStream(resume.resumeData, {
+          ...streamOptions,
+          runId: resume.runId,
+          toolCallId: resume.toolCallId ?? consumedSuspended.toolCallId,
+        } as never);
+      } else {
+        stream = await agent.stream(agentMessages as never, streamOptions as never);
+      }
     } catch (err) {
       await hookBus.emit(
         'StopFailure',
@@ -948,6 +1099,16 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         },
         { threadId },
       );
+      if (consumedSuspended) {
+        registerSuspendedRun(consumedSuspended, { restoreConsumed: true });
+        await setThreadSuspendedRun(threadId, {
+          agentId: consumedSuspended.agentId,
+          runId: consumedSuspended.runId,
+          toolCallId: consumedSuspended.toolCallId,
+          suspendPayload: consumedSuspended.suspendPayload,
+          createdAt: consumedSuspended.createdAt,
+        }).catch(() => undefined);
+      }
       throw err;
     }
 
@@ -962,9 +1123,27 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         });
     }, 300);
 
+    let originalUiMessages = messages as UiMessage[];
+    if (resume) {
+      try {
+        const recalled = await deps.runtime.memory.recall({
+          threadId,
+          resourceId: ctx.userId,
+          perPage: false,
+        });
+        originalUiMessages = mastraMessagesToUi(recalled.messages ?? []);
+      } catch (err) {
+        app.log.warn(
+          { err, threadId, runId: resume.runId },
+          'resume UI context recall failed',
+        );
+      }
+    }
+
     const from = 'agent';
+    let sawSuspension = false;
     const uiMessageStream = createUIMessageStream({
-      originalMessages: messages as never,
+      originalMessages: originalUiMessages as never,
       onFinish: () => {
         clearInterval(cancelPoll);
         unregisterRunAbort(streamId);
@@ -972,6 +1151,11 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
           app.log.warn({ err, threadId }, 'clearActiveStream failed');
         });
         markThreadChatActivity(threadId, 'finished');
+        if (!sawSuspension) {
+          void setThreadSuspendedRun(threadId, null).catch((err) => {
+            app.log.warn({ err, threadId }, 'clear suspended run state failed');
+          });
+        }
         scheduleDreamConsolidation(deps.runtime, identity);
         void hookBus.emit('Stop', { thread_id: threadId }, { threadId });
         void hookBus.emit('PostToolBatch', { thread_id: threadId }, { threadId });
@@ -1116,12 +1300,39 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
             },
           } as never)) {
             if (runAbort.signal.aborted) break;
+            const observedPart = observeSuspensionChunk(part, suspensionOwner);
+            const suspensionPart = observedPart as {
+              type?: string;
+              data?: {
+                runId?: unknown;
+                toolCallId?: unknown;
+                suspendPayload?: unknown;
+                suspendedAt?: unknown;
+              };
+            };
+            if (
+              suspensionPart.type === 'data-tool-call-suspended' &&
+              typeof suspensionPart.data?.runId === 'string' &&
+              typeof suspensionPart.data.toolCallId === 'string'
+            ) {
+              sawSuspension = true;
+              await setThreadSuspendedRun(threadId, {
+                agentId,
+                runId: suspensionPart.data.runId,
+                toolCallId: suspensionPart.data.toolCallId,
+                suspendPayload: suspensionPart.data.suspendPayload,
+                createdAt:
+                  typeof suspensionPart.data.suspendedAt === 'number'
+                    ? suspensionPart.data.suspendedAt
+                    : Date.now(),
+              });
+            }
             // Input processors may finish after stream() returns; emit once when payload appears.
             writeCompactNoticeIfNeeded();
-            for (const repaired of repairUiStreamChunk(part as never, streamRepair)) {
+            for (const repaired of repairUiStreamChunk(observedPart as never, streamRepair)) {
               writer.write(repaired as never);
             }
-            const partType = (part as { type?: string }).type;
+            const partType = (observedPart as { type?: string }).type;
             if (partType === 'finish-step' || partType === 'finish') {
               writeContextUsageIfNeeded(lastStepUsage);
             }

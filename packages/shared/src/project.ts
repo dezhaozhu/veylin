@@ -20,6 +20,17 @@ export interface Project {
    * the display name — user-composed projects can share any name safely.
    */
   migratedFrom?: string;
+  /**
+   * 项目文件夹的绝对路径(用户选)。原件、产物、快照都躺在这里,`.veylin/` 放
+   * 不可变原件仓与 manifest —— 见 docs/specs/2026-08-14-project-folder-immutable-originals.md。
+   * 没设 = 这个项目还没绑文件夹(旧项目全是这样),导入照旧只存解析结果。
+   */
+  folder?: string;
+  /**
+   * 这个项目要做什么(用户写的一段话)。**会作为项目级指令喂给模型** ——
+   * 所以它不是备注:写进去的每句话都会影响这个项目里所有对话的行为。
+   */
+  instructions?: string;
   createdAt?: string;
 }
 
@@ -37,5 +48,8 @@ export const PROJECT_SOURCE_LABELS: Record<string, string> = {
 };
 
 export function projectSourceLabel(source: string): string {
+  // 个人工作区的 id 带一段防撞车的指纹(compass: me:<slug>-<sha8>),那是给机器看的。
+  // 把它原样摆给用户,人只会看到一串不认识的东西 —— 而它其实就是"他自己的空间"。
+  if (source.startsWith('me:')) return '我的工作区';
   return PROJECT_SOURCE_LABELS[source] ?? source;
 }

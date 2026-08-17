@@ -24,9 +24,6 @@ function secondsFromTimingMs(ms: number | undefined): number | undefined {
  */
 export const WorkedForBlock: FC<
   PropsWithChildren<{
-    elapsedSeconds?: number;
-    /** When false, never show seconds (even if message timing metadata exists). */
-    showDuration?: boolean;
     /** First island renders the trigger; later islands only show when open. */
     isPrimary?: boolean;
     open?: boolean;
@@ -34,8 +31,6 @@ export const WorkedForBlock: FC<
   }>
 > = ({
   children,
-  elapsedSeconds,
-  showDuration = true,
   isPrimary = true,
   open = false,
   onOpenChange,
@@ -48,10 +43,7 @@ export const WorkedForBlock: FC<
     return <div className="flex flex-col gap-2">{children}</div>;
   }
 
-  const seconds = showDuration
-    ? (secondsFromTimingMs(timing?.totalStreamTime) ??
-      (elapsedSeconds != null && elapsedSeconds > 0 ? elapsedSeconds : undefined))
-    : undefined;
+  const seconds = secondsFromTimingMs(timing?.totalStreamTime);
 
   const label =
     seconds != null

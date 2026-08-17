@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuiState } from '@assistant-ui/react';
-import { Plus, Minus, Redo2, Undo2, Upload, Download, X, Loader2, Search } from 'lucide-react';
+import { useAui } from '@assistant-ui/store';
+import { Plus, ChevronDown, ChevronUp, Minus, Redo2, Undo2, Upload, Download, X, Loader2, Search, AtSign, Camera, FolderPlus } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
+import { placeComposerCaret } from '@/lib/composer-caret';
+import { appendSelectionToken, registerTableSelection } from '@/lib/table-selection-ref';
 import {
   type ColDef,
   type GetRowIdParams,
@@ -10,12 +14,17 @@ import {
   type CellClassParams,
   type CellValueChangedEvent,
   type CellKeyDownEvent,
+  type SelectionChangedEvent,
   type IHeaderParams,
   type GridApi,
   type GridReadyEvent,
-  type FirstDataRenderedEvent,
+  type IRowNode,
   themeQuartz,
 } from 'ag-grid-community';
+import { anchorOfRow, rowMatchesAnchor } from '@/lib/grain-anchor';
+import { carryViewAcrossGrain } from '@/lib/grain-view-carry';
+import { revealPath } from '@/lib/project-folder';
+import { askBubbleAction, resolveSelectionScope, type SelectionScope } from '@/lib/grid-selection-scope';
 import './ag-grid-modules';
 import { hasProEntitlement } from '@/lib/ag-grid-license';
 import { isAgGridEnterpriseReady } from '@/lib/ag-grid-enterprise-state';
@@ -34,6 +43,8 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { exportTableToExcel, parseTableExcelFile } from '@/lib/table-excel';
 import { buildGovernedEditBody, GOVERNED_EDIT_FIELDS } from '@/lib/schedule-edit';
+import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
+import { isLateOnlyGridFilter, type OpenGridFilter } from '@/lib/correction-bridge';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 
 type TableColumnType = 'text' | 'number' | 'status' | 'sparkline';
@@ -58,6 +69,7 @@ type TableEvent =
 // ── 二三级 master-detail (Pro / AG-Grid Enterprise) ──────────────────────────
 // The schedule sheet's 二级 rows expand to their 三级 (设备级) ops, fetched on
 // demand from /api/schedule-detail (→ Compass get_workorder_rows). Read-only.
+const EMPTY_RANGE: SelectionScope = { rowKeys: [], columns: [] };
 const SCHEDULE_SHEET_ID = 'schedule';
 const ORDER_SHEET_ID = 'orders';
 
@@ -67,29 +79,25 @@ const ORDER_SHEET_ID = 'orders';
 // header fill), and the app's neutral accent for selection/focus.
 const veylinGridTheme = themeQuartz.withParams({
   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-  fontSize: 12.5,
-  spacing: 7,
-  rowHeight: 36,
-  headerHeight: 40,
+  fontSize: 13,
+  spacing: 6,
+  rowHeight: 34,
+  headerHeight: 38,
   backgroundColor: 'var(--background)',
   foregroundColor: 'var(--foreground)',
-  borderColor: 'color-mix(in oklab, var(--border) 80%, transparent)',
+  borderColor: 'var(--border)',
   chromeBackgroundColor: 'var(--muted)',
-  // Soft header band so the grid reads less like a raw spreadsheet dump.
-  headerBackgroundColor: 'color-mix(in oklab, var(--muted) 45%, var(--background))',
+  headerBackgroundColor: 'var(--background)',
   headerTextColor: 'var(--muted-foreground)',
   headerFontWeight: 600,
-  headerFontSize: 11.5,
-  // Flat rows — no zebra; separators + hover carry hierarchy.
-  oddRowBackgroundColor: 'var(--background)',
-  rowHoverColor: 'color-mix(in oklab, var(--muted) 65%, transparent)',
-  selectedRowBackgroundColor: 'color-mix(in oklab, var(--accent) 75%, transparent)',
-  accentColor: 'var(--primary)',
-  cellTextColor: 'var(--foreground)',
-  wrapperBorderRadius: 10,
-  wrapperBorder: true,
+  headerFontSize: 12,
+  oddRowBackgroundColor: 'transparent',
+  rowHoverColor: 'var(--muted)',
+  selectedRowBackgroundColor: 'var(--accent)',
+  accentColor: 'var(--ring)',
+  wrapperBorderRadius: 8,
+  wrapperBorder: false,
   columnBorder: false,
-  borderRadius: 6,
 });
 
 // Columns worth showing in the B2 preview dialog (filtered by presence in the payload)
@@ -184,6 +192,7 @@ interface TableSheet {
 
 interface TableGridTotals {
   rowCount: number;
+  selectedCount: number;
 }
 
 type FilterState = { query: string };
@@ -220,14 +229,6 @@ const FALLBACK_TONE: Record<string, StatusTone> = {
   normal: 'positive',
   tight: 'warning',
   overdue: 'negative',
-  // Scheduling vocabulary (used when Compass omits column semantics)
-  solved: 'positive',
-  derived: 'info',
-  unscheduled: 'neutral',
-  scheduled: 'positive',
-  feasible: 'positive',
-  infeasible: 'negative',
-  not_scheduled: 'neutral',
 };
 
 function statusClass(value: string, semantics?: Record<string, string>): string {
@@ -237,20 +238,6 @@ function statusClass(value: string, semantics?: Record<string, string>): string 
 
 function humanizeStatus(value: string): string {
   return value.replace(/_/g, ' ');
-}
-
-/** Date-like column keys — give them room and show YYYY-MM-DD instead of ISO spam. */
-function isDateishColumn(key: string): boolean {
-  return /(^|_)(at|date|end|start|due|time)(_|$)/i.test(key) || /完工|交期|日期/.test(key);
-}
-
-function formatTableCellValue(key: string, value: unknown): string {
-  if (value === undefined || value === null || value === '') return '';
-  const s = String(value);
-  if (isDateishColumn(key) || /^\d{4}-\d{2}-\d{2}T/.test(s)) {
-    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  }
-  return s;
 }
 
 function resolveStatusOptions(def: TableColumnDef, rows: TableRow[]): string[] {
@@ -314,8 +301,16 @@ async function readJsonResponse<T>(res: Response): Promise<T> {
   }
 }
 
-async function fetchSchedule(sheetId: string): Promise<SchedulePayload> {
-  const res = await fetch(`/api/table?sheet=${encodeURIComponent(sheetId)}`);
+/**
+ * 取一张表。**必须带 threadId** —— 服务端要靠它推出这一屏的作用域(项目 or
+ * 个人区)。不带就等于每次都问"个人区有什么",项目的表一张也看不到。
+ * `sheetId` 省略 = 让服务端给这个作用域的默认表(切项目时用)。
+ */
+async function fetchSchedule(sheetId: string | undefined, threadId?: string): Promise<SchedulePayload> {
+  const qs = new URLSearchParams();
+  if (sheetId) qs.set('sheet', sheetId);
+  if (threadId) qs.set('threadId', threadId);
+  const res = await fetch(`/api/table?${qs.toString()}`);
   const data = await readJsonResponse<SchedulePayload>(res);
   if (!res.ok) {
     throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
@@ -323,12 +318,41 @@ async function fetchSchedule(sheetId: string): Promise<SchedulePayload> {
   return data;
 }
 
-async function patchRow(sheetId: string, row: TableRow): Promise<boolean> {
+/**
+ * 提交改动过的行。**一次一个批次**,打到 `PATCH /api/table/rows`。
+ *
+ * 这里曾经是 `PATCH /api/table` 打单行 —— 而服务端只有 `/api/table/rows`,于是
+ * 普通单元格编辑一直是 404:本地看着改了,实际一个字也没存进去(上游 2026-07
+ * 的 batch-PATCH 修复没进我们这条 fork)。
+ *
+ * `threadId` 决定服务端解析到哪个作用域;不带就是个人区,项目里的表会 404。
+ */
+/** 读成 base64(留档用;解析仍在前端做)。 */
+async function fileToBase64(file: File): Promise<string> {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let bin = '';
+  const CHUNK = 0x8000;               // 大文件别一次性 apply,会爆栈
+  for (let i = 0; i < buf.length; i += CHUNK) {
+    bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+async function patchRows(
+  sheetId: string,
+  rows: TableRow[],
+  threadId?: string,
+): Promise<boolean> {
+  if (rows.length === 0) return true;
   try {
-    const res = await fetch('/api/table', {
+    const res = await fetch('/api/table/rows', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: sheetId, row_key: rowKey(row), ...row }),
+      body: JSON.stringify({
+        sheet: sheetId,
+        threadId,
+        rows: rows.map((row) => ({ row_key: rowKey(row), ...row })),
+      }),
     });
     const data = (await res.json()) as { ok?: boolean };
     return res.ok && data.ok === true;
@@ -336,6 +360,7 @@ async function patchRow(sheetId: string, row: TableRow): Promise<boolean> {
     return false;
   }
 }
+
 
 function applyHistoryBatch(
   allRows: TableRow[],
@@ -395,6 +420,9 @@ function TableGridFooter({ totals }: { totals: TableGridTotals }) {
       <span className="text-foreground font-medium">
         {t('table.footerTotal', { count: totals.rowCount })}
       </span>
+      {totals.selectedCount > 0 ? (
+        <span>{t('table.footerSelected', { count: totals.selectedCount })}</span>
+      ) : null}
     </div>
   );
 }
@@ -411,7 +439,7 @@ function StatusBadge({
   return (
     <span
       className={cn(
-        'inline-flex max-w-full items-center truncate rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 ring-1 ring-inset ring-black/5 dark:ring-white/10',
+        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
         statusClass(status, semantics),
       )}
     >
@@ -448,55 +476,40 @@ function ScheduleDetailPanel(params: { data?: Record<string, unknown> }) {
   }, [params.data, threadId]);
   const day = (v: unknown) => (typeof v === 'string' && v.length >= 10 ? v.slice(0, 10) : '');
 
-  // Empty / loading: one quiet line — never a big empty card.
-  if (rows === null) {
-    return (
-      <div className="text-muted-foreground py-1 pl-12 pr-3 text-[11px]">加载中…</div>
-    );
-  }
-  if (rows.length === 0) {
-    return (
-      <div className="text-muted-foreground py-1 pl-12 pr-3 text-[11px]">暂无三级工艺明细</div>
-    );
-  }
-
   return (
-    <div className="veylin-schedule-detail border-border/50 ml-10 mr-2 border-l-2 py-0.5 pl-3">
-      <div className="text-muted-foreground mb-0.5 flex items-center gap-3 px-1 text-[10px]">
-        <span className="w-7 shrink-0">#</span>
-        <span className="min-w-[7rem] shrink-0">工序</span>
-        <span className="min-w-[6rem] shrink-0">资源</span>
-        <span className="w-20 shrink-0">状态</span>
-        <span className="ml-auto shrink-0">计划</span>
-      </div>
-      {rows.map((op, i) => (
-        <div
-          key={i}
-          className="hover:bg-muted/50 flex items-center gap-3 rounded-sm px-1 py-0.5 text-xs"
-        >
-          <span className="text-muted-foreground w-7 shrink-0 tabular-nums">
-            {String(op['op_seq'] ?? '')}
-          </span>
-          <span className="min-w-[7rem] shrink-0 font-medium">{String(op['op_name'] ?? '-')}</span>
-          <span className="text-muted-foreground min-w-[6rem] shrink-0">
-            {String(op['resource_id'] ?? '')}
-          </span>
-          <span className="w-20 shrink-0">
-            <StatusBadge status={String(op['status'] ?? '')} semantics={semantics} />
-          </span>
-          <span className="text-muted-foreground ml-auto shrink-0 tabular-nums">
-            {day(op['planned_start'])}
-            {day(op['planned_end']) ? ` → ${day(op['planned_end'])}` : ''}
-          </span>
+    <div className="border-l-2 border-primary/25 bg-muted/25 py-1.5 pl-9 pr-3">
+      {rows === null ? (
+        <div className="py-1.5 text-xs text-muted-foreground">加载三级工艺路线…</div>
+      ) : rows.length === 0 ? (
+        <div className="py-1.5 text-xs text-muted-foreground">该订单暂无三级工艺明细</div>
+      ) : (
+        <div className="flex flex-col">
+          {rows.map((op, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3 rounded px-2 py-1 text-xs hover:bg-muted/60"
+            >
+              <span className="w-8 shrink-0 tabular-nums text-muted-foreground">
+                {String(op['op_seq'] ?? '')}
+              </span>
+              <span className="min-w-[7rem] shrink-0 font-medium">{String(op['op_name'] ?? '-')}</span>
+              <span className="min-w-[6rem] shrink-0 text-muted-foreground">
+                {String(op['resource_id'] ?? '')}
+              </span>
+              <StatusBadge status={String(op['status'] ?? '')} semantics={semantics} />
+              <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
+                {day(op['planned_start'])}
+                {day(op['planned_end']) ? ` → ${day(op['planned_end'])}` : ''}
+              </span>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }
 
-// AG-Grid v36 custom header: name click → column selection.
-// Sort chevrons are omitted — browsing / filtering is the primary job here;
-// column filters stay on the native header menu button.
+// AG-Grid v36 custom header: name click → column selection, chevron → native sort
 interface AgColumnHeaderParams extends IHeaderParams<TableRow> {
   columnKey: string;
   onSelect: (key: string | null) => void;
@@ -504,6 +517,17 @@ interface AgColumnHeaderParams extends IHeaderParams<TableRow> {
 }
 
 function AgColumnHeader(params: AgColumnHeaderParams) {
+  const { t } = useTranslation();
+  const [sort, setSort] = useState<string | null | undefined>(
+    () => params.column.getSort(),
+  );
+
+  useEffect(() => {
+    const handler = () => setSort(params.column.getSort());
+    params.column.addEventListener('sortChanged', handler);
+    return () => params.column.removeEventListener('sortChanged', handler);
+  }, [params.column]);
+
   const isSelected = params.selectedKeyRef.current === params.columnKey;
 
   return (
@@ -522,6 +546,25 @@ function AgColumnHeader(params: AgColumnHeaderParams) {
       >
         {params.displayName}
       </button>
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label={t('table.sortBy', { name: params.displayName })}
+        className="text-muted-foreground hover:text-foreground shrink-0 rounded p-0.5"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          params.progressSort(e.shiftKey);
+        }}
+      >
+        {sort === 'asc' ? (
+          <ChevronUp className="size-3.5" />
+        ) : sort === 'desc' ? (
+          <ChevronDown className="size-3.5" />
+        ) : (
+          <ChevronUp className="size-3.5 opacity-25" />
+        )}
+      </button>
     </div>
   );
 }
@@ -538,6 +581,10 @@ export function TableGrid() {
   const localThreadId = useAuiState((s) => s.threadListItem.id);
   const remoteThreadId = useAuiState((s) => s.threadListItem.remoteId ?? s.threadListItem.externalId);
   const threadId = remoteThreadId ?? localThreadId ?? undefined;
+  const aui = useAui();
+  // 排产即导航: a cockpit drill (focusScheduleFilter) stashes an OpenGridFilter
+  // here; we position the already-loaded grid via an AG-Grid external filter.
+  const { scheduleFilter, clearScheduleFilter } = usePanelTabs();
   const [sheets, setSheets] = useState<TableSheet[]>([]);
   const [activeSheetId, setActiveSheetId] = useState('main');
   const [columnDefs, setColumnDefs] = useState<TableColumnDef[]>([]);
@@ -551,6 +598,7 @@ export function TableGrid() {
   // rowData; column filters narrow further inside the grid). null until first render.
   const [displayedCount, setDisplayedCount] = useState<number | null>(null);
   const [columnFilterActive, setColumnFilterActive] = useState(false);
+  const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
   const [undoStack, setUndoStack] = useState<HistoryBatch[]>([]);
   const [redoStack, setRedoStack] = useState<HistoryBatch[]>([]);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
@@ -561,12 +609,13 @@ export function TableGrid() {
   const importInputRef = useRef<HTMLInputElement>(null);
   // AG-Grid API ref — populated in onGridReady
   const gridApiRef = useRef<GridApi<TableRow> | null>(null);
-  // Per-sheet column widths after first autosize — revisit applies immediately (no jump).
-  const columnWidthCacheRef = useRef<Map<string, Record<string, number>>>(new Map());
   // Ref mirror of selectedColumnKey — read by AgColumnHeader on refreshHeader()
   const selectedColumnKeyRef = useRef<string | null>(null);
   // Ref mirror of rows — used in async paste handler to avoid stale closure
   const rowsRef = useRef<TableRow[]>(rows);
+  // load() 是 useCallback 且不该因为换会话就重建(SSE 订阅挂在它上面),
+  // 所以当前 threadId 走 ref 读。
+  const threadIdRef = useRef<string | undefined>(threadId);
   const sseErrorNotified = useRef(false);
   // Agent-requested chart waiting for the target sheet's rows to be on screen
   const pendingChartRef = useRef<{
@@ -575,6 +624,20 @@ export function TableGrid() {
     chartType: string;
     aggFunc?: string;
   } | null>(null);
+  // A drill filter waiting for the grid to be live with rows (same apply-when-
+  // ready idiom as pendingChartRef). activeGridFilterRef holds the filter AG-Grid
+  // is currently positioned to — read by isExternalFilterPresent/doesExternalFilterPass
+  // (props, so they must read a ref, not state — cf. selectedColumnKeyRef).
+  const pendingScheduleFilterRef = useRef<OpenGridFilter | null>(null);
+  const activeGridFilterRef = useRef<OpenGridFilter | null>(null);
+  // 切焦段时带过去的锚点(见 switchSheet)。新焦段的行到齐后定位过去。
+  const pendingAnchorRef = useRef<string | null>(null);
+  // 「怎么看的」也跟着走:分组 + 列筛选。新焦段没有那列就带不过去 —— 而带不过去
+  // 要说出来(见 lib/grain-view-carry.ts)。
+  const pendingViewRef = useRef<{ filterModel: Record<string, unknown>; groupBy: string[] } | null>(null);
+  // 判断一次点击落在网格里还是网格外(见 askBubbleAction)
+  const gridWrapRef = useRef<HTMLDivElement | null>(null);
+  const askBubbleRef = useRef<HTMLDivElement | null>(null);
 
   const drawPendingChart = useCallback((attempt = 0) => {
     const pending = pendingChartRef.current;
@@ -605,11 +668,106 @@ export function TableGrid() {
     }
   }, []);
 
+  // Position the grid to a pending drill filter once it's live with rows. Same
+  // remount-safe retry as drawPendingChart: re-read gridApiRef each attempt.
+  // "late" is a computed predicate (scheduleLateness), not a column value, so we
+  // drive an AG-Grid EXTERNAL filter — set activeGridFilterRef, then onFilterChanged().
+  const applyPendingScheduleFilter = useCallback((attempt = 0) => {
+    const pending = pendingScheduleFilterRef.current;
+    if (!pending) return;
+    const api = gridApiRef.current;
+    const ready =
+      api && !api.isDestroyed?.() && (api.getDisplayedRowCount?.() ?? 0) > 0;
+    if (!ready) {
+      if (attempt < 20) setTimeout(() => applyPendingScheduleFilter(attempt + 1), 150);
+      return;
+    }
+    pendingScheduleFilterRef.current = null;
+    activeGridFilterRef.current = pending;
+    api.onFilterChanged();
+  }, []);
+
+  const showToast = useCallback((message: string, variant: 'success' | 'error') => {
+    setToast({ message, variant });
+  }, []);
+
+  // 到达新焦段后,把分组与筛选按新焦段有的列重新装上;装不上的报出来。
+  const applyPendingView = useCallback((attempt = 0) => {
+    const pending = pendingViewRef.current;
+    if (!pending) return;
+    const api = gridApiRef.current;
+    const ready = api && !api.isDestroyed?.() && (api.getDisplayedRowCount?.() ?? 0) > 0;
+    if (!ready) {
+      if (attempt < 20) setTimeout(() => applyPendingView(attempt + 1), 150);
+      return;
+    }
+    pendingViewRef.current = null;
+    const available = new Set(
+      (api.getColumns?.() ?? []).map((c) => c.getColId?.()).filter(Boolean) as string[],
+    );
+    const carried = carryViewAcrossGrain(
+      {
+        groupBy: pending.groupBy,
+        filters: Object.fromEntries(Object.keys(pending.filterModel).map((k) => [k, '1'])),
+      },
+      available,
+    );
+    try {
+      api.setRowGroupColumns?.(carried.groupBy);
+      const keep = Object.fromEntries(
+        Object.entries(pending.filterModel).filter(([k]) => k in carried.filters),
+      );
+      api.setFilterModel?.(Object.keys(keep).length ? keep : null);
+    } catch {
+      /* Enterprise 分组不可用时忽略 —— 筛选照常 */
+    }
+    if (carried.dropped.length) {
+      showToast(
+        t('table.viewCarryDropped', { cols: carried.dropped.map((d) => d.key).join('、') }),
+        'error',
+      );
+    }
+  }, [showToast, t]);
+
+  // 到达新焦段后定位到锚点那一单。同样的 remount-safe 重试(切 sheet 会重建网格)。
+  const locatePendingAnchor = useCallback((attempt = 0) => {
+    const anchor = pendingAnchorRef.current;
+    if (!anchor) return;
+    const api = gridApiRef.current;
+    const ready = api && !api.isDestroyed?.() && (api.getDisplayedRowCount?.() ?? 0) > 0;
+    if (!ready) {
+      if (attempt < 20) setTimeout(() => locatePendingAnchor(attempt + 1), 150);
+      return;
+    }
+    pendingAnchorRef.current = null;
+    const hits: IRowNode<TableRow>[] = [];
+    api.forEachNodeAfterFilterAndSort((node) => {
+      if (rowMatchesAnchor(node.data as Record<string, unknown> | undefined, anchor)) {
+        hits.push(node);
+      }
+    });
+    if (hits.length === 0) {
+      // 这一单在这个焦段没有行 —— 说出来。三级只覆盖二级的一部分,静悄悄地
+      // 停在别处等于让人以为自己找错了。
+      showToast(t('table.anchorNotHere', { anchor }), 'error');
+      return;
+    }
+    api.ensureNodeVisible(hits[0]!, 'middle');
+    api.flashCells({ rowNodes: hits });
+  }, [t]);
+
   useEffect(() => {
     rowsRef.current = rows;
   }, [rows]);
 
+  useEffect(() => {
+    threadIdRef.current = threadId;
+  }, [threadId]);
+
   const [importing, setImporting] = useState(false);
+  const [snapshotting, setSnapshotting] = useState(false);
+  // 项目文件夹里冒出来的新文件(spec §6:只提示,不自动吸收)
+  const [inboxPending, setInboxPending] = useState<Array<{ name: string }>>([]);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [importConfirmOpen, setImportConfirmOpen] = useState(false);
   const [addColumnOpen, setAddColumnOpen] = useState(false);
@@ -640,10 +798,6 @@ export function TableGrid() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const showToast = useCallback((message: string, variant: 'success' | 'error') => {
-    setToast({ message, variant });
-  }, []);
-
   const resetImportInput = useCallback(() => {
     if (importInputRef.current) importInputRef.current.value = '';
   }, []);
@@ -654,6 +808,10 @@ export function TableGrid() {
   const selectColumn = useCallback((key: string | null) => {
     setSelectedColumnKey(key);
     selectedColumnKeyRef.current = key;
+    if (key) {
+      setSelectedRows(new Set());
+      gridApiRef.current?.deselectAll();
+    }
     gridApiRef.current?.refreshHeader();
   }, []);
 
@@ -666,6 +824,11 @@ export function TableGrid() {
   const resetSheetUiState = useCallback(() => {
     setFilters(EMPTY_FILTERS);
     gridApiRef.current?.setFilterModel(null);   // drop the previous sheet's column filters
+    // Drop any positioned drill filter too, so it never leaks across sheets.
+    pendingScheduleFilterRef.current = null;
+    activeGridFilterRef.current = null;
+    gridApiRef.current?.onFilterChanged();
+    setSelectedRows(new Set());
     setUndoStack([]);
     setRedoStack([]);
     setSelectedColumnKey(null);
@@ -677,16 +840,9 @@ export function TableGrid() {
   }, []);
 
   const applyPayload = useCallback((data: SchedulePayload, initial: boolean) => {
-    if (data.sheets?.length) {
-      setSheets(data.sheets);
-      // Empty default Sheet 1 may be pruned after Compass import — follow the
-      // sheet the server actually returned / the first remaining tab.
-      setActiveSheetId((current) => {
-        if (data.sheets!.some((s) => s.id === current)) return current;
-        if (data.sheet && data.sheets!.some((s) => s.id === data.sheet)) return data.sheet;
-        return data.sheets![0]!.id;
-      });
-    }
+    // 空数组也要照收:换到一个还没装过表的项目时,页签就该空掉,而不是留着
+    // 上一个作用域的页签(那正是"个人区看得见项目的表"那个病的另一半)。
+    if (data.sheets) setSheets(data.sheets);
     if (data.columns) setColumnDefs(data.columns);
     const next = data.rows ?? [];
     if (initial) setLoading(false);
@@ -702,7 +858,7 @@ export function TableGrid() {
       const attempts = initial ? 6 : 1;
       for (let i = 0; i < attempts; i++) {
         try {
-          const data = await fetchSchedule(sheetId);
+          const data = await fetchSchedule(sheetId, threadIdRef.current);
           applyPayload(data, initial);
           if (initial) setLoadError(null);
           return;
@@ -713,8 +869,8 @@ export function TableGrid() {
           }
           if (initial) {
             const message = err instanceof Error ? err.message : t('table.loadFailedGeneric');
-            // Inline banner only — avoid a second solid-red toast for the same failure.
             setLoadError(message);
+            showToast(t('table.loadError', { error: message }), 'error');
             applyPayload(emptySchedulePayload(sheetId), true);
           }
         }
@@ -726,13 +882,27 @@ export function TableGrid() {
   const switchSheet = useCallback(
     (sheetId: string) => {
       if (sheetId === activeSheetId) return;
+      // 焦段之间带上锚点:切表前记下"我在看哪一单",到了新焦段再定位过去。
+      // 用户对多表切换的担心就是这个 —— 每切一次都得重新找位置。
+      const api = gridApiRef.current;
+      const focused = api?.getFocusedCell?.();
+      const focusedRow =
+        focused != null ? api?.getDisplayedRowAtIndex?.(focused.rowIndex)?.data : undefined;
+      let anchor = anchorOfRow(focusedRow as Record<string, unknown> | undefined);
+      if (!anchor) {
+        const selected = api?.getSelectedRows?.()?.[0];
+        anchor = anchorOfRow(selected as Record<string, unknown> | undefined);
+      }
+      const groupBy: string[] = [];
+      api?.getRowGroupColumns?.().forEach((c) => {
+        const id = c.getColId?.();
+        if (id) groupBy.push(id);
+      });
+      const filterModel = (api?.getFilterModel?.() ?? {}) as Record<string, unknown>;
       resetSheetUiState();
-      // Drop previous sheet immediately — same AgGrid instance would otherwise
-      // keep painting old rows until fetch returns, then autosize jumps again.
-      lastSerialized.current = '';
-      setRows([]);
-      setColumnDefs([]);
-      setDisplayedCount(null);
+      pendingViewRef.current =
+        groupBy.length || Object.keys(filterModel).length ? { filterModel, groupBy } : null;
+      pendingAnchorRef.current = anchor;
       setActiveSheetId(sheetId);
       setLoading(true);
     },
@@ -864,7 +1034,10 @@ export function TableGrid() {
   useEffect(() => {
     if (!bootstrapped) return;
     void load(activeSheetId, true);
-    const es = new EventSource('/api/table/stream');
+    // 带上 threadId:服务端据此推出作用域,只推这个作用域里的表的变更(spec §7)。
+    // 换会话可能换作用域,所以 threadId 进依赖 —— 连接跟着重建。
+    const es = new EventSource(
+      `/api/table/stream${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ''}`);
     es.onopen = () => {
       sseErrorNotified.current = false;
       // (re)connected — one full resync catches anything missed while disconnected.
@@ -915,7 +1088,52 @@ export function TableGrid() {
       showToast(t('table.sseDisconnected'), 'error');
     };
     return () => es.close();
-  }, [activeSheetId, load, bootstrapped, showToast, t]);
+  }, [activeSheetId, load, bootstrapped, showToast, t, threadId]);
+
+  // 换会话 = 可能换了作用域(项目 ⇄ 个人区)。表是**那个作用域的 context**,
+  // 所以整屏跟着走:重取该作用域的页签,并落到它的默认表。不这么做的话,个人区
+  // 里会继续摆着上一个项目的三万行 —— 而 agent 那侧早就读不到了,两边说法打架。
+  const lastScopeThread = useRef<string | undefined>(threadId);
+  useEffect(() => {
+    if (!bootstrapped) return;
+    if (lastScopeThread.current === threadId) return;
+    lastScopeThread.current = threadId;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await fetchSchedule(undefined, threadId);
+        if (cancelled) return;
+        resetSheetUiState();
+        setSheets(data.sheets ?? []);
+        if (data.sheet) setActiveSheetId(data.sheet);
+        lastSerialized.current = '';
+        applyPayload(data, true);
+      } catch {
+        /* 取不到就维持现状:下一次 SSE 或手动切换会再试 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, bootstrapped, applyPayload, resetSheetUiState]);
+
+  // 进到一个项目(或换了会话)时看一眼文件夹里有没有没见过的文件。**只看不吸收**:
+  // 顺手放一份 ≠ 它就是项目数据(spec §6)。
+  useEffect(() => {
+    if (!bootstrapped) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const qs = threadId ? `?threadId=${encodeURIComponent(threadId)}` : '';
+        const res = await fetch(`/api/table/inbox${qs}`);
+        const data = (await res.json()) as { ok?: boolean; pending?: Array<{ name: string }> };
+        if (!cancelled && data.ok) setInboxPending(data.pending ?? []);
+      } catch {
+        /* 扫不到就算了 —— 这只是个提示,不该打断任何事 */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [threadId, bootstrapped]);
 
   // A pending agent chart draws once its target sheet's rows have loaded.
   useEffect(() => {
@@ -924,14 +1142,54 @@ export function TableGrid() {
     }
   }, [rows, activeSheetId, drawPendingChart]);
 
-  // Pre-filter rows in React (search box); column filters stay inside AG-Grid.
+  // A cockpit drill arrives via the panel store → position the grid. Only "late"
+  // activates the external filter (the sole field compass emits); anything else
+  // just leaves the grid open, unpositioned. Never throws. `scheduleFilter.at`
+  // makes repeat drills of the same filter re-fire.
+  useEffect(() => {
+    if (!scheduleFilter) return;
+    if (isLateOnlyGridFilter(scheduleFilter.filter)) {
+      pendingScheduleFilterRef.current = scheduleFilter.filter;
+      // Position on the schedule sheet: other sheets (e.g. orders) lack the
+      // end/due_at fields scheduleLateness reads, so a late filter there would
+      // blank the grid. Mirror the pending-chart path's raw setActiveSheetId —
+      // switching remounts + reloads, and the apply-when-ready retry / rows
+      // fallback then applies the filter. If the schedule sheet isn't
+      // bootstrapped yet, the bootstrap load makes it active and the same
+      // fallback fires (no throw when the id isn't present yet).
+      if (activeSheetId === SCHEDULE_SHEET_ID) {
+        applyPendingScheduleFilter();
+      } else {
+        setActiveSheetId(SCHEDULE_SHEET_ID);
+      }
+    }
+    clearScheduleFilter();
+  }, [scheduleFilter, activeSheetId, applyPendingScheduleFilter, clearScheduleFilter]);
+
+  // Fallback for a drill that landed before rows finished loading (mirrors the
+  // pending-chart rows effect): apply once rows are on screen.
+  useEffect(() => {
+    if (pendingScheduleFilterRef.current && rows.length > 0) {
+      applyPendingScheduleFilter();
+    }
+  }, [rows, applyPendingScheduleFilter]);
+
+  // 换了焦段、新一批行到齐 → 先恢复视图(分组/筛选),再定位到切换前那一单。
+  useEffect(() => {
+    if (rows.length === 0) return;
+    if (pendingViewRef.current) applyPendingView();
+    if (pendingAnchorRef.current) locatePendingAnchor();
+  }, [rows, locatePendingAnchor, applyPendingView]);
+
+  // Pre-filter rows in React; AG-Grid handles sort natively via comparator
   const filteredRows = useMemo(() => applyFilters(rows, filters), [rows, filters]);
 
   const totals = useMemo<TableGridTotals>(
     () => ({
       rowCount: displayedCount ?? filteredRows.length,
+      selectedCount: selectedRows.size,
     }),
-    [displayedCount, filteredRows.length],
+    [displayedCount, filteredRows.length, selectedRows.size],
   );
 
   const commitRows = useCallback(
@@ -939,11 +1197,9 @@ export function TableGrid() {
       lastSerialized.current = JSON.stringify(merged);
       editingUntil.current = Date.now() + 3000;
       setRows(merged);
-      for (const row of merged) {
-        if (touchedKeys.has(rowKey(row))) void patchRow(activeSheetId, row);
-      }
+      void patchRows(activeSheetId, merged.filter((r) => touchedKeys.has(rowKey(r))), threadId);
     },
-    [activeSheetId],
+    [activeSheetId, threadId],
   );
 
   // B2: send one governed cell edit into the Compass draft
@@ -1023,6 +1279,9 @@ export function TableGrid() {
         conflict?: boolean;
         message?: string;
         error?: string;
+        recorded?: boolean;
+        recordPath?: string;
+        recordNote?: string;
       }>(res);
       if (!res.ok || !data.ok) {
         showToast(
@@ -1035,6 +1294,13 @@ export function TableGrid() {
         t('table.commitDone', { committed: data.committed ?? 0, deferred: data.deferred ?? 0 }),
         'success',
       );
+      // 这次提交的依据自动留档了(spec §5.1 第三档)。留成了说落在哪儿,没留成说
+      // 为什么 —— 两种都得说,不能让人以为翻得了账而其实翻不了。
+      if (data.recorded && data.recordPath) {
+        setTimeout(() => showToast(t('table.decisionRecorded'), 'success'), 1200);
+      } else if (data.recordNote) {
+        setTimeout(() => showToast(data.recordNote!, 'error'), 1200);
+      }
       setDraftOps(0);
       setPreviewOpen(false);
       editingUntil.current = 0;
@@ -1086,9 +1352,7 @@ export function TableGrid() {
         lastSerialized.current = JSON.stringify(merged);
         editingUntil.current = Date.now() + 3000;
         const touched = new Set(batch.map((e) => e.rowKey));
-        for (const row of merged) {
-          if (touched.has(rowKey(row))) void patchRow(activeSheetId, row);
-        }
+        void patchRows(activeSheetId, merged.filter((r) => touched.has(rowKey(r))), threadId);
         return merged;
       });
       queueMicrotask(() => {
@@ -1188,7 +1452,7 @@ export function TableGrid() {
         }
         return;
       }
-      // Paste: read clipboard, coerce to column type, commit via patchRow
+      // Paste: read clipboard, coerce to column type, commit via patchRows
       if (key === 'v') {
         const colId = event.column.getColId();
         if (colId && editableKeys.has(colId) && event.data) {
@@ -1227,38 +1491,22 @@ export function TableGrid() {
     [columnDefs, commitRows, editableKeys, handleRedo, handleUndo, pushHistory],
   );
 
+  // AG-Grid selection changed → sync React selectedRows (used by toolbar + totals)
+  const onSelectionChanged = useCallback(
+    (event: SelectionChangedEvent<TableRow>) => {
+      const selected = event.api
+        .getSelectedNodes()
+        .filter((n) => n.data != null)
+        .map((n) => rowKey(n.data!));
+      setSelectedRows(new Set(selected));
+      if (selected.length > 0) clearColumnSelection();
+    },
+    [clearColumnSelection],
+  );
+
   const onGridReady = useCallback((event: GridReadyEvent<TableRow>) => {
     gridApiRef.current = event.api;
   }, []);
-
-  const persistColumnWidths = useCallback((sheetId: string) => {
-    const api = gridApiRef.current;
-    if (!api) return;
-    const widths: Record<string, number> = {};
-    for (const s of api.getColumnState()) {
-      if (!s.colId || s.colId.startsWith('__') || s.width == null) continue;
-      widths[s.colId] = s.width;
-    }
-    if (Object.keys(widths).length > 0) {
-      columnWidthCacheRef.current.set(sheetId, widths);
-    }
-  }, []);
-
-  // After first paint / autosize strategy: remember widths so the next visit
-  // to this sheet applies them on ColDef (no second layout pass).
-  const onFirstDataRendered = useCallback(
-    (_event: FirstDataRenderedEvent<TableRow>) => {
-      persistColumnWidths(activeSheetId);
-    },
-    [activeSheetId, persistColumnWidths],
-  );
-
-  const onColumnResized = useCallback(
-    (event: { finished?: boolean }) => {
-      if (event.finished) persistColumnWidths(activeSheetId);
-    },
-    [activeSheetId, persistColumnWidths],
-  );
 
   // Keep the footer count honest under column filters. onModelUpdated fires on
   // rowData (search) AND column-filter/sort/group changes → single source of truth.
@@ -1277,10 +1525,14 @@ export function TableGrid() {
     setColumnFilterActive((prev) => (prev === active ? prev : active));
   }, []);
 
-  // Clear BOTH the global search and every AG-Grid column filter.
+  // Clear BOTH the global search and every AG-Grid column filter (incl. the
+  // positioned drill's external filter, which isAnyFilterPresent() counts).
   const clearAllFilters = useCallback(() => {
     setFilters(EMPTY_FILTERS);
+    pendingScheduleFilterRef.current = null;
+    activeGridFilterRef.current = null;
     gridApiRef.current?.setFilterModel(null);
+    gridApiRef.current?.onFilterChanged();
   }, []);
 
   // Status options per column — includes values already present in rows
@@ -1328,16 +1580,14 @@ export function TableGrid() {
   const proGridProps = useMemo(() => {
     if (!proEnterprise) return {};
     return {
-      // Only show the drop zone once the user is actually grouping — permanent
-      // empty strip made the toolbar feel like three stacked chrome bands.
-      rowGroupPanelShow: 'onlyWhenGrouping' as const,
+      rowGroupPanelShow: 'always' as const,
       cellSelection: true,
       enableCharts: true,
+      // allow any data column to be dragged into the group panel / aggregated
       defaultColDef: { enableRowGroup: true, enableValue: true, enablePivot: true },
       sideBar: {
         toolPanels: ['columns', 'filters'],
-        // Collapsed by default; open via the edge tabs when needed.
-        hiddenByDefault: true,
+        hiddenByDefault: false,
         defaultToolPanel: '',
       },
       statusBar: {
@@ -1352,9 +1602,7 @@ export function TableGrid() {
   const agColDefs = useMemo<ColDef<TableRow>[]>(() => {
     const defs: ColDef<TableRow>[] = [];
 
-    // Pinned row-number column (read-only, no sort). Number leaf/master rows in
-    // full filtered+sorted order (skip detail panels). Must NOT use the visible
-    // viewport window — that renumbers as 1..N on every scroll.
+    // Pinned row-number column (read-only, no sort)
     defs.push({
       colId: '__rowNum__',
       headerName: '',
@@ -1372,22 +1620,7 @@ export function TableGrid() {
       enableValue: false,
       enablePivot: false,
       suppressHeaderFilterButton: true,
-      suppressAutoSize: true,
-      valueGetter: (p) => {
-        const target = p.node;
-        if (!target || target.detail) return '';
-        const rowIndex = target.rowIndex;
-        if (rowIndex == null || rowIndex < 0) return '';
-        const api = p.api;
-        if (!api) return rowIndex + 1;
-        let n = 0;
-        for (let i = 0; i <= rowIndex; i++) {
-          const node = api.getDisplayedRowAtIndex(i);
-          if (!node || node.detail) continue;
-          n += 1;
-        }
-        return n > 0 ? n : '';
-      },
+      valueGetter: (p) => (p.node?.rowIndex ?? 0) + 1,
       cellStyle: {
         textAlign: 'center',
         color: 'var(--muted-foreground)',
@@ -1417,30 +1650,21 @@ export function TableGrid() {
         enablePivot: false,
         suppressHeaderFilterButton: true,
         suppressHeaderMenuButton: true,
-        suppressAutoSize: true,
         cellRenderer: 'agGroupCellRenderer',
       });
     }
-
-    // Cached widths (after first autosize) paint correctly on sheet revisit.
-    const widthCache = columnWidthCacheRef.current.get(activeSheetId);
 
     // Data columns
     for (const def of columnDefs) {
       const isEditable =
         activeSheetId === SCHEDULE_SHEET_ID ? GOVERNED_EDIT_FIELDS.has(def.key) : true;
-      const cachedWidth = widthCache?.[def.key];
       const baseColDef: ColDef<TableRow> = {
         field: def.key,
         colId: def.key,
         headerName: def.name,
-        // Cache hit → fixed width on first paint (no autosize jump). Miss → hint only.
-        ...(cachedWidth != null
-          ? { width: cachedWidth, suppressAutoSize: true }
-          : { initialWidth: def.width }),
+        width: def.width,
         resizable: true,
-        // Browse + filter first; no per-column sort chevrons in this UI.
-        sortable: false,
+        sortable: true,
         pinned: def.frozen ? ('left' as const) : undefined,
         editable: isEditable,
         // Hover cue on the schedule sheet's governed-edit cells (改资源/日期→propose).
@@ -1449,15 +1673,24 @@ export function TableGrid() {
         tooltipValueGetter: (p) => (p.value == null || p.value === '' ? null : String(p.value)),
         cellDataType: false,
         suppressHeaderFilterButton: true,
-        // Column filters stay available via the Filters tool panel / header menu.
-        // Floating filter row under every header made the grid look like three
-        // chrome bands stacked on the data — opt out for a calmer default.
+        // Per-column filtering. Text filter by default; number/status branches
+        // override with the right filter type. A floating filter row under the
+        // header makes it usable without depending on the custom header component,
+        // and the Filters side panel auto-populates from these.
         filter: 'agTextColumnFilter',
-        floatingFilter: false,
-        minWidth: isDateishColumn(def.key) ? 112 : 72,
-        valueFormatter: (params: ValueFormatterParams<TableRow>) =>
-          formatTableCellValue(def.key, params.value),
-        // Custom header: name click selects column (filter via menu button)
+        floatingFilter: true,
+        valueFormatter: (params: ValueFormatterParams<TableRow>) => {
+          const v = params.value;
+          return v === undefined || v === null ? '' : String(v);
+        },
+        // zh-CN numeric comparator — reuses compareScheduleValues
+        comparator: (valueA, valueB) =>
+          compareScheduleValues(
+            valueA as string | number | undefined,
+            valueB as string | number | undefined,
+            def.type,
+          ),
+        // Custom header: name click selects column, chevron cycles sort
         headerComponent: AgColumnHeader,
         headerComponentParams: {
           columnKey: def.key,
@@ -1481,8 +1714,7 @@ export function TableGrid() {
             const v = Number(params.value);
             if (!Number.isFinite(v) || v <= 0) return base;
             const t = Math.min(1, v / heatMax);   // 0..1
-            // Whisper tint — readable without washing out zebra / selection.
-            return { ...base, backgroundColor: `rgba(37, 99, 235, ${(0.035 + t * 0.14).toFixed(3)})` };
+            return { ...base, backgroundColor: `rgba(37, 99, 235, ${(0.05 + t * 0.22).toFixed(3)})` };
           },
         });
       } else if (def.type === 'sparkline' && proEnterprise) {
@@ -1550,20 +1782,18 @@ export function TableGrid() {
     return defs;
   }, [activeSheetId, columnDefs, statusOptionsByKey, numberColMax, selectColumn, proMasterDetail]);
 
-  // First visit (or schema changed) — cached complete sheets skip strategy.
-  const autoSizeStrategy = useMemo(() => {
-    const cached = columnWidthCacheRef.current.get(activeSheetId);
-    const cacheComplete =
-      !!cached &&
-      columnDefs.length > 0 &&
-      columnDefs.every((c) => cached[c.key] != null);
-    if (cacheComplete) return undefined;
-    if (cached && !cacheComplete) columnWidthCacheRef.current.delete(activeSheetId);
-    return {
-      type: 'fitCellContents' as const,
-      defaultMaxWidth: 360,
-    };
-  }, [activeSheetId, columnDefs]);
+  // AG-Grid v36 row selection config (object form)
+  const rowSelection = useMemo(
+    () => ({
+      mode: 'multiRow' as const,
+      checkboxes: true,
+      headerCheckbox: true,
+      // checkbox-only selection: clicking a cell (to edit) must NOT select the row.
+      // shift-range still works natively via the checkboxes.
+      enableClickSelection: false,
+    }),
+    [],
+  );
 
   // (三级 detail is now the ScheduleDetailPanel custom renderer, which fetches on
   // expand — no detailGridOptions/getDetailRowData needed.)
@@ -1572,7 +1802,7 @@ export function TableGrid() {
     const res = await fetch('/api/table/rows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: activeSheetId }),
+      body: JSON.stringify({ sheet: activeSheetId, threadId }),
     });
     const data = (await res.json()) as { ok?: boolean; rows?: TableRow[] };
     if (data.ok && data.rows) {
@@ -1580,6 +1810,21 @@ export function TableGrid() {
       lastSerialized.current = JSON.stringify(data.rows);
       setRows(data.rows);
     }
+  };
+
+  const handleDeleteRows = async () => {
+    if (selectedRows.size === 0) return;
+    const res = await fetch('/api/table/rows', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheet: activeSheetId, row_keys: [...selectedRows], threadId }),
+    });
+    const data = (await res.json()) as { ok?: boolean; rows?: TableRow[] };
+    if (!data.ok || !data.rows) return;
+    resetSheetUiState();
+    editingUntil.current = Date.now() + 3000;
+    lastSerialized.current = JSON.stringify(data.rows);
+    setRows(data.rows);
   };
 
   const openAddColumnDialog = useCallback(() => {
@@ -1595,7 +1840,7 @@ export function TableGrid() {
       const res = await fetch('/api/table/columns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheet: activeSheetId, name }),
+        body: JSON.stringify({ sheet: activeSheetId, name, threadId }),
       });
       const data = (await res.json()) as {
         ok?: boolean;
@@ -1626,7 +1871,7 @@ export function TableGrid() {
     const res = await fetch('/api/table/columns', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheet: activeSheetId, key: selectedColumnKey }),
+      body: JSON.stringify({ sheet: activeSheetId, key: selectedColumnKey, threadId }),
     });
     const data = (await res.json()) as {
       ok?: boolean;
@@ -1644,8 +1889,133 @@ export function TableGrid() {
     selectedColumnKeyRef.current = null;
   };
 
+  // 选区 → 对话引用。**登记引用,不塞数据**:agent 拿 id 去取当前值(见
+  // lib/table-selection-ref.ts)。分组/筛选状态一起带走 —— 它是"这里为什么堆这么多"
+  // 里的"这里"。
+  // 拖选的单元格区域**不在** React state 里(它活在 AG-Grid 里),所以不能只看勾选行和
+  // 选中列 —— 第一版就是这么错的:拖出一块区域时两个条件都不满足,按钮永远不冒。
+  // 第二版错在反方向:点一个格子也算"区域"(1×1),于是勾了 4 行再点一下格子,引用就
+  // 缩成了「1 行 · 列 order_id」。判定收进 resolveSelectionScope。
+  const [rangeShape, setRangeShape] = useState<SelectionScope>(EMPTY_RANGE);
+  const selectionScope = useMemo(
+    () => resolveSelectionScope({
+      range: rangeShape,
+      checkedRowKeys: [...selectedRows],
+      selectedColumnKey,
+    }),
+    [rangeShape, selectedRows, selectedColumnKey],
+  );
+  const canReference = selectionScope !== null;
+  const referenceSelection = useCallback(async () => {
+    if (!threadId || !activeSheetId || !selectionScope) return;
+    const grouped: string[] = [];
+    gridApiRef.current?.getRowGroupColumns?.().forEach((c) => {
+      const id = c.getColId?.();
+      if (id) grouped.push(id);
+    });
+    const res = await registerTableSelection({
+      sheet: activeSheetId,
+      threadId: String(threadId),
+      rowKeys: selectionScope.rowKeys,
+      columns: selectionScope.columns,
+      groupBy: grouped,
+      // 列筛选也是"这里"的一部分:同一批行,筛过和没筛过问的是两回事
+      filter: Object.entries(filters)
+        .filter(([, v]) => String(v ?? '').trim())
+        .map(([k, v]) => `${k}=${String(v).trim()}`)
+        .join(', '),
+    });
+    if (!res.ok) {
+      showToast(res.message, 'error');
+      return;
+    }
+    const composer = aui.composer();
+    const next = appendSelectionToken(composer.getState().text, res.token);
+    composer.setText(next);
+    placeComposerCaret(next.length);
+    setAskAnchor(null);
+  }, [activeSheetId, aui, filters, selectionScope, showToast, threadId]);
+
+  // 浮现式「问」:选完在手边冒出来,与已有的"选中文字→问"(thread-selection-ask)
+  // 同一个手势。不再放工具栏 —— 一个动作只留一处入口。
+  const [askAnchor, setAskAnchor] = useState<{ top: number; left: number } | null>(null);
+  useEffect(() => {
+    const onUp = (e: MouseEvent) => {
+      const api = gridApiRef.current;
+      if (!api) return;
+      const target = e.target as Node | null;
+      // 点在气泡自己身上:什么都别做(mouseup 早于 click,这时收掉就点不到了)
+      if (target && askBubbleRef.current?.contains(target)) return;
+      // 点在网格外:收起来。监听挂在 document 上是为了接住拖选时落在网格外的
+      // 抬手 —— 代价是应用里任何一次点击都会走到这儿。
+      if (!target || !gridWrapRef.current?.contains(target)) {
+        setAskAnchor(null);
+        return;
+      }
+      // 把 AG-Grid 的区域展开成"哪些行、哪些列"——判定交给 resolveSelectionScope,
+      // 这里只负责读形状。
+      const rowKeys = new Set<string>();
+      const columns = new Set<string>();
+      for (const r of api.getCellRanges?.() ?? []) {
+        r.columns.forEach((c) => { const id = c.getColId?.(); if (id) columns.add(id); });
+        const from = Math.min(r.startRow?.rowIndex ?? 0, r.endRow?.rowIndex ?? 0);
+        const to = Math.max(r.startRow?.rowIndex ?? 0, r.endRow?.rowIndex ?? 0);
+        for (let i = from; i <= to; i += 1) {
+          const key = (api.getDisplayedRowAtIndex?.(i)?.data as TableRow | undefined)?.row_id;
+          if (key) rowKeys.add(String(key));
+        }
+      }
+      const range: SelectionScope = { rowKeys: [...rowKeys], columns: [...columns] };
+      setRangeShape(range);
+      const scope = resolveSelectionScope({
+        range,
+        checkedRowKeys: (api.getSelectedNodes?.() ?? [])
+          .map((n) => String((n.data as TableRow | undefined)?.row_id ?? ''))
+          .filter(Boolean),
+        selectedColumnKey: selectedColumnKeyRef.current,
+      });
+      const action = askBubbleAction({ insideGrid: true, insideBubble: false, scope });
+      if (action !== 'show') {
+        setAskAnchor(null);
+        return;
+      }
+      setAskAnchor({ top: e.clientY, left: e.clientX });
+    };
+    document.addEventListener('mouseup', onUp);
+    return () => document.removeEventListener('mouseup', onUp);
+  }, []);
+
+
+  const askBubble =
+    askAnchor && canReference
+      ? createPortal(
+          <div
+            ref={askBubbleRef}
+            className="fixed z-[210]"
+            style={{ top: Math.max(8, askAnchor.top - 44), left: askAnchor.left }}
+          >
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1 shadow-md"
+              onClick={referenceSelection}
+            >
+              <AtSign className="size-3" />
+              {t('table.referenceSelection')}
+            </Button>
+          </div>,
+          document.body,
+        )
+      : null;
+
+  const rowActionDelete = selectedRows.size > 0;
   const selectedColumn = columnDefs.find((c) => c.key === selectedColumnKey);
   const columnSelected = Boolean(selectedColumnKey && selectedColumn);
+
+  const handleRowAction = () => {
+    if (rowActionDelete) void handleDeleteRows();
+    else void handleAddRow();
+  };
 
   const handleColumnAction = () => {
     if (columnSelected) void handleDeleteColumn();
@@ -1677,6 +2047,32 @@ export function TableGrid() {
     resetImportInput();
   }, [resetImportInput]);
 
+  /**
+   * 快照:把当前 sheet 写成一份不可变文件落进项目文件夹(spec §5)。
+   * 连接器视图是会腐烂的缓存 —— 这是"我要当时那一份"的唯一正解。
+   */
+  const handleSnapshot = async () => {
+    setSnapshotting(true);
+    try {
+      const res = await fetch('/api/table/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheet: activeSheetId, threadId }),
+      });
+      const data = (await res.json()) as { ok?: boolean; path?: string; rows?: number; message?: string };
+      if (!res.ok || !data.ok) {
+        showToast(data.message ?? t('table.snapshotFailed'), 'error');
+        return;
+      }
+      showToast(t('table.snapshotDone', { rows: data.rows ?? 0 }), 'success');
+      if (data.path) void revealPath(data.path, threadId);
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : t('table.snapshotFailed'), 'error');
+    } finally {
+      setSnapshotting(false);
+    }
+  };
+
   const handleImportFile = async (file: File) => {
     setImporting(true);
     try {
@@ -1685,6 +2081,9 @@ export function TableGrid() {
         showToast(t('table.importEmpty'), 'error');
         return;
       }
+      // 原件字节一起送上去:服务端按内容哈希留档进项目文件夹(spec §3「导入即留档」)。
+      // 解析仍在前端做 —— 服务端只需要字节来存档,不重复解析一遍。
+      const base64 = await fileToBase64(file);
       const res = await fetch('/api/table/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1692,6 +2091,8 @@ export function TableGrid() {
           sheet: activeSheetId,
           column_names: columnNames,
           rows: importedRows,
+          threadId,
+          file: { name: file.name, base64 },
         }),
       });
       const data = (await res.json()) as {
@@ -1699,6 +2100,8 @@ export function TableGrid() {
         message?: string;
         columns?: TableColumnDef[];
         rows?: TableRow[];
+        archived?: boolean;
+        archiveNote?: string;
       };
       if (!res.ok || !data.ok) {
         showToast(data.message ?? t('table.importFailed'), 'error');
@@ -1715,6 +2118,10 @@ export function TableGrid() {
         t('table.importSuccess', { count: data.rows?.length ?? importedRows.length }),
         'success',
       );
+      // 没留档要说出来 —— 用户以为"原件存好了"而其实没有,是最坏的一种沉默。
+      if (data.archived === false && data.archiveNote) {
+        setTimeout(() => showToast(data.archiveNote!, 'error'), 1200);
+      }
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : t('table.importFailed'), 'error');
     } finally {
@@ -1733,9 +2140,7 @@ export function TableGrid() {
 
   const hasActiveFilters = filters.query.trim() !== '' || columnFilterActive;
 
-  // Full-page spinner only before any sheet chrome exists. Sheet switches clear
-  // rows/cols but keep tabs visible and load inside the grid area.
-  if ((compassLoading || loading) && rows.length === 0 && columnDefs.length === 0 && sheets.length === 0) {
+  if ((compassLoading || loading) && rows.length === 0 && columnDefs.length === 0) {
     return (
       <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
         {compassLoading ? t('table.loadingCompass') : t('table.loading')}
@@ -1743,23 +2148,53 @@ export function TableGrid() {
     );
   }
 
+  // 这个作用域还没有表。说现状和下一步就够了 —— 不解释归属机制。
+  if (sheets.length === 0 && rows.length === 0 && columnDefs.length === 0) {
+    return (
+      <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-sm">
+        <span>{t('table.scopeEmpty')}</span>
+        <span className="text-xs opacity-70">{t('table.scopeEmptyHint')}</span>
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex h-full min-h-0 flex-col">
+      {askBubble}
       {loadError ? (
         <div
           role="alert"
-          className="border-border bg-muted/60 text-muted-foreground shrink-0 border-b px-3 py-1.5 text-xs"
+          className="border-destructive/30 bg-destructive/10 text-destructive shrink-0 border-b px-3 py-2 text-xs"
         >
           {t('table.loadError', { error: loadError })}
+        </div>
+      ) : null}
+      {inboxPending.length > 0 ? (
+        <div className="border-border bg-muted/40 text-muted-foreground flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
+          <FolderPlus className="size-3 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">
+            {t('table.inboxPending', {
+              count: inboxPending.length,
+              names: inboxPending.slice(0, 3).map((f) => f.name).join('、'),
+            })}
+          </span>
+          <button
+            type="button"
+            className="hover:text-foreground shrink-0 underline underline-offset-2"
+            onClick={() => setInboxPending([])}
+          >
+            {t('table.inboxDismiss')}
+          </button>
         </div>
       ) : null}
       {toast ? (
         <div
           role="status"
           className={cn(
-            'absolute bottom-3 left-1/2 z-50 max-w-[min(90vw,24rem)] -translate-x-1/2 rounded-lg border px-3 py-2 text-center text-xs shadow-sm backdrop-blur-sm',
-            'border-border bg-background/95 text-foreground',
-            toast.variant === 'error' && 'text-muted-foreground',
+            'absolute bottom-3 left-1/2 z-50 max-w-[min(90vw,28rem)] -translate-x-1/2 rounded-md px-3 py-2 text-center text-xs shadow-md',
+            toast.variant === 'success'
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-destructive text-white',
           )}
         >
           {toast.message}
@@ -1826,11 +2261,16 @@ export function TableGrid() {
             type="button"
             variant="outline"
             size="sm"
-            className="h-7 gap-1 px-2 text-xs"
-            onClick={() => void handleAddRow()}
+            className={cn(
+              'h-7 gap-1 px-2 text-xs',
+              rowActionDelete && 'text-destructive hover:text-destructive',
+            )}
+            onClick={handleRowAction}
           >
-            <Plus className="size-3" />
-            {t('table.rows')}
+            {rowActionDelete ? <Minus className="size-3" /> : <Plus className="size-3" />}
+            {rowActionDelete && selectedRows.size > 1
+              ? t('table.rowsN', { count: selectedRows.size })
+              : t('table.rows')}
           </Button>
           <Button
             type="button"
@@ -1838,7 +2278,7 @@ export function TableGrid() {
             size="sm"
             className={cn(
               'h-7 gap-1 px-2 text-xs',
-              columnSelected && 'text-muted-foreground hover:text-foreground',
+              columnSelected && 'text-destructive hover:text-destructive',
             )}
             onClick={handleColumnAction}
           >
@@ -1879,31 +2319,37 @@ export function TableGrid() {
             <Download className="size-3" />
             {t('table.export')}
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 px-2 text-xs"
+            onClick={handleSnapshot}
+            disabled={snapshotting}
+          >
+            <Camera className="size-3" />
+            {t('table.snapshot')}
+          </Button>
           <span className="text-muted-foreground mx-1 hidden h-4 w-px bg-border sm:inline-block" />
           <div className="relative min-w-[8rem] flex-1">
             <Search className="text-muted-foreground pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2" />
             <input
-              type="text"
+              type="search"
               placeholder={t('table.filterPlaceholder')}
               value={filters.query}
               onChange={(e) => setFilters({ query: e.target.value })}
-              className={cn(
-                'bg-background border-input h-7 w-full rounded-md border pl-7 text-xs outline-none focus:ring-1 focus:ring-ring',
-                hasActiveFilters ? 'pr-7' : 'pr-2',
-              )}
+              className="bg-background border-input h-7 w-full rounded-md border pl-7 pr-2 text-xs outline-none focus:ring-1 focus:ring-ring"
             />
-            {hasActiveFilters ? (
-              <button
-                type="button"
-                className="text-muted-foreground hover:text-foreground absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5"
-                aria-label={t('table.clear')}
-                title={t('table.clear')}
-                onClick={clearAllFilters}
-              >
-                <X className="size-3.5" />
-              </button>
-            ) : null}
           </div>
+          {hasActiveFilters ? (
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground text-xs underline"
+              onClick={clearAllFilters}
+            >
+              {t('table.clear')}
+            </button>
+          ) : null}
           <div className="ml-auto flex items-center gap-1">
             <Button
               type="button"
@@ -1944,7 +2390,7 @@ export function TableGrid() {
             <Button type="button" size="sm" className="h-6 px-2 text-xs" disabled={committing} onClick={() => void commitDraft()}>
               {t('table.draftCommit')}
             </Button>
-            <Button type="button" variant="outline" size="sm" className="text-muted-foreground hover:text-foreground h-6 px-2 text-xs" onClick={() => void discardDraft()}>
+            <Button type="button" variant="outline" size="sm" className="text-destructive hover:text-destructive h-6 px-2 text-xs" onClick={() => void discardDraft()}>
               {t('table.draftDiscard')}
             </Button>
           </div>
@@ -1976,15 +2422,14 @@ export function TableGrid() {
           ) : null}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden" ref={gridWrapRef}>
           <div className="min-h-0 flex-1 text-sm" style={{ height: '100%' }}>
             <AgGridReact<TableRow>
-              // Remount per sheet so orders/resources/schedule never share one
-              // half-updated grid instance across tab switches.
-              key={`grid-${activeSheetId}`}
+              key={proMasterDetail ? 'grid-md' : 'grid-plain'}
               theme={veylinGridTheme}
-              // First visit: fit contents. Revisit: ColDef.width from cache (no jump).
-              autoSizeStrategy={autoSizeStrategy}
+              // Size columns to fit header + visible content on load — no more
+              // truncated headers (订.../产.../期...). Virtualized, so it's cheap.
+              autoSizeStrategy={{ type: 'fitCellContents' }}
               rowData={filteredRows}
               columnDefs={agColDefs}
               // All rows load into the grid (no 500 cap); paginate so large sheets
@@ -1995,23 +2440,33 @@ export function TableGrid() {
               // Left accent stripe: red = past due (end > due_at), amber = at-risk
               // (within the buffer). No-op on rows/sheets without both fields.
               rowClassRules={{
-                // Detail rows reuse master data in some AG-Grid versions — never
-                // paint lateness stripes on the nested panel.
-                'sched-late': (p) =>
-                  !p.node?.detail && scheduleLateness(p.data) === 'late',
-                'sched-atrisk': (p) =>
-                  !p.node?.detail && scheduleLateness(p.data) === 'atrisk',
+                'sched-late': (p) => scheduleLateness(p.data) === 'late',
+                'sched-atrisk': (p) => scheduleLateness(p.data) === 'atrisk',
               }}
+              // External filter for the cockpit drill: "late" is a computed
+              // predicate (scheduleLateness), not a column value, so it can't be a
+              // setFilterModel entry. Present only while positioned to a late drill.
+              isExternalFilterPresent={() => isLateOnlyGridFilter(activeGridFilterRef.current)}
+              doesExternalFilterPass={(node) => scheduleLateness(node.data) === 'late'}
               getRowId={(params: GetRowIdParams<TableRow>) => rowKey(params.data)}
+              rowSelection={rowSelection}
+              selectionColumnDef={{
+                suppressHeaderMenuButton: true,
+                suppressMovable: true,
+                lockPinned: true,
+                width: 48,
+                minWidth: 44,
+                maxWidth: 64,
+              }}
               masterDetail={proMasterDetail || undefined}
-              // orders 表：有 _wo_count 时按计数决定能否展开；schedule 二级行没有
-              // 这个字段，必须 fail-open，否则会整表关掉「二级→三级」展开。
+              // Expander only on rows whose order has 三级 ops (_wo_count > 0). FAIL-OPEN
+              // when _wo_count is absent (sheet loaded before the field existed / other
+              // sheets) so the affordance isn't silently lost — reload to get true gating.
               isRowMaster={
                 proMasterDetail
                   ? (data: TableRow) => {
                       const c = (data as Record<string, unknown>)?.['_wo_count'];
-                      if (c === undefined || c === null || c === '') return true;
-                      return Number(c) > 0;
+                      return c === undefined ? true : Number(c) > 0;
                     }
                   : undefined
               }
@@ -2020,11 +2475,10 @@ export function TableGrid() {
               // 300px box that fills with empty space — AG-Grid master-detail-height guidance.
               detailRowAutoHeight={proMasterDetail || undefined}
               onGridReady={onGridReady}
-              onFirstDataRendered={onFirstDataRendered}
-              onColumnResized={onColumnResized}
               onModelUpdated={onModelUpdated}
               onCellValueChanged={onCellValueChanged}
               onCellKeyDown={onGridCellKeyDown}
+              onSelectionChanged={onSelectionChanged}
               {...proGridProps}
             />
           </div>
@@ -2054,7 +2508,7 @@ export function TableGrid() {
             }}
             placeholder={t('table.newSheetName')}
           />
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:gap-0">
             <Button
               type="button"
               variant="outline"
@@ -2099,7 +2553,7 @@ export function TableGrid() {
             }}
             placeholder={t('table.newColumnName')}
           />
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:gap-0">
             <Button
               type="button"
               variant="outline"
@@ -2137,7 +2591,7 @@ export function TableGrid() {
             </DialogTitle>
             <DialogDescription>{t('table.confirmDeleteSheet')}</DialogDescription>
           </DialogHeader>
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:gap-0">
             <Button
               type="button"
               variant="outline"
@@ -2169,7 +2623,7 @@ export function TableGrid() {
             <DialogTitle>{t('table.import')}</DialogTitle>
             <DialogDescription>{t('table.confirmImport')}</DialogDescription>
           </DialogHeader>
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:gap-0">
             <Button type="button" variant="outline" onClick={cancelImport}>
               {t('common.cancel')}
             </Button>

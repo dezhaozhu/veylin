@@ -1,3 +1,4 @@
+import { readProjectFile, renderProjectFilePage } from '../project-file-read.js';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import {
   addTableColumn,
@@ -7,20 +8,26 @@ import {
   deleteTableRows,
   deleteTableSheet,
   getTableSheetMeta,
+  isProjectPinMismatch,
   importTableSheet,
   isTableSheetNameTaken,
   listTableColumns,
   listTableRows,
   listTableSheets,
   renameTableSheet,
-  resolveTableSheetId,
-  sheetBelongsToThread,
+  tryResolveTableSheetId,
+  sheetBelongsToScope,
+  flushTablePersist,
+  stampTableSheetSource,
   updateTableRows,
   DEFAULT_TABLE_SHEET,
   onTableEvent,
   type TableRowPatch,
   type TableEvent,
+  getTableRow,
 } from '../table-store.js';
+import { recordTableEdits } from '../table-edit-journal.js';
+import { formatSelectionToken, registerSelection } from '../table-selection.js';
 import type { ServerDeps } from './types.js';
 import {
   unwrapMcpPayload,
@@ -29,8 +36,21 @@ import {
 } from '../table-tools.js';
 import { resolveCompassServer } from '../mcp-scoping.js';
 import { resolveThreadPin } from '../thread-state.js';
+import { resolveSheetScope } from '../table-tools.js';
+import type { SheetScope } from '../table-scope.js';
+import { eventVisibleInScope } from '../table-event-scope.js';
+import { archiveImportedFile } from '../table-import-archive.js';
+import { writeSheetSnapshot } from '../project-snapshot.js';
+import { scanProjectInbox } from '../project-inbox.js';
+import { revealInFileManager } from '../project-reveal.js';
+import { listProjectFiles, summarizeConnectors } from '../project-context.js';
+import { writeDecisionRecord } from '../decision-record.js';
+import { getProject } from '../project-store.js';
+import { isFileSource } from '@veylin/db';
+import { listProjects } from '../project-store.js';
 import { resolvePinnedProjectScope } from '../project-store.js';
-import { getPooledCompassToolsets, type CompassPoolDeps } from '../compass-pool.js';
+import { getPooledCompassToolsets, sceneSetKey, type CompassPoolDeps } from '../compass-pool.js';
+import { compassRestBase, fetchCompassData, type CompassRestScope } from '../compass-rest.js';
 import {
   proposeScheduleEdit,
   previewScheduleEdit,
@@ -39,15 +59,26 @@ import {
   type ProposeEditBody,
 } from '../schedule-edit.js';
 
-// Fork seam: threadId is OPTIONAL on these routes. Sessions (dezhao's per-thread
-// sheet tabs) pass it and see global + their own sheets; our workspace AG-Grid
-// omits it and operates on the workspace scope (global sheets only). Session
-// sheets remain inaccessible without their matching threadId.
+// Fork seam: threadId is OPTIONAL on these routes. It is what the request's
+// **作用域**(表的归属)is resolved from —— thread → 项目钉定 → scope。没带
+// threadId(或那个会话没钉项目)= 个人区。
 function requireThreadId(
   _reply: FastifyReply,
   threadId: string | undefined | null,
 ): string | null {
   return threadId?.trim() || null;
+}
+
+/**
+ * 这个请求在哪个作用域。规则与 agent 侧同一处实现(`resolveSheetScope`):
+ * 有项目钉定 → 项目;没有 → 个人区。见 spec §3.3。
+ */
+async function scopeOfRequest(
+  threadId: string | undefined | null,
+  ctx: { tenantId: string; userId: string },
+): Promise<SheetScope> {
+  const pin = await resolveThreadPin(threadId ?? undefined, ctx);
+  return resolveSheetScope(threadId, pin);
 }
 
 /**
@@ -94,6 +125,12 @@ function threadIdFromRequest(req: {
  * loaded through these routes (plan risk #1: the PROJECT id, never the
  * resolved toolset key).
  *
+ * `rest` is the REST data-plane scope (spec 2026-08-06 三形态 §2 ①) for the
+ * SAME pin: `baseUrl` from the entry's `/mcp/` url, headers carrying the
+ * entry's Authorization plus `x-compass-source` composed by `sceneSetKey` —
+ * the identical scene-set identity the pooled MCP connection above uses.
+ * `null` whenever the pin denies (no entry to bind a REST call to).
+ *
  * Exported (with injectable seams, compass-pool deps style) as the testable
  * seam — no HTTP harness exists in this repo (see tables-thread-pin.test.ts).
  */
@@ -101,6 +138,7 @@ export type CompassRequestScope = {
   getToolsets: () => Record<string, unknown>;
   entryPin: string | null;
   projectId: string | null;
+  rest: CompassRestScope | null;
   /** Scope for importCompassScheduleSheet; undefined = tenant-getter fallback (no pin). */
   loadScope: CompassLoadScope | undefined;
 };
@@ -122,6 +160,7 @@ export async function resolveCompassRequestScope(
       getToolsets: deps.getMcpToolsets,
       entryPin: null,
       projectId: null,
+      rest: null,
       loadScope: undefined,
     };
   }
@@ -133,29 +172,45 @@ export async function resolveCompassRequestScope(
   );
   const record: Record<string, unknown> =
     pooled == null ? {} : { [scope.entryPin]: pooled[scope.entryPin] ?? {} };
+  const rest: CompassRestScope = {
+    baseUrl: compassRestBase(scope.entry.url),
+    headers: { ...scope.entry.headers, 'x-compass-source': sceneSetKey(scope.sources) },
+  };
   return {
     getToolsets: () => record,
     entryPin: scope.entryPin,
     projectId: scope.project.id,
-    loadScope: { toolsets: record, entryPin: scope.entryPin, projectId: scope.project.id },
+    rest,
+    loadScope: {
+      toolsets: record,
+      entryPin: scope.entryPin,
+      projectId: scope.project.id,
+      rest,
+    },
   };
 }
 
-type SheetAccess = { sheetId: string; threadId: string | null };
+type SheetAccess = { sheetId: string; scope: SheetScope };
 
-/** Resolve sheet and enforce thread ownership (global sheets pass any scope). */
-function requireThreadSheet(
+/**
+ * 解析表并核对归属:不属于本作用域的表,一律 404 —— 不是"看得见但没权限"。
+ *
+ * **显式给了 id 就绝不退回默认表**。退回是这里最危险的行为:一个请求带着项目里的
+ * sheet id、却没带 threadId(于是解析成个人区),退回默认表就把行**写进了个人区的
+ * main** —— 返回 200、写错地方,比 404 糟得多。`tryResolveTableSheetId` 正是这个
+ * 语义:给了但找不到/不属于本作用域 → null;没给 → 本作用域的默认表。
+ */
+function requireScopedSheet(
   reply: FastifyReply,
   sheetParam: string | undefined,
-  threadId: string | undefined | null,
+  scope: SheetScope,
 ): SheetAccess | { error: { ok: false; message: string } } {
-  const scoped = threadId?.trim() || null;
-  const sheetId = resolveTableSheetId(sheetParam);
-  if (!sheetBelongsToThread(sheetId, scoped)) {
+  const sheetId = tryResolveTableSheetId(sheetParam, scope);
+  if (!sheetId || !sheetBelongsToScope(sheetId, scope)) {
     reply.code(404);
     return { error: { ok: false, message: 'sheet not found' } };
   }
-  return { sheetId, threadId: scoped };
+  return { sheetId, scope };
 }
 
 function isSheetAccess(
@@ -167,15 +222,16 @@ function isSheetAccess(
 export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // Editable multi-sheet table dataset for the right-panel data grid.
   app.get('/api/table', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheet, threadId } = req.query as { sheet?: string; threadId?: string };
-    const access = requireThreadSheet(reply, sheet, threadId);
+    const scope = await scopeOfRequest(threadId, ctx);
+    const access = requireScopedSheet(reply, sheet, scope);
     if (!isSheetAccess(access)) {
       return access.error;
     }
     return {
       sheet: access.sheetId,
-      sheets: listTableSheets(access.threadId),
+      sheets: listTableSheets(scope),
       defaultSheet: DEFAULT_TABLE_SHEET,
       columns: listTableColumns(access.sheetId),
       rows: listTableRows(access.sheetId),
@@ -185,7 +241,10 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   // Server-Sent Events: push row-level table changes so the client can drop its 4s
   // full-sheet poll and apply surgical AG-Grid transactions (cost independent of size).
   app.get('/api/table/stream', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
+    const { threadId } = req.query as { threadId?: string };
+    // 推送也按作用域:不在作用域里的表变了,这个连接不该知道(spec §7)。
+    const scope = await scopeOfRequest(threadId, ctx);
     reply.hijack();
     const raw = reply.raw;
     raw.writeHead(200, {
@@ -196,6 +255,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     });
     raw.write('retry: 3000\n\n');
     const send = (event: TableEvent): void => {
+      if (!eventVisibleInScope(event, scope)) return;
       raw.write(`data: ${JSON.stringify(event)}\n\n`);
     };
     const unsubscribe = onTableEvent(send);
@@ -225,6 +285,24 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     // missing/foreign threadId falls back to the tenant toolsets with a null
     // pin — resolveCompassServer then refuses rather than guessing.
     const scope = await resolveCompassRequestScope(threadId, ctx, deps);
+    if (scope.rest) {
+      const r = await fetchCompassData(scope.rest, '/data/workorder-rows', {
+        order_id,
+        wbs,
+        stage_code,
+        material,
+        limit: limit ? Math.max(1, parseInt(limit, 10)) : 500,
+      });
+      if (r.ok) {
+        return {
+          ok: true,
+          columns: r.payload['columns'] ?? [],
+          rows: r.payload['rows'] ?? [],
+          total: r.payload['total'] ?? 0,
+        };
+      }
+      console.warn('[tables] schedule-detail data-plane fetch failed, falling back to MCP:', r.error);
+    }
     const scopedToolsets = scope.getToolsets();
     const serverName = resolveCompassServer(scopedToolsets, deps.getMcpGroups(), scope.entryPin);
     const compass = serverName
@@ -298,6 +376,25 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code('conflict' in out && out.conflict ? 409 : 503);
       return out;
     }
+    // 提交这一刻,那份预览就**当过依据**了 —— 自动留档(spec §5.1 第三档)。
+    // 不靠人记得点保存:它是这个决定的凭据,将来要能翻账。
+    // 留档失败绝不能翻成错误响应:提交已经发生了。
+    const record = await writeDecisionRecord({
+      folder: scope.projectId
+        ? (await getProject(ctx.tenantId, scope.projectId))?.folder
+        : undefined,
+      title: '排产变更',
+      summary: `提交 ${out.committed} 条改动` + (out.deferred ? `,延后 ${out.deferred} 条` : ''),
+      facts: {
+        提交条数: out.committed,
+        延后条数: out.deferred,
+        结果: out.status,
+        未排: out.unscheduled,
+        run_id: String(out.run_id ?? '—'),
+        提案: (out.proposal_ids ?? []).join('、') || '—',
+      },
+    }).catch((e: unknown) => ({ written: false as const, reason: String(e) }));
+
     // Refresh the schedule sheet from Compass so the grid shows the new run
     // (importTableSheet emits sheetReplace → SSE → client refetch).
     // Best-effort: the commit already happened — never turn a refresh failure into an error response.
@@ -306,7 +403,12 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     } catch {
       /* best-effort refresh; grid converges on next manual load */
     }
-    return out;
+    return {
+      ...out,
+      recorded: record.written,
+      ...(record.written ? { recordPath: record.path } : {}),
+      ...(record.reason ? { recordNote: record.reason } : {}),
+    };
   });
 
   app.post('/api/schedule-edit/discard', async (req, reply) => {
@@ -353,17 +455,18 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
 
   // Lightweight sheet-tab list (no row payload) — used after sheetsChange SSE.
   app.get('/api/table/sheets', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { threadId } = req.query as { threadId?: string };
-    const scoped = requireThreadId(reply, threadId);
-    return { ok: true, sheets: listTableSheets(scoped) };
+    return { ok: true, sheets: listTableSheets(await scopeOfRequest(threadId, ctx)) };
   });
 
   app.post('/api/table/sheets', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { name, threadId } = (req.body ?? {}) as { name?: string; threadId?: string };
     const trimmed = name?.trim();
-    const scoped = requireThreadId(reply, threadId);
+    // 面板上新建的表落在**当前作用域**(项目 or 个人区),不再是对话级 —— 在
+    // 面板上建一张表是工作区行为,不是"这一轮的临时物"(spec §3.4)。
+    const scoped = await scopeOfRequest(threadId, ctx);
     if (!trimmed) {
       reply.code(400);
       return { ok: false, message: 'name is required' };
@@ -384,12 +487,12 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.delete('/api/table/sheets/:sheetId', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheetId } = req.params as { sheetId: string };
     const { threadId } = req.query as { threadId?: string };
-    const scoped = requireThreadId(reply, threadId);
+    const scoped = await scopeOfRequest(threadId, ctx);
     const existing = getTableSheetMeta(sheetId);
-    if (!existing || (existing.threadId ?? '') !== (scoped ?? '')) {
+    if (!existing || !sheetBelongsToScope(sheetId, scoped)) {
       reply.code(404);
       return { ok: false, message: 'sheet not found' };
     }
@@ -404,7 +507,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.patch('/api/table/sheets/:sheetId', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheetId } = req.params as { sheetId: string };
     const { name, threadId } = (req.body ?? {}) as { name?: string; threadId?: string };
     const trimmed = name?.trim();
@@ -412,9 +515,9 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code(400);
       return { ok: false, message: 'name is required' };
     }
-    const scoped = requireThreadId(reply, threadId);
+    const scoped = await scopeOfRequest(threadId, ctx);
     const existing = getTableSheetMeta(sheetId);
-    if (!existing || (existing.threadId ?? '') !== (scoped ?? '')) {
+    if (!existing || !sheetBelongsToScope(sheetId, scoped)) {
       reply.code(404);
       return { ok: false, message: 'sheet not found' };
     }
@@ -434,9 +537,9 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.post('/api/table/rows', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheet, threadId } = (req.body ?? {}) as { sheet?: string; threadId?: string };
-    const access = requireThreadSheet(reply, sheet, threadId);
+    const access = requireScopedSheet(reply, sheet, await scopeOfRequest(threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -449,14 +552,14 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.delete('/api/table/rows', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       threadId?: string;
       row_keys?: string[];
       order_nos?: string[];
     };
-    const access = requireThreadSheet(reply, body.sheet, body.threadId);
+    const access = requireScopedSheet(reply, body.sheet, await scopeOfRequest(body.threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -466,13 +569,13 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.post('/api/table/columns', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheet, name, threadId } = (req.body ?? {}) as {
       sheet?: string;
       name?: string;
       threadId?: string;
     };
-    const access = requireThreadSheet(reply, sheet, threadId);
+    const access = requireScopedSheet(reply, sheet, await scopeOfRequest(threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -494,13 +597,13 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.delete('/api/table/columns', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const { sheet, key, threadId } = (req.body ?? {}) as {
       sheet?: string;
       key?: string;
       threadId?: string;
     };
-    const access = requireThreadSheet(reply, sheet, threadId);
+    const access = requireScopedSheet(reply, sheet, await scopeOfRequest(threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -517,7 +620,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   });
 
   app.patch('/api/table/rows', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       threadId?: string;
@@ -534,7 +637,7 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       reply.code(400);
       return { ok: false, message: 'rows must contain at least one update' };
     }
-    const access = requireThreadSheet(reply, sheet, threadId);
+    const access = requireScopedSheet(reply, sheet, await scopeOfRequest(threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -545,12 +648,32 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
         patch,
       };
     });
+    // 变更日志:**改之前**先把旧值取出来 —— 事后再读就只剩新值了,"从什么改成什么"
+    // 是 agent 唯一读不出来的那一半(见 table-edit-journal.ts)。
+    const before = new Map<string, Record<string, unknown>>();
+    for (const u of updates) {
+      const row = getTableRow(u.rowKey, access.sheetId);
+      if (row) before.set(u.rowKey, { ...row });
+    }
     const result = await updateTableRows(updates, access.sheetId);
     if (!result.ok) {
       const notFound = /not found/i.test(result.message);
       reply.code(notFound ? 404 : 400);
       return { ok: false, message: result.message, rejected: result.rejected };
     }
+    recordTableEdits({
+      threadId,
+      sheet: access.sheetId,
+      by: 'human',                       // 这条路由是表格面板(人)在改;agent 走的是工具
+      edits: updates.flatMap((u) =>
+        Object.entries(u.patch).map(([column, to]) => ({
+          rowKey: u.rowKey,
+          column,
+          from: before.get(u.rowKey)?.[column],
+          to,
+        })),
+      ),
+    });
     return {
       ok: true,
       sheet: result.sheet,
@@ -559,16 +682,197 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
     };
   });
 
+  // 选区引用:前端圈选后登记,拿一个短 id 插进输入框。**不传数据** —— agent 拿 id 去
+  // table_get 取当前值(见 table-selection.ts:引用是拉,变更是推)。
+  app.post('/api/table/selection', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const body = (req.body ?? {}) as {
+      sheet?: string; threadId?: string; rowKeys?: string[]; columns?: string[];
+      groupBy?: string[]; filter?: string;
+    };
+    const access = requireScopedSheet(reply, body.sheet, await scopeOfRequest(body.threadId, ctx));
+    if (!isSheetAccess(access)) {
+      return access.error;
+    }
+    const threadId = (body.threadId ?? '').trim();
+    if (!threadId) {
+      reply.code(400);
+      return { ok: false, message: 'threadId is required — a selection belongs to a conversation' };
+    }
+    // **早失败**:这张表是别的项目加载来的时,现在就说清楚,而不是等 agent 事后
+    // 讲道理(实测撞到过:圈了 4 行,agent 才回"这是上重的数据,不能用于锅炉厂")。
+    // 判据用与 table_get 同一条 —— 两处口径必须一致。
+    const pin = await resolveThreadPin(threadId, ctx);
+    const source = getTableSheetMeta(access.sheetId)?.source;
+    if (isProjectPinMismatch(source, pin, await listProjects(ctx.tenantId))) {
+      reply.code(409);
+      return {
+        ok: false,
+        message: `这张表是项目 ${source?.project ?? (isFileSource(source) ? source.fileName : source?.server)} 加载来的,`
+          + '与当前会话的项目不一致 —— 请在当前项目下重新加载后再引用。',
+      };
+    }
+    try {
+      const sel = registerSelection({
+        threadId,
+        sheet: access.sheetId,
+        rowKeys: Array.isArray(body.rowKeys) ? body.rowKeys.map(String) : [],
+        columns: Array.isArray(body.columns) ? body.columns.map(String) : [],
+        groupBy: Array.isArray(body.groupBy) ? body.groupBy.map(String) : [],
+        filter: typeof body.filter === 'string' ? body.filter : '',
+      });
+      return { ok: true, id: sel.id, token: formatSelectionToken(sel) };
+    } catch (e) {
+      reply.code(400);
+      return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
+  /**
+   * 快照:把当前 sheet 的内容写成一份**不可变文件**落进项目文件夹(spec §5)。
+   * 连接器视图是会腐烂的缓存,这是"我要当时那一份"的唯一正解。
+   */
+  app.post('/api/table/snapshot', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const body = (req.body ?? {}) as { sheet?: string; threadId?: string };
+    const scope = await scopeOfRequest(body.threadId, ctx);
+    const access = requireScopedSheet(reply, body.sheet, scope);
+    if (!isSheetAccess(access)) return access.error;
+
+    const projectId = scope.kind === 'project' ? scope.id : null;
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    if (!folder) {
+      reply.code(400);
+      return {
+        ok: false,
+        message: projectId
+          ? '当前项目没有绑定文件夹,快照没有地方放'
+          : '个人区还没有项目文件夹,快照没有地方放',
+      };
+    }
+    const meta = getTableSheetMeta(access.sheetId);
+    try {
+      const out = await writeSheetSnapshot({
+        folder,
+        sheetName: meta?.name ?? access.sheetId,
+        columns: listTableColumns(access.sheetId).map((c) => ({ key: c.key, name: c.name })),
+        rows: listTableRows(access.sheetId),
+        origin: meta?.source ?? undefined,
+      });
+      return { ok: true, path: out.path, rows: out.rows };
+    } catch (e: unknown) {
+      reply.code(400);
+      return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
+  /**
+   * 项目里到底有什么:文件(原件/快照)+ 连接器(带**上次刷新**)。
+   * 两类分开说 —— 文件不会腐烂,连接器会,所以后者必须报新鲜度。
+   */
+  app.get('/api/project/context', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const { threadId, projectId: asked } = req.query as { threadId?: string; projectId?: string };
+    // **项目页问的是它正在显示的那个项目**,不是当前线程钉着的那个 —— 后者会让
+    // 页面显示另一个项目的上下文,而且看起来完全正常(实测)。
+    const scope = await scopeOfRequest(threadId, ctx);
+    const projectId = asked ?? (scope.kind === 'project' ? scope.id : null);
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    const sheets = listTableSheets(scope).map((m) => ({ name: m.name, source: m.source }));
+    const connectors = summarizeConnectors(sheets);
+    if (!folder) {
+      return { ok: true, folder: null, originals: [], snapshots: [], connectors };
+    }
+    const files = await listProjectFiles(folder);
+    void reply;
+    return { ok: true, folder, ...files, connectors };
+  });
+
+  /**
+   * 预览项目文件夹里的一个文件。
+   *
+   * 只读、只在这个项目的文件夹之内(readProjectFile 自己做路径包含校验)。
+   * 表格类只回概览 —— 要筛选统计得导入后用 table_query,那才是能回答问题的形状;
+   * 把几万行塞进预览面板既慢又没人读。
+   */
+  app.get('/api/project/file', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const { threadId, name, projectId: asked } = req.query as {
+      threadId?: string; name?: string; projectId?: string;
+    };
+    if (!name) return reply.code(400).send({ error: '缺少 name' });
+    const scope = await scopeOfRequest(threadId, ctx);
+    const projectId = asked ?? (scope.kind === 'project' ? scope.id : null);
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    // 没有文件夹时不是"读失败",是**这个项目根本没有本地文件**。说清楚。
+    if (!folder) return reply.code(404).send({ error: '这个项目还没有文件夹' });
+    try {
+      return { ok: true, ...(await readProjectFile(folder, name, { limit: 400 })) };
+    } catch (err) {
+      return reply.code(404).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  /**
+   * 右侧文档面板按页取 PDF 图。**边界和 /api/project/file 共用一个函数** ——
+   * 一个能画文件夹外文件的渲染接口,就是一个读任意文件的接口。
+   */
+  app.get('/api/project/file/page', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const { threadId, name, projectId: asked, page } = req.query as {
+      threadId?: string; name?: string; projectId?: string; page?: string;
+    };
+    const n = Number(page);
+    if (!name || !Number.isInteger(n)) return reply.code(400).send({ error: '缺少 name 或 page' });
+    const scope = await scopeOfRequest(threadId, ctx);
+    const projectId = asked ?? (scope.kind === 'project' ? scope.id : null);
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    if (!folder) return reply.code(404).send({ error: '这个项目还没有文件夹' });
+    const dataUrl = await renderProjectFilePage(folder, name, n);
+    // 画不出来就 404 —— 回一张空图会被当成"这一页是白的"。
+    if (!dataUrl) return reply.code(404).send({ error: `画不出第 ${n} 页` });
+    return { ok: true, dataUrl };
+  });
+
+  /** 在访达里显示项目文件夹里的某个东西(Show in Folder)。只允许文件夹之内。 */
+  app.post('/api/project/reveal', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const body = (req.body ?? {}) as { path?: string; threadId?: string };
+    const scope = await scopeOfRequest(body.threadId, ctx);
+    const projectId = scope.kind === 'project' ? scope.id : null;
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    const target = String(body.path ?? '');
+    const out = await revealInFileManager(folder, target || folder || '');
+    if (!out.ok) reply.code(400);
+    return out;
+  });
+
+  /** 文件夹里有哪些文件还没导入过(spec §6:只列,不自动吸收)。 */
+  app.get('/api/table/inbox', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const { threadId } = req.query as { threadId?: string };
+    const scope = await scopeOfRequest(threadId, ctx);
+    const projectId = scope.kind === 'project' ? scope.id : null;
+    const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
+    if (!folder) return { ok: true, pending: [], note: '当前作用域没有绑定文件夹' };
+    const out = await scanProjectInbox(folder);
+    return { ok: true, folder, pending: out.pending, ...(out.note ? { note: out.note } : {}) };
+  });
+
   app.post('/api/table/import', async (req, reply) => {
-    await deps.resolveContext(req.headers);
+    const ctx = await deps.resolveContext(req.headers);
     const body = (req.body ?? {}) as {
       sheet?: string;
       threadId?: string;
       rows?: TableRowPatch[];
       column_names?: string[];
       new_column_names?: string[];
+      /** 原件字节(base64)。有它才谈得上留档 —— 见 spec §3。 */
+      file?: { name: string; base64: string };
+      /** 它当初躺在哪儿(纯溯源) */
+      fromPath?: string;
     };
-    const access = requireThreadSheet(reply, body.sheet, body.threadId);
+    const access = requireScopedSheet(reply, body.sheet, await scopeOfRequest(body.threadId, ctx));
     if (!isSheetAccess(access)) {
       return access.error;
     }
@@ -581,15 +885,36 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
       body.new_column_names ??
       [];
     const result = importTableSheet(access.sheetId, columnNames, body.rows);
+    // 用户导一张大表、紧接着关掉 app —— 响应必须意味着"已经在盘上了"
+    await flushTablePersist();
     if (!result) {
       reply.code(400);
       return { ok: false, message: 'Import failed' };
+    }
+
+    // 导入即留档(spec 2026-08-14 §3):原件按内容哈希存进项目文件夹,sheet 记一根
+    // 指向它的指针。留不成不是错误,是**要说出来的事实** —— 照实回给前端。
+    const projectId = access.scope.kind === 'project' ? access.scope.id : null;
+    const folder = projectId
+      ? (await getProject(ctx.tenantId, projectId))?.folder
+      : undefined;
+    const archive = await archiveImportedFile({
+      folder, projectId, file: body.file, fromPath: body.fromPath,
+    });
+    if (archive.source) {
+      await stampTableSheetSource(access.sheetId, archive.source).catch((e: unknown) => {
+        console.error('[table] file-source stamp failed:', e);
+      });
     }
     return {
       ok: true,
       sheet: access.sheetId,
       columns: result.columns,
       rows: result.rows,
+      // 留档结果照实回:archived=false 时 reason 是人话,前端原样显示。
+      archived: archive.archived,
+      ...(archive.archived ? { original: { hash: archive.source!.fileHash, name: archive.source!.fileName } } : {}),
+      ...(archive.reason ? { archiveNote: archive.reason } : {}),
     };
   });
 }

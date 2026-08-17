@@ -23,7 +23,6 @@ import type { UIMessage } from "ai";
 
 import { readPendingSkillFromMessage } from '@/lib/pending-skill-message';
 import { dispatchOverlayDismiss } from '@/lib/overlay-dismiss';
-import { restorePendingAskUserSession } from '@/lib/restore-ask-user-session';
 import {
   fetchThreadMessages,
   storedMessageToUiMessage,
@@ -33,6 +32,10 @@ import {
   setHistoryLoadError,
   setHistoryLoadRetry,
 } from '@/lib/history-load-state';
+import {
+  assistantTurnWorkMs,
+  type AssistantTurnTiming,
+} from '@/lib/assistant-turn-timing';
 
 function countFileParts(messages: ReadonlyArray<unknown>): number {
   return messages.reduce<number>((total, message) => {
@@ -246,8 +249,9 @@ export const useExternalHistory = <TMessage>(
         }
 
         runtimeRef.current.thread.import(converted);
+        // The pending ask panel is re-opened by the chat runtime once these
+        // messages land — it keys the session by chat id, as the panel does.
         onSetMessagesRef.current(uiMessages);
-        restorePendingAskUserSession(remoteId, uiMessages as UIMessage[]);
 
         historyIds.current = new Set(
           converted.messages.map((m) => m.message.id),
@@ -284,11 +288,8 @@ export const useExternalHistory = <TMessage>(
     toThreadMessages,
   ]);
 
-  const runStartRef = useRef<number | null>(null);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stepBoundariesRef = useRef<number[]>([]);
   const wasRunningRef = useRef(false);
-  const toolCallCountRef = useRef(0);
 
   useEffect(() => {
     if (!formatAdapter) return;
@@ -298,25 +299,7 @@ export const useExternalHistory = <TMessage>(
       const wasRunning = wasRunningRef.current;
       wasRunningRef.current = isRunning;
 
-      if (runStartRef.current != null) {
-        const lastMsg = runtimeRef.current.thread.getState().messages.at(-1);
-        if (lastMsg?.role === "assistant") {
-          const currentToolCallCount = lastMsg.content.filter(
-            (p) => p.type === "tool-call",
-          ).length;
-          while (toolCallCountRef.current < currentToolCallCount) {
-            stepBoundariesRef.current.push(Date.now() - runStartRef.current);
-            toolCallCountRef.current++;
-          }
-        }
-      }
-
       if (isRunning) {
-        if (runStartRef.current == null) {
-          runStartRef.current = Date.now();
-          stepBoundariesRef.current = [];
-          toolCallCountRef.current = 0;
-        }
         if (persistTimerRef.current) {
           clearTimeout(persistTimerRef.current);
           persistTimerRef.current = null;
@@ -326,10 +309,6 @@ export const useExternalHistory = <TMessage>(
 
       if (!wasRunning) return;
 
-      if (runStartRef.current != null) {
-        stepBoundariesRef.current.push(Date.now() - runStartRef.current);
-      }
-
       if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
       persistTimerRef.current = setTimeout(async () => {
         persistTimerRef.current = null;
@@ -337,39 +316,35 @@ export const useExternalHistory = <TMessage>(
         const latest = runtimeRef.current.thread.getState();
         if (latest.isRunning) return;
 
-        const boundaries = stepBoundariesRef.current;
-        const durationMs =
-          boundaries.length > 0 ? boundaries.at(-1) : undefined;
-
-        if (boundaries.length === 1 && durationMs != null) {
-          const lastAssistant = latest.messages.findLast(
-            (m) => m.role === "assistant",
-          );
-          if (lastAssistant) {
-            const tcCount = lastAssistant.content.filter(
-              (p) => p.type === "tool-call",
-            ).length;
-            if (tcCount > 0) {
-              const totalSteps = tcCount + 1;
-              const stepDur = durationMs / totalSteps;
-              boundaries.length = 0;
-              for (let i = 0; i < totalSteps; i++) {
-                boundaries.push(Math.round((i + 1) * stepDur));
-              }
-            }
-          }
+        const lastAssistant = latest.messages.findLast(
+          (message) => message.role === "assistant",
+        );
+        const turnTiming = (
+          lastAssistant as
+            | { metadata?: { custom?: { turnTiming?: AssistantTurnTiming } } }
+            | undefined
+        )?.metadata?.custom?.turnTiming;
+        const durationMs = assistantTurnWorkMs(turnTiming);
+        const workDurations =
+          turnTiming?.segments
+            .filter((segment) => segment.kind === "work")
+            .map((segment) => segment.durationMs) ?? [];
+        const closedWorkMs = workDurations.reduce(
+          (sum, duration) => sum + duration,
+          0,
+        );
+        if (durationMs != null && durationMs > closedWorkMs) {
+          workDurations.push(durationMs - closedWorkMs);
         }
-
+        let cumulativeWorkMs = 0;
         const stepTimestamps =
-          boundaries.length > 1
-            ? boundaries.map((endMs, i) => ({
-                start_ms: i === 0 ? 0 : boundaries[i - 1]!,
-                end_ms: endMs,
-              }))
+          workDurations.length > 1
+            ? workDurations.map((duration) => {
+                const start_ms = cumulativeWorkMs;
+                cumulativeWorkMs += duration;
+                return { start_ms, end_ms: cumulativeWorkMs };
+              })
             : undefined;
-
-        runStartRef.current = null;
-        stepBoundariesRef.current = [];
 
         const telemetryOptions = {
           ...(durationMs != null ? { durationMs } : undefined),
@@ -440,7 +415,7 @@ export const useExternalHistory = <TMessage>(
 
           formatAdapter.reportTelemetry?.(batchItems, telemetryOptions);
         }
-      }, 0);
+      }, 50);
     });
 
     return () => {

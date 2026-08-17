@@ -5,6 +5,7 @@
  * in-memory-only tests (table-tools-provenance.test.ts) don't touch.
  */
 import assert from 'node:assert/strict';
+import { PERSONAL_SCOPE } from './table-scope.js';
 import { after, before, describe, it } from 'node:test';
 import {
   closeDb,
@@ -24,7 +25,7 @@ describe('table sheet source (load provenance) — real DB round-trip', () => {
   });
 
   it('persists a stamped source (v3 shape: project id + display server) and reads it back verbatim', async () => {
-    const created = createTableSheet(`prov-db-${Date.now()}`);
+    const created = createTableSheet(`prov-db-${Date.now()}`, PERSONAL_SCOPE);
     assert.ok(created);
 
     // v3 stamp shape (Phase B 5c): `project` = the pinned PROJECT id is the
@@ -45,7 +46,7 @@ describe('table sheet source (load provenance) — real DB round-trip', () => {
   });
 
   it('persists a LEGACY-shaped stamp (server only, no project) verbatim — pre-migration rows keep their shape', async () => {
-    const created = createTableSheet(`prov-db-legacy-shape-${Date.now()}`);
+    const created = createTableSheet(`prov-db-legacy-shape-${Date.now()}`, PERSONAL_SCOPE);
     assert.ok(created);
 
     const source = {
@@ -74,7 +75,7 @@ describe('table sheet source (load provenance) — real DB round-trip', () => {
   });
 
   it('re-stamping overwrites the previous source (not merged) — a reload under another project fully re-keys it', async () => {
-    const created = createTableSheet(`prov-db-restamp-${Date.now()}`);
+    const created = createTableSheet(`prov-db-restamp-${Date.now()}`, PERSONAL_SCOPE);
     assert.ok(created);
 
     await stampTableSheetSource(created!.id, {

@@ -131,6 +131,10 @@ export function conversationAwaitsResume(messages: UIMessage[]): boolean {
   if (last.role !== 'assistant') return false;
 
   const parts = last.parts ?? [];
+  // **以原生挂起结尾的会话不重连。** 这一行来自内网那条线:ask_user_question
+  // 挂起是正常终止,不是"流被切断" —— 去重连它会把一次正在等人回答的挂起当成
+  // 故障重跑。内网侧有测试钉着(frontend-suspend-tools.test.ts)。
+  if (parts.some((part) => part.type === 'data-tool-call-suspended')) return false;
   // An empty assistant placeholder is a freshly-created, not-yet-streamed turn.
   if (parts.length === 0) return true;
 

@@ -15,6 +15,10 @@ export type ProjectInfo = {
   sources: string[];
   /** Reconciler-managed default project (one per granted source). */
   managed: boolean;
+  /** 项目文件夹绝对路径(用户在桌面端选);未绑 = undefined。见 spec 2026-08-14。 */
+  folder?: string;
+  /** 项目级指令 —— 会喂给模型(见 chat.ts buildProjectPinBlock)。 */
+  instructions?: string;
 };
 
 const EMPTY: ProjectInfo[] = [];
@@ -78,12 +82,14 @@ export function useProjects(): ProjectInfo[] {
 export async function createProject(
   name: string,
   sources: string[],
+  /** 项目级指令 —— 会喂给模型(见 chat.ts buildProjectPinBlock)。 */
+  instructions = '',
 ): Promise<{ ok: true; project: ProjectInfo } | { ok: false; error: string }> {
   try {
     const res = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, sources }),
+      body: JSON.stringify({ name, sources, ...(instructions ? { instructions } : {}) }),
     });
     const data = (await res.json()) as {
       ok?: boolean;
@@ -93,6 +99,77 @@ export async function createProject(
     if (!res.ok || !data.ok || !data.project) {
       return { ok: false, error: data.error ?? `HTTP ${res.status}` };
     }
+    return { ok: true, project: data.project };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * `PATCH /api/projects/:id` —— 绑定项目文件夹(spec 2026-08-14 §2)。
+ *
+ * managed 项目也能绑:文件夹既不是身份也不是范围,是本机偏好,而默认项目
+ * (锅炉厂、上重)恰恰是最需要它的那些。名字与场景仍归 reconciler 管。
+ */
+/** 改项目说明 —— 它会作为项目级指令喂给模型(见 chat.ts buildProjectPinBlock)。 */
+export async function setProjectInstructions(
+  id: string,
+  instructions: string,
+): Promise<{ ok: true; project: ProjectInfo } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instructions }),
+    });
+    const body = (await res.json()) as { ok?: boolean; project?: ProjectInfo; error?: string };
+    if (!res.ok || !body.ok || !body.project) {
+      return { ok: false, error: body.error ?? `保存失败(HTTP ${res.status})` };
+    }
+    invalidateProjects();
+    return { ok: true, project: body.project };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** 事后改这个项目用哪些数据源 —— 建项目时不必选,那句"以后随时能加"得有地方落。 */
+export async function setProjectSources(
+  id: string,
+  sources: string[],
+): Promise<{ ok: true; project: ProjectInfo } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sources }),
+    });
+    const body = (await res.json()) as { ok?: boolean; project?: ProjectInfo; error?: string };
+    if (!res.ok || !body.ok || !body.project) {
+      return { ok: false, error: body.error ?? `保存失败(HTTP ${res.status})` };
+    }
+    invalidateProjects();
+    return { ok: true, project: body.project };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function setProjectFolder(
+  id: string,
+  folder: string,
+): Promise<{ ok: true; project: ProjectInfo } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder }),
+    });
+    const data = (await res.json()) as { ok?: boolean; project?: ProjectInfo; error?: string };
+    if (!res.ok || !data.ok || !data.project) {
+      return { ok: false, error: data.error ?? `HTTP ${res.status}` };
+    }
+    invalidateProjects();
     return { ok: true, project: data.project };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

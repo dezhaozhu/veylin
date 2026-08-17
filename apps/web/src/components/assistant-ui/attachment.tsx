@@ -27,6 +27,11 @@ import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button
 import { FileIcon } from "@react-symbols/icons/utils";
 import { cn } from "@/lib/utils";
 import { useChatColumnBounds } from "@/lib/overlay-bounds";
+import {
+  previewAttachment,
+  type PreviewState,
+} from "@/lib/attachment-preview";
+import { DocumentPreview } from "@/components/features/document-preview";
 
 function fileTypeLabel(name: string, contentType?: string): string {
   if (contentType === "application/pdf" || name.toLowerCase().endsWith(".pdf")) {
@@ -203,6 +208,135 @@ const AttachmentRemove: FC<{ className?: string; variant?: "dark" | "light" }> =
   );
 };
 
+/**
+ * 文档附件的字节。composer 里还握着 File;已发出去的消息里只剩内容部件里的
+ * data URL。两条都要认 —— 否则"发出去之后就点不开了"。
+ */
+const useDocumentData = (): { data?: string; file?: File } => {
+  return useAuiState(
+    useShallow((s): { data?: string; file?: File } => {
+      if (s.attachment.file) return { file: s.attachment.file };
+      const part = s.attachment.content?.find(
+        (c) => (c as { type?: string }).type === "file",
+      ) as { data?: string; url?: string } | undefined;
+      const data = part?.data ?? part?.url;
+      return data?.startsWith("data:") ? { data } : {};
+    }),
+  );
+};
+
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * 点开看一眼 —— **和项目页的文件预览是同一件事**:同一份 xlsx,从哪儿点开
+ * 看到的都该一样。用的也是同一条抽取路径(服务端 document-extract)。
+ *
+ * 覆盖层贴着聊天列,不铺满整个窗口:右侧面板是原生 webview,会画在 HTML 之上,
+ * 铺满会被它盖掉一角(图片预览当初就是为这个才这么做的)。
+ */
+const DocumentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
+  const name = useAuiState((s) => s.attachment.name);
+  const { data, file } = useDocumentData();
+  const [open, setOpen] = useState(false);
+  const [preview, setPreview] = useState<PreviewState>({ state: "idle" });
+  const [dataUrl, setDataUrl] = useState<string | undefined>(undefined);
+  const bounds = useChatColumnBounds(open);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    setPreview({ state: "loading" });
+    void (async () => {
+      const url = data ?? (file ? await fileToDataUrl(file) : undefined);
+      if (alive) setDataUrl(url);
+      const out = await previewAttachment(name, url);
+      if (alive) setPreview(out);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [open, data, file, name]);
+
+  const overlay =
+    open && bounds
+      ? createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${name} preview`}
+            className="fixed z-[201] flex items-center justify-center bg-black/50 p-4"
+            style={{ left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height }}
+            onClick={() => setOpen(false)}
+          >
+            <div
+              className="bg-background relative flex h-full max-h-full w-full flex-col overflow-hidden rounded-lg border shadow-lg"
+              onClick={(e: MouseEvent) => e.stopPropagation()}
+            >
+              <header className="flex items-center justify-between gap-3 border-b px-4 py-2.5">
+                <p className="truncate text-sm font-medium" title={name}>{name}</p>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  className="text-muted-foreground hover:text-foreground shrink-0"
+                  onClick={() => setOpen(false)}
+                >
+                  <XIcon className="size-4" />
+                </button>
+              </header>
+              <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+                {preview.state === "loading" || preview.state === "idle" ? (
+                  <p className="text-muted-foreground text-sm">读取中…</p>
+                ) : (
+                  <DocumentPreview
+                    name={name}
+                    payload={preview.payload}
+                    action={
+                      dataUrl ? (
+                        // 打不开也走得下去 —— 这正是"没有可预览的内容"缺的那一步。
+                        <a
+                          href={dataUrl}
+                          download={name}
+                          className="text-foreground inline-flex items-center gap-1.5 text-xs underline underline-offset-4"
+                        >
+                          下载原件
+                        </a>
+                      ) : null
+                    }
+                  />
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+      : null;
+
+  return (
+    <>
+      <span className="contents cursor-pointer" onClick={() => setOpen(true)}>
+        {children}
+      </span>
+      {overlay}
+    </>
+  );
+};
+
 const DocumentAttachmentCard: FC = () => {
   const aui = useAui();
   const isComposer = aui.attachment.source !== "message";
@@ -212,6 +346,7 @@ const DocumentAttachmentCard: FC = () => {
 
   return (
     <AttachmentPrimitive.Root className="aui-attachment-root aui-attachment-root-document relative w-44 shrink-0">
+      <DocumentPreviewDialog>
       <div
         className="aui-attachment-document-card relative flex w-full min-w-0 items-center gap-2.5 rounded-xl border border-border/70 bg-background px-2.5 py-2 pe-8 shadow-sm"
         aria-label={`${typeLabel} attachment: ${name}`}
@@ -244,10 +379,12 @@ const DocumentAttachmentCard: FC = () => {
             {name}
           </TooltipContent>
         </Tooltip>
-        {isComposer && (
-          <AttachmentRemove className="absolute end-1.5 top-1.5 size-5" />
-        )}
       </div>
+      </DocumentPreviewDialog>
+      {/* 删除键留在覆盖层之外 —— 套进去的话,点"删除"会先把预览打开。 */}
+      {isComposer && (
+        <AttachmentRemove className="absolute end-1.5 top-1.5 size-5" />
+      )}
     </AttachmentPrimitive.Root>
   );
 };

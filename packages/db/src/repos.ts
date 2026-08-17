@@ -54,6 +54,7 @@ function mapThreadState(r: Record<string, unknown>): ThreadStateRow {
     project: (r.project as string | null) ?? null,
     movedFrom: (r.moved_from as string | null) ?? null,
     movedAt: (r.moved_at as string | null) ?? null,
+    suspendedRun: (r.suspended_run as unknown) ?? null,
     updatedAt: r.updated_at ? String(r.updated_at) : undefined,
   };
 }
@@ -129,6 +130,8 @@ function mapProject(r: Record<string, unknown>): ProjectRow {
     managed: Boolean(r.managed ?? false),
     enabled: Boolean(r.enabled ?? true),
     migratedFrom: r.migrated_from ? String(r.migrated_from) : undefined,
+    folder: r.folder ? String(r.folder) : undefined,
+    instructions: r.instructions ? String(r.instructions) : undefined,
     createdAt: r.created_at ? String(r.created_at) : undefined,
   };
 }
@@ -266,6 +269,7 @@ export async function insertThreadState(row: Omit<ThreadStateRow, 'updatedAt'>):
     project: row.project ?? null,
     moved_from: row.movedFrom ?? null,
     moved_at: row.movedAt ?? null,
+    ...(row.suspendedRun != null ? { suspended_run: row.suspendedRun } : {}),
     updated_at: new Date(),
   });
 }
@@ -330,6 +334,14 @@ export async function updateThreadState(
     } else {
       sets.push('moved_at = $movedAt');
       vars.movedAt = patch.movedAt;
+    }
+  }
+  if (patch.suspendedRun !== undefined) {
+    if (patch.suspendedRun === null) {
+      sets.push('suspended_run = NONE');
+    } else {
+      sets.push('suspended_run = $suspendedRun');
+      vars.suspendedRun = patch.suspendedRun;
     }
   }
   if (patch.tenantId !== undefined) {
@@ -729,6 +741,8 @@ export async function insertProjectRow(
     enabled: input.enabled,
     // Set-once identity marker (option<string>): only included when present.
     ...(input.migratedFrom != null ? { migrated_from: input.migratedFrom } : {}),
+    ...(input.folder != null ? { folder: input.folder } : {}),
+    ...(input.instructions != null ? { instructions: input.instructions } : {}),
     // Uniqueness key for project_identity_uniq: the marker when this row IS a
     // migration-owned identity, the row's own id otherwise (so unmarked rows
     // never collide with each other). See init-schema's comment.
@@ -749,6 +763,8 @@ export async function updateProjectRow(
     ['sources', 'sources'],
     ['managed', 'managed'],
     ['enabled', 'enabled'],
+    ['folder', 'folder'],
+    ['instructions', 'instructions'],
   ] as const) {
     const val = patch[key];
     if (val !== undefined) {

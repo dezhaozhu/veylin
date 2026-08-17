@@ -16,7 +16,13 @@ export const FILE_ATTACHMENT_ACCEPT =
   'application/javascript,text/javascript,.js,.mjs,.cjs,' +
   'application/typescript,.ts,.tsx,.jsx,.vue,.svelte,.astro,' +
   'application/sql,.sql,' +
-  '.md,.markdown,.txt,.csv,.tsv,.toml,.ini,.cfg,.conf,.env,.log,.svg,.ipynb';
+  '.md,.markdown,.txt,.csv,.tsv,.toml,.ini,.cfg,.conf,.env,.log,.svg,.ipynb,' +
+  // Office 三件套:服务端抽得出文字(和放进项目文件夹走的是同一个抽取器)。
+  // 从前它们不在这个列表里,拖进来只会收到一句"转成 PDF 再来" —— 而同一份文件
+  // 放进项目文件夹却读得好好的,这个区别对用户讲不通。
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,' +
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xlsm,' +
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation,.pptx';
 
 function readAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

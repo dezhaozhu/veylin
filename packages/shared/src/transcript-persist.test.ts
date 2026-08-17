@@ -39,6 +39,38 @@ describe('transcript-persist', () => {
     assert.equal(restored.meta?.sentAt, 99);
     assert.equal(restored.meta?.interrupted, true);
   });
+
+  it('round-trips accumulated turn and reasoning timing', () => {
+    const turnTiming = {
+      runId: 'run-1',
+      phase: 'finished' as const,
+      accumulatedWorkMs: 4_000,
+      segments: [
+        {
+          key: 'run-1:work:0',
+          kind: 'work' as const,
+          startedAt: 0,
+          endedAt: 2_000,
+          durationMs: 2_000,
+        },
+        {
+          key: 'run-1:reasoning:1:2',
+          kind: 'reasoning' as const,
+          startedAt: 200,
+          endedAt: 1_200,
+          durationMs: 1_000,
+        },
+      ],
+    };
+    const restored = extractTranscriptEnvelope(
+      embedTranscriptEnvelope(
+        [{ type: 'text', text: 'answer' }],
+        { custom: { sentAt: 99, turnTiming } },
+      ),
+    );
+    assert.deepEqual(restored.meta?.turnTiming, turnTiming);
+    assert.equal(restored.meta?.sentAt, 99);
+  });
 });
 
 describe('filterPersistableUiMessageParts', () => {

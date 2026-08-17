@@ -11,7 +11,12 @@
  * 'main' plus what this file creates — deterministic counts.
  */
 import assert from 'node:assert/strict';
+import { PERSONAL_SCOPE } from './table-scope.js';
 import { after, before, describe, it } from 'node:test';
+
+/** 测试里读连接器来源的收窄小工具(来源现在是判别式两类,见 spec §4)。 */
+const conn = (x: unknown) =>
+  (x ?? {}) as { server?: string; project?: string; tenant?: string; loadedAt?: string };
 import {
   closeDb,
   connectDb,
@@ -332,19 +337,19 @@ describe('runProjectMigration — real store, real fixture rows', () => {
     await insertThreadState(state(threads.migrated, guoluId));
 
     const loadedAt = '2026-07-20T03:04:05.000Z';
-    sheetGuoluId = createTableSheet(`mig-sheet-guolu-${ts}`)!.id;
+    sheetGuoluId = createTableSheet(`mig-sheet-guolu-${ts}`, PERSONAL_SCOPE)!.id;
     await stampTableSheetSource(sheetGuoluId, { server: 'compass-guolu', tenant: 'guolu', loadedAt });
-    sheetCompareId = createTableSheet(`mig-sheet-compare-${ts}`)!.id;
+    sheetCompareId = createTableSheet(`mig-sheet-compare-${ts}`, PERSONAL_SCOPE)!.id;
     await stampTableSheetSource(sheetCompareId, { server: LEGACY_COMPARE_ENTRY_NAME, loadedAt });
-    sheetForeignId = createTableSheet(`mig-sheet-foreign-${ts}`)!.id;
+    sheetForeignId = createTableSheet(`mig-sheet-foreign-${ts}`, PERSONAL_SCOPE)!.id;
     await stampTableSheetSource(sheetForeignId, { server: 'some-other-mcp', loadedAt });
-    sheetAlreadyId = createTableSheet(`mig-sheet-already-${ts}`)!.id;
+    sheetAlreadyId = createTableSheet(`mig-sheet-already-${ts}`, PERSONAL_SCOPE)!.id;
     await stampTableSheetSource(sheetAlreadyId, {
       server: 'compass-guolu',
       loadedAt,
       project: 'pre-stamped-project-id',
     });
-    sheetUnstampedId = createTableSheet(`mig-sheet-unstamped-${ts}`)!.id;
+    sheetUnstampedId = createTableSheet(`mig-sheet-unstamped-${ts}`, PERSONAL_SCOPE)!.id;
   });
 
   after(async () => {
@@ -388,17 +393,17 @@ describe('runProjectMigration — real store, real fixture rows', () => {
       loadedAt: '2026-07-20T03:04:05.000Z',
       project: guoluId,
     });
-    assert.equal(metaById.get(sheetCompareId)?.source?.project, composed[0]!.id);
-    assert.equal(metaById.get(sheetCompareId)?.source?.server, LEGACY_COMPARE_ENTRY_NAME);
+    assert.equal(conn(metaById.get(sheetCompareId)?.source).project, composed[0]!.id);
+    assert.equal(conn(metaById.get(sheetCompareId)?.source).server, LEGACY_COMPARE_ENTRY_NAME);
     // Foreign server: no project added; pre-stamped: never clobbered; unstamped: untouched.
-    assert.equal(metaById.get(sheetForeignId)?.source?.project, undefined);
-    assert.equal(metaById.get(sheetAlreadyId)?.source?.project, 'pre-stamped-project-id');
+    assert.equal(conn(metaById.get(sheetForeignId)?.source).project, undefined);
+    assert.equal(conn(metaById.get(sheetAlreadyId)?.source).project, 'pre-stamped-project-id');
     assert.ok(!metaById.get(sheetUnstampedId)?.source);
 
     // Stamps also persisted through to the real DB rows.
     const dbRows = await listTableSheetsDb();
-    assert.equal(dbRows.find((r) => r.id === sheetGuoluId)?.source?.project, guoluId);
-    assert.equal(dbRows.find((r) => r.id === sheetCompareId)?.source?.project, composed[0]!.id);
+    assert.equal(conn(dbRows.find((r) => r.id === sheetGuoluId)?.source).project, guoluId);
+    assert.equal(conn(dbRows.find((r) => r.id === sheetCompareId)?.source).project, composed[0]!.id);
   });
 
   it('second run: all zeros and still exactly one composed project (idempotent)', async () => {

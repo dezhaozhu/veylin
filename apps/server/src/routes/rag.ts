@@ -10,6 +10,9 @@ import {
 } from '../rag-store.js';
 import { extractPdfText } from '../extract-pdf-text.js';
 import { RAG_UPLOAD_MAX_BYTES } from '../rag-limits.js';
+import { archiveImportedFile } from '../table-import-archive.js';
+import { getProject } from '../project-store.js';
+import { resolveThreadPin } from '../thread-state.js';
 import {
   getLocalModelsStatus,
   downloadLocalModel,
@@ -69,6 +72,9 @@ export function registerRagRoutes(app: FastifyInstance, deps: ServerDeps): void 
       mimeType?: string;
       model?: string;
       threadId?: string;
+      /** 原件字节(base64)。有它才谈得上留档 —— spec 2026-08-14 §3。 */
+      file?: { name: string; base64: string };
+      fromPath?: string;
     };
     const threadId = requireThreadId(body, reply);
     if (!threadId) return { ok: false, message: 'threadId is required' };
@@ -86,7 +92,26 @@ export function registerRagRoutes(app: FastifyInstance, deps: ServerDeps): void 
       body.mimeType,
       { model: body.model?.trim() || 'default' },
     );
-    return { ok: true, ...result };
+
+    // 导入即留档(spec §3):对话里传进来的文档,原件同样按内容哈希留一份进项目
+    // 文件夹。留不成是**要说出来的事实**,不是错误 —— 抽取出的文本已经入库了。
+    const pin = await resolveThreadPin(threadId, ctx);
+    const folder = pin ? (await getProject(ctx.tenantId, pin))?.folder : undefined;
+    const archive = await archiveImportedFile({
+      folder,
+      projectId: pin,
+      file: body.file,
+      fromPath: body.fromPath,
+    });
+    return {
+      ok: true,
+      ...result,
+      archived: archive.archived,
+      ...(archive.archived
+        ? { original: { hash: archive.source!.fileHash, name: archive.source!.fileName } }
+        : {}),
+      ...(archive.reason ? { archiveNote: archive.reason } : {}),
+    };
   });
 
   app.delete('/api/rag/documents/:id', async (req, reply) => {

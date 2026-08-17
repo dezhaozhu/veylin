@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import type { TableSheetSource } from '@veylin/db';
+import { isFileSource, type TableSheetSource } from '@veylin/db';
+import { checkSourcesChange } from './project-sources-immutable.js';
 import type { Project } from '@veylin/shared';
 import {
   addTableColumn,
@@ -14,10 +15,15 @@ import {
   getTableSheetMeta,
   importTableSheet,
   isProjectPinMismatch,
+  isUnscopedProjectData,
   listTableColumns,
+  listTableRows,
   listTableRowsPage,
   listTableSheets,
+  flushTablePersist,
+  tableRowKey,
   MAX_TABLE_GET_LIMIT,
+  renameTableSheet,
   resolveTableSheetId,
   stampTableSheetSource,
   updateTableRow,
@@ -28,6 +34,13 @@ const cellValueSchema = z.union([z.string(), z.number()]);
 
 import { unwrapMcpPayload } from './mcp-payload.js';
 import { resolveCompassServer } from './mcp-scoping.js';
+import { getSelection } from './table-selection.js';
+import { PERSONAL_SCOPE, projectScope, sheetIdFor, type SheetScope } from './table-scope.js';
+import { queryTableRows } from './table-query.js';
+import { readProjectFile } from './project-file-read.js';
+import { getProject, updateProject } from './project-store.js';
+import { DEV_TENANT_ID } from './tenant.js';
+import { fetchCompassData, type CompassRestScope } from './compass-rest.js';
 
 export { unwrapMcpPayload } from './mcp-payload.js';
 
@@ -59,11 +72,15 @@ export type GroupsGetter = () => McpServerGroups;
  *   resolved toolset key — every project resolves the same `'compass'` key,
  *   so stamping the key would make all projects' stamps identical and blind
  *   `isProjectPinMismatch` completely.
+ * - `rest` — the REST data-plane scope (spec 2026-08-06 三形态 §2 ①) for the
+ *   same pin: `undefined` whenever `toolsets`/`entryPin`/`projectId` fall
+ *   back (no pin, no entry) — there is no scene set to bind a REST call to.
  */
 export type CompassLoadScope = {
   toolsets?: Record<string, unknown>;
   entryPin: string | null;
   projectId: string | null;
+  rest?: CompassRestScope;
 };
 
 /**
@@ -118,7 +135,7 @@ function tenantFromPayload(payload: Record<string, unknown>): string | undefined
  */
 async function stampCompassLoadSource(
   sheetId: string,
-  compass: ResolvedCompass,
+  serverName: string,
   payload: Record<string, unknown>,
   projectId: string | null,
 ): Promise<void> {
@@ -126,8 +143,10 @@ async function stampCompassLoadSource(
     // Display only. The durable cross-project identity is `project` below —
     // NEVER this key (plan risk #1: post-v3 every project resolves the same
     // 'compass' toolset key, so keying provenance on it would collapse every
-    // project's stamp into one value and blind isProjectPinMismatch).
-    server: compass.serverName,
+    // project's stamp into one value and blind isProjectPinMismatch). Also
+    // the REST data-plane path's stand-in for a toolset key — the pin's
+    // `entryPin` — since REST loads never resolve one.
+    server: serverName,
     // The pinned PROJECT id at load time. Absent only for loads with no
     // project scope at all (legacy ungrouped deployments) — those stamps stay
     // server-only and hard-refuse under any project pin via the legacy shim.
@@ -171,8 +190,29 @@ function buildProvenanceWarning(
   // project-id pin) — never a raw string compare against the toolset key.
   if (!isProjectPinMismatch(source, projectPin, projects)) return undefined;
   return (
-    `注意: 本表数据来自项目 ${source.project ?? source.server}(租户 ${source.tenant ?? '未知'}, ${source.loadedAt} 加载), ` +
+    `注意: 本表数据来自${describeSource(source)}, ` +
     `与当前会话项目 ${projectPin} 不一致 — 勿与当前项目的实时数据混用`
+  );
+}
+
+/** 一句给人看的来源描述,两类来源各说各的话(spec §4)。 */
+function describeSource(source: TableSheetSource): string {
+  if (isFileSource(source)) {
+    return `文件「${source.fileName}」(${source.importedAt} 导入)`;
+  }
+  return `项目 ${source.project ?? source.server}(租户 ${source.tenant ?? '未知'}, ${source.loadedAt} 加载)`;
+}
+
+/**
+ * G1 refusal text: says what the sheet IS (project data, whose, when loaded),
+ * that it cannot ground this turn, and the one gesture that fixes it. No
+ * hedging and no advice the model can read as optional — the rows are already
+ * gone by the time it reads this.
+ */
+function buildUnscopedProjectDataWarning(source: TableSheetSource): string {
+  return (
+    `本表是项目数据(来自${describeSource(source)});当前会话未绑定任何项目,` +
+    `这些数据不能作为依据 — 请将本会话移动到该项目,或在该项目下新建会话`
   );
 }
 
@@ -185,6 +225,11 @@ interface TableToolCtx {
  * `execute` ctx — `requestContext.get('projectPin')`, set by routes/chat.ts.
  * Used by `table_get`'s provenance check.
  */
+function readThreadId(ctx?: TableToolCtx): string | null {
+  return (ctx?.requestContext?.get('threadId') as string | null | undefined) ?? null;
+}
+
+
 function readProjectPin(ctx?: TableToolCtx): string | null {
   return (ctx?.requestContext?.get('projectPin') as string | null | undefined) ?? null;
 }
@@ -200,22 +245,48 @@ function readTenantProjects(ctx?: TableToolCtx): Project[] {
   return Array.isArray(value) ? (value as Project[]) : [];
 }
 
+
+/** 这一轮对话所在项目的文件夹(没绑或不在项目里 → undefined)。 */
+async function folderOfCtx(ctx?: TableToolCtx): Promise<string | undefined> {
+  const pin = readProjectPin(ctx);
+  if (!pin) return undefined;
+  const tenant = (ctx?.requestContext?.get('tenantId') as string | undefined) ?? undefined;
+  if (!tenant) return undefined;
+  const { getProject } = await import('./project-store.js');
+  return (await getProject(tenant, pin))?.folder;
+}
+
+/**
+ * 这一轮对话在哪个作用域(spec §3.3)。唯一入口 —— 三个调用面(agent 工具、
+ * REST 路由、面板)都从这里推导,规则只有一处。
+ */
+export function resolveSheetScope(
+  _threadId: string | null | undefined,
+  projectPin: string | null | undefined,
+): SheetScope {
+  return projectPin ? projectScope(projectPin) : PERSONAL_SCOPE;
+}
+
+function scopeFromCtx(ctx?: TableToolCtx): SheetScope {
+  return resolveSheetScope(readThreadId(ctx), readProjectPin(ctx));
+}
+
 /**
  * Compose the per-request Compass scope for the load_compass_* AGENT tools
  * from the chat turn's requestContext (all three set by routes/chat.ts):
  * `scopedMcpToolsets` (the final per-request toolsets, pooled compass
- * included) + `pinnedProjectScope` (`{id, entryPin}` — the provenance project
- * id and the entry-level resolution pin). No requestContext at all (a tool
- * invoked outside a chat turn) → `undefined`, i.e. tenant-getter fallback
- * with a null pin — today's no-thread-context refusal behavior under
- * ambiguity.
+ * included) + `pinnedProjectScope` (`{id, entryPin, rest}` — the provenance
+ * project id, the entry-level resolution pin, and the REST data-plane scope
+ * for the same pin). No requestContext at all (a tool invoked outside a chat
+ * turn) → `undefined`, i.e. tenant-getter fallback with a null pin — today's
+ * no-thread-context refusal behavior under ambiguity.
  */
 function compassScopeFromCtx(ctx?: TableToolCtx): CompassLoadScope | undefined {
   const rc = ctx?.requestContext;
   if (!rc) return undefined;
   const scoped = rc.get('scopedMcpToolsets');
   const pinScope = rc.get('pinnedProjectScope') as
-    | { id: string; entryPin: string | null }
+    | { id: string; entryPin: string | null; rest?: CompassRestScope | null }
     | null
     | undefined;
   return {
@@ -223,6 +294,7 @@ function compassScopeFromCtx(ctx?: TableToolCtx): CompassLoadScope | undefined {
       scoped && typeof scoped === 'object' ? (scoped as Record<string, unknown>) : undefined,
     entryPin: pinScope?.entryPin ?? null,
     projectId: pinScope?.id ?? null,
+    rest: pinScope?.rest ?? undefined,
   };
 }
 
@@ -234,51 +306,39 @@ function compassScopeFromCtx(ctx?: TableToolCtx): CompassLoadScope | undefined {
  */
 export const SCHEDULE_SHEET_ID = 'schedule';
 
-export async function importCompassScheduleSheet(
-  getMcpToolsets: ToolsetsGetter | undefined,
-  input: { limit?: number; workshop?: string; status?: string; order_id?: string },
-  getMcpGroups?: GroupsGetter,
-  scope?: CompassLoadScope,
-): Promise<
-  | { ok: true; sheet: string; imported: number; total: number; columns: number }
-  | { ok: false; error: string }
-> {
-  // Resolve live toolsets via the getter (not a snapshot — rebuildMcp re-assigns the var)
-  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
-  const tool = compass?.toolset['get_schedule_rows'];
-  if (!compass || !tool) {
-    return {
-      ok: false as const,
-      error: 'compass MCP server not connected (no get_schedule_rows)',
-    };
-  }
+/**
+ * 建表(只在第一次)并给页签一个人话名字。
+ *
+ * id 保持英文且稳定 —— 工具、REST、选区引用全按 id 走;显示名是给人看的,而三张
+ * Compass 表本来就是同一个模型的三个**焦段**(订单 / 工序 / 派工),页签直接这么写,
+ * 就不必再在工具栏上放一个说同一件事的切换器。
+ */
+function ensureCompassSheet(shortName: string, label: string, scope: SheetScope): string {
+  const id = sheetIdFor(scope, shortName);
+  if (listTableSheets(scope).find((s) => s.id === id)) return id;
+  createTableSheet(shortName, scope);
+  renameTableSheet(id, label);
+  return id;
+}
 
-  // Load the FULL result set into the grid sheet (not just 500). This is safe for
-  // the agent's context: importCompassScheduleSheet returns only a summary
-  // (imported/total counts), never the rows — the rows go straight into the grid.
-  // The grid paginates them client-side. An explicit input.limit still wins.
-  const res: unknown = await tool.execute({
-    limit: input.limit ?? 1_000_000,
-    workshop: input.workshop,
-    status: input.status,
-    order_id: input.order_id,
-  });
 
-  const payload = unwrapMcpPayload(res);
+/**
+ * Compass 装载的落点作用域:**必须有项目**。项目数据只能落在项目里 —— 个人区
+ * 装不了(spec §3.4)。今天靠 `resolveCompassServer` 拿不到 entry 间接失败,
+ * 报的是 "not connected",原因不对;这里显式拒绝并说人话。
+ */
+function compassSheetScope(scope?: CompassLoadScope): SheetScope | null {
+  return scope?.projectId ? projectScope(scope.projectId) : null;
+}
 
-  const columns = (payload['columns'] as Array<Record<string, unknown>> | undefined) ?? [];
-  const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
+const NO_PROJECT_ERROR = '当前会话没有选项目,无法装载项目数据 —— 先选一个项目再试';
 
-  // Ensure the 'schedule' sheet exists (create on first use; fire-and-forget persist is fine)
-  const existingSheets = listTableSheets();
-  if (!existingSheets.find((s) => s.id === SCHEDULE_SHEET_ID)) {
-    createTableSheet(SCHEDULE_SHEET_ID);
-  }
-
-  // Build rich column descriptors from Compass's typed columns: friendly display
-  // name + type + (for status columns) the real option set — so the grid shows
-  // readable headers and colored status badges without blanking derived/solved.
-  const descriptors = columns
+/**
+ * Compass 的 typed columns → 网格的列描述:显示名 + 类型 + (status 列的)选项集与
+ * 语义色。域知识全部来自服务端 —— Veylin 这边不重新硬编码一份状态色表。
+ */
+function compassColumnDescriptors(columns: Array<Record<string, unknown>>) {
+  return columns
     .map((c) => {
       const key = String(c['key'] ?? '');
       if (!key) return null;
@@ -299,22 +359,168 @@ export async function importCompassScheduleSheet(
       };
     })
     .filter((d): d is NonNullable<typeof d> => d !== null);
+}
+
+export async function importCompassScheduleSheet(
+  getMcpToolsets: ToolsetsGetter | undefined,
+  input: { limit?: number; workshop?: string; status?: string; order_id?: string },
+  getMcpGroups?: GroupsGetter,
+  scope?: CompassLoadScope,
+  seams: { fetchImpl?: typeof fetch } = {},
+): Promise<
+  | { ok: true; sheet: string; imported: number; total: number; columns: number }
+  | { ok: false; error: string }
+> {
+  const sheetScope = compassSheetScope(scope);
+  if (!sheetScope) return { ok: false as const, error: NO_PROJECT_ERROR };
+  // Load the FULL result set into the grid sheet (not just 500). This is safe for
+  // the agent's context: importCompassScheduleSheet returns only a summary
+  // (imported/total counts), never the rows — the rows go straight into the grid.
+  // The grid paginates them client-side. An explicit input.limit still wins.
+  let payload: Record<string, unknown> | undefined;
+  let sourceName: string | undefined;
+  if (scope?.rest) {
+    // Data-plane first (spec 2026-08-06 ①): bulk rows come over plain REST —
+    // no MCP framing, no double serialization, no tool-channel timeout class.
+    const r = await fetchCompassData(
+      scope.rest,
+      '/data/schedule-rows',
+      {
+        limit: input.limit ?? 1_000_000,
+        workshop: input.workshop,
+        status: input.status,
+        order_id: input.order_id,
+      },
+      seams,
+    );
+    if (r.ok) {
+      payload = r.payload;
+      sourceName = scope.entryPin ?? 'compass';
+    } else {
+      console.warn('[table-tools] compass data-plane fetch failed, falling back to MCP:', r.error);
+    }
+  }
+  if (!payload) {
+    // Resolve live toolsets via the getter (not a snapshot — rebuildMcp re-assigns the var)
+    const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
+    const tool = compass?.toolset['get_schedule_rows'];
+    if (!compass || !tool) {
+      return {
+        ok: false as const,
+        error: 'compass MCP server not connected (no get_schedule_rows)',
+      };
+    }
+    const res: unknown = await tool.execute({
+      limit: input.limit ?? 1_000_000,
+      workshop: input.workshop,
+      status: input.status,
+      order_id: input.order_id,
+    });
+    payload = unwrapMcpPayload(res);
+    sourceName = compass.serverName;
+  }
+
+  const columns = (payload['columns'] as Array<Record<string, unknown>> | undefined) ?? [];
+  const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
+
+  // Ensure the 'schedule' sheet exists (create on first use; fire-and-forget persist is fine)
+  const sheetId = ensureCompassSheet(SCHEDULE_SHEET_ID, '工序', sheetScope);
+
+  const descriptors = compassColumnDescriptors(columns);
 
   const result = importTableSheet(
-    SCHEDULE_SHEET_ID,
+    sheetId,
     [],
     rows as Array<Record<string, string | number>>,
     undefined,
     descriptors,
   );
-  await stampCompassLoadSource(SCHEDULE_SHEET_ID, compass, payload, scope?.projectId ?? null);
+  await stampCompassLoadSource(sheetId, sourceName!, payload, scope?.projectId ?? null);
+  // 大表导入的落盘是排队写的:等它走完再说"装好了"(实测截断过一次,49,350 → 39,685)
+  await flushTablePersist();
 
   return {
     ok: true as const,
-    sheet: SCHEDULE_SHEET_ID,
+    sheet: sheetId,
     imported: rows.length,
     total: (payload['total'] as number | undefined) ?? rows.length,
     columns: result?.columns?.length ?? columns.length,
+  };
+}
+
+export const WORKORDERS_SHEET_ID = 'workorders';
+
+/**
+ * 派工焦段:把整个场景的三级(设备级工序工单)作为**主行集**装进 `workorders` sheet。
+ *
+ * 与 master-detail 抽屉的区别不是显示样式,是**谁是主行集**:抽屉里的子行不参与主表的
+ * 排序/筛选/分组,所以「这周哪台压机堵了」在抽屉里问不出来 —— 那得让三级自己当主行集。
+ * 反过来,「这一单到哪了」用抽屉更好,不必离开订单层。两个都要,各管一件事。
+ *
+ * Compass 侧同一个端点按有无单据范围区分两种模式(见 joint_service.work_order_rows_payload)。
+ */
+export async function importCompassWorkorderSheet(
+  getMcpToolsets: ToolsetsGetter | undefined,
+  input: { limit?: number; resource?: string; status?: string },
+  getMcpGroups?: GroupsGetter,
+  scope?: CompassLoadScope,
+  seams: { fetchImpl?: typeof fetch } = {},
+): Promise<
+  | { ok: true; sheet: string; imported: number; total: number; columns: number }
+  | { ok: false; error: string }
+> {
+  const sheetScope = compassSheetScope(scope);
+  if (!sheetScope) return { ok: false as const, error: NO_PROJECT_ERROR };
+  const params = {
+    limit: input.limit ?? 1_000_000,
+    resource: input.resource,
+    status: input.status,
+  };
+  let payload: Record<string, unknown> | undefined;
+  let sourceName: string | undefined;
+  if (scope?.rest) {
+    const r = await fetchCompassData(scope.rest, '/data/workorder-rows', params, seams);
+    if (r.ok) {
+      payload = r.payload;
+      sourceName = scope.entryPin ?? 'compass';
+    } else {
+      console.warn('[table-tools] compass data-plane fetch failed, falling back to MCP:', r.error);
+    }
+  }
+  if (!payload) {
+    const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
+    const tool = compass?.toolset['get_workorder_rows'];
+    if (!compass || !tool) {
+      return { ok: false as const, error: 'compass MCP server not connected (no get_workorder_rows)' };
+    }
+    const res: unknown = await tool.execute(params);
+    payload = unwrapMcpPayload(res);
+    sourceName = compass.serverName;
+  }
+
+  const columns = (payload['columns'] as Array<Record<string, unknown>> | undefined) ?? [];
+  const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
+  const sheetId = ensureCompassSheet(WORKORDERS_SHEET_ID, '派工', sheetScope);
+  const descriptors = compassColumnDescriptors(columns);
+  const result = importTableSheet(
+    sheetId,
+    [],
+    rows as Array<Record<string, string | number>>,
+    undefined,
+    descriptors,
+  );
+  await stampCompassLoadSource(sheetId, sourceName!, payload, scope?.projectId ?? null);
+  // 大表导入的落盘是排队写的:等它走完再说"装好了"(实测截断过一次,49,350 → 39,685)
+  await flushTablePersist();
+
+  return {
+    ok: true as const,
+    sheet: sheetId,
+    imported: rows.length,
+    // Compass 报的是筛完、切页前的真数。装进来的是 imported —— 两个数不合并,
+    // 合并了就等于把"装了 500 行"说成"一共 500 行"。
+    total: (payload['total'] as number | undefined) ?? rows.length,
+    columns: result?.columns?.length ?? descriptors.length,
   };
 }
 
@@ -328,6 +534,8 @@ export async function importCompassResourceSheet(
   | { ok: true; sheet: string; imported: number }
   | { ok: false; error: string }
 > {
+  const sheetScope = compassSheetScope(scope);
+  if (!sheetScope) return { ok: false as const, error: NO_PROJECT_ERROR };
   const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
   const tool = compass?.toolset['get_resources'];
   if (!compass || !tool) {
@@ -339,9 +547,7 @@ export async function importCompassResourceSheet(
   const resources =
     (payload['resources'] as Array<Record<string, unknown>> | undefined) ?? [];
 
-  if (!listTableSheets().find((s) => s.id === RESOURCES_SHEET_ID)) {
-    createTableSheet(RESOURCES_SHEET_ID);
-  }
+  const sheetId = ensureCompassSheet(RESOURCES_SHEET_ID, '资源', sheetScope);
 
   // Compass's per-resource `trend` is a 12-month forward load series (array);
   // store it as the sparkline column's comma-separated form.
@@ -364,9 +570,10 @@ export async function importCompassResourceSheet(
     { key: 'load_days', name: '负荷(天)', type: 'number' as const },
     { key: 'source', name: '来源', type: 'text' as const },
   ];
-  importTableSheet(RESOURCES_SHEET_ID, [], rows, undefined, descriptors);
-  await stampCompassLoadSource(RESOURCES_SHEET_ID, compass, payload, scope?.projectId ?? null);
-  return { ok: true as const, sheet: RESOURCES_SHEET_ID, imported: rows.length };
+  importTableSheet(sheetId, [], rows, undefined, descriptors);
+  await stampCompassLoadSource(sheetId, compass.serverName, payload, scope?.projectId ?? null);
+  await flushTablePersist();
+  return { ok: true as const, sheet: sheetId, imported: rows.length };
 }
 
 export const ORDERS_SHEET_ID = 'orders';
@@ -378,17 +585,36 @@ export async function importCompassOrderSheet(
   getMcpToolsets: ToolsetsGetter | undefined,
   getMcpGroups?: GroupsGetter,
   scope?: CompassLoadScope,
+  seams: { fetchImpl?: typeof fetch } = {},
 ): Promise<
   | { ok: true; sheet: string; imported: number; total: number; columns: number }
   | { ok: false; error: string }
 > {
-  const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
-  const tool = compass?.toolset['get_schedule_rows'];
-  if (!compass || !tool) {
-    return { ok: false as const, error: 'compass MCP server not connected (no get_schedule_rows)' };
+  const sheetScope = compassSheetScope(scope);
+  if (!sheetScope) return { ok: false as const, error: NO_PROJECT_ERROR };
+  let payload: Record<string, unknown> | undefined;
+  let sourceName: string | undefined;
+  if (scope?.rest) {
+    // Data-plane first (spec 2026-08-06 ①) — same endpoint as the schedule
+    // sheet, just aggregated client-side below; only `limit` is meaningful here.
+    const r = await fetchCompassData(scope.rest, '/data/schedule-rows', { limit: 1_000_000 }, seams);
+    if (r.ok) {
+      payload = r.payload;
+      sourceName = scope.entryPin ?? 'compass';
+    } else {
+      console.warn('[table-tools] compass data-plane fetch failed, falling back to MCP:', r.error);
+    }
   }
-  const res: unknown = await tool.execute({ limit: 1_000_000 });
-  const payload = unwrapMcpPayload(res);
+  if (!payload) {
+    const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, scope);
+    const tool = compass?.toolset['get_schedule_rows'];
+    if (!compass || !tool) {
+      return { ok: false as const, error: 'compass MCP server not connected (no get_schedule_rows)' };
+    }
+    const res: unknown = await tool.execute({ limit: 1_000_000 });
+    payload = unwrapMcpPayload(res);
+    sourceName = compass.serverName;
+  }
   const rows = (payload['rows'] as Array<Record<string, unknown>> | undefined) ?? [];
 
   // Aggregate the per-工序 rows into one row per order.
@@ -445,9 +671,11 @@ export async function importCompassOrderSheet(
     { key: 'end', name: '计划完工', type: 'text' as const },
     { key: 'due_at', name: '交期', type: 'text' as const },
   ];
-  if (!listTableSheets().find((s) => s.id === ORDERS_SHEET_ID)) createTableSheet(ORDERS_SHEET_ID);
-  importTableSheet(ORDERS_SHEET_ID, [], orderRows as Array<Record<string, string | number>>, undefined, descriptors);
-  await stampCompassLoadSource(ORDERS_SHEET_ID, compass, payload, scope?.projectId ?? null);
+  const sheetId = ensureCompassSheet(ORDERS_SHEET_ID, '订单', sheetScope);
+  importTableSheet(sheetId, [], orderRows as Array<Record<string, string | number>>, undefined, descriptors);
+  await stampCompassLoadSource(sheetId, sourceName!, payload, scope?.projectId ?? null);
+  // 大表导入的落盘是排队写的:等它走完再说"装好了"(实测截断过一次,49,350 → 39,685)
+  await flushTablePersist();
   return {
     ok: true as const, sheet: ORDERS_SHEET_ID,
     imported: orderRows.length, total: orderRows.length, columns: descriptors.length,
@@ -479,6 +707,13 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         .max(MAX_TABLE_GET_LIMIT)
         .optional()
         .describe(`Rows per page (default ${DEFAULT_TABLE_GET_LIMIT}, max ${MAX_TABLE_GET_LIMIT}).`),
+      selection_id: z
+        .string()
+        .optional()
+        .describe(
+          '用户在表格里圈选后 @ 进来的选区 id(形如 @表格[… #a1b2c3d4] 里的那串)。'
+          + '给了它就只返回选中的行与列 —— 取的是**当前值**,不是圈选那一刻的快照。',
+        ),
     }),
     outputSchema: z.object({
       sheet: z.string(),
@@ -491,15 +726,21 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         .optional(),
       rows: z.array(rowSchema).optional(),
       notice: z.string().optional(),
+      // 两类来源(spec 2026-08-14 §4):connector = 会腐烂的缓存(有 loadedAt),
+      // file = 不可变原件解析来的(有 fileHash/fileName)。字段都可选,由 kind 区分。
       source: z
         .object({
-          server: z.string(),
+          kind: z.enum(['connector', 'file']).optional(),
+          server: z.string().optional(),
           project: z
             .string()
             .optional()
             .describe('Pinned project id at load time (v3 durable provenance identity).'),
           tenant: z.string().optional(),
-          loadedAt: z.string(),
+          loadedAt: z.string().optional(),
+          fileHash: z.string().optional().describe('原件 sha256(内容寻址)'),
+          fileName: z.string().optional(),
+          importedAt: z.string().optional(),
         })
         .optional()
         .describe('Load provenance, verbatim from sheet metadata. Absent on legacy unstamped sheets.'),
@@ -516,7 +757,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         ),
     }),
     execute: async (input, ctx?: TableToolCtx) => {
-      const sheet = resolveTableSheetId(input.sheet);
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const source = getTableSheetMeta(sheet)?.source ?? undefined;
       // v3: both pin and stamp are PROJECT ids; tenantProjects feeds the
       // legacy-stamp shim (see isProjectPinMismatch's re-key note).
@@ -536,11 +777,45 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         };
       }
 
+      // G1: no project pin at all (个人 area, or a call outside a chat turn) +
+      // a STAMPED sheet = project data with no project in scope. Withheld for
+      // the same reason the grouped MCP servers are: the alternative — which is
+      // what shipped until now — is the agent quietly narrating an analysis off
+      // a project's stale sheet with nothing telling the user it had no
+      // Compass basis. Unstamped (personal) sheets fall through untouched.
+      if (isUnscopedProjectData(source, projectPin)) {
+        return { sheet, refused: true, warning: buildUnscopedProjectDataWarning(source!) };
+      }
+
       // z.coerce.number() already validated string→number; Number() re-narrows the
       // zod-v4 `unknown` input type to a clean number (idempotent at runtime).
+      // 选区引用:用户圈的那块。**按引用取当前值**,而不是把圈选那一刻的数据塞进
+      // 对话 —— 后者五分钟后就成了假话(与 G1 同一个病)。
+      const selection = input.selection_id
+        ? getSelection(readThreadId(ctx) ?? '', String(input.selection_id))
+        : undefined;
+      if (input.selection_id && !selection) {
+        return {
+          sheet,
+          warning: `选区 #${String(input.selection_id).trim().replace(/^#+/, '')}`
+            + ' 不在本会话里(可能已过期或属于别的会话);请让用户重新圈选。',
+        };
+      }
+
       const offset = Number(input.offset ?? 0);
       const limit = Number(input.limit ?? DEFAULT_TABLE_GET_LIMIT);
-      const { totalRows, rows } = listTableRowsPage(sheet, offset, limit);
+      const page = listTableRowsPage(sheet, offset, limit);
+      let { totalRows, rows } = page;
+      if (selection) {
+        const wanted = new Set(selection.rowKeys);
+        const all = listTableRows(sheet).filter((r) => wanted.has(tableRowKey(r)));
+        rows = selection.columns.length
+          ? all.map((r) => Object.fromEntries(
+              Object.entries(r).filter(([k]) => k === 'row_id' || selection.columns.includes(k)),
+            ) as typeof r)
+          : all;
+        totalRows = rows.length;
+      }
       const hasMore = offset + rows.length < totalRows;
       const warning = buildProvenanceWarning(source, projectPin, tenantProjects);
       return {
@@ -559,9 +834,14 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         ...(warning ? { warning } : {}),
         ...(hasMore
           ? {
+              // 还剩很多没看时,指向 **查** 而不是继续翻 —— 四万九千行翻 247 页
+              // 既读不完也读不懂。翻页只对"就差一点"的情况有意义。
               notice:
                 `Showing rows ${offset + 1}–${offset + rows.length} of ${totalRows}. ` +
-                `Call table_get again with offset=${offset + rows.length} for the next page.`,
+                (totalRows - offset - rows.length > limit
+                  ? `还有 ${totalRows - offset - rows.length} 行没看 —— **用 table_query** 按列筛选或分组计数`
+                    + `(不认识这张表就先 group_by 某一列看看有哪些值),不要一页页翻。`
+                  : `Call table_get again with offset=${offset + rows.length} for the next page.`),
             }
           : totalRows === 0
             ? {
@@ -589,8 +869,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       row: rowSchema.nullable(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const updated = await updateTableRow(input.row_key, input.values, sheet);
       if (!updated) {
         return { ok: false, sheet, row: null, message: `Row ${input.row_key} not found` };
@@ -615,8 +895,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       row: rowSchema.nullable(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const updated = await updateTableRow(
         input.row_key,
         { [input.column]: input.value },
@@ -646,8 +926,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       row: rowSchema.nullable(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const row = addTableRow(sheet);
       if (!row) return { ok: false, sheet, row: null, message: 'Failed to add row' };
       return { ok: true, sheet, row, message: 'Added a blank row' };
@@ -667,8 +947,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       removed: z.number(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const { removed } = deleteTableRows(sheet, input.row_keys);
       return { ok: removed > 0, sheet, removed, message: `Deleted ${removed} row(s)` };
     },
@@ -687,8 +967,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       column: z.object({ key: z.string(), name: z.string() }).nullable(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const column = addTableColumn(sheet, input.name);
       if (!column) return { ok: false, sheet, column: null, message: 'Failed to add column' };
       return {
@@ -712,8 +992,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       sheet: z.string(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const ok = deleteTableColumn(sheet, input.column);
       return {
         ok,
@@ -734,8 +1014,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       sheet: z.object({ id: z.string(), name: z.string() }).nullable(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const sheet = createTableSheet(input.name);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = createTableSheet(input.name, scopeFromCtx(ctx));
       if (!sheet) return { ok: false, sheet: null, message: 'Failed to create sheet' };
       return { ok: true, sheet: { id: sheet.id, name: sheet.name }, message: `Created sheet ${sheet.name}` };
     },
@@ -751,8 +1031,9 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       ok: z.boolean(),
       message: z.string(),
     }),
-    execute: async (input) => {
-      const ok = await deleteTableSheet(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const id = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
+      const ok = await deleteTableSheet(id);
       return { ok, message: ok ? `Deleted sheet ${input.sheet}` : 'Failed to delete sheet' };
     },
   });
@@ -796,6 +1077,91 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       ),
   });
 
+  /**
+   * 查一张表(筛选 / 分组计数),而不是翻它。
+   *
+   * `table_get` 一次最多 200 行 —— 四万九千行的表要翻 247 次,等于读不了。这个
+   * 工具补上 Compass 侧早就有的口径:筛完的真数、写错列名就拒绝、分组计数当作
+   * 认识陌生表的入口。
+   */
+  const tableQuery = createTool({
+    id: 'table_query',
+    description:
+      '查询一张表:按列筛选、分组计数、只取需要的列。**大表要用它,不要用 table_get 翻页**'
+      + '(table_get 一次最多 200 行)。返回的 matched 是筛完的真数,returned 是这次给了几行。'
+      + '不认识一张表时,先用 group_by 看某列有哪些值、各多少行。',
+    inputSchema: z.object({
+      sheet: z.string().optional().describe('sheet id;默认当前主 sheet'),
+      filters: z
+        .array(z.object({
+          column: z.string(),
+          op: z.enum(['eq', 'contains', 'gt', 'lt', 'empty', 'nonempty']),
+          value: z.string().optional(),
+        }))
+        .optional()
+        .describe('多个条件是**且**。列名写错会被拒绝并列出可用列。'),
+      group_by: z.string().optional().describe('按这一列分组计数(降序)'),
+      group_limit: z.coerce.number().int().min(1).optional(),
+      columns: z.array(z.string()).optional().describe('只取这些列(省 token)'),
+      offset: z.coerce.number().int().min(0).optional(),
+      limit: z.coerce.number().int().min(0).max(MAX_TABLE_GET_LIMIT).optional()
+        .describe(`最多给几行(默认 50,上限 ${MAX_TABLE_GET_LIMIT});只想要计数就给 0`),
+    }),
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
+      const meta = getTableSheetMeta(sheet);
+      // 归属与来源的两道判据与 table_get 完全一致 —— 一个事实一个口径。
+      const projectPin = readProjectPin(ctx);
+      const source = meta?.source ?? undefined;
+      if (isProjectPinMismatch(source, projectPin, readTenantProjects(ctx))) {
+        return { sheet, refused: true, message: buildProvenanceWarning(source, projectPin, readTenantProjects(ctx)) ?? '' };
+      }
+      if (isUnscopedProjectData(source, projectPin)) {
+        return { sheet, refused: true, message: buildUnscopedProjectDataWarning(source!) };
+      }
+      const cols = listTableColumns(sheet).map((c) => c.key);
+      const out = queryTableRows(listTableRows(sheet), cols, {
+        filters: input.filters,
+        groupBy: input.group_by,
+        // z.coerce 之后运行时已是 number;Number() 只是把 zod-v4 的 unknown 收窄回来
+        groupLimit: input.group_limit == null ? undefined : Number(input.group_limit),
+        columns: input.columns,
+        offset: input.offset == null ? undefined : Number(input.offset),
+        limit: input.limit == null ? undefined : Number(input.limit),
+      });
+      return { sheet, ...out };
+    },
+  });
+
+  /**
+   * 读项目文件夹里的一份文件(按需)。
+   *
+   * **文件夹即上下文 ≠ 把文件塞进 context**:提示块里只有文件清单,内容要用时再取。
+   * 表格只给概览并指向 table_query —— 别让概览被当成全量分析。
+   */
+  const projectFileRead = createTool({
+    id: 'project_file_read',
+    description:
+      '读项目文件夹里的一份文件(路径相对项目文件夹)。文本/Markdown/Word 给正文(可 offset 翻);'
+      + '表格只给概览(页签、表头、行数、前几行)——要筛选统计请把它导入成表再用 table_query。'
+      + '读不了的类型会直说,并给替代做法。',
+    inputSchema: z.object({
+      path: z.string().describe('相对项目文件夹的路径,例如 `分析/瓶颈复盘.md`'),
+      offset: z.coerce.number().int().min(0).optional().describe('文本从第几行开始'),
+      limit: z.coerce.number().int().min(1).optional().describe('给多少行(文本)/多少行数据(表格)'),
+    }),
+    execute: async (input, ctx?: TableToolCtx) => {
+      const folder = await folderOfCtx(ctx);
+      if (!folder) {
+        return { kind: 'refused', notice: '当前项目没有绑定文件夹 —— 没有可读的项目文件。' };
+      }
+      return readProjectFile(folder, input.path, {
+        offset: input.offset == null ? undefined : Number(input.offset),
+        limit: input.limit == null ? undefined : Number(input.limit),
+      });
+    },
+  });
+
   const tableChart = createTool({
     id: 'table_chart',
     description:
@@ -816,8 +1182,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         .optional()
         .describe('数值聚合（配合分组时用）'),
     }),
-    execute: async (input) => {
-      const sheet = resolveTableSheetId(input.sheet);
+    execute: async (input, ctx?: TableToolCtx) => {
+      const sheet = resolveTableSheetId(input.sheet, scopeFromCtx(ctx));
       const known = new Set(listTableColumns(sheet).map((c) => c.key));
       const missing = input.columns.filter((c) => !known.has(c));
       if (missing.length) {
@@ -847,6 +1213,25 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       importCompassOrderSheet(getMcpToolsets, getMcpGroups, compassScopeFromCtx(ctx)),
   });
 
+  const loadCompassWorkorders = createTool({
+    id: 'load_compass_workorders',
+    description:
+      '从 Compass 拉取本场景的三级派工行（每道现场工序一行：WBS/工序/设备工作中心/状态/计划与实际起止），' +
+      '写入名为 workorders 的表 sheet。这是把三级当**主行集**看——适合「哪台设备上堆了多少活」' +
+      '这类跨订单的问题；只想看某一单下面的三级，展开该订单那一行即可，不必装这张表。',
+    inputSchema: z.object({
+      resource: z.string().optional().describe('只看某台设备/工作中心（可选）'),
+      status: z.string().optional().describe('只看某个执行状态（可选）'),
+    }),
+    execute: async (input, ctx?: TableToolCtx) =>
+      importCompassWorkorderSheet(
+        getMcpToolsets,
+        { resource: input.resource, status: input.status },
+        getMcpGroups,
+        compassScopeFromCtx(ctx),
+      ),
+  });
+
   const loadCompassResources = createTool({
     id: 'load_compass_resources',
     description:
@@ -855,6 +1240,293 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     inputSchema: z.object({}),
     execute: async (_input, ctx?: TableToolCtx) =>
       importCompassResourceSheet(getMcpToolsets, getMcpGroups, compassScopeFromCtx(ctx)),
+  });
+
+  /**
+   * 把一个数据源挂到当前项目上。
+   *
+   * 这是"用了才进 context"那条路的**动作**那一半:agent 撞到"这个项目没接数据源"
+   * 之后,由它把用户指名的那个挂上去,之后就和一直挂着一样(零开销)。
+   *
+   * 三条守住:
+   * - **必须已授权**。这里只从 Compass 给你的场景里挑,挂不出新权限。
+   * - **必须钉了项目**。没钉就没有"这个项目"可言,拒绝比找一个默认的强。
+   * - **不替用户挑**。工具只接受明确的 source;"用户没说清楚就要问"由系统块
+   *   和这条描述共同要求 —— 挂错厂的后果是他对着另一个工厂的数据做决定,
+   *   而界面上看起来完全正常。
+   */
+  const attachProjectSource = createTool({
+    id: 'attach_project_source',
+    description:
+      '把一个数据源(场景)挂到当前项目上,之后这个项目的对话就能读它的数据。' +
+      '只能挂你已被授权的场景(先用 list_my_scenes 看有哪些)。' +
+      '**用户没有明确指定用哪个时,先问,不要替他挑一个。**',
+    inputSchema: z.object({
+      source: z.string().describe('场景代号,例如 guolu —— 必须来自 list_my_scenes 的结果'),
+    }),
+    execute: async (input: { source: string }, ctx?: TableToolCtx) => {
+      const scope = compassScopeFromCtx(ctx);
+      const projectId = scope?.projectId ?? null;
+      if (!projectId) {
+        return { ok: false, error: '这个会话没有钉定项目,没有"当前项目"可挂。' };
+      }
+      const tenantId = (ctx?.requestContext?.get('tenantId') as string | undefined) ?? DEV_TENANT_ID;
+      const project = await getProject(tenantId, projectId);
+      if (!project) return { ok: false, error: '找不到当前项目。' };
+      if (project.sources.includes(input.source)) {
+        return { ok: true, sources: project.sources, note: '这个数据源本来就挂着,没有改动。' };
+      }
+      // 这个工具只**加**,天然不违反"数据源不能换"(见 project-sources-immutable)。
+      // 仍然过一遍同一个判据,免得以后有人给它加个 replace 参数。
+      const next = [...project.sources, input.source];
+      const blocked = checkSourcesChange(project.sources, next);
+      if (blocked) return { ok: false, error: blocked };
+      try {
+        const updated = await updateProject(tenantId, projectId, { sources: next });
+        return { ok: true, sources: updated?.sources ?? next };
+      } catch (err) {
+        // 未授权的场景会在这里被拒 —— 挂载不能凭空造出权限。
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  });
+
+  /**
+   * 生成一份 Word / PPT,落进项目文件夹的 `生成/`。
+   *
+   * 三条:
+   * - **输入是 markdown**:模型本来就写 markdown,再发明一套结构只会让它填错格子。
+   * - **生成物不是原件**:进 `生成/`、只读、文件名带生成时间。原件仓一个字不动 ——
+   *   这一条不是这里的规矩,是 immutable-originals 的规矩,生成也得守。
+   * - **没绑文件夹就说没绑**,不悄悄找一个地方放 —— 人会以为文件生成好了,
+   *   然后哪儿也找不到。
+   */
+  const createDocument = createTool({
+    id: 'create_document',
+    description:
+      '按 markdown 生成一份 Word(docx)或 PPT(pptx),存进当前项目文件夹的「生成/」目录。' +
+      '用于交付一份汇报/说明文档。支持标题、段落、列表、表格、引用、代码块;' +
+      'PPT 按一级/二级标题或 `---` 分页。**不会改动任何已有文件。**',
+    inputSchema: z.object({
+      format: z.enum(['docx', 'pptx']).describe('docx=Word,pptx=PPT'),
+      title: z.string().describe('文档标题,也用作文件名'),
+      markdown: z.string().describe('正文,markdown'),
+    }),
+    execute: async (
+      input: { format: 'docx' | 'pptx'; title: string; markdown: string },
+      ctx?: TableToolCtx,
+    ) => {
+      const scope = compassScopeFromCtx(ctx);
+      const projectId = scope?.projectId ?? null;
+      if (!projectId) {
+        return { ok: false, error: '这个会话没有钉定项目,不知道该把文件放进哪个项目文件夹。' };
+      }
+      const tenantId = (ctx?.requestContext?.get('tenantId') as string | undefined) ?? DEV_TENANT_ID;
+      const folder = (await getProject(tenantId, projectId))?.folder;
+      if (!folder) {
+        return {
+          ok: false,
+          error: '这个项目还没有绑定本地文件夹,生成的文件没地方放。先在项目页绑一个。',
+        };
+      }
+      const { generateDocx, generatePptx, saveGenerated } = await import('./document-generate.js');
+      try {
+        const bytes = input.format === 'pptx'
+          ? await generatePptx(input.title, input.markdown)
+          : await generateDocx(input.title, input.markdown);
+        const saved = await saveGenerated(folder, input.title, input.format, bytes, new Date());
+        return {
+          ok: true,
+          name: saved.name,
+          bytes: bytes.length,
+          note: '已生成(只读)。在项目页的上下文清单里可以「在右侧打开」看它。',
+        };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  });
+
+  /**
+   * 当前项目的文件夹,**拿不到时说清是哪一种拿不到**:"没钉项目"和"项目没绑
+   * 文件夹"是两回事,该做的下一步也不同。(上面那个 folderOfCtx 把两者并成了
+   * undefined,调用处只好一律说"没绑文件夹" —— 那句话在没钉项目时是错的。)
+   */
+  const folderOrReason = async (ctx?: TableToolCtx) => {
+    const projectId = compassScopeFromCtx(ctx)?.projectId ?? null;
+    if (!projectId) return { error: '这个会话没有钉定项目,不知道该在哪个项目文件夹里找。' };
+    const tenantId = (ctx?.requestContext?.get('tenantId') as string | undefined) ?? DEV_TENANT_ID;
+    const folder = (await getProject(tenantId, projectId))?.folder;
+    if (!folder) return { error: '这个项目还没有绑定本地文件夹。先在项目页绑一个。' };
+    return { folder };
+  };
+
+  /**
+   * 改一份文档。**改发生在副本上,原件一个字节不动。**
+   *
+   * 为什么不原地改 docx:Word 会把一句话拆进好几个 `<w:r>`,选中的那段在文件里
+   * 很可能不是连续存着的 —— 保格式改 docx 是一整块最容易出错的代码。
+   *
+   * 锚点必须**一字不差且唯一**:找不到、有多处,都拒绝并说出下一步。不做模糊
+   * 匹配 —— 猜着改会改到别处,而且改完看不出来,人只会去看他以为改了的那一处。
+   */
+  const documentEdit = createTool({
+    id: 'document_edit',
+    description:
+      '改一份项目文档(Word/PPT/markdown 等)。**不改原件** —— 第一次改会自动从原件建一份' +
+      '可编辑副本(文稿/xxx.md),之后改都落在副本上,每次一个版本、可回退。' +
+      'find 必须是文档里一字不差的原文,而且只出现一处;不唯一时把它写长一点。' +
+      '改完把 diff 给用户看,由他确认 —— 不要替他决定改得对不对。',
+    inputSchema: z.object({
+      name: z.string().describe('原件文件名,例如 工艺说明.docx'),
+      find: z.string().describe('要替换的原文,一字不差'),
+      replace: z.string().describe('替换成什么'),
+      note: z.string().optional().describe('这次改的原因,记进版本历史'),
+    }),
+    execute: async (
+      input: { name: string; find: string; replace: string; note?: string },
+      ctx?: TableToolCtx,
+    ) => {
+      const got = await folderOrReason(ctx);
+      if (!got.folder) return { ok: false, error: got.error };
+      const { applyAnchoredEdit, openCopy, saveRevision } = await import('./document-copy.js');
+      try {
+        const copy = await openCopy(got.folder, input.name);
+        const out = applyAnchoredEdit(copy.text, input.find, input.replace);
+        if (!out.ok) return { ok: false, error: out.reason, created_copy: copy.created };
+        const rev = await saveRevision(got.folder, input.name, out.text, input.note ?? '按原文替换');
+        return {
+          ok: true,
+          copy: `文稿/${copy.path.split('/').pop()}`,
+          revision: rev.n,
+          diff: out.diff,
+          note: copy.created
+            ? '第一次改:已从原件建了可编辑副本,原件没有改动。'
+            : '改在副本上,原件没有改动。',
+        };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  });
+
+  /** 版本历史 / 回退。**回退是追加一版,不抹掉中间那几版。** */
+  const documentRevisions = createTool({
+    id: 'document_revisions',
+    description:
+      '看一份文档副本的版本历史;给了 rollback_to 就回退到那一版' +
+      '(回退是追加一个新版本,历史不会被抹掉)。',
+    inputSchema: z.object({
+      name: z.string().describe('原件文件名'),
+      rollback_to: z.number().optional().describe('要回到第几版'),
+    }),
+    execute: async (input: { name: string; rollback_to?: number }, ctx?: TableToolCtx) => {
+      const got = await folderOrReason(ctx);
+      if (!got.folder) return { ok: false, error: got.error };
+      const { listRevisions, rollbackTo } = await import('./document-copy.js');
+      try {
+        if (input.rollback_to != null) {
+          const rev = await rollbackTo(got.folder, input.name, input.rollback_to);
+          return { ok: true, revision: rev.n, note: rev.note };
+        }
+        return { ok: true, revisions: await listRevisions(got.folder, input.name) };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  });
+
+  /**
+   * 把一份文档和**系统里在跑的规则**逐条对照。
+   *
+   * 起因很具体:改完文档,系统里的规则一个字没动 —— 文档和系统对不上,两边看起来
+   * 都正常,没人知道。这个工具就是回答"你要改的是这份文档,还是它描述的那件事"
+   * 之前必须先摆出来的事实。
+   *
+   * **模型提名、代码判定**:断言由模型从文档里抽(带原文引述),对照是纯函数,
+   * 判据确定。**"系统里查不到"单独一档** —— 那是我们不知道,不是文档错了。
+   */
+  const reconcileDocument = createTool({
+    id: 'reconcile_document',
+    description:
+      '把一份项目文档里写的做法,和排产系统里实际在跑的规则逐条对照,' +
+      '给出「一致 / 对不上 / 部分对上 / 查不到」。' +
+      '在用户想按文档改系统、或改完文档之后,用它确认两边是否同步。' +
+      '需要 Compass 数据源(工序资格、资源产能)——没挂数据源时会照实说,不会瞎比。',
+    inputSchema: z.object({
+      name: z.string().describe('文档文件名,例如 工艺说明.docx(会优先读它的可编辑副本)'),
+    }),
+    execute: async (input: { name: string }, ctx?: TableToolCtx) => {
+      const got = await folderOrReason(ctx);
+      if (!got.folder) return { ok: false, error: got.error };
+
+      const [{ readCopy }, { readProjectFile }, { reconcile }, docAssertions] = await Promise.all([
+        import('./document-copy.js'),
+        import('./project-file-read.js'),
+        import('./doc-rule-reconcile.js'),
+        import('./doc-assertions.js'),
+      ]);
+      // 有副本就读副本 —— 人改过的那一版才是"文档现在说的"。
+      const copy = await readCopy(got.folder, input.name);
+      const text = copy ?? (await readProjectFile(got.folder, input.name, { limit: 4000 })).text;
+      if (!text?.trim()) {
+        return { ok: false, error: `读不到「${input.name}」的正文,没法对照。` };
+      }
+
+      const { extractAssertions, factsFromCompass, summarizeReconcile } = docAssertions;
+      const tenantId = (ctx?.requestContext?.get('tenantId') as string | undefined) ?? DEV_TENANT_ID;
+      let assertions; let dropped = 0;
+      try {
+        ({ assertions, dropped } = await extractAssertions(tenantId, text));
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      // 丢了几条要说 —— 悄悄丢等于谎报覆盖面。
+      const droppedNote = dropped ? `(另有 ${dropped} 条提名不合规,已丢弃)` : '';
+      if (!assertions.length) {
+        return { ok: true, summary: summarizeReconcile([]) + droppedNote, verdicts: [] };
+      }
+
+      // 事实从 Compass 取。**只问文档提到的那几道工序** —— 上百道全端回来既慢
+      // 又没用,而且 not_found 会淹掉真正要看的几条。
+      const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, compassScopeFromCtx(ctx));
+      if (!compass) {
+        return {
+          ok: false,
+          assertions,
+          error:
+            `从文档里抽到 ${assertions.length} 条可核对的断言,但这个项目**没挂 Compass 数据源** ——` +
+            '没有系统侧的事实可比。先挂上数据源再对照。',
+        };
+      }
+      const ops = [...new Set(assertions.filter((x) => x.kind === 'op_resource').map((x) => x.subject))];
+      const payload: Record<string, unknown> = {};
+      try {
+        if (ops.length && compass.toolset['get_op_eligibility']) {
+          Object.assign(payload, await compass.toolset['get_op_eligibility']!.execute({ ops }));
+        }
+        if (assertions.some((x) => x.kind === 'capacity_k') && compass.toolset['get_resources']) {
+          Object.assign(payload, await compass.toolset['get_resources']!.execute({}));
+        }
+      } catch (err) {
+        return { ok: false, error: `取系统事实失败:${err instanceof Error ? err.message : String(err)}` };
+      }
+
+      const facts = factsFromCompass(payload as never);
+      if (!facts.length) {
+        // 拿不到事实就照实说。拿空事实去比,会把每一条都判成"查不到" ——
+        // 看起来像做过对照,其实一条也没核对。
+        return {
+          ok: false,
+          assertions,
+          error:
+            `从文档里抽到 ${assertions.length} 条断言,但从 Compass 没取到可比对的事实` +
+            '(工序资格 / 资源产能都是空的)。这份场景可能还没有三级工序历史。',
+        };
+      }
+      const verdicts = reconcile(assertions, facts);
+      return { ok: true, summary: summarizeReconcile(verdicts) + droppedNote, verdicts };
+    },
   });
 
   return {
@@ -870,7 +1542,15 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     table_list_sheets: tableListSheets,
     load_compass_schedule: loadCompassSchedule,
     load_compass_orders: loadCompassOrders,
+    load_compass_workorders: loadCompassWorkorders,
     load_compass_resources: loadCompassResources,
+    attach_project_source: attachProjectSource,
     table_chart: tableChart,
+    table_query: tableQuery,
+    project_file_read: projectFileRead,
+    create_document: createDocument,
+    document_edit: documentEdit,
+    document_revisions: documentRevisions,
+    reconcile_document: reconcileDocument,
   };
 }

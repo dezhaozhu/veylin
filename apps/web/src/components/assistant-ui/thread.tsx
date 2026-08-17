@@ -30,6 +30,7 @@ import {
 import { ModelPicker } from "@/components/assistant-ui/model-picker";
 import { ThreadQuestionRail } from "@/components/assistant-ui/thread-question-rail";
 import { ThreadSelectionAskToolbar } from "@/components/assistant-ui/thread-selection-ask-toolbar";
+import { CrystallizeMessageAction } from "@/components/assistant-ui/crystallize-message-action";
 import { MessageTimestamp } from "@/components/assistant-ui/message-timestamp";
 import { MessageKnowledgeCitations } from "@/components/assistant-ui/message-knowledge-citations";
 import { Button } from "@/components/ui/button";
@@ -79,11 +80,17 @@ import {
 } from "@/lib/ask-user-question-session";
 import {
   findFinalProseIndex,
-  findLastFrontendSuspendToolIndex,
   hasPreFinalWork,
   isFinalProsePart,
 } from "@/lib/assistant-final-output";
-import { isFrontendSuspendPartsSettled } from "@/lib/frontend-suspend-tools";
+import {
+  findFoldedPrefixEnd,
+  findTrailingVisiblePartIndex,
+  resolveAssistantRunPhase,
+  shouldFoldAssistantWork,
+  shouldShowAssistantFooter,
+  type AssistantRunPhase,
+} from "@/lib/assistant-part-settled";
 import { usePlanModeBridge, useGoalLoopBridge } from "@/lib/use-composer-settings";
 import { dispatchOverlayDismiss } from "@/lib/overlay-dismiss";
 import { hideWebView, isTauri } from "@/lib/tauri-web-view";
@@ -94,7 +101,6 @@ import {
   subscribeHistoryLoadState,
 } from "@/lib/history-load-state";
 import { WorkedForBlock } from "@/components/assistant-ui/worked-for";
-import { useStreamingDuration } from "@/components/assistant-ui/collapsible-streaming";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
@@ -444,36 +450,36 @@ const AssistantMessage: FC = () => {
     const last = s.thread.messages.at(-1);
     return last?.id === s.message.id;
   });
-  // Prefer thread.isRunning for the active turn so ask-await / continuation
-  // gaps (runtime-extended isRunning) do not fold early via message.status.
-  // Do not inherit thread.isRunning onto a completed prior assistant that is
-  // briefly still last during edit→send (before the new user/assistant land).
-  const anyPartRunning = useAuiState((s) =>
-    s.message.parts.some((p) => p.status?.type === "running"),
+  const recordedPhase = useAuiState((s) =>
+    (
+      s.message.metadata as
+        | { custom?: { turnTiming?: { phase?: AssistantRunPhase } } }
+        | undefined
+    )?.custom?.turnTiming?.phase,
   );
-  const messageIsOptimistic = useAuiState((s) =>
-    Boolean(s.message.metadata?.isOptimistic),
-  );
+  const runPhase = resolveAssistantRunPhase({
+    recordedPhase,
+    isLastMessage,
+    threadIsRunning,
+  });
+  const showFooter = shouldShowAssistantFooter(runPhase);
   const finalProseIdx = useMemo(() => findFinalProseIndex(parts), [parts]);
-  const suspendSettled = isFrontendSuspendPartsSettled(parts);
-  const inheritThreadRunning =
-    isLastMessage &&
-    threadIsRunning &&
-    (anyPartRunning ||
-      messageIsOptimistic ||
-      finalProseIdx < 0 ||
-      !suspendSettled);
-  const isRunning =
-    anyPartRunning || messageIsOptimistic || inheritThreadRunning;
-  const elapsedSeconds = useStreamingDuration(isRunning === true);
-  // Fold middle work whenever there is pre-final work — including while the
-  // turn is still running. Only the final prose (and unsettled ask) stay out.
-  const foldWork = hasPreFinalWork(parts, finalProseIdx);
-  const lastSuspendIdx = useMemo(
-    () => findLastFrontendSuspendToolIndex(parts),
-    [parts],
+  const foldedPrefixEnd = useMemo(
+    () => findFoldedPrefixEnd(parts, runPhase),
+    [parts, runPhase],
   );
-  const showWorkedForDuration = !isRunning && suspendSettled;
+  const hasWorkToFold = hasPreFinalWork(parts, finalProseIdx);
+  const foldWork = shouldFoldAssistantWork({
+    phase: runPhase,
+    foldedPrefixEnd,
+    hasPreFinalWork: hasWorkToFold,
+  });
+  // With no final prose (e.g. a turn that ended on a tool error) keep the tail
+  // outside so the message never collapses into a bare label.
+  const tailVisibleIdx = useMemo(
+    () => (finalProseIdx < 0 ? findTrailingVisiblePartIndex(parts) : -1),
+    [parts, finalProseIdx],
+  );
   const [workedForOpen, setWorkedForOpen] = useState(false);
   const workedForPrimaryStartRef = useRef<number | null>(null);
   // First group-worked-for in this render pass owns the label.
@@ -487,22 +493,20 @@ const AssistantMessage: FC = () => {
       if (!foldWork) {
         return baseAssistantGroupBy(part, context) as readonly AssistantGroupKey[];
       }
-      // Only the final answer (after last ask, or last text) stays outside.
       const index = parts.indexOf(part as (typeof parts)[number]);
       if (
+        (runPhase === "finished" || runPhase === "failed") &&
         part.type === "text" &&
         index >= 0 &&
         isFinalProsePart(parts, index, finalProseIdx)
       ) {
         return ["group-final-prose"];
       }
-      // Keep the current (last) frontend-suspend tool visible until the turn
-      // settles — earlier answered asks still fold into Worked-for.
-      // Keep the current (last) frontend-suspend tool visible until the turn
-      // settles — earlier answered asks still fold into Worked-for.
-      // lastSuspendIdx is only ask_user_question / read_open_page.
-      if (!suspendSettled && index >= 0 && index === lastSuspendIdx) {
+      if (index >= 0 && index === tailVisibleIdx) {
         return [];
+      }
+      if (index < 0 || index >= foldedPrefixEnd) {
+        return baseAssistantGroupBy(part, context) as readonly AssistantGroupKey[];
       }
       const path = baseAssistantGroupBy(part, context);
       // Include path=[] (step-start / leftover standalone) so islands can share
@@ -511,7 +515,15 @@ const AssistantMessage: FC = () => {
       return ["group-worked-for", ...(path as AssistantGroupKey[])];
     };
     return fold;
-  }, [foldWork, parts, finalProseIdx, messageId, suspendSettled, lastSuspendIdx]);
+  }, [
+    foldWork,
+    parts,
+    finalProseIdx,
+    messageId,
+    tailVisibleIdx,
+    foldedPrefixEnd,
+    runPhase,
+  ]);
 
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
   // keeps hovered action bar from shifting layout (autohide doesn't support absolute positioning well)
@@ -544,10 +556,6 @@ const AssistantMessage: FC = () => {
                 }
                 return (
                   <WorkedForBlock
-                    elapsedSeconds={
-                      showWorkedForDuration ? elapsedSeconds : undefined
-                    }
-                    showDuration={showWorkedForDuration}
                     isPrimary={isPrimary}
                     open={workedForOpen}
                     onOpenChange={setWorkedForOpen}
@@ -621,12 +629,14 @@ const AssistantMessage: FC = () => {
         <MessageKnowledgeCitations />
       </div>
 
-      <div
-        data-slot="aui_assistant-message-footer"
-        className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
-      >
-        <AssistantActionBar />
-      </div>
+      {showFooter ? (
+        <div
+          data-slot="aui_assistant-message-footer"
+          className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
+        >
+          <AssistantActionBar />
+        </div>
+      ) : null}
     </MessagePrimitive.Root>
   );
 };
@@ -652,6 +662,7 @@ const AssistantActionBar: FC = () => {
       className="aui-assistant-action-bar-root text-muted-foreground/50 animate-in fade-in col-start-3 row-start-2 -ms-1 flex items-center gap-1 duration-200"
     >
       <MessageCopyButton />
+      <CrystallizeMessageAction />
       <MessageTimestamp className="ms-0.5" align="start" inline />
     </ActionBarPrimitive.Root>
   );

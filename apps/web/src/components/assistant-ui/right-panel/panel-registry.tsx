@@ -8,16 +8,19 @@
  * | Web       | Embedded browser for read_open_page       |   -> Agent prompt, separate storage  |
  * | Knowledge | RAG upload, search, citations + KG        | Workflow = multi-step executable DAG |
  * | Workflow  | Visual DAG editor + real execution engine | Both share InProcQueue / cron / hook |
+ * | Doc       | READ-ONLY 文档(Word/PPT/PDF)。表格那格是编辑面,这格不是 —— 没人要 |
+ * |           | 在这里编辑一份 docx 再写回去;要改走"改在副本上、按需导出"。      |
  *
  * label/description/defaultTitle hold i18n keys, resolved with t() at render.
  */
-import { BookOpen, Box, Globe, Table, Workflow } from 'lucide-react';
+import { BookOpen, Box, FileText, Globe, Table, Workflow } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { TableGrid } from '@/components/assistant-ui/table-grid';
 import { WebBrowserPanel } from '@/components/assistant-ui/right-panel/panels/web-browser-panel';
 import { RagPanel } from '@/components/assistant-ui/right-panel/panels/rag-panel';
 import { WorkflowPanel } from '@/components/assistant-ui/right-panel/panels/workflow-panel';
 import { Viewer3dPanel } from '@/components/assistant-ui/right-panel/panels/viewer3d-panel';
+import { DocPanel } from '@/components/assistant-ui/right-panel/panels/doc-panel';
 import type { PanelContentProps, PanelKind, PanelKindDef } from './panel-types';
 
 // Fork seam: our AG-Grid TableGrid manages its own sheet tabs (workspace-wide,
@@ -79,6 +82,16 @@ export const PANEL_KINDS: PanelKindDef[] = [
     defaultTitle: 'panels.workflow.label',
     createState: () => ({ workflowId: undefined }),
     Component: WorkflowPanelEntry,
+  },
+  {
+    kind: 'doc',
+    label: 'panels.doc.label',
+    description: 'panels.doc.desc',
+    icon: <FileText className="size-4" />,
+    defaultTitle: 'panels.doc.label',
+    // 打开时还不知道是哪份文件 —— 由「在右侧打开」把 projectId/name 填进来。
+    createState: () => ({ projectId: undefined, name: undefined }),
+    Component: DocPanel,
   },
   {
     kind: '3d',

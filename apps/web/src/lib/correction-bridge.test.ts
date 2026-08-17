@@ -4,7 +4,9 @@ import {
   CORRECTION_CURRENT_MAX,
   CORRECTION_FIELD_MAX,
   correctionDraftSpec,
+  isLateOnlyGridFilter,
   parseCorrectionMessage,
+  parseOpenGridMessage,
   type CorrectionPayload,
 } from './correction-bridge';
 
@@ -202,5 +204,62 @@ describe('correctionDraftSpec — draft composition', () => {
     // the payload text is inside quotes, and the user's own words start after
     assert.ok(draft.includes('「上锅 136 吨/月」'));
     assert.ok(draft.trimEnd().endsWith('以上内容有误:'));
+  });
+});
+
+describe('parseOpenGridMessage — 展开排产表 drill', () => {
+  const grid = (payload: unknown) => ({ type: 'veylin:action', action: 'open-schedule-grid', payload });
+
+  it('accepts the action with an empty payload → {}', () => {
+    assert.deepEqual(parseOpenGridMessage(grid({})), {});
+    assert.deepEqual(parseOpenGridMessage({ type: 'veylin:action', action: 'open-schedule-grid' }), {});
+  });
+
+  it('returns sanitized status/workshop/order_id filters when present', () => {
+    assert.deepEqual(parseOpenGridMessage(grid({ status: 'late' })), { status: 'late' });
+    assert.deepEqual(
+      parseOpenGridMessage(grid({ workshop: '金工分厂', order_id: 'SO123' })),
+      { workshop: '金工分厂', order_id: 'SO123' },
+    );
+  });
+
+  it('drops non-open-schedule-grid / non-veylin:action shapes (null)', () => {
+    assert.equal(parseOpenGridMessage({ type: 'veylin:action', action: 'open-correction', payload: {} }), null);
+    assert.equal(parseOpenGridMessage({ type: 'other', action: 'open-schedule-grid', payload: {} }), null);
+    assert.equal(parseOpenGridMessage('open-schedule-grid'), null);
+    assert.equal(parseOpenGridMessage(null), null);
+  });
+
+  it('drops the whole message when a filter field is oversized (not truncated)', () => {
+    assert.equal(parseOpenGridMessage(grid({ status: 'x'.repeat(CORRECTION_FIELD_MAX + 1) })), null);
+  });
+
+  it('strips control/zero-width chars from filter fields', () => {
+    assert.deepEqual(parseOpenGridMessage(grid({ status: 'la​te' })), { status: 'late' });
+  });
+
+  it('never selects a target — payload carries only filters', () => {
+    assert.deepEqual(parseOpenGridMessage(grid({ status: 'late', threadId: 'evil', tenant: 'evil' })), {
+      status: 'late',
+    });
+  });
+});
+
+describe('isLateOnlyGridFilter — the late-only decision', () => {
+  it('is true only when status is exactly "late"', () => {
+    assert.equal(isLateOnlyGridFilter({ status: 'late' }), true);
+  });
+
+  it('is false for any other/absent status', () => {
+    assert.equal(isLateOnlyGridFilter({}), false);
+    assert.equal(isLateOnlyGridFilter({ status: 'atrisk' }), false);
+    assert.equal(isLateOnlyGridFilter({ status: 'Late' }), false);
+    assert.equal(isLateOnlyGridFilter({ workshop: '金工分厂' }), false);
+    assert.equal(isLateOnlyGridFilter(null), false);
+    assert.equal(isLateOnlyGridFilter(undefined), false);
+  });
+
+  it('ignores non-status fields on a late filter (still late-only)', () => {
+    assert.equal(isLateOnlyGridFilter({ status: 'late', workshop: '金工分厂' }), true);
   });
 });

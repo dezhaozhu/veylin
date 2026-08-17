@@ -9,6 +9,10 @@ export async function listTableSheets(threadId?: string | null): Promise<TableSh
     name: String(r.name ?? ''),
     builtin: Boolean(r.builtin),
     threadId: (r.thread_id as string | null | undefined) ?? null,
+    scope:
+      r.scope && typeof r.scope === 'object'
+        ? (r.scope as TableSheetRow['scope'])
+        : null,
     source:
       r.source && typeof r.source === 'object'
         ? (r.source as TableSheetRow['source'])
@@ -25,6 +29,7 @@ export async function upsertTableSheet(sheet: TableSheetRow): Promise<void> {
     name: sheet.name,
     builtin: sheet.builtin,
     thread_id: sheet.threadId?.trim() || null,
+    scope: sheet.scope ?? null,
     source: sheet.source ?? null,
   });
 }

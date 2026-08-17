@@ -10,7 +10,8 @@
     "build:bundle": "esbuild src/server.ts --bundle --platform=node --format=esm --outfile=dist/server.mjs --packages=external",
     "build:sidecar": "node scripts/build-sidecar.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test \"src/**/*.test.ts\""
+    "test": "VEYLIN_TEST_DATA=1 node --import tsx --test \"src/**/*.test.ts\"",
+    "gen:compass-refs": "node --import tsx src/compass-refs.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
@@ -19,6 +20,7 @@
     "@mastra/fastembed": "^1.2.0",
     "@mastra/mcp": "^1.11.0",
     "@napi-rs/canvas": "^0.1.100",
+    "@types/turndown": "^5.0.6",
     "@veylin/agent-package": "*",
     "@veylin/db": "*",
     "@veylin/hooks": "*",
@@ -30,13 +32,20 @@
     "assistant-stream": "^0.3.23",
     "better-auth": "^1.6.20",
     "better-sqlite3": "^12.11.1",
+    "docx": "^9.7.1",
     "dotenv": "^16.4.7",
     "fastify": "^5.8.5",
     "jmespath": "^0.16.0",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.12.0",
+    "marked": "^16.4.2",
     "minimatch": "^10.2.5",
     "node-cron": "^4.5.0",
     "p-queue": "^9.3.0",
+    "pptxgenjs": "^4.0.1",
+    "turndown": "^7.2.4",
     "unpdf": "^1.6.2",
+    "xlsx": "^0.18.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {

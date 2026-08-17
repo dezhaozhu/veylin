@@ -36,6 +36,7 @@
  */
 import type { TableSheetSource } from '@veylin/db';
 import type { Project } from '@veylin/shared';
+import { isFileSource } from '@veylin/db';
 
 /** Legacy per-scene managed entry names were `compass-<source>`. */
 export const LEGACY_COMPASS_ENTRY_PREFIX = 'compass-';
@@ -203,7 +204,8 @@ export function planSheetSourceStamps(
   const stamps: SheetSourceStamp[] = [];
   for (const sheet of sheets) {
     const source = sheet.source;
-    if (!source?.server) continue;
+    // 只有连接器来源才有旧的 entry-name 戳要改写;文件来源从一开始就带 project。
+    if (!source || isFileSource(source) || !source.server) continue;
     if (source.project) continue; // already migrated (or Task 5c-stamped): never clobber
     const mapped = legacyServerToProjectId(source.server, projects);
     if (!mapped) continue;

@@ -9,6 +9,9 @@
  * posture cases.
  */
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { closeDb, connectDb } from '@veylin/db';
@@ -115,21 +118,29 @@ describe('project CRUD routes', () => {
     }
   });
 
-  it('POST allows empty sources (source-less project folders)', async () => {
+  it('**零数据源的项目是合法的** —— 只用自己的文件,以后随时能加', async () => {
+    // 原来强制至少选一个,等于把"项目"降成"数据源的别名" —— 而每个数据源本来就
+    // 已经有一个默认项目;人自己建项目是为了"我要做的事"。而且建的那一刻常常还
+    // 不知道要用哪个数据源。
     const res = await app.inject({
       method: 'POST',
       url: '/api/projects',
-      payload: { name: '空项目', sources: [] },
+      payload: { name: '只放我自己的文件', sources: [] },
     });
-    assert.equal(res.statusCode, 200);
-    const body = res.json() as {
-      ok: boolean;
-      project: { name: string; sources: string[]; managed: boolean };
-    };
+    assert.equal(res.statusCode, 200, res.body);
+    const body = res.json() as { ok: boolean; project: { sources: string[] } };
     assert.equal(body.ok, true);
-    assert.equal(body.project.name, '空项目');
     assert.deepEqual(body.project.sources, []);
-    assert.equal(body.project.managed, false);
+  });
+
+  it('但没授权的数据源仍然拒 —— 空集放开的是"必填",不是"随便填"', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      payload: { name: 'x', sources: ['nope'] },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.match((res.json() as { error: string }).error, /nope/);
   });
 
   it('POST rejects an ungranted source with 400 naming it (disabled default ⇒ not granted)', async () => {
@@ -153,7 +164,7 @@ describe('project CRUD routes', () => {
     assert.equal(res.statusCode, 400);
   });
 
-  it('PATCH renames and re-ticks a user project (and ignores immutable fields in the body)', async () => {
+  it('PATCH renames a user project (and ignores immutable fields in the body)', async () => {
     const created = await createProject(TENANT, { name: '改前', sources: ['guolu', 'shangzhong'] });
     const res = await app.inject({
       method: 'PATCH',
@@ -161,7 +172,8 @@ describe('project CRUD routes', () => {
       // managed/enabled/migratedFrom in the body must be structurally inert.
       payload: {
         name: ' 改后 ',
-        sources: ['guolu'],
+        // **加宽是允许的,摘掉不是** —— 见下一条。这里原样提交,只改名字。
+        sources: ['guolu', 'shangzhong'],
         managed: true,
         enabled: false,
         migratedFrom: 'compass-对比',
@@ -172,7 +184,7 @@ describe('project CRUD routes', () => {
       project: { name: string; sources: string[]; managed: boolean };
     };
     assert.equal(project.name, '改后');
-    assert.deepEqual(project.sources, ['guolu']);
+    assert.deepEqual(project.sources, ['guolu', 'shangzhong']);
     assert.equal(project.managed, false);
 
     const stored = await getProject(TENANT, created.id);
@@ -180,6 +192,25 @@ describe('project CRUD routes', () => {
     assert.equal(stored.managed, false);
     assert.equal(stored.enabled, true);
     assert.equal(stored.migratedFrom, undefined);
+  });
+
+  it('**PATCH 摘掉数据源 → 400**:项目里已有的对话是照旧数据源得出的结论,换掉就对不上了', async () => {
+    const created = await createProject(TENANT, { name: 'p', sources: ['guolu', 'shangzhong'] });
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/projects/${created.id}`, payload: { sources: ['guolu'] },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.match((res.json() as { error: string }).error, /只能加|新建/);
+    // 而且**不能落一半** —— 拒了就一个字节都不动。
+    assert.deepEqual((await getProject(TENANT, created.id))?.sources, ['guolu', 'shangzhong']);
+  });
+
+  it('PATCH 再挂一个数据源 → 允许(加宽不会让老结论失真)', async () => {
+    const created = await createProject(TENANT, { name: 'p', sources: ['guolu'] });
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/projects/${created.id}`, payload: { sources: ['guolu', 'shangzhong'] },
+    });
+    assert.equal(res.statusCode, 200);
   });
 
   it('PATCH re-validates sources against granted (400) without applying a partial patch', async () => {
@@ -271,5 +302,99 @@ describe('project CRUD routes', () => {
     assert.ok(stored);
     assert.equal(stored.name, '别家的');
     assert.equal(stored.enabled, true);
+  });
+
+  // ---- 项目文件夹(spec 2026-08-14)-------------------------------------
+  // folder 既不是身份也不是范围,是**本机偏好** —— 所以 managed 项目(guolu、上重
+  // 这些默认项目,恰恰是用户真正在用的)也必须能设,否则这个功能对他们等于不存在。
+
+  it('给项目绑一个文件夹', async () => {
+    const p = await createProject(TENANT, { name: '带文件夹的', sources: ['guolu'] });
+    const dir = mkdtempSync(join(tmpdir(), 'veylin-projroute-'));
+    try {
+      const res = await app.inject({
+        method: 'PATCH', url: `/api/projects/${p.id}`, payload: { folder: dir },
+      });
+      assert.equal(res.statusCode, 200, res.body);
+      assert.equal((await getProject(TENANT, p.id))!.folder, dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('managed 项目也能绑文件夹 —— 名字和场景仍然锁着', async () => {
+    const managed = await createProject(TENANT, {
+      name: '受管的', sources: ['guolu'], managed: true,
+    });
+    const dir = mkdtempSync(join(tmpdir(), 'veylin-projroute-'));
+    try {
+      const ok = await app.inject({
+        method: 'PATCH', url: `/api/projects/${managed.id}`, payload: { folder: dir },
+      });
+      assert.equal(ok.statusCode, 200);
+      assert.equal((await getProject(TENANT, managed.id))!.folder, dir);
+
+      const denied = await app.inject({
+        method: 'PATCH', url: `/api/projects/${managed.id}`, payload: { name: '改名' },
+      });
+      assert.equal(denied.statusCode, 403, '身份与范围仍归 reconciler 管');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('文件夹必须是存在的绝对路径 —— 否则用户会以为绑好了,其实什么都不会落下来', async () => {
+    const p = await createProject(TENANT, { name: '坏路径', sources: ['guolu'] });
+    for (const bad of ['relative/path', '/definitely/not/here/veylin-nope']) {
+      const res = await app.inject({
+        method: 'PATCH', url: `/api/projects/${p.id}`, payload: { folder: bad },
+      });
+      assert.equal(res.statusCode, 400, bad);
+    }
+    assert.equal((await getProject(TENANT, p.id))!.folder, undefined);
+  });
+
+  it('项目说明能写能改 —— 它会作为项目级指令喂给模型', async () => {
+    const created = (await app.inject({
+      method: 'POST', url: '/api/projects',
+      payload: { name: '带说明的项目', sources: [] },
+    })).json() as { project: { id: string } };
+
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/projects/${created.project.id}`,
+      payload: { instructions: '只看锻件分厂,别碰冶铸。' },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(
+      (res.json() as { project: { instructions?: string } }).project.instructions,
+      '只看锻件分厂,别碰冶铸。',
+    );
+  });
+
+  it('**managed 项目也能写说明** —— 它是项目意图,不是身份或范围', async () => {
+    const list = (await app.inject({ method: 'GET', url: '/api/projects' })).json() as {
+      projects: Array<{ id: string; managed: boolean }>;
+    };
+    const managed = list.projects.find((p) => p.managed);
+    if (!managed) return;  // 这套 fixture 里没有 managed 行就跳过
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/projects/${managed.id}`,
+      payload: { instructions: '这个厂的口径…' },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+  });
+
+  it('**新建时填的说明要存下来** —— 只在 PATCH 里认会让它静默丢掉', async () => {
+    // 实测发现:对话框那个框看起来完全正常,填了、创建了、什么都没报错,
+    // 但值没进去 —— 而项目说明是要喂给模型的,丢了就是行为悄悄不对。
+    const res = await app.inject({
+      method: 'POST', url: '/api/projects',
+      payload: { name: '带说明新建', sources: [], instructions: '只看锻件分厂。' },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(
+      (res.json() as { project: { instructions?: string } }).project.instructions,
+      '只看锻件分厂。',
+    );
   });
 });

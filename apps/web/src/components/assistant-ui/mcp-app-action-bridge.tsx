@@ -1,5 +1,10 @@
 import { useEffect, useRef, type FC, type ReactNode } from 'react';
-import { parseCorrectionMessage, type CorrectionPayload } from '@/lib/correction-bridge';
+import {
+  parseCorrectionMessage,
+  parseOpenGridMessage,
+  type CorrectionPayload,
+  type OpenGridFilter,
+} from '@/lib/correction-bridge';
 
 /**
  * Widget→host action bridge (修正桥, scene-card v2 Phase 3). Wraps one
@@ -38,13 +43,19 @@ function hasUserActivation(): boolean {
 
 export const McpAppActionBridge: FC<{
   onCorrection: (payload: CorrectionPayload) => void;
+  /** Optional: widget "展开排产表" drill (open-schedule-grid). Same containment
+   * + user-gesture gate as onCorrection; the filter only narrows the current
+   * thread's grid. Omit (e.g. contexts with no schedule grid) → drill no-ops. */
+  onOpenGrid?: (filter: OpenGridFilter) => void;
   children: ReactNode;
-}> = ({ onCorrection, children }) => {
+}> = ({ onCorrection, onOpenGrid, children }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // Live ref so the single listener never needs re-binding when the parent
   // re-creates its callback (same idiom as SandboxHost's liveRef).
   const onCorrectionRef = useRef(onCorrection);
   onCorrectionRef.current = onCorrection;
+  const onOpenGridRef = useRef(onOpenGrid);
+  onOpenGridRef.current = onOpenGrid;
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -59,9 +70,15 @@ export const McpAppActionBridge: FC<{
       }
       if (!own) return;
       if (!hasUserActivation()) return;
-      const payload = parseCorrectionMessage(event.data);
-      if (!payload) return;
-      onCorrectionRef.current(payload);
+      const correction = parseCorrectionMessage(event.data);
+      if (correction) {
+        onCorrectionRef.current(correction);
+        return;
+      }
+      const gridFilter = parseOpenGridMessage(event.data);
+      if (gridFilter && onOpenGridRef.current) {
+        onOpenGridRef.current(gridFilter);
+      }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);

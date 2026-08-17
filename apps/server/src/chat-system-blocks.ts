@@ -22,6 +22,8 @@ export type ChatSystemBlockInput = {
   attachedBrowserBlock: string;
   workingMemoryBlock?: string;
   projectPinBlock?: string;
+  /** Compass 接地块(compass 连上时才有内容)。见 compass-grounding.ts。 */
+  compassGroundingBlock?: string;
 };
 
 function blockOrNull(value: string): string | null {
@@ -49,6 +51,12 @@ export async function buildChatSystemBlocks(input: ChatSystemBlockInput): Promis
     uncachedSystemPromptSection('locale', () => blockOrNull(input.localeBlock)),
     uncachedSystemPromptSection('attached_browser', () => blockOrNull(input.attachedBrowserBlock)),
     uncachedSystemPromptSection('project_pin', () => blockOrNull(input.projectPinBlock ?? '')),
+    // 必须 uncached:值取决于本请求是否连上 compass 与项目钉定,而 sectionCache
+    // 是进程级、只按名字做键(systemPromptSections.ts:9)——用 cached 版会让第一个
+    // 请求的结果永久钉住,并跨租户泄漏/屏蔽。
+    uncachedSystemPromptSection('compass_grounding', () =>
+      blockOrNull(input.compassGroundingBlock ?? ''),
+    ),
   ];
 
   const values = await resolveSystemPromptSections(sections);

@@ -53,6 +53,7 @@ import {
 } from '@/components/ui/sidebar';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import { useDesktopInteractionGuard } from '@/lib/use-desktop-interaction-guard';
+import { consumeNativeResumeRequest } from '@/lib/native-suspend-resume';
 
 function DesktopInteractionGuard() {
   const { view } = useSettingsPanel();
@@ -160,6 +161,39 @@ export function AssistantChat() {
     transport: new AssistantChatTransport({
       api: '/api/chat',
       fetch: resilientChatFetch,
+      prepareSendMessagesRequest: ({
+        id,
+        body,
+        messages,
+        trigger,
+        messageId,
+        requestMetadata,
+      }) => {
+        const resume = consumeNativeResumeRequest(id);
+        if (!resume) {
+          return {
+            body: {
+              ...body,
+              id,
+              messages,
+              trigger,
+              messageId,
+              metadata: requestMetadata,
+            },
+          };
+        }
+        return {
+          body: {
+            ...body,
+            id: resume.threadId,
+            resume: {
+              runId: resume.runId,
+              toolCallId: resume.toolCallId,
+              resumeData: resume.resumeData,
+            },
+          },
+        };
+      },
       prepareReconnectToStreamRequest: ({ id }) => {
         const streamId = resumableStorage.getStreamId();
         if (streamId) {

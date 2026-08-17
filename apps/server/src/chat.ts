@@ -35,6 +35,11 @@ type ChatBody = {
   messages?: UiMessage[];
   threadId?: string;
   agentId?: string;
+  resume?: {
+    runId: string;
+    toolCallId?: string;
+    resumeData: unknown;
+  };
   model?: string;
   toolQuery?: string;
   planMode?: boolean;
@@ -61,40 +66,6 @@ export function textOfMessage(msg: UiMessage | undefined): string {
     msg.parts
       ?.flatMap((p) => {
         if (p.type === 'text' && p.text) return [p.text];
-        if (p.type === 'tool-ask_user_question') {
-          const output = (p as { output?: { answers?: Record<string, string> } }).output;
-          const answers = output?.answers;
-          if (!answers || Object.keys(answers).length === 0) return [];
-          const answersText = Object.entries(answers)
-            .map(([question, answer]) => `"${question}"="${answer}"`)
-            .join(', ');
-          return [
-            `User has answered your questions: ${answersText}. You can now continue with the user's answers in mind.`,
-          ];
-        }
-        if (p.type === 'tool-read_open_page') {
-          const output = (p as {
-            output?: { url?: string; title?: string; content?: string; error?: string };
-          }).output;
-          if (!output) return [];
-          if (output.error) return [`read_open_page failed: ${output.error}`];
-          const header = [output.title, output.url].filter(Boolean).join(' — ');
-          const body = output.content?.trim();
-          if (!header && !body) return [];
-          return [[header, body].filter(Boolean).join('\n')];
-        }
-        if (p.type === 'tool-request_3d_selection') {
-          const output = (p as { output?: { face_ids?: number[]; cancelled?: boolean } }).output;
-          if (!output) return [];
-          if (output.cancelled) {
-            return ["User cancelled the 3D face selection. You can now continue accordingly."];
-          }
-          const ids = output.face_ids ?? [];
-          if (ids.length === 0) return [];
-          return [
-            `User selected these faces on the 3D panel: ${ids.join(', ')}. You can now continue with this selection in mind.`,
-          ];
-        }
         return [];
       })
       .join('\n') ?? ''
@@ -188,6 +159,73 @@ async function pdfToParts(url: string, filename: string, vision: boolean): Promi
   }
 }
 
+const OFFICE_EXTENSIONS = new Set([
+  '.docx', '.xlsx', '.xlsm', '.pptx',
+  // 老二进制格式也走这条:抽取器读不了它们,但它给的是"用 Office 另存为 .docx
+  // 再来"这种能照做的话,比通用那句"convert to PDF or plain text"有用。
+  '.doc', '.xls', '.ppt',
+]);
+
+/** 交给 Office 抽取器处理的后缀(含读不了但要好好拒的老格式)。 */
+export function isOfficeAttachment(filename: string): boolean {
+  const i = filename.lastIndexOf('.');
+  return i >= 0 && OFFICE_EXTENSIONS.has(filename.slice(i).toLowerCase());
+}
+
+/** data URL → 字节。不是 data URL 就返回 null(不猜)。 */
+function decodeDataUrlToBytes(url: string): Buffer | null {
+  const comma = url.indexOf(',');
+  if (!url.startsWith('data:') || comma < 0) return null;
+  if (!url.slice(5, comma).includes('base64')) return null;
+  try {
+    return Buffer.from(url.slice(comma + 1), 'base64');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 拖进对话框的 Office 文件(docx / xlsx / pptx)→ 文字。
+ *
+ * 走的是**项目文件夹那条同一个抽取器**(`document-extract`)。从前这里是一堵墙:
+ * 同一份 xlsx,放进项目文件夹能读概览,拖进来只回一句"转成 PDF 再来" —— 这个
+ * 区别对用户毫无道理可讲,因为它根本不该存在。
+ *
+ * 表格照旧**只给概览**:附件这条路没有分页,把三万行塞进提示词既装不下,更糟的是
+ * 模型会以为自己拿到了全部,然后基于前一千行下结论。
+ */
+export async function officeAttachmentToParts(
+  url: string,
+  filename: string,
+): Promise<ContentPart[]> {
+  const name = filename || 'attachment';
+  const bytes = decodeDataUrlToBytes(url);
+  if (!bytes) {
+    return [{ type: 'text', text: `[附件 "${name}" 读不了:拿不到文件内容]` }];
+  }
+  const { extractDocument } = await import('./document-extract.js');
+  const out = await extractDocument(name, bytes);
+  if (out.kind === 'unsupported') {
+    return [{ type: 'text', text: `[附件 "${name}" 读不了:${out.notice ?? '格式不支持'}]` }];
+  }
+  if (out.kind === 'sheet') {
+    const head = `[附件 "${name}" —— 表格概览]`;
+    const body = [
+      `页签:${(out.sheets ?? []).join('、')}`,
+      `列:${(out.columns ?? []).join('、')}`,
+      `共 ${out.totalRows ?? 0} 行,下面是前 ${out.rows?.length ?? 0} 行:`,
+      JSON.stringify(out.rows ?? [], null, 0),
+      out.notice ?? '',
+    ].join('\n');
+    return [{ type: 'text', text: `${head}\n${body}` }];
+  }
+  const label = out.kind === 'slides' ? 'PPT' : 'Word';
+  return [{
+    type: 'text',
+    text: `[附件 "${name}" —— ${label} 正文]\n${out.text ?? ''}${out.notice ? `\n${out.notice}` : ''}`,
+  }];
+}
+
 async function textFileToParts(url: string, filename: string, mediaType: string): Promise<ContentPart[]> {
   const name = filename || 'attachment.txt';
   if (isBinaryAttachment(name, mediaType)) {
@@ -221,6 +259,10 @@ async function fileParts(msg: UiMessage, vision: boolean): Promise<ContentPart[]
       out.push({ type: 'image', image: p.url });
     } else if (mediaType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf')) {
       out.push(...(await pdfToParts(p.url, filename, vision)));
+    } else if (isOfficeAttachment(filename)) {
+      // Office 要排在 isBinaryAttachment 之前 —— 它按后缀把 docx/xlsx/pptx 判成
+      // 二进制,那正是从前"转成 PDF 再来"那句话的出处。
+      out.push(...(await officeAttachmentToParts(p.url, filename)));
     } else if (isTextLikeAttachment(filename, mediaType)) {
       out.push(...(await textFileToParts(p.url, filename, mediaType)));
     } else if (isBinaryAttachment(filename, mediaType)) {
@@ -238,30 +280,11 @@ async function fileParts(msg: UiMessage, vision: boolean): Promise<ContentPart[]
   return out;
 }
 
-const FRONTEND_SUSPEND_TOOL_PART_TYPES = new Set([
-  'tool-ask_user_question',
-  'tool-read_open_page',
-  'tool-request_3d_selection',
-]);
-
 function messageHasModelToolParts(messages: UiMessage[]): boolean {
   return messages.some((m) =>
     m.parts?.some((p) => {
       const type = (p as { type?: string }).type;
-      return (
-        typeof type === 'string' &&
-        type.startsWith('tool-') &&
-        !FRONTEND_SUSPEND_TOOL_PART_TYPES.has(type)
-      );
-    }),
-  );
-}
-
-function messageHasFrontendSuspendToolParts(message: UiMessage): boolean {
-  return Boolean(
-    message.parts?.some((p) => {
-      const type = (p as { type?: string }).type;
-      return typeof type === 'string' && FRONTEND_SUSPEND_TOOL_PART_TYPES.has(type);
+      return typeof type === 'string' && type.startsWith('tool-');
     }),
   );
 }
@@ -269,11 +292,8 @@ function messageHasFrontendSuspendToolParts(message: UiMessage): boolean {
 /**
  * Convert UIMessages to Mastra agent.stream input. Text-only messages stay as a
  * string; messages carrying images/PDFs become a multimodal content array.
- * When model-executed tool UI parts are present, use AI SDK conversion so tool
- * results reach the model on client-completed tool continuations. Frontend
- * suspend tools (ask_user_question/read_open_page) are user-side context, so
- * convert them to plain text via textOfMessage instead of emitting provider
- * tool protocol blocks.
+ * When tool UI parts are present, use AI SDK conversion so calls/results keep
+ * their native provider protocol instead of becoming synthetic user text.
  */
 export async function toAgentMessages(
   messages: UiMessage[],
@@ -298,12 +318,12 @@ export async function toAgentMessages(
         if (text) parts.push({ type: 'text', text });
         parts.push(...files);
         return {
-          role: messageHasFrontendSuspendToolParts(m) ? 'user' : m.role,
+          role: m.role,
           content: parts as string | ContentPart[],
         };
       }
       return {
-        role: messageHasFrontendSuspendToolParts(m) ? 'user' : m.role,
+        role: m.role,
         content: text as string | ContentPart[],
       };
     }),
@@ -382,10 +402,35 @@ export function projectPinLabel(project: { name: string; sources: string[] }): s
 export function buildProjectPinBlock(
   pinLabel: string | null,
   move?: { movedFrom: string | null; movedAt: string | null } | null,
+  /**
+   * 项目级指令(用户在"这个项目要做什么"里写的)。**这是它存在的意义** ——
+   * 不喂给模型的话,那个输入框就只是个装饰。
+   *
+   * 放在钉定块里而不是另起一节:它和"当前是哪个项目"是同一件事的两半 ——
+   * 项目变了,指令必须跟着变;分成两处迟早会有一处忘了跟。
+   */
+  instructions?: string | null,
+  /** 这个项目一个数据源都没接 —— 只在这种情况下才提示,挂好后这句消失。 */
+  hasNoSources = false,
 ): string {
   const lines = ['<system-reminder>'];
   if (pinLabel) {
     lines.push(`当前数据项目: ${pinLabel}(本会话所有数据均来自该项目,勿引用其他项目)`);
+    // **只在零数据源时说**。挂好之后这句就消失 —— 稳态下不该每轮都在处理一件
+    // 早就解决了的事。
+    if (hasNoSources) {
+      lines.push(
+        '这个项目还没有接任何数据源,所以现在查不到工厂数据。' +
+        '需要时先用 list_my_scenes 看看这个身份有哪些场景,' +
+        '再确认要挂哪一个 —— **用户没有指明就要问,不要替他挑一个**。',
+      );
+    }
+    const trimmed = (instructions ?? '').trim();
+    if (trimmed) {
+      // 明确标出这是**用户为这个项目写的**,不是系统规则 —— 两者的权威不同,
+      // 混在一起模型无从判断该以谁为准。
+      lines.push(`该项目的说明(用户写给这个项目的,适用于本项目全部对话):\n${trimmed}`);
+    }
   } else {
     lines.push(
       '当前会话在「个人」区,未绑定任何项目数据源;需要查看工厂数据时,请在侧边栏选择项目新建会话,或用会话菜单将本会话移动到项目。',

@@ -76,29 +76,74 @@ export function isCompassIdentitySyncEnabled(env: NodeJS.ProcessEnv = process.en
 }
 
 export type CompassSourcesResult =
-  | { ok: true; sources: string[] }
+  | { ok: true; sources: string[]; username?: string }
   | { ok: false; error: string };
+
+
+/**
+ * 401 到底是为什么 —— **信息本来就在 token 里,不说出来是白白让人绕远路**。
+ *
+ * 实测:排查一次 401 花了五步(先怀疑 URL 指错、再怀疑被吊销、又去比对两套库),
+ * 最后发现只是昨天过期了。exp 就写在 token 的 payload 里。
+ *
+ * 只解码不验签:我们不是在做鉴权,是在解释一个已经被拒的请求。
+ */
+export function explain401(token: string): string {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return 'token 格式不对';
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+      exp?: number; sub?: string;
+    };
+    const who = claims.sub ? `(${claims.sub})` : '';
+    if (typeof claims.exp === 'number') {
+      const at = new Date(claims.exp * 1000);
+      if (at.getTime() < Date.now()) {
+        // "重新签一张即可"曾经把人带偏:token 是**进程启动时**读一次的,换了 .env
+        // 而不重启,401 照旧 —— 人会以为自己签错了,再签一次,还是不通。
+        return (
+          `token 已于 ${at.toLocaleString('zh-CN')} 过期${who} —— ` +
+          `重新签一张后**要重启 Veylin**(token 在启动时读入,改 .env 不会热生效)`
+        );
+      }
+    }
+    return `token 未过期${who},401 多半是被吊销(代数已提)或对面换了签名密钥`;
+  } catch {
+    return 'token 解不开,可能不是一个 JWT';
+  }
+}
 
 /** `GET {url}/my/sources` with the account bearer token — 10s timeout. */
 export async function fetchCompassSources(
   config: CompassIdentityConfig,
   timeoutMs = 10_000,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<CompassSourcesResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${config.url}/my/sources`, {
+    const res = await fetchImpl(`${config.url}/my/sources`, {
       headers: { Authorization: `Bearer ${config.token}` },
       signal: controller.signal,
     });
     if (!res.ok) {
+      // 401 单独解释:光说 "HTTP 401" 等于把排查成本原样丢给人
+      if (res.status === 401) {
+        return { ok: false, error: `Compass 拒绝了这个身份:${explain401(config.token)}` };
+      }
       return { ok: false, error: `GET /my/sources returned HTTP ${res.status}` };
     }
-    const body = (await res.json()) as { sources?: unknown };
+    const body = (await res.json()) as { sources?: unknown; username?: unknown };
     if (!Array.isArray(body.sources)) {
       return { ok: false, error: '/my/sources response missing a "sources" array' };
     }
-    return { ok: true, sources: body.sources.filter((s): s is string => typeof s === 'string') };
+    // username 是后加的:老版本 Compass 不返 —— 那就**标成未知**,不猜也不编。
+    // 界面要能说出"以谁的身份连着",否则同事复制了同一份 token 也没人会发现。
+    return {
+      ok: true,
+      sources: body.sources.filter((s): s is string => typeof s === 'string'),
+      ...(typeof body.username === 'string' && body.username ? { username: body.username } : {}),
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {

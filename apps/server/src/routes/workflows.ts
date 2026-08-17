@@ -2,6 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { workflowInputSchema } from '@veylin/shared';
 import {
+  crystallizedDraftSchema,
+  crystallizeConversation,
+  draftToCreateInput,
+} from '../workflow-crystallize.js';
+import {
   registerWorkflowSchedule,
   unregisterWorkflowSchedule,
 } from '../queue.js';
@@ -193,6 +198,80 @@ export function registerWorkflowsRoutes(app: FastifyInstance, deps: ServerDeps):
     }
     const runs = await listWorkflowRuns(ctx.tenantId, id);
     return { runs };
+  });
+
+  /**
+   * 把一段对话结晶成工作流**草案**(不直接存,也不直接能跑)。
+   *
+   * 为什么只到草案:从一次对话提炼的东西长在那次数据上 —— "金工分厂是瓶颈"是
+   * 结论不是步骤,当成步骤写进去,换个时间重放照样跑出结果,看起来在工作但答案
+   * 是错的(见 workflow-crystallize.ts)。所以人必须先认一遍。
+   *
+   * `upTo` 让人从**某条消息**结晶,而不是整段对话 —— 通常有用的是"我提出目标 →
+   * 你给出做法"那一截,后面的闲聊只会污染提炼。
+   */
+  app.post('/api/workflows/crystallize', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const body = (req.body ?? {}) as { threadId?: string; upTo?: number };
+    const threadId = body.threadId?.trim();
+    if (!threadId) {
+      reply.code(400);
+      return { ok: false, message: 'threadId is required' };
+    }
+    const all = await deps.readThreadMessages?.(threadId, ctx);
+    if (!all?.length) {
+      // 没有消息不是"生成失败",是没东西可结晶。说清楚。
+      reply.code(400);
+      return { ok: false, message: '这段对话还没有内容可以结晶' };
+    }
+    // 先验请求,再做昂贵的准备 —— 缺 threadId 时不该先去连模型配置,
+    // 那会把一个 400 变成 500。
+    await applyTenantModelSettings(ctx.tenantId);
+    const upTo = typeof body.upTo === 'number' ? Math.max(1, body.upTo) : all.length;
+    const draft = await crystallizeConversation(ctx.tenantId, all.slice(0, upTo));
+    return { ok: true, draft };
+  });
+
+  /**
+   * 把**认过的**草案存成工作流。
+   *
+   * 节点图在服务端从草案生成(`draftToDefinition`),**不收前端传来的图** ——
+   * 一处口径。否则"结论不进提示词""会变的值不写成空占位符"这两条,前端一份、
+   * 后端一份,迟早对不上,而对不上的表现是跑出一个看着正常的错答案。
+   */
+  app.post('/api/workflows/from-draft', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const body = (req.body ?? {}) as { threadId?: string; draft?: unknown; cron?: string };
+    const threadId = body.threadId?.trim();
+    if (!threadId) {
+      reply.code(400);
+      return { ok: false, message: 'threadId is required' };
+    }
+    // 零步先单独拦:schema 本身就要求 ≥1 步,交给它拦会回一句"格式不对",
+    // 而人看到的其实是"我删光了步骤"。同一个拒绝,说得出原因才有用。
+    const steps = (body.draft as { steps?: unknown } | undefined)?.steps;
+    if (Array.isArray(steps) && steps.length === 0) {
+      reply.code(400);
+      return { ok: false, message: '至少要有一步 —— 没有步骤的工作流跑起来什么也不做' };
+    }
+    const parsed = crystallizedDraftSchema.safeParse(body.draft);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false, message: '草案格式不对' };
+    }
+    const draft = parsed.data;
+    const created = await createWorkflow(
+      ctx.tenantId,
+      ctx.userId,
+      draftToCreateInput(draft, threadId, body.cron) as never,
+    );
+    if (created.enabled && created.kind === 'cron' && created.cron) {
+      await registerWorkflowSchedule(
+        deps.queue, created.id, created.cron, created.timezone ?? 'UTC',
+        { tenantId: ctx.tenantId, workflowId: created.id, eventContext: {} },
+      );
+    }
+    return { ok: true, workflow: created };
   });
 
   app.post('/api/workflows/generate', async (req, reply) => {

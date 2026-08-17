@@ -25,7 +25,7 @@ import { buildAgentTaskTools } from './agent-task-tool';
 import { executeSubagentJob, CancelledTaskError } from './agent-task-runner';
 import { buildTableTools } from './table-tools';
 import { buildViewer3dTools } from './viewer3d-tools';
-import { initTableStore, listTableSheets, stampTableSheetSource } from './table-store';
+import { flushTablePersist, initTableStore, listTableSheets, stampTableSheetSource } from './table-store';
 import { pruneDesktopThreadClutter } from './thread-state';
 import {
   initResumableChatStreams,
@@ -37,9 +37,11 @@ import { createMcpAutoRetryLoop, isMcpAutoRetryEnabled } from './mcp-retry-loop'
 import {
   createCompassIdentitySyncLoop,
   isCompassIdentitySyncEnabled,
-  parseCompassIdentityConfig,
   reconcileCompassIdentity,
 } from './compass-identity';
+import { resolveCompassIdentity } from './compass-credential';
+import { readClientRegistration } from './compass-oauth-flow';
+import { refreshIfNeeded } from './compass-refresh';
 import { startupCheckpoint } from './startup-profiler';
 import { ensureDevTenant, DEV_TENANT_ID } from './tenant';
 import { refreshAgentPackages, isAgentHotReloadEnabled } from './agent-packages-sync';
@@ -255,12 +257,33 @@ async function main() {
     await rebuildMcp(tenantId);
   }
 
-  // Absent (or malformed) VEYLIN_COMPASS_IDENTITY → feature off, byte-identical
-  // to today's behavior (no compass-identity route/loop wiring does anything).
-  const compassIdentityConfig = parseCompassIdentityConfig();
-  const compassIdentitySyncOn = compassIdentityConfig != null && isCompassIdentitySyncEnabled();
+  // 身份**每次用的时候才解析**(凭据文件优先,.env 兜底) —— 不在 boot 时捕获成
+  // 常量。捕获过一次的代价是实测到的:换了凭据不重启就不生效,而人完全看不出
+  // 原因(见 compass-credential.ts)。
+  //
+  // 同理,周期同步的开关只看 kill switch,不看"boot 时有没有凭据":新装的应用
+  // 一开始当然没有,如果据此不启动循环,用户连上之后又得重启一次。没凭据的那
+  // 一跳是廉价空转。
+  const compassIdentitySyncOn = isCompassIdentitySyncEnabled();
 
   async function syncCompassIdentity(tenantId: string) {
+    // 每次同步前顺手看一眼要不要续期。放在这里而不是另起一个定时器:同步本来就
+    // 是"把身份的现状对齐"的那一跳,而且续期成功后紧接着的这次同步会把新 token
+    // 物化进 MCP 条目 —— 两件事必须挨着,否则条目里还是旧的那张。
+    // 续不了不阻断同步:凭据还在,能连就继续连(见 compass-refresh.ts)。
+    try {
+      const reg = readClientRegistration(resolveCompassIdentity()?.url ?? '');
+      if (reg) {
+        const outcome = await refreshIfNeeded({ clientId: reg.clientId });
+        if (outcome === 'refreshed') app.log.info('[compass-identity] access token 已自动续期');
+        if (outcome === 'needs-login') {
+          app.log.warn('[compass-identity] 续期被拒 —— 需要重新登录(凭据未清除)');
+        }
+      }
+    } catch (err) {
+      app.log.warn({ err }, '[compass-identity] 续期检查失败,继续用现有凭据');
+    }
+    const compassIdentityConfig = resolveCompassIdentity();
     if (!compassIdentityConfig) {
       return {
         created: 0,
@@ -416,9 +439,27 @@ async function main() {
     subscribeTaskEvents,
     mcpHealthByTenant,
     RAG_UPLOAD_MAX_BYTES,
-    syncCompassIdentity: compassIdentityConfig
-      ? () => syncCompassIdentity(DEV_TENANT_ID)
-      : undefined,
+    // 始终提供:没配凭据时它返回全 0 的空结果(诚实的 no-op),而不是让路由
+    // 表现成"这个功能不存在" —— 用户刚连上就该能手动同步一次。
+    // 结晶成工作流要读这段对话。走和 /api/threads/:id/messages 同一条召回路径,
+    // 注入进来是为了让路由层不必知道 memory 的细节。
+    readThreadMessages: async (threadId: string) => {
+      const { mastraMessagesToUi } = await import('./message-sync.js');
+      const { resolveThreadForRead } = await import('./thread-state.js');
+      const row = await resolveThreadForRead(threadId, { tenantId: DEV_TENANT_ID } as never);
+      if (!row) return [];
+      const { recallOrEmpty } = await import('./memory-recall.js');
+      const recalled = await recallOrEmpty(runtime.memory, {
+        threadId, resourceId: row.resourceId, perPage: false,
+      });
+      return mastraMessagesToUi(recalled.messages ?? []).map(
+        (m: { role?: string; content?: unknown }) => ({
+          role: String(m.role ?? 'user'),
+          content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''),
+        }),
+      );
+    },
+    syncCompassIdentity: () => syncCompassIdentity(DEV_TENANT_ID),
   };
   await registerApiRoutes(app, deps);
 
@@ -566,7 +607,7 @@ async function main() {
 
   if (compassIdentitySyncOn) {
     compassIdentitySyncLoop.start();
-  } else if (compassIdentityConfig) {
+  } else {
     app.log.info('VEYLIN_COMPASS_IDENTITY_SYNC=0 — compass-identity periodic sync disabled');
   }
 
@@ -584,6 +625,9 @@ async function main() {
         await mcp.disconnect().catch(() => undefined);
         mcp = null;
       }
+      // 关库之前把排队中的表格落盘走完 —— 行级改动是 fire-and-forget 的,
+      // 这时候关掉就是静默丢最后几笔(大表导入曾经这样少过一万行)。
+      await flushTablePersist();
       await closeDb();
       await app.close();
     } catch (err) {

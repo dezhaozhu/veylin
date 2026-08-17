@@ -11,7 +11,7 @@
     },
     {
       "name": "compass-scheduler",
-      "description": "Compass 智能排产：真实多厂数据、治理编辑（propose→preview→commit）、增量重排、鼓点/负荷分析；远程 MCP（需 project token）。",
+      "description": "Compass 智能排产：真实多厂数据、治理编辑（propose→preview→commit）、增量重排、鼓点/负荷分析；用法知识包;连接与授权在 设置 → MCP 里完成。",
       "version": "1.0.0",
       "source": {
         "type": "path",

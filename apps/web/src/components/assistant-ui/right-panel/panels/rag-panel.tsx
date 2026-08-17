@@ -423,6 +423,17 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
     }
   }, [tab, graph.nodes.length, graph.links.length, graphSize.width, graphSize.height, fitGraphView]);
 
+  /** 读成 base64(留档用;文本抽取仍在前端做)。 */
+  async function fileToBase64(file: File): Promise<string> {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    let bin = '';
+    const CHUNK = 0x8000;               // 大文件别一次性 apply,会爆栈
+    for (let i = 0; i < buf.length; i += CHUNK) {
+      bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+    }
+    return btoa(bin);
+  }
+
   async function onUpload(files: FileList | File[]) {
     const list = [...files];
     if (list.length === 0) return;
@@ -436,9 +447,14 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
     try {
       for (const file of list) {
         const { text, mimeType } = await extractTextFromFile(file);
+        // 原件字节一起送:服务端按内容哈希留档进项目文件夹(spec §3「导入即留档」)。
+        // 抽取出的文本照旧入库;原件是原件,两回事。
+        const base64 = await fileToBase64(file);
         const result = await fetchJson<{
           graphEntities?: number;
           graphEdges?: number;
+          archived?: boolean;
+          archiveNote?: string;
         }>('/api/rag/documents', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -448,9 +464,12 @@ export function RagPanel({ tab: panelTab, updateState }: PanelContentProps) {
             text,
             threadId,
             model: getChatSettings().model || 'default',
+            file: { name: file.name, base64 },
           }),
         });
         if ((result.graphEntities ?? 0) > 0) addedGraph = true;
+        // 没留档要说出来 —— 以为原件存好了而其实没有,是最坏的一种沉默。
+        if (result.archived === false && result.archiveNote) setError(result.archiveNote);
       }
       await refresh({ showError: true });
       setTab(addedGraph ? 'graph' : 'documents');
