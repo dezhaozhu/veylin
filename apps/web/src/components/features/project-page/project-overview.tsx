@@ -10,6 +10,7 @@ import { PageHeader, SectionHeading } from '@/components/features/settings/page-
 import { useWorkspaceCollapsedInset } from '@/components/features/workspace-view-frame';
 import { WorkspaceMain } from '@/components/features/workspace-main';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
+import { useRightSidebar } from '@/components/ui/sidebar';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { projectSourceLabel } from '@/lib/project-labels';
 import {
@@ -435,8 +436,13 @@ type ProjectContext = {
   folder: string | null;
   originals: Array<{ name: string; bytes: number; importedAt: string; seenCount: number }>;
   snapshots: Array<{ name: string; bytes: number; at: string }>;
+  /** 文件夹里躺着的、我们生成的、可编辑副本 —— 都算上下文 */
+  files?: Array<{ name: string; bytes: number; at: string; where: 'folder' | 'generated' | 'draft' }>;
   connectors: Array<{ server: string; tenant?: string; oldestLoadedAt: string; sheets: string[] }>;
 };
+
+/** 三类文件各自的说法 —— 它们不是一回事,人要能一眼分清。 */
+const FILE_WHERE = { folder: '文件夹里', generated: '生成的', draft: '文稿' } as const;
 
 const kb = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
@@ -451,6 +457,7 @@ const SEARCH_FROM = 6;
 
 const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
   const { openDocument } = usePanelTabs();
+  const { setOpen: setRightOpen } = useRightSidebar();
   const { closeWorkspace } = useSettingsPanel();
   const [data, setData] = useState<ProjectContext | null>(null);
   const [q, setQ] = useState('');
@@ -479,8 +486,11 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
   );
   const originals = (data?.originals ?? []).filter((f) => hit(f.name));
   const snapshots = (data?.snapshots ?? []).filter((f) => hit(f.name));
+  // 文件夹里躺着的文件也算 —— 漏掉它们,项目页会显示"上下文是空的",而文件夹里
+  // 明明放着四份文档(实测)。
+  const files = (data?.files ?? []).filter((f) => hit(f.name));
   const total = data
-    ? data.connectors.length + data.originals.length + data.snapshots.length
+    ? data.connectors.length + data.originals.length + data.snapshots.length + (data.files?.length ?? 0)
     : 0;
 
   return (
@@ -511,6 +521,9 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
           onClose={() => setPanelOpen(false)}
           onOpenInPanel={(name) => {
             openDocument({ projectId: project.id, name });
+            // 右栏是收起的时候,只加一个 tab 等于什么也没发生 —— 人点了「在右侧
+            // 打开」,项目页关掉了,右边一片空白(实测)。要连着把右栏展开。
+            setRightOpen(true);
             // 项目页是盖住全屏的:不让位,右侧那个 tab 打开了也看不见。
             closeWorkspace();
           }}
@@ -536,7 +549,7 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
         </div>
       ) : null}
 
-      {originals.length > 0 || snapshots.length > 0 ? (
+      {originals.length > 0 || snapshots.length > 0 || files.length > 0 ? (
         <div>
           <p className="text-muted-foreground mb-1 text-xs">文件（存下来就不变）</p>
           <ul className="space-y-1">
@@ -555,11 +568,19 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
                 <span className="text-muted-foreground shrink-0">快照 · {kb(f.bytes)}</span>
               </li>
             ))}
+            {files.map((f) => (
+              <li key={`f-${f.name}`} className="flex items-baseline gap-2 text-xs">
+                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                <span className="text-muted-foreground shrink-0">
+                  {FILE_WHERE[f.where]} · {kb(f.bytes)}
+                </span>
+              </li>
+            ))}
           </ul>
         </div>
       ) : null}
       {/* 搜不到要说一声 —— 空白会被读成"这儿本来就没东西"。 */}
-      {kw && connectors.length + originals.length + snapshots.length === 0 ? (
+      {kw && connectors.length + originals.length + snapshots.length + files.length === 0 ? (
         <p className="text-muted-foreground text-xs">没有匹配「{q}」的项</p>
       ) : null}
     </RailSection>

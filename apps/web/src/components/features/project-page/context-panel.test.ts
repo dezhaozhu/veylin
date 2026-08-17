@@ -33,3 +33,32 @@ describe('摊平上下文', () => {
     assert.deepEqual(flattenContext({ originals: [], snapshots: [], connectors: [] }), []);
   });
 });
+
+describe('文件夹里的文件也进清单', () => {
+  const base = { originals: [], snapshots: [], connectors: [] };
+
+  it('**放进项目文件夹的文件要出现** —— 不出现,"在右侧打开"这个入口就够不着(实测)', () => {
+    const items = flattenContext({
+      ...base,
+      files: [{ name: '工艺说明.docx', bytes: 2048, at: '2026-08-16T10:00:00Z', where: 'folder' }],
+    });
+    assert.equal(items[0]!.name, '工艺说明.docx');
+    assert.match(items[0]!.detail, /文件夹/);
+  });
+
+  it('三类分别标清:文件夹里的 / 生成的 / 文稿', () => {
+    const items = flattenContext({
+      ...base,
+      files: [
+        { name: '生成/汇报.docx', bytes: 1, at: '2026-08-16T12:00:00Z', where: 'generated' },
+        { name: '文稿/工艺说明.md', bytes: 1, at: '2026-08-16T11:00:00Z', where: 'draft' },
+      ],
+    });
+    assert.match(items.find((i) => i.name.includes('汇报'))!.detail, /生成/);
+    assert.match(items.find((i) => i.name.includes('工艺说明'))!.detail, /文稿|副本/);
+  });
+
+  it('没有 files 字段时不炸 —— 老响应还在路上', () => {
+    assert.doesNotThrow(() => flattenContext(base as never));
+  });
+});

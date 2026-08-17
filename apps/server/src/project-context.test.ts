@@ -10,7 +10,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarizeConnectors } from './project-context.js';
+import { listProjectFiles, summarizeConnectors } from './project-context.js';
 
 const sheet = (name: string, source: unknown) => ({ id: `p_x~${name}`, name, source } as never);
 
@@ -57,5 +57,55 @@ describe('summarizeConnectors', () => {
     ]);
     assert.equal(out.length, 1);
     assert.equal(out[0]!.server, 'compass-guolu');
+  });
+});
+
+/**
+ * **文件夹即上下文** —— 项目文件夹里躺着的文件,就是这个项目的上下文。
+ *
+ * 实测发现的洞:上下文栏只列"导入过的原件"和「快照/」。把一份工艺说明直接放进
+ * 项目文件夹,它在界面上**根本不出现** —— 于是"在右侧打开"这个入口也就够不着。
+ * 我们自己生成的(「生成/」)和可编辑副本(「文稿/」)同样看不见。
+ */
+describe('文件夹里的文件也算上下文', () => {
+  it('列出根目录里能读的文件,并标明它还没导入', async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'ctx-'));
+    try {
+      writeFileSync(join(dir, '工艺说明.docx'), 'x');
+      writeFileSync(join(dir, '.DS_Store'), 'x');       // 噪声不列
+      const out = await listProjectFiles(dir);
+      const names = out.files.map((f) => f.name);
+      assert.ok(names.includes('工艺说明.docx'), `没列出来:${names.join(',')}`);
+      assert.ok(!names.includes('.DS_Store'), '把噪声也列了');
+      assert.equal(out.files.find((f) => f.name === '工艺说明.docx')!.where, 'folder');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('「生成/」和「文稿/」分开标 —— 三者不是一回事,人要能一眼分清', async () => {
+    const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'ctx-'));
+    try {
+      mkdirSync(join(dir, '生成')); writeFileSync(join(dir, '生成', '汇报.docx'), 'x');
+      mkdirSync(join(dir, '文稿')); writeFileSync(join(dir, '文稿', '工艺说明.md'), 'x');
+      const out = await listProjectFiles(dir);
+      assert.equal(out.files.find((f) => f.name.endsWith('汇报.docx'))?.where, 'generated');
+      assert.equal(out.files.find((f) => f.name.endsWith('工艺说明.md'))?.where, 'draft');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('**不列我们自己的仓** —— .veylin 是实现细节,不是给人看的东西', async () => {
+    const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'ctx-'));
+    try {
+      mkdirSync(join(dir, '.veylin')); writeFileSync(join(dir, '.veylin', 'manifest.json'), '{}');
+      assert.equal((await listProjectFiles(dir)).files.length, 0);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

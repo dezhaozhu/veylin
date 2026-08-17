@@ -12,6 +12,7 @@
  *   等于把"此刻取到的一份快照"讲成了"它的内容"。
  */
 import { useEffect, useState, type FC } from 'react';
+import { createPortal } from 'react-dom';
 
 import { DocumentPreview } from '@/components/features/document-preview';
 import { describeFreshness } from '@/lib/freshness';
@@ -82,8 +83,11 @@ export const ContextPanel: FC<{
     return () => { alive = false; };
   }, [picked, projectId]);
 
-  return (
-    <div className="bg-background/70 fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-sm">
+  // **挂到 body 上**:留在原地的话,祖先里任何一个 transform/opacity 都会造出
+  // 新的 stacking context,把这个 `z-50` 关在里面 —— 表现是侧栏盖住了面板左半边
+  // 的文件清单,人得先收起侧栏才能选文件(实测)。
+  return createPortal(
+    <div className="bg-background/70 fixed inset-0 z-[200] flex items-center justify-center p-6 backdrop-blur-sm">
       <div className="border-border bg-card flex h-[80vh] w-full max-w-5xl flex-col rounded-xl border shadow-lg">
         <header className="flex items-start justify-between gap-3 px-5 pt-4 pb-3">
           <div>
@@ -159,8 +163,9 @@ export const ContextPanel: FC<{
                           在右侧打开
                         </button>
                       ) : null}
-                    // 打不开也走得下去:文件本来就躺在项目文件夹里,让人去拿。
-                    <button
+                      {/* 打不开也走得下去:文件本来就躺在项目文件夹里,让人去拿。
+                          (这行原来是 `//` 注释,被 JSX 当成文本原样显示在了界面上) */}
+                      <button
                       type="button"
                       className="text-foreground text-xs underline underline-offset-4"
                       onClick={() => {
@@ -181,14 +186,24 @@ export const ContextPanel: FC<{
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
+
+/** 三类文件各自的说法 —— 它们不是一回事,人要能一眼分清。 */
+const WHERE_LABEL = {
+  folder: '文件夹里 · 还没导入',
+  generated: '生成的',
+  draft: '文稿(可改的副本)',
+} as const;
 
 /** 侧栏的三类东西摊平成一张清单(顺序=文件在前,连接器在后:文件不变,连接器会腐烂)。 */
 export function flattenContext(data: {
   originals: Array<{ name: string; bytes: number; seenCount: number }>;
   snapshots: Array<{ name: string; bytes: number; at: string }>;
+  /** 直接躺在项目文件夹里的、我们生成的、以及可编辑副本 */
+  files?: Array<{ name: string; bytes: number; at: string; where: 'folder' | 'generated' | 'draft' }>;
   connectors: Array<{ server: string; tenant?: string; oldestLoadedAt: string; sheets: string[] }>;
 }): ContextItem[] {
   const kb = (n: number) =>
@@ -201,6 +216,12 @@ export function flattenContext(data: {
     })),
     ...data.snapshots.map((f) => ({
       kind: 'file' as const, name: f.name, detail: `快照 · ${kb(f.bytes)}`,
+    })),
+    // 文件夹里躺着的文件也是上下文 —— 不列出来,"在右侧打开"就够不着它们(实测)。
+    ...(data.files ?? []).map((f) => ({
+      kind: 'file' as const,
+      name: f.name,
+      detail: `${WHERE_LABEL[f.where]} · ${kb(f.bytes)}`,
     })),
     ...data.connectors.map((c) => ({
       kind: 'connector' as const,
