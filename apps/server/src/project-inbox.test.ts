@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanProjectInbox } from './project-inbox.js';
+import { KNOWN_EXTENSIONS, scanProjectInbox } from './project-inbox.js';
 import { storeOriginal } from './project-originals.js';
 
 let folder: string;
@@ -64,5 +64,15 @@ describe('scanProjectInbox', () => {
     const out = await scanProjectInbox(folder);
     assert.deepEqual(out.pending, []);
     assert.match(out.note ?? '', /不存在/);
+  });
+});
+
+describe('认得的后缀 = 真读得了的后缀', () => {
+  it('**收件箱不能提示一个我们读不了的文件** —— 提示了就是让人白点一次', async () => {
+    const { planExtract } = await import('./document-extract.js');
+    for (const ext of KNOWN_EXTENSIONS) {
+      const plan = planExtract(`x${ext}`);
+      assert.notEqual(plan.kind, 'unsupported', `收件箱认得 ${ext},但抽取器读不了`);
+    }
   });
 });

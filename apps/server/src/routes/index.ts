@@ -14,6 +14,7 @@ import { registerAutomationsRoutes } from './automations.js';
 import { registerWorkflowsRoutes } from './workflows.js';
 import { registerWebhooksRoutes } from './webhooks.js';
 import { registerTablesRoutes } from './tables.js';
+import { registerAttachmentRoutes } from './attachments.js';
 import { registerProjectsRoutes } from './projects.js';
 import { registerThreadsRoutes } from './threads.js';
 import { registerChatRoutes } from './chat.js';
@@ -39,6 +40,7 @@ export async function registerApiRoutes(app: FastifyInstance, deps: ServerDeps):
   registerWorkflowsRoutes(app, deps);
   registerWebhooksRoutes(app, deps);
   registerTablesRoutes(app, deps);
+  registerAttachmentRoutes(app, deps);
   registerProjectsRoutes(app, deps);
   registerThreadsRoutes(app, deps);
   registerGoalLoopRoutes(app, deps);

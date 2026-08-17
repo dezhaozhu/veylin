@@ -159,6 +159,73 @@ async function pdfToParts(url: string, filename: string, vision: boolean): Promi
   }
 }
 
+const OFFICE_EXTENSIONS = new Set([
+  '.docx', '.xlsx', '.xlsm', '.pptx',
+  // 老二进制格式也走这条:抽取器读不了它们,但它给的是"用 Office 另存为 .docx
+  // 再来"这种能照做的话,比通用那句"convert to PDF or plain text"有用。
+  '.doc', '.xls', '.ppt',
+]);
+
+/** 交给 Office 抽取器处理的后缀(含读不了但要好好拒的老格式)。 */
+export function isOfficeAttachment(filename: string): boolean {
+  const i = filename.lastIndexOf('.');
+  return i >= 0 && OFFICE_EXTENSIONS.has(filename.slice(i).toLowerCase());
+}
+
+/** data URL → 字节。不是 data URL 就返回 null(不猜)。 */
+function decodeDataUrlToBytes(url: string): Buffer | null {
+  const comma = url.indexOf(',');
+  if (!url.startsWith('data:') || comma < 0) return null;
+  if (!url.slice(5, comma).includes('base64')) return null;
+  try {
+    return Buffer.from(url.slice(comma + 1), 'base64');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 拖进对话框的 Office 文件(docx / xlsx / pptx)→ 文字。
+ *
+ * 走的是**项目文件夹那条同一个抽取器**(`document-extract`)。从前这里是一堵墙:
+ * 同一份 xlsx,放进项目文件夹能读概览,拖进来只回一句"转成 PDF 再来" —— 这个
+ * 区别对用户毫无道理可讲,因为它根本不该存在。
+ *
+ * 表格照旧**只给概览**:附件这条路没有分页,把三万行塞进提示词既装不下,更糟的是
+ * 模型会以为自己拿到了全部,然后基于前一千行下结论。
+ */
+export async function officeAttachmentToParts(
+  url: string,
+  filename: string,
+): Promise<ContentPart[]> {
+  const name = filename || 'attachment';
+  const bytes = decodeDataUrlToBytes(url);
+  if (!bytes) {
+    return [{ type: 'text', text: `[附件 "${name}" 读不了:拿不到文件内容]` }];
+  }
+  const { extractDocument } = await import('./document-extract.js');
+  const out = await extractDocument(name, bytes);
+  if (out.kind === 'unsupported') {
+    return [{ type: 'text', text: `[附件 "${name}" 读不了:${out.notice ?? '格式不支持'}]` }];
+  }
+  if (out.kind === 'sheet') {
+    const head = `[附件 "${name}" —— 表格概览]`;
+    const body = [
+      `页签:${(out.sheets ?? []).join('、')}`,
+      `列:${(out.columns ?? []).join('、')}`,
+      `共 ${out.totalRows ?? 0} 行,下面是前 ${out.rows?.length ?? 0} 行:`,
+      JSON.stringify(out.rows ?? [], null, 0),
+      out.notice ?? '',
+    ].join('\n');
+    return [{ type: 'text', text: `${head}\n${body}` }];
+  }
+  const label = out.kind === 'slides' ? 'PPT' : 'Word';
+  return [{
+    type: 'text',
+    text: `[附件 "${name}" —— ${label} 正文]\n${out.text ?? ''}${out.notice ? `\n${out.notice}` : ''}`,
+  }];
+}
+
 async function textFileToParts(url: string, filename: string, mediaType: string): Promise<ContentPart[]> {
   const name = filename || 'attachment.txt';
   if (isBinaryAttachment(name, mediaType)) {
@@ -192,6 +259,10 @@ async function fileParts(msg: UiMessage, vision: boolean): Promise<ContentPart[]
       out.push({ type: 'image', image: p.url });
     } else if (mediaType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf')) {
       out.push(...(await pdfToParts(p.url, filename, vision)));
+    } else if (isOfficeAttachment(filename)) {
+      // Office 要排在 isBinaryAttachment 之前 —— 它按后缀把 docx/xlsx/pptx 判成
+      // 二进制,那正是从前"转成 PDF 再来"那句话的出处。
+      out.push(...(await officeAttachmentToParts(p.url, filename)));
     } else if (isTextLikeAttachment(filename, mediaType)) {
       out.push(...(await textFileToParts(p.url, filename, mediaType)));
     } else if (isBinaryAttachment(filename, mediaType)) {

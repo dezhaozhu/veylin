@@ -11,8 +11,15 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { readManifest, sha256 } from './project-originals.js';
 
-/** 认得的后缀。别的(.DS_Store、.txt 笔记…)不提示 —— 提示得多就没人看了。 */
-const KNOWN = new Set(['.xlsx', '.xls', '.csv', '.docx', '.doc', '.pdf', '.pptx', '.md']);
+/**
+ * 认得的后缀。别的(.DS_Store、.txt 笔记…)不提示 —— 提示得多就没人看了。
+ *
+ * **这里只能放真读得了的**(见 document-extract):从前 `.doc`/`.ppt` 也在列,
+ * 于是收件箱提示"有新文件待导入",人点进去却得到一句"读不了" —— 白点一次,
+ * 而且是我们请他点的。`.pdf` 留着:它由对话框那条路(unpdf)读。
+ */
+export const KNOWN_EXTENSIONS = ['.xlsx', '.xls', '.xlsm', '.csv', '.docx', '.pdf', '.pptx', '.md'] as const;
+const KNOWN = new Set<string>(KNOWN_EXTENSIONS);
 /** 只看顶层;.veylin 是我们自己的仓,快照/ 是我们自己生成的产物。 */
 const SKIP_DIRS = new Set(['.veylin', '快照']);
 

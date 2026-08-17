@@ -34,10 +34,16 @@ describe('planFileRead —— 先说清楚这类文件能怎么读', () => {
     assert.equal(planFileRead('说明.docx').kind, 'doc');
   });
 
+  it('PDF 现在也读得了 —— 从前只能"拖进对话框",而同一份文件躺在项目里却读不了', () => {
+    assert.equal(planFileRead('图纸.pdf').kind, 'doc');
+  });
+
   it('读不了的类型**明说读不了**,并给出可行的替代', () => {
-    const p = planFileRead('图纸.pdf');
+    // 老二进制格式是真读不了。"转成 PDF" 对一份 .doc 是没用的建议,
+    // 能照做的那句是"用 Office 另存为 .docx"。
+    const p = planFileRead('纪要.doc');
     assert.equal(p.kind, 'unsupported');
-    assert.match(p.note ?? '', /拖进对话/);
+    assert.match(p.note ?? '', /另存为 \.docx/);
   });
 
   it('没见过的后缀也照实说,不硬当文本读', () => {
