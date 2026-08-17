@@ -352,7 +352,7 @@ const NewProjectDialog: FC<{
       </FormField>
       <FormField
         label={t('threadList.projectSources')}
-        hint={sourceOptions.length ? '不选也行 —— 那这个项目只放你自己的文件,以后随时能加' : undefined}
+        hint={sourceOptions.length ? '远端系统的数据。不选也行 —— 那这个项目只用本地文件,以后随时能加' : undefined}
       >
         <div className="flex flex-col gap-1.5">
           {sourceOptions.map((source) => (

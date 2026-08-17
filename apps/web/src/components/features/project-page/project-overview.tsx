@@ -295,6 +295,9 @@ const ProjectSourcesSection: FC<{ project: ProjectInfo }> = ({ project }) => {
   return (
     <RailSection
       title="数据源"
+      // **数据源 = 远端接来的、会变的数据**;本地文件属于「上下文」那一段。
+      // 两段以前的空状态措辞是混着的("上下文"里也叫人去连数据源),于是没人
+      // 分得清哪个是哪个 —— 而这两者的新鲜度、权威性、能不能改都不一样。
       action={
         // managed 项目不给动作 —— 后端 403,给了就是个只会失败的按钮。
         granted.length && !project.managed
@@ -307,8 +310,10 @@ const ProjectSourcesSection: FC<{ project: ProjectInfo }> = ({ project }) => {
     >
       {project.sources.length === 0 && !editing ? (
         // 说的是**没选会怎样**,而不是"没选"。
+        // **不写"排产"** —— 数据源是接远端系统这件事本身,今天是排产,以后可能是
+        // 质量、设备。写死一个领域,别的接进来时这句话就成了假话。
         <RailEmpty>
-          这个项目只用你自己的文件。<br />接上数据源后,对话里就能直接查排产数据。
+          还没接远端系统。<br />接上之后,对话里就能直接查它那边的实时数据。
         </RailEmpty>
       ) : null}
       {editing ? (
@@ -345,7 +350,7 @@ const ProjectSourcesSection: FC<{ project: ProjectInfo }> = ({ project }) => {
           })}
           {granted.length === 0 ? (
             <p className="text-muted-foreground text-xs">
-              Compass 还没给你任何数据源 —— 先在 设置 → MCP 里连接。
+              还没有可用的远端系统 —— 先在 设置 → MCP 里连一个。
             </p>
           ) : null}
         </div>
@@ -530,7 +535,12 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
     >
       {total === 0 ? (
         // 空状态说清**放什么**,而不是整段消失 —— 消失的话人不知道这里可以放东西。
-        <RailEmpty>导入表格、连上数据源,或给项目设一个文件夹,<br />之后在对话里就能直接引用。</RailEmpty>
+        // **这一段只说本地的东西。** 原来这里也写"连上数据源",于是和上面那段
+        // 讲的是同一件事,人分不清区别 —— 而远端数据会变、本地留档不会变,
+        // 这个区别恰恰是最该讲清楚的。
+        <RailEmpty>
+          把表格导进来、或给项目设一个文件夹,<br />之后在对话里就能直接引用这些文件。
+        </RailEmpty>
       ) : null}
       {/* 侧栏里超过一屏就没法看了 —— 多的交给面板,这里只给搜索当快筛。 */}
       {total > SEARCH_FROM ? (

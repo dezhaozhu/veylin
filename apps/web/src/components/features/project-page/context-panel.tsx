@@ -52,7 +52,7 @@ export const ContextPanel: FC<{
       setPreview({
         state: 'note',
         payload: {
-          note: '这是一条数据源连接,不是一个文件 —— 它的内容随时会变。要看具体的行,在对话里问,或者用表格工具筛。',
+          note: '这是一条远端系统的连接,不是一个文件 —— 它的内容随时会变。要看具体的行,在对话里问,或者用表格工具筛。',
         },
       });
       return;
