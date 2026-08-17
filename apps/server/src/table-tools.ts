@@ -1376,7 +1376,10 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       '改一份项目文档(Word/PPT/markdown 等)。**不改原件** —— 第一次改会自动从原件建一份' +
       '可编辑副本(文稿/xxx.md),之后改都落在副本上,每次一个版本、可回退。' +
       'find 必须是文档里一字不差的原文,而且只出现一处;不唯一时把它写长一点。' +
-      '改完把 diff 给用户看,由他确认 —— 不要替他决定改得对不对。',
+      '改完把 diff 给用户看,由他确认 —— 不要替他决定改得对不对。' +
+      '**改工艺/排产类文档之前,先用 reconcile_document 对照一遍**:改完之后如果结果里带了' +
+      ' ask_next,把那一问原样问给用户(改的是这份文档,还是它描述的那件事)——' +
+      '文档改了而系统规则没改,两边就互相矛盾了,而界面上看不出来。',
     inputSchema: z.object({
       name: z.string().describe('原件文件名,例如 工艺说明.docx'),
       find: z.string().describe('要替换的原文,一字不差'),
@@ -1395,8 +1398,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         const out = applyAnchoredEdit(copy.text, input.find, input.replace);
         if (!out.ok) return { ok: false, error: out.reason, created_copy: copy.created };
         const rev = await saveRevision(got.folder, input.name, out.text, input.note ?? '按原文替换');
-        return {
-          ok: true,
+        const base = {
+          ok: true as const,
           copy: `文稿/${copy.path.split('/').pop()}`,
           revision: rev.n,
           diff: out.diff,
@@ -1404,6 +1407,17 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
             ? '第一次改:已从原件建了可编辑副本,原件没有改动。'
             : '改在副本上,原件没有改动。',
         };
+        // **改完那一问**:这一句在系统里是什么?改了文档,系统可没跟着改。
+        // 只在这次会话已经对照过、且这一句确实对得上某条结论时才问 ——
+        // 没对照过就问,是在假装知道(见 doc-change-intent.ts)。
+        const { attachIntent, recallVerdicts, rememberEditedQuote } =
+          await import('./doc-change-intent.js');
+        const pid = compassScopeFromCtx(ctx)?.projectId ?? '';
+        const withIntent = attachIntent(base, input.find, recallVerdicts(pid, input.name));
+        // 改完引述就变了。**这一刻我们恰好知道动的是哪一条**,把改后的文本也
+        // 登记成别名 —— 否则随后要提规则提案时,拿新原文查不到那条结论(真跑踩到)。
+        rememberEditedQuote(pid, input.name, input.find, input.replace);
+        return withIntent;
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
@@ -1525,7 +1539,78 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         };
       }
       const verdicts = reconcile(assertions, facts);
+      // 存下来给随后的 document_edit 用 —— 那一问("你改的是文档还是那件事")
+      // 只有在**对照过**之后才问得出口。
+      const { rememberVerdicts } = await import('./doc-change-intent.js');
+      rememberVerdicts(compassScopeFromCtx(ctx)?.projectId ?? '', input.name, verdicts);
       return { ok: true, summary: summarizeReconcile(verdicts) + droppedNote, verdicts };
+    },
+  });
+
+  /**
+   * 「文档 + 规则一起改」那个选项的落点。
+   *
+   * 用户在 `document_edit` 的那一问里选了"一起改"之后,这里把文档那句话提成
+   * Compass 的**待审**规则提案(propose → show_shadow → 批准)。不新造治理。
+   *
+   * **必须先对照过。** 提案要说清"这条会排除谁",而那个信息来自对照结果里系统侧
+   * 的真实资源。没对照就提,提出来的是一条不知道自己会砍掉什么的规则。
+   */
+  const proposeRuleFromDocument = createTool({
+    id: 'propose_rule_from_document',
+    description:
+      '用户说「文档+规则一起改」时用它:把文档里的一句话提成 Compass 的**待审**规则提案。' +
+      '不立即生效 —— 提案后要跑 show_shadow 看影响,批准才生效。' +
+      '**必须先 reconcile_document 对照过这份文档**,否则提案说不清它会排除掉哪些现在在用的资源。',
+    inputSchema: z.object({
+      name: z.string().describe('文档文件名'),
+      quote: z.string().describe('文档里的那句原文(要和对照时的引述对得上)'),
+    }),
+    execute: async (input: { name: string; quote: string }, ctx?: TableToolCtx) => {
+      const { recallVerdicts } = await import('./doc-change-intent.js');
+      const pid = compassScopeFromCtx(ctx)?.projectId ?? '';
+      const verdicts = recallVerdicts(pid, input.name);
+      if (!verdicts.length) {
+        return {
+          ok: false,
+          error: `还没有对照过「${input.name}」—— 先用 reconcile_document 跑一遍。` +
+            '没有对照结果,提案说不清它会排除掉哪些现在在用的资源。',
+        };
+      }
+      const q = input.quote.trim();
+      const hit = verdicts.find((v) => {
+        const vq = v.assertion.quote.trim();
+        return vq === q || vq.includes(q) || q.includes(vq);
+      });
+      if (!hit) {
+        return { ok: false, error: `对照结果里没有这一句:「${q.slice(0, 40)}」` };
+      }
+      if (hit.assertion.kind !== 'op_resource') {
+        // 产能类断言走的是另一种规则形状,这条路还没接 —— 说清楚,别假装提上去了。
+        return {
+          ok: false,
+          error: '目前只支持「某道工序归谁做」这类断言提成规则提案;产能/并行数那类还没接。',
+        };
+      }
+
+      const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, compassScopeFromCtx(ctx));
+      const tool = compass?.toolset['propose_rule_from_document'];
+      if (!tool) {
+        return { ok: false, error: '这个项目没挂 Compass 数据源,或对方没有这个工具 —— 提不了。' };
+      }
+      try {
+        const out = await tool.execute({
+          op: hit.assertion.subject,
+          resources: hit.assertion.object.split(/[/、,,;;+]/).map((x) => x.trim()).filter(Boolean),
+          source_text: hit.assertion.quote,
+          document: input.name,
+          // **这条最要紧**:系统里现在在用的资源。没有它,提案说不出自己排除了谁。
+          ...(hit.systemResources ? { current_resources: hit.systemResources } : {}),
+        });
+        return out;
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
     },
   });
 
@@ -1552,5 +1637,6 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     document_edit: documentEdit,
     document_revisions: documentRevisions,
     reconcile_document: reconcileDocument,
+    propose_rule_from_document: proposeRuleFromDocument,
   };
 }

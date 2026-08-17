@@ -264,6 +264,14 @@ const ProjectInstructionsSection: FC<{ project: ProjectInfo }> = ({ project }) =
  *
  * 建项目时**不必选**(见 project-list.tsx 的说明),所以那句"以后随时能加"要在这里
  * 落地。看得到什么取决于你在 Compass 那边被授权的场景 —— 这里只是从中挑。
+ *
+ * **只能加,不能换。** 项目里已有的对话是照着旧数据源的数据得出的结论,换掉之后
+ * 那些结论就和数据对不上了,而对话还留在这个项目里(见 project-sources-immutable.ts)。
+ * 所以已挂上的那几个是**勾上且不可取消**的,动作叫「加」不叫「改」。
+ *
+ * **系统管的项目(managed)连加都不给。** 它的数据源由 reconciler 维护,后端直接
+ * 403 —— 从前这里照样显示「改」,点了必然失败:一个只会让人白点一次的按钮,
+ * 比没有按钮坏。
  */
 const ProjectSourcesSection: FC<{ project: ProjectInfo }> = ({ project }) => {
   const [editing, setEditing] = useState(false);
@@ -272,11 +280,11 @@ const ProjectSourcesSection: FC<{ project: ProjectInfo }> = ({ project }) => {
   const granted = useGrantedSources();
   const picked = new Set(project.sources);
 
-  const toggle = async (source: string) => {
-    if (busy) return;
+  /** 只加。已挂上的点不动(界面上就是禁用的),这里再挡一次。 */
+  const add = async (source: string) => {
+    if (busy || picked.has(source)) return;
     const next = new Set(picked);
-    if (next.has(source)) next.delete(source);
-    else next.add(source);
+    next.add(source);
     setBusy(true);
     const res = await setProjectSources(project.id, [...next]);
     setBusy(false);
@@ -288,8 +296,9 @@ const ProjectSourcesSection: FC<{ project: ProjectInfo }> = ({ project }) => {
     <RailSection
       title="数据源"
       action={
-        granted.length
-          ? { label: editing ? '完成' : '改', onClick: () => setEditing((v) => !v) }
+        // managed 项目不给动作 —— 后端 403,给了就是个只会失败的按钮。
+        granted.length && !project.managed
+          ? { label: editing ? '完成' : '加', onClick: () => setEditing((v) => !v) }
           : undefined
       }
       {...(project.sources.length
@@ -303,19 +312,37 @@ const ProjectSourcesSection: FC<{ project: ProjectInfo }> = ({ project }) => {
         </RailEmpty>
       ) : null}
       {editing ? (
+        // 说清楚为什么只能加 —— 不说,人会以为是漏做了取消勾选。
+        <p className="text-muted-foreground mb-1.5 text-xs leading-relaxed">
+          只能加,不能摘。这个项目里已有的对话是照着现在这些数据源得出的结论,
+          换掉它们那些结论就对不上了。要换 → 新建一个项目。
+        </p>
+      ) : null}
+      {editing ? (
         <div className="flex flex-col gap-1.5">
-          {granted.map((s) => (
-            <label key={s} className="flex cursor-pointer items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                className="accent-primary size-3.5"
-                checked={picked.has(s)}
-                disabled={busy}
-                onChange={() => void toggle(s)}
-              />
-              <span>{projectSourceLabel(s)}</span>
-            </label>
-          ))}
+          {granted.map((s) => {
+            const already = picked.has(s);
+            return (
+              <label
+                key={s}
+                className={`flex items-center gap-2 text-xs ${already ? '' : 'cursor-pointer'}`}
+                {...(already ? { title: '已经在用了 —— 数据源只能加,不能摘掉' } : {})}
+              >
+                <input
+                  type="checkbox"
+                  className="accent-primary size-3.5"
+                  checked={already}
+                  // 已挂上的**禁用**:能点却会被后端拒,是最难受的一种界面。
+                  disabled={busy || already}
+                  onChange={() => void add(s)}
+                />
+                <span className={already ? 'text-muted-foreground' : ''}>
+                  {projectSourceLabel(s)}
+                  {already ? ' · 已在用' : ''}
+                </span>
+              </label>
+            );
+          })}
           {granted.length === 0 ? (
             <p className="text-muted-foreground text-xs">
               Compass 还没给你任何数据源 —— 先在 设置 → MCP 里连接。
