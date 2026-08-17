@@ -198,22 +198,38 @@ async function historyOf(request: APIRequestContext, threadId: string): Promise<
   return (await request.get(`${API}/api/threads/${threadId}/messages`)).json();
 }
 
-/** 打开右侧的表格面板(右栏收起时先展开)。 */
+/**
+ * 打开右侧的表格面板。
+ *
+ * 两道坎都是真几何,不是玄学:右栏可能整个收着(按钮 x<0);也可能开着、但被
+ * 左侧栏挤到**视口右边之外**(实测 x=1660,视口 1600)—— 后者 Playwright 报的是
+ * "outside of the viewport",force 也点不动。收起左侧栏就腾出来了。
+ */
 async function openTablePanel(page: Page): Promise<void> {
   const tableTab = page.getByRole('button', { name: 'Table' }).first();
-  if (((await tableTab.boundingBox().catch(() => null))?.x ?? 0) <= 0) {
+  const width = page.viewportSize()?.width ?? 1280;
+  const fits = async () => {
+    const box = await tableTab.boundingBox().catch(() => null);
+    return box != null && box.x > 0 && box.x + box.width <= width;
+  };
+
+  if (!(await fits())) {
+    // 先把右栏展开(它自己那个 toggle 在视口外,只看视口内的)
     const toggles = await page.getByRole('button', { name: 'Toggle Sidebar' }).all();
     const boxes = await Promise.all(
       toggles.map(async (t) => [t, (await t.boundingBox())?.x ?? -1] as const),
     );
-    // 右栏展开后自己还有一个 toggle,坐标在视口外 —— 用**真实视口宽度**过滤,
-    // 别写死(写死过 1280,视口一改就把该点的那个排除了)。
-    const width = page.viewportSize()?.width ?? 1280;
     const inView = boxes.filter(([, x]) => x > 0 && x < width).sort((a, b) => b[1] - a[1]);
     if (inView[0]) await inView[0][0].click();
     await page.waitForTimeout(1200);
   }
+  if (!(await fits())) {
+    // 还是放不下 —— 收起左侧栏腾地方。
+    await page.getByRole('button', { name: /Close sidebar|Toggle Sidebar/ }).first().click();
+    await page.waitForTimeout(1200);
+  }
   await tableTab.click();
+  await page.waitForTimeout(1500);
 }
 
 /**
@@ -386,4 +402,61 @@ test('本地表 + Compass 云端表,能一起读', async ({ page, request }) => 
   }
 
   expect(reply.length, '一句话都没答上').toBeGreaterThan(0);
+});
+
+/**
+ * **大表和小表之间来回切,不许串屏。**
+ *
+ * 今天修过一个"点不动":切表会重建 SSE,旧连接的 onopen 迟到一步、用过期闭包
+ * 再拉一次上一张表,把当前这张盖掉。**表越大,那个窗口越宽** —— 云端工序表
+ * 七千多行,正好是最恶劣的一档。
+ *
+ * 判据不是"点了没报错",而是**屏幕上这一刻显示的列,属于当前选中的那张表**。
+ */
+test('大表 ⇄ 小表来回切,屏幕上的列始终属于当前那张', async ({ page, request }) => {
+  const folder = await makeFixtureFolder();
+  const listed = await (await request.get(`${API}/api/projects`)).json();
+  const guolu = (listed.projects as Array<{ id: string; name: string; sources: string[] }>)
+    .find((p) => p.sources.includes('guolu'));
+  test.skip(!guolu, '这台机器上没有接 guolu 的项目');
+  await request.patch(`${API}/api/projects/${guolu!.id}`, { data: { folder } });
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(guolu!.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: guolu!.name })).toBeVisible({ timeout: 15_000 });
+
+  // 进一条对话(项目页的输入框会当场建并钉一条),再把两张表准备好。
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+  const threadId = await latestThreadId(request);
+  await request.post(`${API}/api/table/load-compass-schedule`, { data: { threadId } });
+
+  const sheets = (
+    await (await request.get(`${API}/api/table/sheets?threadId=${threadId}`)).json()
+  ).sheets as Array<{ id: string; name: string; source?: { server?: string } }>;
+  const cloud = sheets.find((s) => s.source?.server === 'compass');
+  test.skip(!cloud, '这个项目里没有云端表');
+
+  await composer.fill('把项目文件夹里的 开发组件.xlsx 导入表格面板,建一张新表。');
+  await composer.press('Enter');
+  await waitForAssistantText(page, 1);
+
+  await openTablePanel(page);
+  await page.waitForTimeout(6000);
+
+  const localName = XLSX_NAME.replace(/\.[^.]+$/, '');
+  // 来回切三次,每次都要求"当前页签"和"屏幕上的列"对得上。
+  for (const name of [cloud!.name, localName, cloud!.name, localName]) {
+    await page.getByRole('button', { name, exact: true }).first().click();
+    // 切表是异步的:等到这张表自己的列真的上了屏。
+    const marker = name === localName ? '型号' : '订单号';
+    await expect
+      .poll(async () => (await page.locator('.ag-header-cell-text').allInnerTexts()).join('|'), {
+        timeout: 60_000,
+        intervals: [1000],
+      })
+      .toContain(marker);
+  }
 });

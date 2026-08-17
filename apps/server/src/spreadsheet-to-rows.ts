@@ -39,6 +39,21 @@ export function normalizeHeaders(raw: unknown[]): string[] {
   return out;
 }
 
+/**
+ * 这份字节到底像不像一张表。
+ *
+ * SheetJS 极其宽容:随便一段文本它也会当成 CSV 解析出一列来,于是"这不是表格
+ * 文件"这件事永远不会以异常的形式出现 —— 工具只能把一张莫名其妙的单列表导进去。
+ * 按扩展名核对文件魔数:xlsx 是 zip(PK),xls 是 OLE 复合文档。
+ */
+export function looksLikeSpreadsheet(name: string, bytes: Buffer): boolean {
+  const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase();
+  if (ext === 'xlsx' || ext === 'xlsm') return bytes.subarray(0, 2).toString('latin1') === 'PK';
+  if (ext === 'xls') return bytes.subarray(0, 4).toString('hex') === 'd0cf11e0';
+  // csv/tsv/txt 本来就是文本,交给解析器 —— 它们没有魔数可核。
+  return true;
+}
+
 export function parseSpreadsheet(bytes: Buffer, wanted?: string): ParsedSheet {
   const book = XLSX.read(bytes, { type: 'buffer' });
   const names = book.SheetNames;

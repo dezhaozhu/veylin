@@ -38,7 +38,7 @@ import { getSelection } from './table-selection.js';
 import { PERSONAL_SCOPE, projectScope, sheetIdFor, type SheetScope } from './table-scope.js';
 import { queryTableRows } from './table-query.js';
 import { readProjectFile, readProjectFileBytes } from './project-file-read.js';
-import { parseSpreadsheet } from './spreadsheet-to-rows.js';
+import { looksLikeSpreadsheet, parseSpreadsheet } from './spreadsheet-to-rows.js';
 import { getProject, updateProject } from './project-store.js';
 import { DEV_TENANT_ID } from './tenant.js';
 import { fetchCompassData, type CompassRestScope } from './compass-rest.js';
@@ -249,6 +249,9 @@ function readTenantProjects(ctx?: TableToolCtx): Project[] {
 
 /** 这一轮对话所在项目的文件夹(没绑或不在项目里 → undefined)。 */
 async function folderOfCtx(ctx?: TableToolCtx): Promise<string | undefined> {
+  // 测试注入口:单测里没有项目库,但项目文件夹这件事本身与项目库无关。
+  const injected = ctx?.requestContext?.get('projectFolder');
+  if (typeof injected === 'string' && injected) return injected;
   const pin = readProjectPin(ctx);
   if (!pin) return undefined;
   const tenant = (ctx?.requestContext?.get('tenantId') as string | undefined) ?? undefined;
@@ -1191,6 +1194,12 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       const bytes = await readProjectFileBytes(folder, input.path);
       if (!bytes) return { ok: false, message: `读不到这个文件:${input.path}` };
 
+      if (!looksLikeSpreadsheet(input.path, bytes)) {
+        // SheetJS 太宽容:一段纯文本它也会当 CSV 解析出一列来,于是"这不是表格
+        // 文件"永远不会以异常出现,只会悄悄导进一张莫名其妙的单列表。
+        return { ok: false, message: `「${input.path}」不是表格文件(或已损坏),解析不了。` };
+      }
+
       let parsed;
       try {
         parsed = parseSpreadsheet(bytes, input.source_sheet);
@@ -1210,6 +1219,17 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       const scope = scopeFromCtx(ctx);
       const wanted = input.sheet ?? input.path.replace(/^.*\//, '').replace(/\.[^.]+$/, '');
       const existing = listTableSheets(scope).find((s) => s.name === wanted);
+      // **盖不到云端拉下来的表上。** 那张表带着"来自 Compass"的出处戳,被本地
+      // 文件覆盖之后就变成:戳子说它来自 Compass,内容其实是本地文件 —— 这种谎
+      // 比丢数据更难查(界面上什么都看不出来)。宁可拒绝,让人换个名字。
+      if (existing?.source?.server) {
+        return {
+          ok: false,
+          message:
+            `「${existing.name}」是从数据源(${existing.source.server})拉下来的表,`
+            + '不能用本地文件覆盖 —— 换一个 sheet 名再导。',
+        };
+      }
       const target = existing ?? createTableSheet(wanted, scope);
       if (!target) return { ok: false, message: `建不出 sheet:${wanted}` };
 
