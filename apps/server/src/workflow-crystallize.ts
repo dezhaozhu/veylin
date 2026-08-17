@@ -106,3 +106,47 @@ export function draftToWorkflowInput(draft: CrystallizedDraft): {
     steps: draft.steps.map((s) => (s.detail ? `${s.title} —— ${s.detail}` : s.title)),
   };
 }
+
+/**
+ * 调模型把对话结晶成草案。
+ *
+ * 校验失败就抛,**不返回一个半成品** —— 一个字段缺失的草案会让确认页显示成
+ * "这次没有需要确认的值",而那正是最危险的读法。
+ */
+export async function crystallizeConversation(
+  tenantId: string,
+  messages: Array<{ role: string; content: string }>,
+): Promise<CrystallizedDraft> {
+  const [{ DEFAULT_MODEL, getModelConfig }, { applyTenantModelSettings }] = await Promise.all([
+    import('@veylin/runtime'),
+    import('./model-settings-store.js'),
+  ]);
+  await applyTenantModelSettings(tenantId);
+  const cfg = getModelConfig(DEFAULT_MODEL);
+  if (!cfg.apiKey) throw new Error('没有配置模型,无法结晶');
+
+  const res = await fetch(`${cfg.url.replace(/\/$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
+    body: JSON.stringify({
+      model: cfg.modelId,
+      messages: [
+        { role: 'system', content: CRYSTALLIZE_SYSTEM_PROMPT },
+        { role: 'user', content: conversationToPrompt(messages) },
+      ],
+      temperature: 0.2,
+      max_tokens: 3000,
+      response_format: { type: 'json_object' },
+    }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) throw new Error(`结晶失败(HTTP ${res.status})`);
+  const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const raw = body.choices?.[0]?.message?.content;
+  if (!raw) throw new Error('模型没有返回内容');
+  const parsed = crystallizedDraftSchema.safeParse(JSON.parse(raw));
+  if (!parsed.success) {
+    throw new Error(`模型返回的草案不合规: ${parsed.error.issues[0]?.message ?? '未知'}`);
+  }
+  return parsed.data;
+}

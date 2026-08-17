@@ -441,6 +441,24 @@ async function main() {
     RAG_UPLOAD_MAX_BYTES,
     // 始终提供:没配凭据时它返回全 0 的空结果(诚实的 no-op),而不是让路由
     // 表现成"这个功能不存在" —— 用户刚连上就该能手动同步一次。
+    // 结晶成工作流要读这段对话。走和 /api/threads/:id/messages 同一条召回路径,
+    // 注入进来是为了让路由层不必知道 memory 的细节。
+    readThreadMessages: async (threadId: string) => {
+      const { mastraMessagesToUi } = await import('./message-sync.js');
+      const { resolveThreadForRead } = await import('./thread-state.js');
+      const row = await resolveThreadForRead(threadId, { tenantId: DEV_TENANT_ID } as never);
+      if (!row) return [];
+      const { recallOrEmpty } = await import('./memory-recall.js');
+      const recalled = await recallOrEmpty(runtime.memory, {
+        threadId, resourceId: row.resourceId, perPage: false,
+      });
+      return mastraMessagesToUi(recalled.messages ?? []).map(
+        (m: { role?: string; content?: unknown }) => ({
+          role: String(m.role ?? 'user'),
+          content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''),
+        }),
+      );
+    },
     syncCompassIdentity: () => syncCompassIdentity(DEV_TENANT_ID),
   };
   await registerApiRoutes(app, deps);
