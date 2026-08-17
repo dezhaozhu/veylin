@@ -55,14 +55,13 @@ describe('提案之前的守门', () => {
     assert.equal(out.ok, false);
   });
 
-  it('**产能类断言明说还没接** —— 不假装提上去了', async () => {
-    rememberVerdicts('proj-1', 'k.docx', [{
+  it('**产能类断言现在提得了了** —— 走的是另一种规则形状(见下面那一组)', async () => {
+    rememberVerdicts('proj-1', 'k0.docx', [{
       assertion: { kind: 'capacity_k', subject: '120MN水压机', object: '1', quote: '同时压 1 件' },
       status: 'conflict', detail: 'x',
     }]);
-    const out = await run({ name: 'k.docx', quote: '同时压 1 件' });
-    assert.equal(out.ok, false);
-    assert.match(String(out.error), /还没接|不支持/);
+    const out = await run({ name: 'k0.docx', quote: '同时压 1 件' });
+    assert.equal(out.ok, true, String(out.error));
   });
 });
 
@@ -89,5 +88,34 @@ describe('真的提上去时', () => {
     }]);
     await run({ name: 'c.docx', quote: '| 粗加工 | 金工分厂/外协 |' });
     assert.deepEqual(sent!.resources, ['金工分厂', '外协']);
+  });
+});
+
+describe('产能类断言(现在接上了)', () => {
+  const capVerdict = {
+    assertion: { kind: 'capacity_k' as const, subject: '120MN水压机', object: '1',
+                 quote: '120MN水压机 同时只能压 1 件。' },
+    status: 'conflict' as const,
+    detail: '不一致:文档说 1,系统里在用 80(来源:估值)。',
+  };
+
+  it('**把数字传过去**,并且不带工序范围 —— 产能和资格是两件事', async () => {
+    rememberVerdicts('proj-1', 'k.docx', [capVerdict]);
+    sent = undefined;
+    const out = await run({ name: 'k.docx', quote: '120MN水压机 同时只能压 1 件。' });
+    assert.equal(out.ok, true, String(out.error));
+    assert.equal(sent!.parallel_k, 1);
+    assert.deepEqual(sent!.resources, ['120MN水压机']);
+    assert.ok(!sent!.op, '产能提案不该带工序范围');
+  });
+
+  it('不是数字的照旧拒 —— 「很多」提不出一条规则', async () => {
+    rememberVerdicts('proj-1', 'x.docx', [{
+      ...capVerdict,
+      assertion: { ...capVerdict.assertion, object: '很多', quote: '压很多件' },
+    }]);
+    const out = await run({ name: 'x.docx', quote: '压很多件' });
+    assert.equal(out.ok, false);
+    assert.match(String(out.error), /数|很多/);
   });
 });

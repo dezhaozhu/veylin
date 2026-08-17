@@ -1588,12 +1588,21 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       if (!hit) {
         return { ok: false, error: `对照结果里没有这一句:「${q.slice(0, 40)}」` };
       }
-      if (hit.assertion.kind !== 'op_resource') {
-        // 产能类断言走的是另一种规则形状,这条路还没接 —— 说清楚,别假装提上去了。
-        return {
-          ok: false,
-          error: '目前只支持「某道工序归谁做」这类断言提成规则提案;产能/并行数那类还没接。',
-        };
+      // 产能类断言走另一种规则形状:**只定"同时能干几件",不钉工序范围** ——
+      // 资格和产能是两件事,一条提案顺手把两件都定了,人以为自己只是在改一个数字。
+      const isCapacity = hit.assertion.kind === 'capacity_k';
+      let parallelK: number | undefined;
+      if (isCapacity) {
+        const digits = String(hit.assertion.object).replace(/[^\d.]/g, '');
+        const n = Number(digits);
+        if (digits === '' || !Number.isFinite(n) || n < 1) {
+          // 「很多」提不出一条规则 —— 说清楚,别造一个 K=0 的提案。
+          return {
+            ok: false,
+            error: `文档写的是「${hit.assertion.object}」,不是一个数 —— 提不出产能规则。`,
+          };
+        }
+        parallelK = Math.round(n);
       }
 
       const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, compassScopeFromCtx(ctx));
@@ -1603,12 +1612,17 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       }
       try {
         const out = await tool.execute({
-          op: hit.assertion.subject,
-          resources: hit.assertion.object.split(/[/、,,;;+]/).map((x) => x.trim()).filter(Boolean),
+          // 产能:subject 是资源本身(120MN水压机);资格:subject 是工序,object 是资源。
+          ...(isCapacity
+            ? { resources: [hit.assertion.subject], parallel_k: parallelK }
+            : {
+                op: hit.assertion.subject,
+                resources: hit.assertion.object.split(/[/、,,;;+]/).map((x) => x.trim()).filter(Boolean),
+                // **这条最要紧**:系统里现在在用的资源。没有它,提案说不出自己排除了谁。
+                ...(hit.systemResources ? { current_resources: hit.systemResources } : {}),
+              }),
           source_text: hit.assertion.quote,
           document: input.name,
-          // **这条最要紧**:系统里现在在用的资源。没有它,提案说不出自己排除了谁。
-          ...(hit.systemResources ? { current_resources: hit.systemResources } : {}),
         });
         return out;
       } catch (err) {
