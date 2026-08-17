@@ -1,4 +1,5 @@
 import { recallOrEmpty } from '../memory-recall.js';
+import { persistAskAnswer } from '../ask-answer-record.js';
 import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
@@ -1087,6 +1088,19 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         // stream. A duplicate resume must return 409 without aborting the first.
         await stopChatStream({ threadId }).catch(() => undefined);
         await setThreadSuspendedRun(threadId, null);
+        // **把答案写回历史。** resumeData 只喂给这一次 resumeStream,从来不落库;
+        // 而 resume 这一轮又整个跳过了客户端成绩单同步(见上面的 `if (!isResume)`)。
+        // 不写的话,历史里那个 tool call 永远停在"还在等人答",后面每一轮都不知道
+        // 用户当时选了什么 —— 只能再问一遍。摘掉悬空调用是止血,这才是止因。
+        const answeredToolCallId = resume.toolCallId ?? consumedSuspended.toolCallId;
+        if (answeredToolCallId) {
+          await persistAskAnswer(
+            deps.runtime.memory as never,
+            { threadId, resourceId: ctx.userId },
+            answeredToolCallId,
+            resume.resumeData,
+          );
+        }
         stream = await agent.resumeStream(resume.resumeData, {
           ...streamOptions,
           runId: resume.runId,
