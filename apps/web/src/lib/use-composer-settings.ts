@@ -1,4 +1,5 @@
 import { useAui, useAuiState } from '@assistant-ui/store';
+import { useThreadProjectsOrNull } from '@/lib/thread-projects-sync';
 import { useCallback, useEffect, useRef } from 'react';
 import {
   getChatSettings,
@@ -484,7 +485,16 @@ export function useProjectScope() {
     };
   }, [threadId]);
 
-  return { threadId, groupedServers, currentProject };
+  // **钉定这件事有两份缓存**:这里这份是一次性 fetch,没有任何通知;另一份
+  // (thread-projects-sync)带监听和 invalidate。项目页是"先建线程、再钉",
+  // 于是这份往往在钉定之前就读完并缓存了 null —— 输入框上的 chip 就一直显示
+  // 「项目」(未归属),而这条对话明明已经归在项目里(实测)。
+  // 以有监听的那份为准,自己这份只当它还没加载时的兜底。
+  const shared = useThreadProjectsOrNull();
+  const pin =
+    shared && threadId ? (shared[threadId] ?? null) : currentProject;
+
+  return { threadId, groupedServers, currentProject: pin };
 }
 
 export function useAgentContext(enabled: boolean) {

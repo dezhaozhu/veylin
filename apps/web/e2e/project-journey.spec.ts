@@ -460,3 +460,94 @@ test('大表 ⇄ 小表来回切,屏幕上的列始终属于当前那张', async
       .toContain(marker);
   }
 });
+
+/**
+ * **把一条对话改钉到别的项目,右侧表格必须跟着换。**
+ *
+ * 输入框上的项目选择器让"同一条对话改归属"变成了一个随手的动作。可面板从前只认
+ * threadId:改钉之后 threadId 没变,屏幕上还摆着**上一个项目的表** —— 这轮对话
+ * 已经归给了新项目,而你在面板里的编辑会落到旧项目的表上。
+ *
+ * 判据:改钉之后,旧项目那张独有的表**不能再出现在页签里**。
+ */
+test('改钉到别的项目,表格面板跟着换作用域', async ({ page, request }) => {
+  const folder = await makeFixtureFolder();
+  const listed = await (await request.get(`${API}/api/projects`)).json();
+  const projects = listed.projects as Array<{ id: string; name: string; sources: string[] }>;
+  const guolu = projects.find((p) => p.sources.includes('guolu'));
+  const other = projects.find((p) => p.id !== guolu?.id);
+  test.skip(!guolu || !other, '这台机器上项目不够两个');
+  await request.patch(`${API}/api/projects/${guolu!.id}`, { data: { folder } });
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(guolu!.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: guolu!.name })).toBeVisible({ timeout: 15_000 });
+
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+
+  // 在锅炉厂这边留下一张只属于它的表(云端工序表)。
+  const threadId = await latestThreadId(request);
+  await request.post(`${API}/api/table/load-compass-schedule`, { data: { threadId } });
+
+  // 让旧项目有一张**独有**的表:两个项目都接着 compass、都可能有「工序」,
+  // 只按那个名字断言分不出来(第一版栽过)。
+  // 这一步走接口而不是让模型去导:这条测试的正题是"改钉之后面板跟不跟",
+  // 把它压在模型的发挥上,红了也分不清是哪一头的问题(第一次验证就栽在这儿)。
+  const uniqueSheet = `只属于锅炉厂-${Date.now()}`;
+  await request.post(`${API}/api/table/sheets`, { data: { name: uniqueSheet, threadId } });
+
+  await composer.fill('说一句知道了就行。');
+  await composer.press('Enter');
+  await waitForAssistantText(page, 1);
+
+  await openTablePanel(page);
+  await page.waitForTimeout(4000);
+  await expect(
+    page.getByRole('button', { name: uniqueSheet, exact: true }).first(),
+    '锅炉厂这边本来就该有那张独有的表',
+  ).toBeVisible({ timeout: 30_000 });
+
+  // —— 用输入框上的选择器改钉到另一个项目(这正是新做的那个动作)。
+  // **精确名**:侧栏那些按钮叫「New chat in X」「Expand or collapse X …」,
+  // 只有输入框上那个 chip 的可访问名恰好等于项目名。
+  await page.getByRole('button', { name: guolu!.name, exact: true }).last().click();
+  const picker = page.locator('.fixed.z-\\[201\\]').last();
+  await expect(picker).toBeVisible({ timeout: 10_000 });
+  await picker.getByRole('button', { name: new RegExp(other!.name) }).first().click();
+
+  // 先确认这一半真的成了 —— 不然下面那条断言分不清是"没改钉"还是"面板没跟"。
+  await expect
+    .poll(
+      async () => {
+        const map = await (await request.get(`${API}/api/projects/threads`)).json();
+        return map[threadId] ?? null;
+      },
+      { timeout: 20_000, intervals: [1000] },
+    )
+    .toBe(other!.id);
+
+  // 真正会坏的不是页签列表 —— 那个本来就会跟着换(每次取数都由服务端按钉定
+  // 解析作用域)。坏的是**当前选中的那张表**:它还指着旧作用域里的 sheet,
+  // 于是格子里显示的是一张已经不在页签里的表的数据。
+  // (第一版断言写成"页签集合相等",退回修复照样绿 —— 等于没测。)
+  const after = (
+    await (await request.get(`${API}/api/table/sheets?threadId=${threadId}`)).json()
+  ).sheets as Array<{ name: string }>;
+  const names = new Set(after.map((sheet) => sheet.name));
+
+  await expect
+    .poll(
+      async () => {
+        // 选中的那个页签有 bg-primary;旧表不在新作用域里时,一个都不会亮。
+        const active = await page
+          .locator('[data-testid=sheet-tabs] .group\\/tab.bg-primary')
+          .allInnerTexts();
+        return active.map((t) => t.trim().replace(/\s+/g, '')).join('|');
+      },
+      { timeout: 30_000, intervals: [1000] },
+    )
+    .toMatch(new RegExp([...names].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')));
+});

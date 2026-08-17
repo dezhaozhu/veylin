@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { decideCompassLoad } from '@/lib/compass-schedule-load';
 import { shouldApplyPayload } from '@/lib/sheet-payload-guard';
+import { panelScopeKey } from '@/lib/panel-scope-key';
 import { useProjectsOrNull } from '@/lib/projects-sync';
 import { useThreadProjectsOrNull } from '@/lib/thread-projects-sync';
 import { createPortal } from 'react-dom';
@@ -625,6 +626,19 @@ export function TableGrid() {
   // 迟到的响应要能认出自己是哪张表的 —— applyPayload 的依赖是空数组,
   // 只能靠 ref 读到此刻在看的是哪张表。
   const activeSheetIdRef = useRef<string>('main');
+  /**
+   * **有意换表**要同步更新 ref,不能只 setState。
+   *
+   * 守卫(shouldApplyPayload)看的是 activeSheetIdRef;而 React 的 state 更新是
+   * 异步的 —— 作用域切换那条路是"先 setActiveSheetId(新表)、紧接着 applyPayload",
+   * 那一刻 ref 还指着旧表,于是守卫把**这份正确的数据**当成迟到响应丢掉了:
+   * 改钉到别的项目之后,面板还摆着上一个项目的表(实测)。
+   * 两个修复互相绊脚,记在这儿。
+   */
+  const selectSheet = useCallback((id: string) => {
+    activeSheetIdRef.current = id;
+    setActiveSheetId(id);
+  }, []);
   const sseErrorNotified = useRef(false);
   // Agent-requested chart waiting for the target sheet's rows to be on screen
   const pendingChartRef = useRef<{
@@ -1124,11 +1138,16 @@ export function TableGrid() {
   // 换会话 = 可能换了作用域(项目 ⇄ 个人区)。表是**那个作用域的 context**,
   // 所以整屏跟着走:重取该作用域的页签,并落到它的默认表。不这么做的话,个人区
   // 里会继续摆着上一个项目的三万行 —— 而 agent 那侧早就读不到了,两边说法打架。
-  const lastScopeThread = useRef<string | undefined>(threadId);
+  // 身份是**(对话, 项目)这一对**,不是对话本身:同一条对话可以被改钉到别的项目
+  // (侧栏的移动菜单、输入框上的项目选择器)。只认 threadId 的话,那时屏幕上还是
+  // 上一个项目的表 —— 而这轮对话已经归给了新项目,在面板里的编辑也会落到旧表上。
+  const currentPin = threadId ? threadProjects?.[threadId] : undefined;
+  const scopeKey = panelScopeKey(threadId, currentPin);
+  const lastScopeThread = useRef<string>(scopeKey);
   useEffect(() => {
     if (!bootstrapped) return;
-    if (lastScopeThread.current === threadId) return;
-    lastScopeThread.current = threadId;
+    if (lastScopeThread.current === scopeKey) return;
+    lastScopeThread.current = scopeKey;
     let cancelled = false;
     void (async () => {
       try {
@@ -1136,7 +1155,7 @@ export function TableGrid() {
         if (cancelled) return;
         resetSheetUiState();
         setSheets(data.sheets ?? []);
-        if (data.sheet) setActiveSheetId(data.sheet);
+        if (data.sheet) selectSheet(data.sheet);
         lastSerialized.current = '';
         applyPayload(data, true);
       } catch {
@@ -1146,7 +1165,7 @@ export function TableGrid() {
     return () => {
       cancelled = true;
     };
-  }, [threadId, bootstrapped, applyPayload, resetSheetUiState]);
+  }, [threadId, scopeKey, bootstrapped, applyPayload, resetSheetUiState, selectSheet]);
 
   // 进到一个项目(或换了会话)时看一眼文件夹里有没有没见过的文件。**只看不吸收**:
   // 顺手放一份 ≠ 它就是项目数据(spec §6)。
@@ -2232,7 +2251,10 @@ export function TableGrid() {
         </div>
       ) : null}
       {/* Sheet tabs — top */}
-      <div className="border-border flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
+      <div
+        data-testid="sheet-tabs"
+        className="border-border flex shrink-0 items-center gap-1 border-b px-2 py-1.5"
+      >
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {sheets.map((sheet) => {
             const active = activeSheetId === sheet.id;
