@@ -89,6 +89,7 @@ import {
   type UiMessage,
 } from '../message-sync.js';
 import { filterExternalToolsets } from '../toolsets.js';
+import { restrictSourcelessToolset } from '../compass-sourceless.js';
 import {
   bindActiveStream,
   captureSseToResumable,
@@ -317,7 +318,16 @@ export async function resolveChatMcpScope(
       deps.poolDeps ?? {},
     );
     if (pooled != null) {
-      compassOverlay = { [scope.entryPin]: pooled[scope.entryPin] ?? {} };
+      // **没挂数据源的项目只留发现类工具。** 空 sources 发出去的场景头是空串,
+      // 而非 account 的旧式 token 会忽略场景头、落回它自己烘焙的租户 —— 实测:
+      // 一个写着"只用你自己的文件"的项目,agent 在里面回答了整页另一个厂的排产
+      // 数据,界面上还完全正常。见 compass-sourceless.ts。
+      compassOverlay = {
+        [scope.entryPin]: restrictSourcelessToolset(
+          (pooled[scope.entryPin] ?? {}) as Record<string, unknown>,
+          scope.sources,
+        ),
+      };
     } else {
       // Honest refusal: the pool could not produce a connection for THIS
       // scene set, so compass vanishes from the request — active list, tool

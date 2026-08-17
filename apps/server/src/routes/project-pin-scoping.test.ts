@@ -477,3 +477,60 @@ describe('isValidProjectPin', () => {
     assert.equal(await isValidProjectPin(TENANT, foreign.id), false);
   });
 });
+
+/**
+ * 实测踩到的越界:项目「111」的数据源写着"这个项目只用你自己的文件",
+ * 而 agent 在里面回答了整页 shangzhong 的排产数据。
+ *
+ * 两边"各自没错"叠出来的:Veylin 对空 sources 照常建连接、场景头是空串;
+ * Compass 那边非 account 的旧式 token 按设计忽略场景头,落回自己的租户。
+ */
+describe('没挂数据源的项目', () => {
+  const base = {
+    tenantId: 'T',
+    threadProjectPin: 'p-empty',
+    tenantActiveMcp: ['compass'],
+    mcpServerGroups: { compass: 'compass' },
+    mcpEnabled: undefined,
+    mcpToolIndex: [],
+  };
+  const pooled = {
+    compass: {
+      list_my_scenes: { execute: async () => ({}) },
+      get_cockpit: { execute: async () => ({}) },
+      get_schedule_rows: { execute: async () => ({}) },
+    },
+  };
+  const deps = (sources: string[]) => ({
+    resolveScope: async () => ({
+      project: { id: 'p-empty', name: '111', sources, managed: false, enabled: true } as never,
+      entryPin: 'compass',
+      sources,
+      entry: { id: 'e1', name: 'compass' } as never,
+    }),
+    getPooledToolsets: async () => pooled as never,
+  });
+
+  it('**读数据的工具一个都不暴露**', async () => {
+    const out = await resolveChatMcpScope(base, deps([]) as never);
+    const tools = Object.keys((out.compassOverlay?.['compass'] ?? {}) as object);
+    assert.ok(!tools.includes('get_cockpit'), `越界了:${tools.join(',')}`);
+    assert.ok(!tools.includes('get_schedule_rows'));
+  });
+
+  it('**模型连看都看不到那些工具** —— 只是调用报错的话,它会一直重试', async () => {
+    const out = await resolveChatMcpScope(base, deps([]) as never);
+    assert.ok(!out.mcpToolNames.some((t) => String(t.id).includes('get_cockpit')));
+  });
+
+  it('发现类留着 —— 否则"我有哪些数据源可以挂"这条路也断了', async () => {
+    const out = await resolveChatMcpScope(base, deps([]) as never);
+    assert.ok('list_my_scenes' in ((out.compassOverlay?.['compass'] ?? {}) as object));
+  });
+
+  it('挂了数据源的项目一个不动', async () => {
+    const out = await resolveChatMcpScope(base, deps(['shangzhong']) as never);
+    const tools = Object.keys((out.compassOverlay?.['compass'] ?? {}) as object);
+    assert.ok(tools.includes('get_cockpit'));
+  });
+});
