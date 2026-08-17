@@ -133,14 +133,16 @@ describe('没被回答的前端工具调用', () => {
     assert.ok(!kinds.includes('tool-ask_user_question'), `悬空调用还在:${kinds.join(',')}`);
   });
 
-  it('**要告诉模型那个问题没被回答** —— 否则它不知道该重新问还是接着做', () => {
+  it('**措辞不能说成"用户没回答"** —— 实测里用户点了、答案也送达了,只是没写进历史', () => {
     const out = stripUnansweredToolCallsForAgent([
       suspended(), { id: 'u2', role: 'user', parts: [{ type: 'text', text: '好了' }] },
     ]);
     const text = (out[0]!.parts ?? [])
       .filter((p): p is { type: string; text: string } => (p as { type: string }).type === 'text')
       .map((p) => p.text).join(' ');
-    assert.match(text, /没有回答|直接回复|未回答/);
+    assert.match(text, /没有留在记录里/);
+    // 说成"用户没回答"会让模型再问一遍,或者以为用户在回避 —— 而他明明答了。
+    assert.ok(!/用户.*没有回答|没有被回答/.test(text), `措辞把答过说成没答:${text}`);
   });
 
   it('原来的正文留着 —— 那是它已经说过的话', () => {

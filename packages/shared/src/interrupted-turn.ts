@@ -84,7 +84,8 @@ function isAwaitingToolPart(part: unknown): boolean {
 }
 
 export const UNANSWERED_TOOL_NOTE =
-  '(上一轮问的那个问题没有被回答 —— 用户直接回复了下面这条消息。按他说的继续,需要的话再问一次。)';
+  '(上一轮那个问题的答案没有留在记录里 —— 可能已经回答过,只是没被写进历史。' +
+  '按下面最新的用户消息继续;确实需要那个答案时,再问一次。)';
 
 /**
  * 前端工具挂起(如 ask_user_question)之后,用户**没点那个问题、直接打字回复**时,
@@ -96,8 +97,11 @@ export const UNANSWERED_TOOL_NOTE =
  *
  * 上面那条 stripper 只管客户端标了 `interrupted` 的 turn,不管这种。
  *
- * **摘掉之后要留一句话说明**:不说的话,模型不知道那个问题是被跳过了还是从没问过,
- * 于是可能傻乎乎再问一遍同样的问题。
+ * **措辞不能说成"用户没回答"。** 实测的真实序列是:用户**点了**、答案也送达了、
+ * agent 也接着回了话 —— 但答案**从没被写回历史**(`resume.resumeData` 直接进
+ * `resumeStream`,不落库)。所以记录里那个调用永远是"未回答"的样子,而事实是
+ * 答过了。说成"没回答"会让模型据此再问一遍、或者以为用户在回避。
+ * 只说**记录里没有**,这在两种情形下都是真的。
  * **没有后续用户消息就不动** —— 那是正常在等人回答,不是卡住。
  */
 export function stripUnansweredToolCallsForAgent<T extends UiMessageLike>(messages: T[]): T[] {
