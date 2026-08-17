@@ -333,7 +333,18 @@ const ThreadWelcome: FC = () => {
   );
 };
 
-const Composer: FC = () => {
+/**
+ * 输入框。**导出**是因为项目页也要用同一个 —— 项目页原来自己搭了一个简化版,
+ * 结果是"两个地方长得不一样、能力也不一样"(缺 + 号/附件/技能),而用户没道理
+ * 理解这个区别。项目页那边的做法见 project-composer.tsx。
+ */
+export const Composer: FC<{
+  /**
+   * 默认自动聚焦(对话里就该这样)。**项目页要关掉** —— 那边把"聚焦"当成
+   * "我要说话"的信号来新建并钉定线程,自动聚焦会让每次浏览都留下一条空对话。
+   */
+  autoFocus?: boolean;
+}> = ({ autoFocus = true }) => {
   const { t } = useTranslation();
   const onKeyDown = useComposerSubmitKeys();
 
@@ -351,7 +362,7 @@ const Composer: FC = () => {
               placeholder={t("thread.composerPlaceholder")}
               className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
               rows={1}
-              autoFocus
+              autoFocus={autoFocus}
               aria-label={t("thread.composerAriaLabel")}
               onKeyDown={onKeyDown}
             />
