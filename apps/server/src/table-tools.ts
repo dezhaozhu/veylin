@@ -1376,7 +1376,10 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       '改一份项目文档(Word/PPT/markdown 等)。**不改原件** —— 第一次改会自动从原件建一份' +
       '可编辑副本(文稿/xxx.md),之后改都落在副本上,每次一个版本、可回退。' +
       'find 必须是文档里一字不差的原文,而且只出现一处;不唯一时把它写长一点。' +
-      '改完把 diff 给用户看,由他确认 —— 不要替他决定改得对不对。',
+      '改完把 diff 给用户看,由他确认 —— 不要替他决定改得对不对。' +
+      '**改工艺/排产类文档之前,先用 reconcile_document 对照一遍**:改完之后如果结果里带了' +
+      ' ask_next,把那一问原样问给用户(改的是这份文档,还是它描述的那件事)——' +
+      '文档改了而系统规则没改,两边就互相矛盾了,而界面上看不出来。',
     inputSchema: z.object({
       name: z.string().describe('原件文件名,例如 工艺说明.docx'),
       find: z.string().describe('要替换的原文,一字不差'),
@@ -1395,8 +1398,8 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         const out = applyAnchoredEdit(copy.text, input.find, input.replace);
         if (!out.ok) return { ok: false, error: out.reason, created_copy: copy.created };
         const rev = await saveRevision(got.folder, input.name, out.text, input.note ?? '按原文替换');
-        return {
-          ok: true,
+        const base = {
+          ok: true as const,
           copy: `文稿/${copy.path.split('/').pop()}`,
           revision: rev.n,
           diff: out.diff,
@@ -1404,6 +1407,12 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
             ? '第一次改:已从原件建了可编辑副本,原件没有改动。'
             : '改在副本上,原件没有改动。',
         };
+        // **改完那一问**:这一句在系统里是什么?改了文档,系统可没跟着改。
+        // 只在这次会话已经对照过、且这一句确实对得上某条结论时才问 ——
+        // 没对照过就问,是在假装知道(见 doc-change-intent.ts)。
+        const { attachIntent, recallVerdicts } = await import('./doc-change-intent.js');
+        const pid = compassScopeFromCtx(ctx)?.projectId ?? '';
+        return attachIntent(base, input.find, recallVerdicts(pid, input.name));
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
@@ -1525,6 +1534,10 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         };
       }
       const verdicts = reconcile(assertions, facts);
+      // 存下来给随后的 document_edit 用 —— 那一问("你改的是文档还是那件事")
+      // 只有在**对照过**之后才问得出口。
+      const { rememberVerdicts } = await import('./doc-change-intent.js');
+      rememberVerdicts(compassScopeFromCtx(ctx)?.projectId ?? '', input.name, verdicts);
       return { ok: true, summary: summarizeReconcile(verdicts) + droppedNote, verdicts };
     },
   });
