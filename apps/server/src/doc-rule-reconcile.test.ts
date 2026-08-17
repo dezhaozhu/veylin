@@ -188,3 +188,30 @@ describe('查不到的时候给线索', () => {
     assert.ok(!/性能热处理|最终检验/.test(v!.detail), `不该给线索却给了:${v!.detail}`);
   });
 });
+
+/**
+ * 提案要说清"这条会排除谁",就得知道系统里现在在用哪些资源。
+ * detail 里那句话是给人读的,**不能让下游去解析它** —— 结构化地带出来。
+ */
+describe('结论要带上系统侧的资源', () => {
+  const fact: Fact = {
+    kind: 'op_resource', op: '粗加工',
+    resources: [{ name: '金工分厂', share: 0.92 }, { name: '外协', share: 0.08 }],
+    flexibility: 'limited',
+  };
+
+  it('一致时也带 —— 提案排除谁,和这条对不对得上无关', () => {
+    const [v] = reconcile([{ kind: 'op_resource', subject: '粗加工', object: '金工分厂', quote: 'q' }], [fact]);
+    assert.deepEqual(v!.systemResources, ['金工分厂', '外协']);
+  });
+
+  it('不一致时也带', () => {
+    const [v] = reconcile([{ kind: 'op_resource', subject: '粗加工', object: '锻件分厂', quote: 'q' }], [fact]);
+    assert.deepEqual(v!.systemResources, ['金工分厂', '外协']);
+  });
+
+  it('**查不到时不带** —— 没有事实,给一个空数组会被读成"系统里一个资源都没有"', () => {
+    const [v] = reconcile([{ kind: 'op_resource', subject: '热处理', object: 'x', quote: 'q' }], [fact]);
+    assert.equal(v!.systemResources, undefined);
+  });
+});

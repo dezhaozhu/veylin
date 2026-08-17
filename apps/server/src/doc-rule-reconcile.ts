@@ -49,7 +49,19 @@ export type Status =
   /** 断言本身没法机器核对 */
   | 'unverifiable';
 
-export type Verdict = { assertion: Assertion; status: Status; detail: string };
+export type Verdict = {
+  assertion: Assertion;
+  status: Status;
+  detail: string;
+  /**
+   * 系统侧现在在用的资源(仅 op_resource,且**查得到时才有**)。
+   *
+   * detail 里那句话是给人读的 —— 下游(生成规则提案时要说"这条会排除谁")
+   * 不该去解析它。查不到时**不给空数组**:空数组会被读成"系统里一个资源都没有",
+   * 而事实是"我们没有它的记录"。
+   */
+  systemResources?: string[];
+};
 
 /** 结论顺序 = **人要看的顺序**:先看不一致的,一致的排最后。 */
 const ORDER: Record<Status, number> = {
@@ -115,12 +127,14 @@ function checkOpResource(a: Assertion, facts: Fact[]): Verdict {
         detail:
           `对上了,但不是主力:系统里「${a.subject}」主要跑在「${top.name}」(${pct(top.share)}),` +
           `文档写的「${hit.name}」只占 ${pct(hit.share)}。`,
+        systemResources: fact.resources.map((r) => r.name),
       };
     }
     return {
       assertion: a,
       status: 'agree',
       detail: `一致:系统里「${a.subject}」有 ${pct(hit.share)} 的工序跑在「${hit.name}」(${fact.flexibility})。`,
+      systemResources: fact.resources.map((r) => r.name),
     };
   }
   const overlap = parts.filter((p) => names.includes(p));
@@ -131,6 +145,7 @@ function checkOpResource(a: Assertion, facts: Fact[]): Verdict {
       detail:
         `部分对上:文档写的是组合值「${a.object}」;系统里实际是 ` +
         fact.resources.map((r) => `${r.name} ${pct(r.share)}`).join('、') + '。',
+      systemResources: fact.resources.map((r) => r.name),
     };
   }
   return {
@@ -139,6 +154,7 @@ function checkOpResource(a: Assertion, facts: Fact[]): Verdict {
     detail:
       `不一致:文档说「${a.subject}」由「${a.object}」做;` +
       `系统里实际是 ${fact.resources.map((r) => `${r.name} ${pct(r.share)}`).join('、')}。`,
+    systemResources: fact.resources.map((r) => r.name),
   };
 }
 

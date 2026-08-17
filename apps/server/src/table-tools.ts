@@ -1542,6 +1542,73 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     },
   });
 
+  /**
+   * 「文档 + 规则一起改」那个选项的落点。
+   *
+   * 用户在 `document_edit` 的那一问里选了"一起改"之后,这里把文档那句话提成
+   * Compass 的**待审**规则提案(propose → show_shadow → 批准)。不新造治理。
+   *
+   * **必须先对照过。** 提案要说清"这条会排除谁",而那个信息来自对照结果里系统侧
+   * 的真实资源。没对照就提,提出来的是一条不知道自己会砍掉什么的规则。
+   */
+  const proposeRuleFromDocument = createTool({
+    id: 'propose_rule_from_document',
+    description:
+      '用户说「文档+规则一起改」时用它:把文档里的一句话提成 Compass 的**待审**规则提案。' +
+      '不立即生效 —— 提案后要跑 show_shadow 看影响,批准才生效。' +
+      '**必须先 reconcile_document 对照过这份文档**,否则提案说不清它会排除掉哪些现在在用的资源。',
+    inputSchema: z.object({
+      name: z.string().describe('文档文件名'),
+      quote: z.string().describe('文档里的那句原文(要和对照时的引述对得上)'),
+    }),
+    execute: async (input: { name: string; quote: string }, ctx?: TableToolCtx) => {
+      const { recallVerdicts } = await import('./doc-change-intent.js');
+      const pid = compassScopeFromCtx(ctx)?.projectId ?? '';
+      const verdicts = recallVerdicts(pid, input.name);
+      if (!verdicts.length) {
+        return {
+          ok: false,
+          error: `还没有对照过「${input.name}」—— 先用 reconcile_document 跑一遍。` +
+            '没有对照结果,提案说不清它会排除掉哪些现在在用的资源。',
+        };
+      }
+      const q = input.quote.trim();
+      const hit = verdicts.find((v) => {
+        const vq = v.assertion.quote.trim();
+        return vq === q || vq.includes(q) || q.includes(vq);
+      });
+      if (!hit) {
+        return { ok: false, error: `对照结果里没有这一句:「${q.slice(0, 40)}」` };
+      }
+      if (hit.assertion.kind !== 'op_resource') {
+        // 产能类断言走的是另一种规则形状,这条路还没接 —— 说清楚,别假装提上去了。
+        return {
+          ok: false,
+          error: '目前只支持「某道工序归谁做」这类断言提成规则提案;产能/并行数那类还没接。',
+        };
+      }
+
+      const compass = resolveCompassToolset(getMcpToolsets, getMcpGroups, compassScopeFromCtx(ctx));
+      const tool = compass?.toolset['propose_rule_from_document'];
+      if (!tool) {
+        return { ok: false, error: '这个项目没挂 Compass 数据源,或对方没有这个工具 —— 提不了。' };
+      }
+      try {
+        const out = await tool.execute({
+          op: hit.assertion.subject,
+          resources: hit.assertion.object.split(/[/、,,;;+]/).map((x) => x.trim()).filter(Boolean),
+          source_text: hit.assertion.quote,
+          document: input.name,
+          // **这条最要紧**:系统里现在在用的资源。没有它,提案说不出自己排除了谁。
+          ...(hit.systemResources ? { current_resources: hit.systemResources } : {}),
+        });
+        return out;
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  });
+
   return {
     table_get: tableGet,
     table_update_row: tableUpdateRow,
@@ -1565,5 +1632,6 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     document_edit: documentEdit,
     document_revisions: documentRevisions,
     reconcile_document: reconcileDocument,
+    propose_rule_from_document: proposeRuleFromDocument,
   };
 }
