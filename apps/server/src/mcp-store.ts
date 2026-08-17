@@ -14,6 +14,7 @@ import {
 } from './plugin-store.js';
 import { getDisabledMcpServers } from './veylin-settings-file.js';
 import { veylinHome, veylinMcpLocalPath, veylinMcpPath } from './veylin-paths.js';
+import { readMcpCredential } from './mcp-credentials.js';
 
 export type McpServerConfig = Record<string, unknown>;
 
@@ -124,6 +125,21 @@ export async function seedMcpServersFromEnvIfMissing(tenantId: string): Promise<
   return seeded;
 }
 
+/**
+ * OAuth 落盘凭据(mcp-credentials.json)注入连接 headers。
+ * 行内显式 Authorization(任意大小写)优先——手工配置永远赢过自动凭据,
+ * 且两者并存时不静默覆盖。此前凭据只喂 /diagnose,从未上过真连接(bug)。
+ */
+export function withCredentialAuth(
+  headers: Record<string, string>,
+  cred: { accessToken: string } | null,
+): Record<string, string> {
+  if (!cred) return headers;
+  const hasAuth = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization');
+  if (hasAuth) return headers;
+  return { ...headers, Authorization: `Bearer ${cred.accessToken}` };
+}
+
 export async function buildMcpServerConfigs(tenantId: string): Promise<McpServerConfig> {
   const remote = await listRemoteMcpServers(tenantId);
   const active = new Set(await listActiveMcpServerNames(tenantId));
@@ -144,9 +160,10 @@ export async function buildMcpServerConfigs(tenantId: string): Promise<McpServer
     // a headerless (unscoped) compass session. Skipped here, at the single
     // config-builder all three paths share.
     if (server.group === COMPASS_IDENTITY_GROUP) continue;
+    const headers = withCredentialAuth(server.headers, readMcpCredential(server.id));
     configs[server.name] = {
       url: new URL(server.url),
-      ...(Object.keys(server.headers).length > 0 ? { requestInit: { headers: server.headers } } : {}),
+      ...(Object.keys(headers).length > 0 ? { requestInit: { headers } } : {}),
     };
   }
 
