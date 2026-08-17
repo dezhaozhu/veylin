@@ -11,6 +11,7 @@
 import type { FastifyInstance } from 'fastify';
 
 import { extractDocument } from '../document-extract.js';
+import { getProject } from '../project-store.js';
 import type { ServerDeps } from './types.js';
 
 function decodeDataUrl(url: string): Buffer | null {
@@ -24,7 +25,41 @@ function decodeDataUrl(url: string): Buffer | null {
   }
 }
 
-export function registerAttachmentRoutes(app: FastifyInstance, _deps: ServerDeps): void {
+export function registerAttachmentRoutes(app: FastifyInstance, deps: ServerDeps): void {
+  /**
+   * 界面上那个「撤销这次修改」。工具(document_revisions)是 agent 用的,人点
+   * 按钮走这条 —— 同一个 `rollbackTo`,所以**回退照旧是追加一版**,历史不抹。
+   */
+  app.post('/api/project/document/rollback', async (req, reply) => {
+    const ctx = await deps.resolveContext(req.headers);
+    const body = (req.body ?? {}) as { projectId?: string; name?: string; to?: number };
+    const to = Number(body.to);
+    if (!body.name || !Number.isInteger(to)) {
+      reply.code(400);
+      return { ok: false, error: '缺少 name 或 to' };
+    }
+    if (to < 1) {
+      // 第 1 版是副本刚建立那一版,没有更早的可退。
+      reply.code(400);
+      return { ok: false, error: '没有更早的版本可以退回' };
+    }
+    const folder = body.projectId
+      ? (await getProject(ctx.tenantId, body.projectId))?.folder
+      : undefined;
+    if (!folder) {
+      reply.code(404);
+      return { ok: false, error: '这个项目还没有文件夹' };
+    }
+    try {
+      const { rollbackTo } = await import('../document-copy.js');
+      const rev = await rollbackTo(folder, body.name, to);
+      return { ok: true, revision: rev.n, note: rev.note };
+    } catch (err) {
+      reply.code(400);
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   app.post('/api/attachment/preview', async (req, reply) => {
     const body = (req.body ?? {}) as { name?: string; data?: string };
     const name = body.name?.trim();

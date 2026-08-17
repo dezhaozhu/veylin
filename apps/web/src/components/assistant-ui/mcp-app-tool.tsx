@@ -11,6 +11,8 @@ import { useTranslation } from 'react-i18next';
 import { McpAppActionBridge } from '@/components/assistant-ui/mcp-app-action-bridge';
 import { ToolFallback } from '@/components/assistant-ui/tool-fallback';
 import { placeComposerCaret } from '@/lib/composer-caret';
+import { useThreadProjects } from '@/lib/thread-projects-sync';
+import { DocumentEditResult } from '@/components/assistant-ui/document-edit-result';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import { correctionDraftSpec, type CorrectionPayload, type OpenGridFilter } from '@/lib/correction-bridge';
 
@@ -77,7 +79,13 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
   const threadId = remoteId ?? localId ?? undefined;
   const appTools = useAppTools(threadId);
   const mcpHost = useMemo(() => McpAppsRemoteHost({ url: mcpHostUrl(threadId) }), [threadId]);
+  // 撤销要知道改的是哪个项目的文件 —— 用这条线程钉着的那个项目(和工具当时用的
+  // 是同一个:工具走的也是会话钉定)。
+  const threadProjects = useThreadProjects();
+  const pinnedProjectId = threadId ? threadProjects[threadId] : undefined;
   const p = props as unknown as Record<string, unknown>;
+
+
   const uri = appTools[p.toolName as string];
   // getMcpAppFromToolPart (inside McpAppRenderer) reads the part's `.mcp.app`.
   // Inject it for tools that declare a ui:// resource so the app renders inline.
@@ -116,6 +124,22 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
     },
     [focusScheduleFilter],
   );
+
+  // 文档修改自己有一块界面:红绿对照 + 一键撤销。**改已经发生了**,这里不是问
+  // "要不要改",是让人看见改了什么、并且退得回去(版本+回退当安全网)。
+  //
+  // **这个分支必须放在所有 hook 之后。** 一开始写成了提前 return,结果整个界面
+  // 崩在 "Rendered fewer hooks than expected" —— 类型和单测都看不见,一跑就白屏。
+  if (p.toolName === 'document_edit' && p.result && typeof p.result === 'object') {
+    const args = (p.args ?? {}) as { name?: string };
+    return (
+      <DocumentEditResult
+        result={p.result as Parameters<typeof DocumentEditResult>[0]['result']}
+        {...(pinnedProjectId ? { projectId: pinnedProjectId } : {})}
+        {...(args.name ? { name: args.name } : {})}
+      />
+    );
+  }
 
   return (
     <McpAppActionBridge onCorrection={handleCorrection} onOpenGrid={handleOpenGrid}>

@@ -49,3 +49,26 @@ describe('POST /api/attachment/preview', () => {
     assert.equal(res.statusCode, 400);
   });
 });
+
+/**
+ * 界面上那个「撤销这次修改」要有东西可调 —— 工具是 agent 用的,人点按钮走 REST。
+ */
+describe('POST /api/project/document/rollback', () => {
+  const build2 = () => {
+    const app = Fastify();
+    registerAttachmentRoutes(app, { resolveContext: async () => ({ tenantId: 'T' }) } as never);
+    return app;
+  };
+  const post = (payload: unknown) =>
+    build2().inject({ method: 'POST', url: '/api/project/document/rollback', payload: payload as object });
+
+  it('缺 name 或 to → 400', async () => {
+    assert.equal((await post({ projectId: 'p' })).statusCode, 400);
+    assert.equal((await post({ projectId: 'p', name: 'a.docx' })).statusCode, 400);
+  });
+
+  it('**退到第 0 版要拒** —— 第 1 版是副本刚建立那版,没有更早的', async () => {
+    const res = await post({ projectId: 'p', name: 'a.docx', to: 0 });
+    assert.equal(res.statusCode, 400);
+  });
+});
