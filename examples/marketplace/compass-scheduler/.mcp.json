@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "compass": {
+      "command": "node",
+      "args": ["./mcp/bridge.cjs"],
+      "cwd": ".",
+      "env": {
+        "COMPASS_MCP_URL": "https://mcp.compass-work.com/mcp/",
+        "COMPASS_MCP_TOKEN": "在此粘贴你的 project token"
+      }
+    }
+  }
+}
