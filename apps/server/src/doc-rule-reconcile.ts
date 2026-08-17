@@ -17,6 +17,8 @@
  * 3. **每条结论都带原文引述**,人能自己核对我们读得对不对。
  */
 
+import { applyAliases, type OpAliases } from './op-aliases.js';
+
 export type Assertion = {
   kind: 'op_resource' | 'capacity_k';
   /** 工序名 / 资源名 */
@@ -61,6 +63,11 @@ export type Verdict = {
    * 而事实是"我们没有它的记录"。
    */
   systemResources?: string[];
+  /**
+   * 系统里名字相近的工序(仅 not_found)。**结构化给出来**,上层才能把它变成一个
+   * 可点的"这两个是同一道吗" —— 只写在 detail 那句话里,人只能自己再打一遍。
+   */
+  aliasCandidates?: string[];
 };
 
 /** 结论顺序 = **人要看的顺序**:先看不一致的,一致的排最后。 */
@@ -78,23 +85,34 @@ const splitCombo = (s: string) =>
 /**
  * 系统里名字相近的工序 —— **给线索,不替他认定**。
  *
- * 真数据实测:上重 11 个文档工序名只有 2 个一字不差对得上("锻造"vs"焊后热处理"、
- * "性能热处理"vs"性能热处理-冶铸")。只回一句"查不到"是条死胡同,而系统里明明
- * 有相近的。判定仍然是"查不到" —— 相近**不是**同一道工序,这条线不能越。
+ * 真数据实测:上重 11 个文档工序名只有 2 个一字不差对得上。只回一句"查不到"是条
+ * 死胡同,而系统里明明有相近的。判定仍然是"查不到" —— 相近**不是**同一道工序,
+ * 这条线不能越;要认得由人来认(confirm_op_alias)。
  *
- * 判据故意保守:一方包含另一方(「性能热处理」⊂「性能热处理-冶铸」)才算,
- * 不做编辑距离 —— 凑出来的线索会把人带偏,比没有线索更坏。
+ * 判据经过一次修正:原来只认"一方包含另一方",结果**恰恰漏掉了它存在的理由** ——
+ * 「最终验收」和「最终检验」谁也不包含谁,一条候选都不给,人永远不会被提示去登记。
+ * **保守到没用,和乱猜一样是失败。** 现在两条,都要能讲得出道理:
+ *   1. 一方包含另一方(性能热处理 ⊂ 性能热处理-冶铸)
+ *   2. **前两个字相同,长度相近,且过半的字重合**(最终验收 / 最终检验)
+ * 仍然不用编辑距离:说不清为什么算相近的候选,会把人带偏。
  */
 function nearMisses(subject: string, facts: Fact[]): string[] {
   const q = norm(subject);
   if (q.length < 2) return [];
+  const chars = new Set(q);
+  const similar = (o: string) => {
+    if (o === q) return false;
+    if (o.includes(q) || q.includes(o)) return true;
+    // 前两个字是同一个词头 —— 工序名的区别几乎总在后半截(验收/检验、粗加工/精加工)
+    if (o.slice(0, 2) !== q.slice(0, 2)) return false;
+    if (Math.abs(o.length - q.length) > 1) return false;
+    const shared = [...new Set(o)].filter((c) => chars.has(c)).length;
+    return shared / Math.max(q.length, o.length) >= 0.5;
+  };
   return facts
     .filter((f): f is Extract<Fact, { kind: 'op_resource' }> => f.kind === 'op_resource')
     .map((f) => f.op)
-    .filter((op) => {
-      const o = norm(op);
-      return o !== q && (o.includes(q) || q.includes(o));
-    })
+    .filter((op) => similar(norm(op)))
     .slice(0, 3);
 }
 
@@ -109,6 +127,7 @@ function checkOpResource(a: Assertion, facts: Fact[]): Verdict {
       detail:
         `系统里查不到「${a.subject}」这道工序的历史记录 —— 无法核对(不代表文档写错了)。` +
         (near.length ? `系统里有名字相近的:${near.join('、')} —— 是不是同一道,得你来认。` : ''),
+      ...(near.length ? { aliasCandidates: near } : {}),
     };
   }
   const names = fact.resources.map((r) => norm(r.name));
@@ -185,10 +204,21 @@ function checkCapacityK(a: Assertion, facts: Fact[]): Verdict {
   };
 }
 
-export function reconcile(assertions: Assertion[], facts: Fact[]): Verdict[] {
-  const out = assertions.map((a) =>
-    a.kind === 'capacity_k' ? checkCapacityK(a, facts) : checkOpResource(a, facts),
-  );
+export function reconcile(
+  assertions: Assertion[],
+  facts: Fact[],
+  /** 人确认过的工序名对照表(文档词 → 系统词)。见 op-aliases.ts。 */
+  aliases: OpAliases = {},
+): Verdict[] {
+  const out = assertions.map((raw) => {
+    // **先过对照表**:文档说「最终验收」、系统里叫「最终检验」—— 不换名的话
+    // 这条永远是"查不到"(真数据里 11 条只有 2 条能一字不差对上)。
+    const subject = applyAliases(raw.subject, aliases);
+    const a = subject === raw.subject ? raw : { ...raw, subject };
+    const v = a.kind === 'capacity_k' ? checkCapacityK(a, facts) : checkOpResource(a, facts);
+    // 结论里回原始断言 —— 引述和上层的匹配都按文档原话来。
+    return subject === raw.subject ? v : { ...v, assertion: raw };
+  });
   // 稳定排序:同档内保持文档里的原顺序,人能顺着文档读下来。
   return out
     .map((v, i) => ({ v, i }))

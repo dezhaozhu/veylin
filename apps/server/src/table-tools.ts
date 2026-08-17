@@ -1538,7 +1538,10 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
             '(工序资格 / 资源产能都是空的)。这份场景可能还没有三级工序历史。',
         };
       }
-      const verdicts = reconcile(assertions, facts);
+      // 过一遍人确认过的工序名对照表 —— 真数据里 11 条只有 2 条能一字不差对上,
+      // 不过表的话产出就是一堆诚实但没用的"查不到"。
+      const { readAliases } = await import('./op-aliases.js');
+      const verdicts = reconcile(assertions, facts, await readAliases(got.folder));
       // 存下来给随后的 document_edit 用 —— 那一问("你改的是文档还是那件事")
       // 只有在**对照过**之后才问得出口。
       const { rememberVerdicts } = await import('./doc-change-intent.js');
@@ -1614,6 +1617,48 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     },
   });
 
+  /**
+   * 人确认一条工序名对照(文档里的叫法 = 系统里的哪一道)。
+   *
+   * **只认人确认的。** 近似名只当候选提出来 —— 自动配对一旦配错,后面所有结论
+   * 都错在一个没人看过的假设上,而且看起来完全正常。
+   */
+  const confirmOpAlias = createTool({
+    id: 'confirm_op_alias',
+    description:
+      '登记一条工序名对照:文档里的叫法 = 系统里的哪一道工序。' +
+      '对照结果里出现「查不到」且给了近似名候选时,**先问用户是不是同一道**,他确认了再调这个。' +
+      '登记之后,以后对照这个项目的文档都会自动认。',
+    inputSchema: z.object({
+      doc_name: z.string().describe('文档里的叫法,例如 最终验收'),
+      system_name: z.string().describe('系统里的叫法,例如 最终检验(来自对照结果的候选)'),
+      confirmed_by: z.string().optional().describe('是谁确认的'),
+    }),
+    execute: async (
+      input: { doc_name: string; system_name: string; confirmed_by?: string },
+      ctx?: TableToolCtx,
+    ) => {
+      const got = await folderOrReason(ctx);
+      if (!got.folder) return { ok: false, error: got.error };
+      const { mergeAlias, readAliases, writeAliases } = await import('./op-aliases.js');
+      try {
+        const out = mergeAlias(await readAliases(got.folder), {
+          doc: input.doc_name, system: input.system_name, by: input.confirmed_by ?? '用户',
+        });
+        await writeAliases(got.folder, out.aliases);
+        return {
+          ok: true,
+          alias: `${input.doc_name} → ${input.system_name}`,
+          count: Object.keys(out.aliases).length,
+          ...(out.note ? { note: out.note } : {}),
+          next: '重新跑一次 reconcile_document,之前"查不到"的那几条现在应该有结论了。',
+        };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  });
+
   return {
     table_get: tableGet,
     table_update_row: tableUpdateRow,
@@ -1637,6 +1682,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     document_edit: documentEdit,
     document_revisions: documentRevisions,
     reconcile_document: reconcileDocument,
+    confirm_op_alias: confirmOpAlias,
     propose_rule_from_document: proposeRuleFromDocument,
   };
 }

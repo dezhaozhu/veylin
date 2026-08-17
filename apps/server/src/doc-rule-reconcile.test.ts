@@ -215,3 +215,77 @@ describe('结论要带上系统侧的资源', () => {
     assert.equal(v!.systemResources, undefined);
   });
 });
+
+/**
+ * 有了对照表之后:文档说「最终验收」、系统里叫「最终检验」,应该对得上。
+ * 而没登记的,近似名要变成**机器可读的候选**,不能只写在一句话里 ——
+ * 上层要能把它变成一个可点的确认动作。
+ */
+describe('工序名对照表', () => {
+  const facts: Fact[] = [{
+    kind: 'op_resource', op: '最终检验',
+    resources: [{ name: 'YZ0201-2', share: 1 }], flexibility: 'locked',
+  }];
+  const a = { kind: 'op_resource' as const, subject: '最终验收', object: 'YZ0201-2', quote: 'q' };
+
+  it('**登记过就对得上** —— 从"查不到"变成真结论', () => {
+    const [v] = reconcile([a], facts, {
+      最终验收: { system: '最终检验', confirmedBy: '老王', at: '2026-08-17' },
+    });
+    assert.equal(v!.status, 'agree');
+  });
+
+  it('没登记还是查不到(不猜)', () => {
+    assert.equal(reconcile([a], facts)[0]!.status, 'not_found');
+  });
+
+  it('**近似名要给成结构化候选**,不能只写在话里 —— 上层要变成可点的确认', () => {
+    const [v] = reconcile(
+      [{ kind: 'op_resource', subject: '最终检', object: 'x', quote: 'q' }],
+      facts,
+    );
+    assert.equal(v!.status, 'not_found');
+    assert.deepEqual(v!.aliasCandidates, ['最终检验']);
+  });
+
+  it('八竿子打不着的不给候选 —— 凑出来的候选会把人带偏', () => {
+    const [v] = reconcile(
+      [{ kind: 'op_resource', subject: '钢锭加热', object: 'x', quote: 'q' }],
+      facts,
+    );
+    assert.equal(v!.aliasCandidates, undefined);
+  });
+});
+
+/**
+ * 真数据打脸第二次:上面那条"一方包含另一方"的保守判据,**恰恰漏掉了它存在的理由** ——
+ * 「最终验收」和「最终检验」谁也不包含谁,于是一条候选都不给,人永远不会被提示去
+ * 登记这条别名。保守到没用,和乱猜一样是失败。
+ */
+describe('近似名的判据要够用,又不能乱凑', () => {
+  const F = (op: string): Fact => ({
+    kind: 'op_resource', op, resources: [{ name: 'R', share: 1 }], flexibility: 'locked',
+  });
+  const near = (subject: string, ops: string[]) =>
+    reconcile([{ kind: 'op_resource', subject, object: 'R', quote: 'q' }], ops.map(F))[0]!.aliasCandidates;
+
+  it('**一字之差要给** —— 最终验收 / 最终检验', () => {
+    assert.deepEqual(near('最终验收', ['最终检验']), ['最终检验']);
+  });
+
+  it('包含关系照旧给 —— 性能热处理 / 性能热处理-冶铸', () => {
+    assert.deepEqual(near('性能热处理', ['性能热处理-冶铸']), ['性能热处理-冶铸']);
+  });
+
+  it('**只共享一个字不给** —— 钢锭加热 vs 焊后热处理,凑出来会把人带偏', () => {
+    assert.equal(near('钢锭加热', ['焊后热处理']), undefined);
+  });
+
+  it('前缀不同不给 —— 锻造 vs 预热处理', () => {
+    assert.equal(near('锻造', ['预热处理']), undefined);
+  });
+
+  it('长度差太多不给 —— 取样 vs 无损检测(结构焊后)', () => {
+    assert.equal(near('取样', ['无损检测(结构焊后)']), undefined);
+  });
+});
