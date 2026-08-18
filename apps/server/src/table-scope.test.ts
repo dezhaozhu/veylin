@@ -16,6 +16,7 @@ import {
   shortNameOf,
   scopeOfSheetId,
 } from './table-scope.js';
+import { resolveSheetScope } from './table-tools.js';
 
 describe('作用域的 key', () => {
   it('三种作用域各有稳定的短前缀', () => {
@@ -73,5 +74,30 @@ describe('内部 id ↔ 短名', () => {
       sheetIdFor(projectScope('guolu'), 'schedule'),
       sheetIdFor(projectScope('shangzhong'), 'schedule'),
     );
+  });
+});
+
+/**
+ * 用户实测:开一条新对话、点开表格面板,里面是**上一条对话**传的表。
+ *
+ * 因为不在项目里时,所有对话共用同一个"个人区" —— 每条临时对话都能看见别的
+ * 临时对话的表,而它们之间毫无关系。用户的话:「上次的表应该只存在于上次上传的
+ * 对话里」。
+ *
+ * 项目仍然是共享的:进了项目就是要接着上一轮的活干(这条一直是对的)。
+ */
+describe('不在项目里时,表归这一轮对话', () => {
+  it('钉了项目 → 项目作用域(项目里的对话共用一套表)', () => {
+    assert.deepEqual(resolveSheetScope('th-1', 'proj-a'), projectScope('proj-a'));
+  });
+
+  it('没钉项目 → 这条对话自己的作用域,不是共用的个人区', () => {
+    assert.deepEqual(resolveSheetScope('th-1', null), threadScope('th-1'));
+    assert.notDeepEqual(resolveSheetScope('th-1', null), resolveSheetScope('th-2', null));
+  });
+
+  it('连对话都没有(不在对话轮次里调的)→ 还是个人区,不瞎猜', () => {
+    assert.deepEqual(resolveSheetScope(undefined, null), PERSONAL_SCOPE);
+    assert.deepEqual(resolveSheetScope('', null), PERSONAL_SCOPE);
   });
 });

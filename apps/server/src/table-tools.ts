@@ -35,7 +35,13 @@ const cellValueSchema = z.union([z.string(), z.number()]);
 import { unwrapMcpPayload } from './mcp-payload.js';
 import { resolveCompassServer } from './mcp-scoping.js';
 import { getSelection } from './table-selection.js';
-import { PERSONAL_SCOPE, projectScope, sheetIdFor, type SheetScope } from './table-scope.js';
+import {
+  PERSONAL_SCOPE,
+  projectScope,
+  sheetIdFor,
+  threadScope,
+  type SheetScope,
+} from './table-scope.js';
 import { queryTableRows } from './table-query.js';
 import { readProjectFile, readProjectFileBytes, writeProjectFile } from './project-file-read.js';
 import { looksLikeSpreadsheet, parseSpreadsheet } from './spreadsheet-to-rows.js';
@@ -266,10 +272,19 @@ async function folderOfCtx(ctx?: TableToolCtx): Promise<string | undefined> {
  * REST 路由、面板)都从这里推导,规则只有一处。
  */
 export function resolveSheetScope(
-  _threadId: string | null | undefined,
+  threadId: string | null | undefined,
   projectPin: string | null | undefined,
 ): SheetScope {
-  return projectPin ? projectScope(projectPin) : PERSONAL_SCOPE;
+  if (projectPin) return projectScope(projectPin);
+  // **不在项目里 = 表归这一轮对话。**
+  //
+  // 从前这里一律回个人区,于是所有临时对话共用一套表:开一条新对话点开表格面板,
+  // 里面是上一条对话传的表,而两者毫无关系(用户实测,原话:「上次的表应该只
+  // 存在于上次上传的对话里」)。项目仍然共享 —— 进了项目就是要接着上一轮干。
+  //
+  // 连 threadId 都没有(不在对话轮次里调的工具)才回个人区:那时没有"这一轮"
+  // 可归,不瞎猜。
+  return threadId ? threadScope(threadId) : PERSONAL_SCOPE;
 }
 
 function scopeFromCtx(ctx?: TableToolCtx): SheetScope {
