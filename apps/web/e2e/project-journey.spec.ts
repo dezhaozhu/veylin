@@ -265,10 +265,22 @@ async function historyOf(request: APIRequestContext, threadId: string): Promise<
  * dev 钩子暴露的就是面板自己的 open('table')。
  */
 async function openTablePanel(page: Page): Promise<void> {
-  await page.waitForFunction(() => Boolean(window.__veylinTest?.openTablePanel), undefined, {
-    timeout: 30_000,
-  });
-  await page.evaluate(() => window.__veylinTest!.openTablePanel());
+  // 钩子的**注册**是异步的(动态 import + effect),光看属性在不在不够 ——
+  // 首屏立刻调会撞上 "opener not ready"。调到成功为止。
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          try {
+            window.__veylinTest?.openTablePanel?.();
+            return true;
+          } catch {
+            return false;
+          }
+        }),
+      { timeout: 30_000, intervals: [500] },
+    )
+    .toBe(true);
   // 判"面板开了"看容器上的 data-panel-kind,别看页签栏 —— 空作用域下表格走
   // 空状态早退,页签栏根本不渲染,拿它当判据会冤枉面板(踩过一轮)。
   await expect(
@@ -878,4 +890,36 @@ test('预览里能把表格直接导进表格面板', async ({ page, request }) 
     )
   ).json();
   expect((data.rows as unknown[]).length, '导进来的表是空的').toBeGreaterThan(0);
+});
+
+/**
+ * **什么都没有的时候,表格面板要立刻是一张空表,不是永远"加载中"。**
+ *
+ * 用户原话:项目没绑数据源、context 里也没有 excel,打开表格组件就该直接是空表;
+ * "加载"只该出现在真要去 Compass 拉、或真有文件要导的时候。
+ *
+ * 实测过的坑:面板首屏用的是**未解析的默认名** `main`,而服务端回的是解析后的
+ * `me~main` —— "迟到响应守卫"一比对不相等,把首屏这份正确数据丢掉了,
+ * loading 永远清不掉。
+ */
+test('没有数据源也没有文件时,表格面板直接是空表', async ({ page }) => {
+  await page.goto('/');
+  // 先开一条新对话:全量跑时上一条测试可能把界面停在项目页,而项目页盖住全屏、
+  // 右侧面板是隐藏的(这也正是"什么都没有的新对话"这个场景本身)。
+  await openSidebar(page);
+  await page.getByRole('button', { name: 'New Chat' }).first().click();
+  await page.waitForTimeout(2000);
+  await openTablePanel(page);
+
+  await expect
+    .poll(
+      async () => (await page.locator('[data-panel-kind=table]').innerText()).replace(/\s+/g, ' '),
+      { timeout: 20_000, intervals: [1000] },
+    )
+    .not.toMatch(/加载表格数据|Loading table data/);
+
+  // 空表也要是**能用的表**:工具条在,不是一块白板。
+  await expect(page.getByRole('button', { name: /行|Rows/ }).first()).toBeVisible({
+    timeout: 10_000,
+  });
 });

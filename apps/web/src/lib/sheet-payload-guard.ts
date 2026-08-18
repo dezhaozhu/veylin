@@ -11,10 +11,19 @@
  *
  * 响应本来就带着 `sheet` 字段,一句话就能对上;缺字段时照收,免得误伤老响应。
  */
+/**
+ * 面板的初值是**未解析的默认名** `main`,而服务端回的是解析后的完整 id
+ * (`me~main` / `p_<项目>~sheet_1`)。按"不相等就丢"处理的话,首屏那份**正确的**
+ * 数据会被当成迟到响应丢掉,loading 永远清不掉 —— 实测:首页打开表格面板一直
+ * 转圈。这是守卫本身的边界,不是产品的另一个 bug。
+ */
+const UNRESOLVED_DEFAULT = 'main';
+
 export function shouldApplyPayload(
   payloadSheet: string | undefined,
   activeSheetId: string | undefined,
 ): boolean {
   if (!payloadSheet || !activeSheetId) return true;
+  if (activeSheetId === UNRESOLVED_DEFAULT) return true;
   return payloadSheet === activeSheetId;
 }

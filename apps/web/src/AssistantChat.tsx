@@ -27,6 +27,7 @@ import {
   getResumeCursor,
 } from '@/lib/stream-resume-cursor';
 import { resumableStorage } from '@/lib/resumable-storage';
+import { readPendingProjectHint } from '@/lib/pending-project-hint';
 import {
   LazyAssistantToolUIs,
   LazyAutomateWorkspace,
@@ -226,6 +227,8 @@ export function AssistantChat() {
           // 用户本地时区 —— 服务端据此告诉模型"现在几点"。桌面端服务端就在本机,
           // 但工作站/远端部署时两者不在一个时区,而"今天"是本地语义。
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          // 从项目页发出的第一条消息:钉定可能还没落地,带上意图让服务端补钉。
+          projectHint: readPendingProjectHint(),
           workspacePanel: readWorkspacePanelContext(),
           forceReplace: consumeForceReplaceNextChat(),
           locale: resolveAppLanguage(i18n.resolvedLanguage ?? i18n.language),

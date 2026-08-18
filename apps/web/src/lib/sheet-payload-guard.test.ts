@@ -22,4 +22,16 @@ describe('shouldApplyPayload', () => {
   it('还没有当前表 → 照收(首屏就是靠它把表定下来的)', () => {
     assert.equal(shouldApplyPayload('a', undefined), true);
   });
+
+  it('**首屏那个未解析的 main 要照收** —— 否则面板永远停在"加载中"', () => {
+    // 面板的初值是字面量 'main',而服务端回的是解析后的 `me~main` / `p_x~main`。
+    // 按"不相等就丢"处理的话,首屏这份**正确的**数据会被当成迟到响应丢掉,
+    // loading 永远清不掉(实测:首页打开表格面板一直转圈)。
+    assert.equal(shouldApplyPayload('me~main', 'main'), true);
+    assert.equal(shouldApplyPayload('p_abc~sheet_1', 'main'), true);
+  });
+
+  it('已经落到具体某张表之后,还是要挡住别的表', () => {
+    assert.equal(shouldApplyPayload('me~main', 'me~组件'), false);
+  });
 });
