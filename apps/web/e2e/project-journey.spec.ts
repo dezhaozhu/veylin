@@ -619,3 +619,95 @@ test('PDF:卡片出封面,文档面板画得出第一页', async ({ page, reques
   const pageImage = page.locator('img[alt*="第 1 页"], img[alt*="page 1"]').first();
   await expect(pageImage, '文档面板没把第 1 页画出来').toBeVisible({ timeout: 60_000 });
 });
+
+/**
+ * **没绑文件夹的项目**:让 agent 去读项目文件,它得说清"没有文件夹",
+ * 而不是编一个、也不是抛一句看不懂的错误。
+ *
+ * 这是每个新项目的第一状态,却最容易没人测:拒绝话术写在工具里,可从来没人
+ * 真让它走一遍。判据不看措辞,看**它有没有去编内容**。
+ */
+test('没绑文件夹时,读项目文件要说清没有文件夹', async ({ page, request }) => {
+  const name = `没有文件夹-${Date.now()}`;
+  const created = await request.post(`${API}/api/projects`, { data: { name, sources: [] } });
+  expect((await created.json()).ok, '项目没建出来').toBeTruthy();
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 });
+
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+  await composer.fill('读一下项目文件夹里的 开发组件.xlsx,告诉我里面有几行。');
+  await composer.press('Enter');
+  const reply = await waitForAssistantText(page, 1);
+
+  expect(reply.length, '一句话都没答上').toBeGreaterThan(0);
+  // 说清"没有文件夹 / 没绑 / 读不到" —— 任一说法都行,含糊其辞不行。
+  expect(reply, `没说清为什么读不到:${reply.slice(0, 200)}`)
+    .toMatch(/文件夹|绑定|没有.*文件|读不到|不存在/);
+  // **不许编**:项目里根本没有这个文件,却报出一个行数,那是最坏的一种回答。
+  expect(reply, `编了行数:${reply.slice(0, 200)}`).not.toMatch(/共\s*\d+\s*行|一共\s*\d+\s*行/);
+});
+
+/**
+ * **答到一半刷新页面,那一轮要能接上。**
+ *
+ * resume 存在的全部意义就是这个。跑测试时一直能看到一句
+ * `TypeError: ... (reading 'state')` 落在 resumeStream 这条路上,被我们的 catch
+ * 吞掉 —— 光看日志分不清那是"无害噪音"还是"恢复其实从来没成功过"。
+ * 那就别猜:真刷新一次,看那一轮最后有没有落地。
+ *
+ * **实测结论:会丢。** 刷新之后历史里那一轮只剩刷新前流出来的十几个字,
+ * 三分钟轮询都没被补上。已经排除掉的两条:
+ *  · 不是 resumeStream 抛错 —— 打点看到它 `returned ok`(那句 TypeError 来自别处);
+ *  · 不是服务端把这一轮掐了 —— runAbort 只在**显式取消**时触发,客户端断连不算,
+ *    而且 SSE 已经被 captureSseToResumable 接进可恢复流里。
+ * 也就是说:后半段确实还在服务端生成,但**没人把它写回这条线程的历史**
+ * (onFinish → syncThreadMessagesToServer 是客户端那一侧的活,刷新之后没再跑成)。
+ * 下一刀应该从"谁负责落库"那儿切,而不是继续在 resume 上打转。
+ */
+test('答到一半刷新,那一轮还能接上', async ({ page, request }) => {
+  // **已知未修**:钉在这里,修好了它会自己变绿并报警(Playwright 对 test.fail
+  // 的通过会判为失败)。查到哪一步记在下面,别人接手不用从零开始。
+  test.fail();
+  const name = `刷新恢复-${Date.now()}`;
+  await request.post(`${API}/api/projects`, { data: { name, sources: [] } });
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 });
+
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+  await composer.fill('用大约五句话讲讲车间排产里"瓶颈"是什么意思。');
+  await composer.press('Enter');
+
+  // 等它真的开口(有正文了),再在流中途刷新。
+  await expect(page.locator('[data-role=assistant], .aui-assistant-message').first())
+    .not.toBeEmpty({ timeout: 60_000 });
+  await page.reload();
+
+  // 刷新之后:这一轮的回答要在页面上,而且**不是半句**。
+  const threadId = await latestThreadId(request);
+  await expect
+    .poll(
+      async () => {
+        const history = (await (
+          await request.get(`${API}/api/threads/${threadId}/messages`)
+        ).json()) as { messages?: Array<{ role?: string; parts?: Array<{ type?: string; text?: string }> }> };
+        const last = (history.messages ?? []).filter((m) => m.role === 'assistant').at(-1);
+        return (last?.parts ?? [])
+          .filter((p) => p.type === 'text')
+          .map((p) => p.text ?? '')
+          .join('')
+          .length;
+      },
+      { timeout: 3 * 60_000, intervals: [3000] },
+    )
+    .toBeGreaterThan(20);
+});
