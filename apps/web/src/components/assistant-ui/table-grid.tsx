@@ -714,7 +714,14 @@ export function TableGrid() {
     api.onFilterChanged();
   }, []);
 
-  const showToast = useCallback((message: string, variant: 'success' | 'error') => {
+  /**
+ * 三档,不是两档。
+ *
+ * 「当前项目没有绑定文件夹,原件没有留档」是一句**陈述**,不是错误 —— 从前它用
+ * 报错的红底白字弹出来,吓人(用户原话),而且把"你需要知道的事"和"出事了"
+ * 混成了同一种语气。中性档专门给这类:要说,但不该像出了故障。
+ */
+const showToast = useCallback((message: string, variant: 'success' | 'error' | 'note') => {
     setToast({ message, variant });
   }, []);
 
@@ -804,7 +811,7 @@ export function TableGrid() {
   const [addColumnOpen, setAddColumnOpen] = useState(false);
   const [newColumnName, setNewColumnName] = useState('');
   const [addingColumn, setAddingColumn] = useState(false);
-  const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(
+  const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' | 'note' } | null>(
     null,
   );
   const [deleteSheetTarget, setDeleteSheetTarget] = useState<TableSheet | null>(null);
@@ -2220,7 +2227,7 @@ export function TableGrid() {
       );
       // 没留档要说出来 —— 用户以为"原件存好了"而其实没有,是最坏的一种沉默。
       if (data.archived === false && data.archiveNote) {
-        setTimeout(() => showToast(data.archiveNote!, 'error'), 1200);
+        setTimeout(() => showToast(data.archiveNote!, 'note'), 1200);
       }
     } catch (e: unknown) {
       showToast(e instanceof Error ? e.message : t('table.importFailed'), 'error');
@@ -2292,9 +2299,10 @@ export function TableGrid() {
           role="status"
           className={cn(
             'absolute bottom-3 left-1/2 z-50 max-w-[min(90vw,28rem)] -translate-x-1/2 rounded-md px-3 py-2 text-center text-xs shadow-md',
-            toast.variant === 'success'
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-destructive text-white',
+            toast.variant === 'success' && 'bg-primary text-primary-foreground',
+            toast.variant === 'error' && 'bg-destructive text-white',
+            // 陈述:低调、可读,不抢注意力。
+            toast.variant === 'note' && 'bg-foreground/85 text-background',
           )}
         >
           {toast.message}

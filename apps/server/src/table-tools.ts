@@ -37,8 +37,9 @@ import { resolveCompassServer } from './mcp-scoping.js';
 import { getSelection } from './table-selection.js';
 import { PERSONAL_SCOPE, projectScope, sheetIdFor, type SheetScope } from './table-scope.js';
 import { queryTableRows } from './table-query.js';
-import { readProjectFile, readProjectFileBytes } from './project-file-read.js';
+import { readProjectFile, readProjectFileBytes, writeProjectFile } from './project-file-read.js';
 import { looksLikeSpreadsheet, parseSpreadsheet } from './spreadsheet-to-rows.js';
+import { exportFileName, toCsv } from './table-export.js';
 import { getProject, updateProject } from './project-store.js';
 import { DEV_TENANT_ID } from './tenant.js';
 import { fetchCompassData, type CompassRestScope } from './compass-rest.js';
@@ -1254,6 +1255,60 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     },
   });
 
+  /**
+   * **导出一张表**。缺口是用户实测出来的:面板工具条上明明有「导出」,agent 却回
+   * 「当前可用的表格工具不支持导出为 CSV/Excel」—— 人有按钮、agent 没有工具,
+   * 和之前 table_import_file 是同一类不对称。
+   */
+  const tableExport = createTool({
+    id: 'table_export',
+    description:
+      '把一张 sheet 导出成 CSV,写进项目文件夹。**没绑文件夹时不要用它** —— '
+      + '那种情况直接告诉用户点表格面板工具条上的「导出」按钮,那条路不需要文件夹。',
+    inputSchema: z.object({
+      sheet: z.string().optional().describe('sheet 名或 id(默认当前主 sheet)'),
+      path: z.string().optional().describe('相对项目文件夹的落盘路径,默认用表名 + .csv'),
+    }),
+    execute: async (input, ctx?: TableToolCtx) => {
+      const folder = await folderOfCtx(ctx);
+      if (!folder) {
+        return {
+          ok: false,
+          message:
+            '当前项目没有绑定文件夹,导不了文件。'
+            + '**表格面板工具条上的「导出」按钮可以直接导出**,那条路不需要文件夹 —— 请这样告诉用户。',
+        };
+      }
+      const scope = scopeFromCtx(ctx);
+      const sheetId = resolveTableSheetId(input.sheet, scope);
+      const meta = listTableSheets(scope).find((s) => s.id === sheetId);
+      if (!meta) return { ok: false, message: `找不到这张表:${input.sheet ?? '(默认)'}` };
+
+      const columns = listTableColumns(sheetId).map((c) => c.key);
+      const names = listTableColumns(sheetId).map((c) => c.name);
+      const rows = listTableRows(sheetId).map((r) => {
+        const out: Record<string, unknown> = {};
+        columns.forEach((key, i) => {
+          out[names[i] ?? key] = (r as Record<string, unknown>)[key];
+        });
+        return out;
+      });
+      if (names.length === 0) return { ok: false, message: `「${meta.name}」还没有列,没什么可导。` };
+
+      const rel = input.path?.trim() || exportFileName(meta.name);
+      const written = await writeProjectFile(folder, rel, toCsv(names, rows));
+      if (!written) return { ok: false, message: `写不进去:${rel}(只能写项目文件夹里)` };
+
+      return {
+        ok: true,
+        path: rel,
+        rows: rows.length,
+        columns: names,
+        message: `已导出「${meta.name}」的 ${rows.length} 行到 ${rel}`,
+      };
+    },
+  });
+
   const tableChart = createTool({
     id: 'table_chart',
     description:
@@ -1785,6 +1840,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
     table_query: tableQuery,
     project_file_read: projectFileRead,
     table_import_file: tableImportFile,
+    table_export: tableExport,
     create_document: createDocument,
     document_edit: documentEdit,
     document_revisions: documentRevisions,
