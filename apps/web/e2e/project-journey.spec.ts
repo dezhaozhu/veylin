@@ -1092,3 +1092,60 @@ test('在项目页里说话,这条对话归这个项目', async ({ page, request
     'chip 上没显示项目 —— 用户看到的就是"变成个人对话"',
   ).toBeVisible({ timeout: 20_000 });
 });
+
+/**
+ * **打开表格面板不该新建表。**
+ *
+ * 用户实测:进「上重」点一下右侧表格,就多一张空 Sheet;点几次就 Sheet 1…Sheet 6。
+ * 表是按项目存的,所以每换一条对话再点一下,项目里就又多一张空表 —— 谁也不知道
+ * 那些是谁建的。打开是**要看已经有的东西**,新建只该发生在面板里那个「+」上。
+ */
+test('反复打开表格面板,不会一路堆出空表', async ({ page, request }) => {
+  const name = `开面板不建表-${Date.now()}`;
+  const project = (
+    await (await request.post(`${API}/api/projects`, { data: { name, sources: [] } })).json()
+  ).project as { id: string; name: string };
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(project.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: project.name })).toBeVisible({ timeout: 15_000 });
+  // 发一句进到对话里 —— 项目页盖着右栏,不离开它就点不到表格面板。
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await composer.fill('说一句知道了就行。');
+  await composer.press('Enter');
+  await waitForAssistantText(page, 1);
+  const threadId = await latestThreadId(request);
+  await waitPinned(request, threadId, project.id);
+
+  const sheetNames = async (): Promise<string[]> => {
+    const body = await (
+      await request.get(`${API}/api/table/sheets?threadId=${encodeURIComponent(threadId)}`)
+    ).json();
+    return (body.sheets as Array<{ name: string }>).map((s) => s.name);
+  };
+
+  // 这个项目还是空的:第一次打开可以建一张(不然面板里没有可看的东西)。
+  await openTablePanel(page);
+  await page.waitForTimeout(2000);
+  const first = await sheetNames();
+  expect(first.length, `第一次打开应当只有一张表,实际:${first.join(',')}`).toBe(1);
+
+  // **同一条对话里点不出问题**(面板是单例,已开就只是激活)。用户是跨对话堆出来的:
+  // 表按项目存,而页签按对话存 —— 每开一条新对话再点一下面板,项目里就又多一张。
+  for (let i = 0; i < 2; i++) {
+    // 走用户那条路:回项目页 → 说一句(这会开一条新对话)→ 点面板。
+    await page.getByText(project.name, { exact: true }).first().click();
+    await expect(page.getByRole('heading', { name: project.name })).toBeVisible({ timeout: 15_000 });
+    const next = page.locator('textarea:visible').first();
+    await next.click();
+    await next.fill('再说一句知道了就行。');
+    await next.press('Enter');
+    await waitForAssistantText(page, 1);
+    await openTablePanel(page);
+    await page.waitForTimeout(2000);
+  }
+  const again = await sheetNames();
+  expect(again, `每开一条新对话点一下面板就多一张空表:${again.join(',')}`).toEqual(first);
+});
