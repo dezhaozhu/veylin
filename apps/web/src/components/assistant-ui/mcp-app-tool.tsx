@@ -12,6 +12,7 @@ import { McpAppActionBridge } from '@/components/assistant-ui/mcp-app-action-bri
 import { ToolFallback } from '@/components/assistant-ui/tool-fallback';
 import { placeComposerCaret } from '@/lib/composer-caret';
 import { toolPartName } from '@/lib/tool-part-name';
+import { appToolsCacheKey } from '@/lib/app-tools-key';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
 import { DocumentEditResult } from '@/components/assistant-ui/document-edit-result';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
@@ -36,8 +37,13 @@ function mcpHostUrl(threadId: string | undefined): string {
 // per threadId — different threads can have different project-pin-scoped
 // tool sets, see routes/mcp-apps.ts's resolveScopedServerNames.
 const appToolsPromiseByThread = new Map<string, Promise<Record<string, string>>>();
-function loadAppTools(threadId: string | undefined): Promise<Record<string, string>> {
-  const key = threadId ?? '';
+function loadAppTools(
+  threadId: string | undefined,
+  projectId: string | undefined,
+): Promise<Record<string, string>> {
+  // 键里带上钉定:映射取决于线程钉在哪个项目,而项目页是"先建线程、后钉项目",
+  // 中间那一刻问到的必然是空表(实测:widget 全体不渲染,而且再也不会自己好)。
+  const key = appToolsCacheKey(threadId, projectId);
   let promise = appToolsPromiseByThread.get(key);
   if (!promise) {
     const url = threadId ? `/api/mcp-apps/tools?threadId=${encodeURIComponent(threadId)}` : '/api/mcp-apps/tools';
@@ -55,17 +61,20 @@ function loadAppTools(threadId: string | undefined): Promise<Record<string, stri
   return promise;
 }
 
-function useAppTools(threadId: string | undefined): Record<string, string> {
+function useAppTools(
+  threadId: string | undefined,
+  projectId: string | undefined,
+): Record<string, string> {
   const [map, setMap] = useState<Record<string, string>>({});
   useEffect(() => {
     let alive = true;
-    loadAppTools(threadId).then((m) => {
+    loadAppTools(threadId, projectId).then((m) => {
       if (alive) setMap(m);
     });
     return () => {
       alive = false;
     };
-  }, [threadId]);
+  }, [threadId, projectId]);
   return map;
 }
 
@@ -83,12 +92,13 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
   const localId = useAuiState((s) => s.threadListItem.id);
   const remoteId = useAuiState((s) => s.threadListItem.remoteId ?? s.threadListItem.externalId);
   const threadId = remoteId ?? localId ?? undefined;
-  const appTools = useAppTools(threadId);
-  const mcpHost = useMemo(() => McpAppsRemoteHost({ url: mcpHostUrl(threadId) }), [threadId]);
   // 撤销要知道改的是哪个项目的文件 —— 用这条线程钉着的那个项目(和工具当时用的
-  // 是同一个:工具走的也是会话钉定)。
+  // 是同一个:工具走的也是会话钉定)。钉定同时也是 widget 映射的作用域,所以它
+  // 必须在 useAppTools 之前算出来。
   const threadProjects = useThreadProjects();
   const pinnedProjectId = threadId ? threadProjects[threadId] : undefined;
+  const appTools = useAppTools(threadId, pinnedProjectId);
+  const mcpHost = useMemo(() => McpAppsRemoteHost({ url: mcpHostUrl(threadId) }), [threadId]);
   const p = props as unknown as Record<string, unknown>;
 
 
