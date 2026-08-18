@@ -36,6 +36,10 @@
     "3d": {
       "label": "3D",
       "desc": "CAD model viewer with face picking and result overlay"
+    },
+    "widget": {
+      "label": "Chart",
+      "desc": "Open a chart from the conversation"
     }
   },
   "subagent": {

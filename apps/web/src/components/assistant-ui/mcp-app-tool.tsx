@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { McpAppActionBridge } from '@/components/assistant-ui/mcp-app-action-bridge';
 import { ToolFallback } from '@/components/assistant-ui/tool-fallback';
 import { placeComposerCaret } from '@/lib/composer-caret';
+import { PanelRightIcon } from 'lucide-react';
 import { toolPartName } from '@/lib/tool-part-name';
 import { useAppTools } from '@/lib/use-app-tools';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
@@ -90,7 +91,7 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
   // Same host-context rule as the correction bridge: the grid is THIS thread's
   // schedule (from panel context), never selected by the message. focusScheduleFilter
   // opens the panel and stashes the OpenGridFilter for the grid to apply client-side.
-  const { focusScheduleFilter } = usePanelTabs();
+  const { focusScheduleFilter, openWidget } = usePanelTabs();
   const handleOpenGrid = useCallback(
     (filter: OpenGridFilter) => {
       void focusScheduleFilter(filter);
@@ -116,7 +117,33 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
 
   return (
     <McpAppActionBridge onCorrection={handleCorrection} onOpenGrid={handleOpenGrid}>
-      <Render {...part} />
+      {uri ? (
+        <div className="flex flex-col gap-1">
+          {/* **排产这类图在对话流里天生挤**(消息栏就那么宽,一张跨三个月、几十条
+              泳道的甘特只能看见一角)。给它和文件预览一样的出口:在右侧摊开。
+              按钮压在图的右上,不抢图本身。 */}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() =>
+                openWidget({
+                  threadId,
+                  resourceUri: uri,
+                  title: toolPartName(p) ?? undefined,
+                  part: p,
+                })
+              }
+              className="text-muted-foreground hover:text-foreground hover:bg-muted -mr-1 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs transition-colors"
+            >
+              <PanelRightIcon className="size-3.5" />
+              在右侧打开
+            </button>
+          </div>
+          <Render {...part} />
+        </div>
+      ) : (
+        <Render {...part} />
+      )}
     </McpAppActionBridge>
   );
 };

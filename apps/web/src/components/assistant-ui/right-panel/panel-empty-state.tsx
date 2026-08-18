@@ -1,4 +1,4 @@
-import { BookOpen, Box, FileText, Globe, Table, Workflow } from 'lucide-react';
+import { BarChart3, BookOpen, Box, FileText, Globe, Table, Workflow } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { PANEL_KINDS } from './panel-registry';
@@ -11,6 +11,7 @@ const EMPTY_ICONS: Record<PanelKind, typeof Table> = {
   workflow: Workflow,
   doc: FileText,
   '3d': Box,
+  widget: BarChart3,
 };
 
 /** Centered 2×2 launcher when the right panel has no open tabs. */
