@@ -657,31 +657,22 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       void syncThreadMessagesToServer(threadId, messages, { forceReplace: true });
     };
 
-    const stopIfRunning = () => {
-      const threadId = getThreadId?.() ?? chatHelpersRef.current.id;
-      if (!isPersistableThreadId(threadId)) return;
-      const status = chatHelpersRef.current.status;
-      const streaming = status === 'submitted' || status === 'streaming';
-      const hasStream = Boolean(
-        resumableStorage.getStreamId() ?? getActiveChatRun()?.streamId,
-      );
-      if (!streaming && !hasStream) return;
-      void requestChatStop(threadId, { keepalive: true });
-    };
-
-    const onPageHide = (event: PageTransitionEvent) => {
-      // bfcache: keep the run so resume can reconnect.
-      if (event.persisted) {
-        flushTranscript();
-        return;
-      }
+    // **离开页面不再掐掉这一轮。**
+    //
+    // 从前这里 pagehide/beforeunload 都会 POST /stop。可"刷新"恰恰是可恢复流
+    // 存在的全部理由 —— 一边掐一边恢复,两个功能互相抵消:实测同一个问题不刷新
+    // 答 198 字,刷新后只剩 19 字(而且开头重复),因为能恢复的只有掐掉那一刻
+    // 已经产出的一截。
+    //
+    // 关标签页确实会因此多跑一会儿:pagehide 分不出"刷新"和"关掉"(能分辨的
+    // PerformanceNavigationTiming 要等下一次加载才知道,太晚)。两害相权,
+    // 保住"刷新不丢答案"这个用户能感知的承诺;真被抛弃的流有 TTL 兜底。
+    const onPageHide = () => {
       flushTranscript();
-      stopIfRunning();
     };
 
     const onBeforeUnload = () => {
       flushTranscript();
-      stopIfRunning();
     };
 
     const onVisibilityChange = () => {

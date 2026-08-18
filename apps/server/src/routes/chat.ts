@@ -6,6 +6,7 @@ import {
   shouldReportEmptyTurn,
 } from '../empty-turn-notice.js';
 import { Readable } from 'node:stream';
+import type { ServerResponse } from 'node:http';
 import type { FastifyInstance } from 'fastify';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { toAISdkStream } from '@mastra/ai-sdk';
@@ -371,6 +372,30 @@ export async function resolveChatMcpScope(
     scopedMcpServersForSubagents,
     compassOverlay,
   };
+}
+
+/**
+ * 把一条 web 流泵到 socket。**客户端没了就只读不写**,不停、不销毁源。
+ *
+ * 为什么不用 `pipe`:socket 一关,pipe 会把源一起销毁 —— 主流程里那个源是
+ * 正在生成的这一轮(于是刷新就把答案掐了),恢复端点里那个源是可恢复缓冲的
+ * 读取游标(于是重连读到一半就断)。两处都栽在同一件事上。
+ */
+function pumpToSocket(body: ReadableStream<Uint8Array>, socket: ServerResponse): void {
+  const reader = body.getReader();
+  void (async () => {
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value && !socket.destroyed && !socket.writableEnded) socket.write(value);
+      }
+    } catch {
+      /* 读不动就收工 —— 这条路上没有比"别把源掐了"更重要的事 */
+    } finally {
+      if (!socket.destroyed && !socket.writableEnded) socket.end();
+    }
+  })();
 }
 
 export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void {
@@ -884,17 +909,18 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         const { getProject } = await import('../project-store.js');
         const folder = (await getProject(ctx.tenantId, projectPin))?.folder;
         if (folder) {
-          const { listProjectFiles } = await import('../project-context.js');
+          const { listProjectFiles, scanProjectGeometry } = await import('../project-context.js');
           const { scanProjectInbox } = await import('../project-inbox.js');
-          const [archived, inbox] = await Promise.all([
+          const [archived, inbox, geometry] = await Promise.all([
             listProjectFiles(folder),
             scanProjectInbox(folder),
+            scanProjectGeometry(folder),
           ]);
           projectFilesBlock = formatProjectFilesBlock(folder, [
             ...archived.originals.map((f) => ({ name: f.name, bytes: f.bytes })),
             ...archived.snapshots.map((f) => ({ name: `快照/${f.name}`, bytes: f.bytes })),
             ...inbox.pending.map((f) => ({ name: f.name, bytes: f.bytes })),
-          ]);
+          ], geometry.map((f) => ({ name: f.name, bytes: f.bytes })));
         }
       } catch {
         /* 读不到文件夹就不放这一段 —— 它是陈述,不该让一轮对话失败 */
@@ -1433,10 +1459,14 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     reply.raw.on('error', clearRawKeepAlive);
 
     if (response.body) {
-      const nodeBody = Readable.fromWeb(response.body as never);
-      nodeBody.on('end', clearRawKeepAlive);
-      nodeBody.on('error', clearRawKeepAlive);
-      nodeBody.pipe(reply.raw);
+      // **不能用 pipe。** 客户端一刷新,socket 关掉,pipe 会把源一起销毁 ——
+      // 于是这一轮的生成当场停住,可恢复缓冲里只留下断开那一刻的半句。刷新之后
+      // "恢复"出来的永远是残句(实测:基线 198 字的回答只剩 19 字)。
+      //
+      // 自己泵:**客户端没了就只读不写**,把这一轮读完。生成继续跑到底,
+      // captureSseToResumable 收全,重连才有完整内容可给。
+      reply.raw.on('close', clearRawKeepAlive);
+      pumpToSocket(response.body as ReadableStream<Uint8Array>, reply.raw);
     } else {
       clearRawKeepAlive();
       reply.raw.end();
@@ -1470,7 +1500,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
 
     reply.hijack();
     reply.raw.writeHead(resumed.status, Object.fromEntries(resumed.headers));
-    Readable.fromWeb(resumed.body as never).pipe(reply.raw);
+    // 和上面主流程同理:pipe 会在客户端断开时把源一起销毁,而源就是**可恢复
+    // 缓冲的读取游标**。销毁它等于把这次重连读到一半的位置丢掉。自己泵,
+    // 客户端没了就只读不写。
+    pumpToSocket(resumed.body as ReadableStream<Uint8Array>, reply.raw);
   });
 
   /** Explicit stop: cancel generation and clear resumable stream (not a disconnect). */
@@ -1526,7 +1559,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
 
     reply.hijack();
     reply.raw.writeHead(resumed.status, Object.fromEntries(resumed.headers));
-    Readable.fromWeb(resumed.body as never).pipe(reply.raw);
+    // 和上面主流程同理:pipe 会在客户端断开时把源一起销毁,而源就是**可恢复
+    // 缓冲的读取游标**。销毁它等于把这次重连读到一半的位置丢掉。自己泵,
+    // 客户端没了就只读不写。
+    pumpToSocket(resumed.body as ReadableStream<Uint8Array>, reply.raw);
   });
 
   // Approval resume seam: the frontend posts the decision for a suspended run.

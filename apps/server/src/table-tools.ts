@@ -1222,11 +1222,14 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
       // **盖不到云端拉下来的表上。** 那张表带着"来自 Compass"的出处戳,被本地
       // 文件覆盖之后就变成:戳子说它来自 Compass,内容其实是本地文件 —— 这种谎
       // 比丢数据更难查(界面上什么都看不出来)。宁可拒绝,让人换个名字。
-      if (existing?.source?.server) {
+      // source 是个联合类型:文件来源那一支没有 server,只有连接器那一支有。
+      const connector =
+        existing?.source && 'server' in existing.source ? existing.source.server : null;
+      if (connector) {
         return {
           ok: false,
           message:
-            `「${existing.name}」是从数据源(${existing.source.server})拉下来的表,`
+            `「${existing!.name}」是从数据源(${connector})拉下来的表,`
             + '不能用本地文件覆盖 —— 换一个 sheet 名再导。',
         };
       }
