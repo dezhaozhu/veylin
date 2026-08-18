@@ -925,6 +925,14 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     // 空数组也要照收:换到一个还没装过表的项目时,页签就该空掉,而不是留着
     // 上一个作用域的页签(那正是"个人区看得见项目的表"那个病的另一半)。
     if (data.sheets) setSheets(data.sheets);
+    // **首屏要认领解析后的表 id。** 面板初值是未解析的 `main`,服务端把它解析成
+    // 这个作用域里的真表并回了数据;不认领的话 activeSheetId 一直是 `main`,
+    // 于是**没有任何页签是高亮的**——"当前表"不存在,后面的切换全都不对劲
+    // (用户实测:点了 orders 之后别的表就切不动了)。
+    if (data.sheet && activeSheetIdRef.current === 'main') {
+      activeSheetIdRef.current = data.sheet;
+      setActiveSheetId(data.sheet);
+    }
     if (data.columns) {
       setColumnDefs(data.columns);
       revealNewColumn(data.columns);
@@ -993,12 +1001,26 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         const selected = api?.getSelectedRows?.()?.[0];
         anchor = anchorOfRow(selected as Record<string, unknown> | undefined);
       }
+      // **这一整段只是"记住我在看哪儿",不能把切表本身搞崩。**
+      // AG-Grid v36 里 getRowGroupColumns 会返回 undefined(行分组模块没注册),
+      // `?.()` 挡得住方法不存在、挡不住返回 undefined —— 紧跟的 .forEach 抛出
+      // TypeError,整个点击处理器当场死掉:表现就是"点了页签毫无反应"
+      // (用户实测:点进 orders 之后别的表都切不动了)。
       const groupBy: string[] = [];
-      api?.getRowGroupColumns?.().forEach((c) => {
-        const id = c.getColId?.();
-        if (id) groupBy.push(id);
-      });
-      const filterModel = (api?.getFilterModel?.() ?? {}) as Record<string, unknown>;
+      try {
+        (api?.getRowGroupColumns?.() ?? []).forEach((c) => {
+          const id = c.getColId?.();
+          if (id) groupBy.push(id);
+        });
+      } catch {
+        /* 记不住分组就算了 —— 锦上添花,不该挡住切表 */
+      }
+      let filterModel: Record<string, unknown> = {};
+      try {
+        filterModel = (api?.getFilterModel?.() ?? {}) as Record<string, unknown>;
+      } catch {
+        /* 同上 */
+      }
       resetSheetUiState();
       pendingViewRef.current =
         groupBy.length || Object.keys(filterModel).length ? { filterModel, groupBy } : null;
@@ -1228,6 +1250,12 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         if (cancelled) return;
         resetSheetUiState();
         setSheets(data.sheets ?? []);
+        // **用户选过表就别抢。** 作用域重取会落到"默认表",而项目钉定是异步落定的
+        // —— 它一落定这个 effect 就跑,把人刚点的表换掉:表现就是"点了切不过去"
+        // (用户实测:点 orders 之后停在原来那张)。换作用域本身要重选,所以
+        // 换的时候把这个标记清掉。
+        // 换作用域本来就该重选:清掉"用户选过"的标记,再落到新作用域的默认表。
+        userPickedSheetRef.current = false;
         if (data.sheet) selectSheet(data.sheet);
         lastSerialized.current = '';
         applyPayload(data, true);
