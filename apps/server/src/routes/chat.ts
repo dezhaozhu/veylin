@@ -965,6 +965,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
           : buildAgentOrchestrationBlock(listDispatchableCustomAgentIds(deps.runtime, agentId))
         : '';
     const systemBlocks = await buildChatSystemBlocks({
+      ...(typeof (body as { timeZone?: unknown }).timeZone === 'string'
+        ? { timeZone: (body as { timeZone: string }).timeZone }
+        : {}),
       skillsCatalog,
       skillBlock,
       rulesBlock,
