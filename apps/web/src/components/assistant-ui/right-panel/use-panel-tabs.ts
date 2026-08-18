@@ -12,7 +12,8 @@ import {
 } from '@/lib/panel-tabs-storage';
 import { isPanelTabsRemoteUpgrade } from '@/lib/panel-tabs-remote-upgrade';
 import type { OpenGridFilter } from '@/lib/correction-bridge';
-import { createNextThreadSheet } from '@/lib/table-sheets';
+import { createNextThreadSheet, fetchThreadSheets } from '@/lib/table-sheets';
+import { decideTablePanelSheet } from '@/lib/open-table-panel';
 import { getPanelKindDef } from './panel-registry';
 import type { PanelKind, PanelTab } from './panel-types';
 
@@ -181,16 +182,22 @@ export function usePanelTabsState(): PanelTabsApi {
         }
       }
 
-      // Create the sheet at the user action (+), not on TableGrid mount —
-      // mount-time create races with React Strict Mode double-invoke.
+      // 打开表格面板 ≠ 新建一张表。
+      //
+      // 从前这里无条件 createNextThreadSheet,于是**点一次面板就多一张空 Sheet**;
+      // 表是按项目存的,换条对话再点一下,项目里又多一张 —— 用户看到的是
+      // Sheet 1…Sheet 6 一路堆上去,没人知道那些是谁建的(实测)。
+      // 已经有表就打开第一张;一张都没有才建(空面板没有可看的东西)。
+      // 建表这件事仍然只发生在用户动作上,不在 TableGrid mount 里 —— 那会和
+      // React Strict Mode 的双次调用打架。
       if (kind === 'table') {
         const tid = threadIdRef.current?.trim();
         if (!tid) return;
         try {
-          const sheet = await createNextThreadSheet(tid);
-          const tab = createTab(kind, {
-            sheetId: sheet.id,
-          });
+          const decided = decideTablePanelSheet(await fetchThreadSheets(tid));
+          const sheetId =
+            decided.kind === 'open' ? decided.sheetId : (await createNextThreadSheet(tid)).id;
+          const tab = createTab(kind, { sheetId });
           commit({ tabs: [...stateRef.current.tabs, tab], activeId: tab.id });
         } catch {
           // Leave workspace unchanged when create fails.
