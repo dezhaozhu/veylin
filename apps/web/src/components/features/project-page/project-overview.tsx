@@ -450,7 +450,12 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
       {folder ? (
         <button
           type="button"
-          onClick={() => void revealPath(folder)}
+          onClick={async () => {
+            // **失败要说话。** 从前 revealPath 返回 false 就没人管了,
+            // 表现成"点了没反应" —— 最难查的一种。
+            const ok = await revealPath(folder, undefined, project.id);
+            if (!ok) setError('打不开访达 —— 这个文件夹可能已经不在了');
+          }}
           className="text-muted-foreground hover:text-foreground text-xs underline"
         >
           在访达中显示

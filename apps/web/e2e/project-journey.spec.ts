@@ -486,13 +486,13 @@ test('本地表 + Compass 云端表,能一起读', async ({ page, request }) => 
  */
 test('大表 ⇄ 小表来回切,屏幕上的列始终属于当前那张', async ({ page, request }) => {
   /**
-   * **状态相关的红:单跑必过、全量必红**(重试两次也红,所以不是抖动)。
-   * 差别只有一个:全量跑到这儿时,锅炉厂作用域里已经堆了十几张前面测试留下的表。
-   * 表一多,点了小表之后当前表会回到「工序」—— 像是重取时按"默认表"落了回去。
+   * **仍不稳:七千行那一档时好时坏**(小表已经稳了)。
    *
-   * 产品那一侧的「点不动」这一轮已经真修好(switchSheet 同步 ref、Compass 异步
-   * 拉表不再抢用户已选的表),单跑这条能稳定通过。剩下的是**表多时**的那一档,
-   * 下一刀:在作用域里先造 15 张表再单跑这条,把它变成能稳定复现的最小用例。
+   * 这一轮修掉的是真根因之一:switchSheet 里那段簿记调 `getRowGroupColumns?.()`,
+   * v36 返回 undefined,紧跟的 .forEach 抛异常把整个点击处理器打死 —— 点页签
+   * 毫无反应。修完之后「点空表也能切过去」那条稳过,这条却仍会红,差别只有
+   * 表的大小(7219 行 vs 一行)。下一刀:在大表加载**完成之前**点页签,看那次
+   * 点击是不是被随后的渲染吞掉。
    */
   test.fail();
   const folder = await makeFixtureFolder();
@@ -922,4 +922,68 @@ test('没有数据源也没有文件时,表格面板直接是空表', async ({ p
   await expect(page.getByRole('button', { name: /行|Rows/ }).first()).toBeVisible({
     timeout: 10_000,
   });
+});
+
+/**
+ * **点了页签就得切过去 —— 哪怕那张表是空的。**
+ *
+ * 用户实测:点进空的 orders 表之后,别的表全都切不动了。根因不在数据:
+ * switchSheet 里那段"记住我在看哪儿"的簿记调了 `api.getRowGroupColumns?.()`,
+ * 而 AG-Grid v36 里它返回 **undefined**(行分组模块没注册)—— `?.()` 挡得住
+ * 方法不存在、挡不住返回 undefined,紧跟的 `.forEach` 抛 TypeError,
+ * 整个点击处理器当场死掉:表现就是"点了毫无反应"。
+ */
+test('点空表也能切过去,切完还能切回来', async ({ page, request }) => {
+  const name = `切表-${Date.now()}`;
+  const created = await request.post(`${API}/api/projects`, { data: { name, sources: [] } });
+  expect((await created.json()).ok).toBeTruthy();
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 });
+
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+  const threadId = await latestThreadId(request);
+
+  // 一张有数据的表 + 一张**空表**(就是 orders 那种)
+  const withData = `有数据-${Date.now()}`;
+  const empty = `空表-${Date.now()}`;
+  const idOf = async (sheetName: string) => {
+    await request.post(`${API}/api/table/sheets`, { data: { name: sheetName, threadId } });
+    const sheets = (await (
+      await request.get(`${API}/api/table/sheets?threadId=${threadId}`)
+    ).json()).sheets as Array<{ id: string; name: string }>;
+    return sheets.find((s) => s.name === sheetName)!.id;
+  };
+  const dataId = await idOf(withData);
+  await idOf(empty);
+  await request.post(`${API}/api/table/import`, {
+    data: { sheet: dataId, threadId, column_names: ['型号'], rows: [{ 型号: 'A1' }] },
+  });
+
+  await composer.fill('说一句知道了就行。');
+  await composer.press('Enter');
+  await waitForAssistantText(page, 1);
+  await openTablePanel(page);
+
+  const activeTab = async () =>
+    (await page.locator('[data-testid=sheet-tabs] .group\\/tab.bg-primary').allInnerTexts())
+      .join('')
+      .replace(/\s+/g, '');
+  const clickTab = (sheetName: string) =>
+    page
+      .locator('[data-testid=sheet-tabs] .sheet-tab-label')
+      .filter({ hasText: sheetName })
+      .first()
+      .click();
+
+  for (const target of [empty, withData, empty]) {
+    await clickTab(target);
+    await expect
+      .poll(activeTab, { timeout: 20_000, intervals: [500] })
+      .toContain(target.replace(/\s+/g, ''));
+  }
 });

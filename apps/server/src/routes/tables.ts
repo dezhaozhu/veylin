@@ -837,9 +837,14 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   /** 在访达里显示项目文件夹里的某个东西(Show in Folder)。只允许文件夹之内。 */
   app.post('/api/project/reveal', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const body = (req.body ?? {}) as { path?: string; threadId?: string };
+    const body = (req.body ?? {}) as { path?: string; threadId?: string; projectId?: string };
+    // **项目页没有 threadId。** 从前只按 threadId 反查项目,于是在项目页点
+    // 「在访达中显示」会解析成个人区 → 拿不到文件夹 → 拒绝,而前端不吭声:
+    // 用户看到的就是"点了没反应"(实测)。项目页知道自己是哪个项目,直接给。
     const scope = await scopeOfRequest(body.threadId, ctx);
-    const projectId = scope.kind === 'project' ? scope.id : null;
+    const projectId =
+      (typeof body.projectId === 'string' && body.projectId ? body.projectId : null) ??
+      (scope.kind === 'project' ? scope.id : null);
     const folder = projectId ? (await getProject(ctx.tenantId, projectId))?.folder : undefined;
     const target = String(body.path ?? '');
     const out = await revealInFileManager(folder, target || folder || '');

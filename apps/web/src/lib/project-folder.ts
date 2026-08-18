@@ -45,12 +45,18 @@ export async function pickProjectFolder(timeoutMs = 15_000): Promise<PickResult>
  * 由**服务端**代劳:前端没有 opener/shell 的插件绑定,而服务端本来就是本机进程。
  * 服务端只允许显示项目文件夹之内的东西(见 project-reveal.ts)。
  */
-export async function revealPath(path: string, threadId?: string): Promise<boolean> {
+export async function revealPath(
+  path: string,
+  threadId?: string,
+  projectId?: string,
+): Promise<boolean> {
   try {
     const res = await fetch('/api/project/reveal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, threadId }),
+      // projectId:项目页没有 threadId,只按 threadId 反查会解析成个人区、
+      // 拿不到文件夹,于是"点了没反应"(实测)。
+      body: JSON.stringify({ path, threadId, projectId }),
     });
     const data = (await res.json()) as { ok?: boolean };
     return res.ok && data.ok === true;
