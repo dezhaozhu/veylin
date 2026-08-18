@@ -1,11 +1,61 @@
 import { getModelConfig, DEFAULT_MODEL, type ModelKey } from '@veylin/runtime';
 
-const TITLE_MAX_LEN = 60;
+/** Sidebar width: ChatGPT / Cursor titles stay short. */
+const TITLE_MAX_LEN = 40;
+/** First user line this short is already the title — do not ask a model. */
+const KEEP_USER_MAX = 32;
 
 export function truncateTitle(text: string, max = TITLE_MAX_LEN): string {
   const t = text.trim().replace(/\s+/g, ' ');
   if (!t) return 'New Chat';
   return t.length > max ? `${t.slice(0, max - 3)}...` : t;
+}
+
+export function stripReasoningMarkup(text: string): string {
+  return text
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, ' ')
+    .replace(/<think\b[^>]*>[\s\S]*$/gi, ' ')
+    .replace(/<\/?think>/gi, ' ')
+    .replace(/<analysis\b[^>]*>[\s\S]*?<\/analysis>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Stored titles that must not stay in the sidebar (reasoning dump / meta). */
+export function isUnusableTitle(title: string | null | undefined): boolean {
+  const t = title?.trim() ?? '';
+  if (!t) return true;
+  if (/<\/?think\b/i.test(t)) return true;
+  if (/^the user\b/i.test(t)) return true;
+  if (/用户(的)?(消息|问题|说)/.test(t)) return true;
+  return false;
+}
+
+export function titleFromUserMessage(prompt: string, max = TITLE_MAX_LEN): string {
+  const firstLine =
+    prompt
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .find(Boolean) ?? '';
+  return truncateTitle(firstLine || prompt, max);
+}
+
+export function shouldSummarizeUserMessage(prompt: string): boolean {
+  const firstLine =
+    prompt
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .find(Boolean) ?? prompt.trim();
+  if (prompt.includes('\n') && [...prompt.trim()].length > KEEP_USER_MAX) return true;
+  return [...firstLine].length > KEEP_USER_MAX;
+}
+
+export function sanitizeGeneratedTitle(raw: string, fallback: string): string {
+  let t = stripReasoningMarkup(raw);
+  t = t.replace(/^["'「『]|["'」』]$/g, '').trim();
+  t = t.split(/\r?\n/).map((s) => s.trim()).find(Boolean) ?? '';
+  if (!t || isUnusableTitle(t)) return fallback;
+  return truncateTitle(t);
 }
 
 type MessageLike = {
@@ -33,8 +83,10 @@ export function firstUserText(messages: readonly unknown[]): string {
 }
 
 /**
- * Generate a short conversation title (agent-style: Haiku/flash, ≤60 chars).
- * Falls back to truncating the first user message when the model is unavailable.
+ * ChatGPT / Cursor title:
+ *   short first user line → keep it
+ *   long paste → optional model phrase, then sanitize
+ *   never use assistant thinking
  */
 export async function generateThreadTitle(
   messages: readonly unknown[],
@@ -43,8 +95,11 @@ export async function generateThreadTitle(
   const prompt = firstUserText(messages);
   if (!prompt) return 'New Chat';
 
+  const fallback = titleFromUserMessage(prompt);
+  if (!shouldSummarizeUserMessage(prompt)) return fallback;
+
   const cfg = getModelConfig(modelKey);
-  if (!cfg.apiKey) return truncateTitle(prompt);
+  if (!cfg.apiKey) return fallback;
 
   try {
     const res = await fetch(`${cfg.url.replace(/\/$/, '')}/chat/completions`, {
@@ -59,21 +114,25 @@ export async function generateThreadTitle(
           {
             role: 'system',
             content:
-              'Generate a concise conversation title (max 60 characters) based on the user message. ' +
-              'Return only the title text — no quotes, no punctuation wrapper, no explanation.',
+              'Create a short sidebar title for this chat, like ChatGPT or Cursor. ' +
+              '2–8 words, or at most 16 Chinese characters. Same language as the user. ' +
+              'Topic or noun phrase, not a sentence. ' +
+              'Return only the title — no quotes, no thinking, no explanation.',
           },
           { role: 'user', content: prompt.slice(0, 2000) },
         ],
         temperature: 0.2,
-        max_tokens: 40,
+        max_tokens: 32,
       }),
     });
-    if (!res.ok) return truncateTitle(prompt);
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    if (!res.ok) return fallback;
+    const data = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
     const raw = data.choices?.[0]?.message?.content?.trim();
-    if (!raw) return truncateTitle(prompt);
-    return truncateTitle(raw.replace(/^["']|["']$/g, ''));
+    if (!raw) return fallback;
+    return sanitizeGeneratedTitle(raw, fallback);
   } catch {
-    return truncateTitle(prompt);
+    return fallback;
   }
 }

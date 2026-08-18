@@ -52,6 +52,71 @@ export function formatSelectionAskComposerText(text: string): string {
   return `${quote}\n\n`;
 }
 
+export function previewQuotedText(text: string, max = 72): string {
+  const one = text.replace(/\s+/g, ' ').trim();
+  const chars = [...one];
+  if (chars.length <= max) return one;
+  return `${chars.slice(0, max).join('')}…`;
+}
+
+/** Leading `> …` block from a sent user message (old inline quotes + new send prefix). */
+export function splitQuotedPrefix(text: string): { quote: string | null; body: string } {
+  const lines = text.split('\n');
+  const quoted: string[] = [];
+  let i = 0;
+  // 取值一次再用:仓库开了 noUncheckedIndexedAccess,`lines[i]` 的类型是
+  // `string | undefined`,直接 .replace/.trim 过不了类型(合并同事那条时 tsc 报的)。
+  for (let line = lines[i]; line !== undefined && /^>/.test(line); line = lines[i]) {
+    quoted.push(line.replace(/^>\s?/, ''));
+    i += 1;
+  }
+  if (quoted.length === 0) return { quote: null, body: text };
+  while (i < lines.length && (lines[i] ?? '').trim() === '') i += 1;
+  return { quote: quoted.join('\n').trim() || null, body: lines.slice(i).join('\n') };
+}
+
+function mergeQuotedDraft(body: string, quote: string): string {
+  const quoted = quote.trim();
+  const typed = body.trim();
+  // Quote-only send: the chip itself is the message, not a `>` wrapper with no ask.
+  if (!typed || typed === quoted) return quoted;
+  return `${formatSelectionAskComposerText(quote)}${body}`;
+}
+
+export function applyQuotePrefixToMessage<T extends { content?: unknown; parts?: unknown[] }>(
+  message: T,
+  quote: string,
+): T {
+  if (!quote.trim()) return message;
+
+  if (typeof message.content === 'string') {
+    return {
+      ...message,
+      content: mergeQuotedDraft(message.content, quote),
+    };
+  }
+
+  if (!Array.isArray(message.parts)) {
+    return { ...message, parts: [{ type: 'text', text: mergeQuotedDraft('', quote) }] };
+  }
+
+  const parts = [...message.parts];
+  const idx = parts.findIndex(
+    (part) => part && typeof part === 'object' && (part as { type?: string }).type === 'text',
+  );
+  if (idx < 0) {
+    parts.unshift({ type: 'text', text: mergeQuotedDraft('', quote) });
+    return { ...message, parts };
+  }
+  const part = parts[idx] as { type: string; text?: string };
+  const body = typeof part.text === 'string' ? part.text : '';
+  parts[idx] = {
+    ...part,
+    text: mergeQuotedDraft(body, quote),
+  };
+  return { ...message, parts };
+}
+
 export function clearThreadTextSelection(): void {
   window.getSelection()?.removeAllRanges();
 }

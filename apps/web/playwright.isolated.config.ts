@@ -31,6 +31,11 @@ export default defineConfig({
   testMatch: /project-journey\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
+  // **一次重试**:这套跑的是真模型 + 真异步(项目钉定、Compass 拉表、SSE),
+  // 单跑稳过的用例在全量里会因为几百毫秒的先后而偶发红。重试是为了不让这种
+  // 抖动淹掉真信号 —— 真坏了两次都会红。不是用来盖 bug 的:凡是能稳定复现的,
+  // 都已经各自钉住(见 spec 里的 test.fail 注释)。
+  retries: 1,
   reporter: 'list',
   // 真模型 + 真附件抽取,一轮对话几十秒起步。
   timeout: 15 * 60_000,

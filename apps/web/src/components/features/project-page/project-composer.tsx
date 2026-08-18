@@ -21,6 +21,7 @@ import { useAui, useAuiState } from '@assistant-ui/react';
 import { Composer } from '@/components/assistant-ui/thread';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { postThreadProject, writeCachedThreadProject } from '@/lib/project-sync';
+import { setPendingProjectHint } from '@/lib/pending-project-hint';
 import { invalidateThreadProjects } from '@/lib/thread-projects-sync';
 
 export const ProjectComposer: FC<{ projectId: string; projectName: string }> = ({
@@ -70,7 +71,14 @@ export const ProjectComposer: FC<{ projectId: string; projectName: string }> = (
   }, [messageCount, closeWorkspace]);
 
   return (
-    <section className="mb-6" onFocusCapture={() => void prepare()}>
+    <section
+      className="mt-4 shrink-0"
+      onFocusCapture={() => {
+        // 立刻记下"我在这个项目里说话" —— prepare() 是异步的,而发送不等它。
+        setPendingProjectHint(projectId);
+        void prepare();
+      }}
+    >
       <p className="text-muted-foreground mb-1.5 text-xs">
         在「{projectName}」里问点什么 —— 新对话会自动归到这个项目
       </p>

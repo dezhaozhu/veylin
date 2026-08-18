@@ -265,10 +265,22 @@ async function historyOf(request: APIRequestContext, threadId: string): Promise<
  * dev 钩子暴露的就是面板自己的 open('table')。
  */
 async function openTablePanel(page: Page): Promise<void> {
-  await page.waitForFunction(() => Boolean(window.__veylinTest?.openTablePanel), undefined, {
-    timeout: 30_000,
-  });
-  await page.evaluate(() => window.__veylinTest!.openTablePanel());
+  // 钩子的**注册**是异步的(动态 import + effect),光看属性在不在不够 ——
+  // 首屏立刻调会撞上 "opener not ready"。调到成功为止。
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          try {
+            window.__veylinTest?.openTablePanel?.();
+            return true;
+          } catch {
+            return false;
+          }
+        }),
+      { timeout: 30_000, intervals: [500] },
+    )
+    .toBe(true);
   // 判"面板开了"看容器上的 data-panel-kind,别看页签栏 —— 空作用域下表格走
   // 空状态早退,页签栏根本不渲染,拿它当判据会冤枉面板(踩过一轮)。
   await expect(
@@ -282,6 +294,17 @@ async function openTablePanel(page: Page): Promise<void> {
  * 所以合成一个真的 DragEvent —— 这也正是用户"把文件拖进对话框"的那条路。
  */
 async function dropFile(page: Page, path: string, name: string): Promise<void> {
+  await dropFileOnce(page, path, name);
+  // **挂上了没有,自己确认。** 合成拖放依赖输入框的 DOM 形状,别人一改就可能落空;
+  // 落空了却继续往下走,后面所有断言都在冤枉产品(合并同事改动后就栽了一次)。
+  const chip = page.getByText(name, { exact: false }).locator('visible=true').first();
+  if (await chip.isVisible().catch(() => false)) return;
+  await page.waitForTimeout(1500);
+  await dropFileOnce(page, path, name);
+  await expect(chip, `附件没挂上(拖放落空):${name}`).toBeVisible({ timeout: 15_000 });
+}
+
+async function dropFileOnce(page: Page, path: string, name: string): Promise<void> {
   const b64 = readFileSync(path).toString('base64');
   await page.evaluate(
     ({ b64, name }) => {
@@ -430,10 +453,12 @@ test('本地表 + Compass 云端表,能一起读', async ({ page, request }) => 
   const names = sheets.map((s) => s.name).join('/');
 
   const fromCloud = sheets.find((s) => s.source?.server === 'compass');
-  // **必须是这一次导进来的那张**。第一版写成"任何一张没有 source 的表",
-  // 结果被上一轮跑剩下的旧表蒙混过关:那一轮 agent 其实只建了个空壳,
-  // 断言却是绿的 —— 弱断言和没测一样。
-  const fromLocal = sheets.find((s) => s.name === XLSX_NAME.replace(/\.[^.]+$/, ''));
+  // 既不能写死表名,也不能松到"任何一张没有 source 的表":
+  //  · 写死 →「开发组件」被模型起成「开发组件导入」就红,测的成了它的命名习惯;
+  //  · 太松 → 上一轮跑剩的空壳表也能蒙混过关(那一轮 agent 只建了壳,断言却绿)。
+  // 取中间:名字里带「开发组件」、且不是云端来的那张;有没有行下面单独验。
+  const stem = XLSX_NAME.replace(/\.[^.]+$/, '');
+  const fromLocal = sheets.find((s) => !s.source && s.name.includes(stem));
   expect(fromCloud, `作用域里没有云端表,现有:${names}`).toBeTruthy();
   expect(fromLocal, `没有「开发组件」这张本地表,现有:${names}`).toBeTruthy();
 
@@ -461,16 +486,13 @@ test('本地表 + Compass 云端表,能一起读', async ({ page, request }) => 
  */
 test('大表 ⇄ 小表来回切,屏幕上的列始终属于当前那张', async ({ page, request }) => {
   /**
-   * **已知未修:点了切不过去。** 这一轮把结论收窄到了一句话 —— 云端工序表
-   * (7219 行)加载之后,点别的表页签,**高亮仍停在「工序」**:不是内容没跟上,
-   * 是压根没切。这正是用户最早报的「点不动」;之前修掉的是另一条机制
-   * (迟到响应把当前表盖掉),标签本身不切是新的一条。
+   * **状态相关的红:单跑必过、全量必红**(重试两次也红,所以不是抖动)。
+   * 差别只有一个:全量跑到这儿时,锅炉厂作用域里已经堆了十几张前面测试留下的表。
+   * 表一多,点了小表之后当前表会回到「工序」—— 像是重取时按"默认表"落了回去。
    *
-   * 沿途已排除(都实测,不是推断):面板没打开(改用 app 自己的 open API)、
-   * 测试数据不干净(小表改成测试自己按唯一名建、走 REST 导入)、
-   * 视图没进对话(项目页盖屏时面板是 hidden)、
-   * compass 异步拉表抢当前表(已加"用户选过就别抢"的守卫,仍红)。
-   * 下一刀:在 switchSheet 里打点,看 activeSheetId 是被谁改回去的。
+   * 产品那一侧的「点不动」这一轮已经真修好(switchSheet 同步 ref、Compass 异步
+   * 拉表不再抢用户已选的表),单跑这条能稳定通过。剩下的是**表多时**的那一档,
+   * 下一刀:在作用域里先造 15 张表再单跑这条,把它变成能稳定复现的最小用例。
    */
   test.fail();
   const folder = await makeFixtureFolder();
@@ -526,6 +548,17 @@ test('大表 ⇄ 小表来回切,屏幕上的列始终属于当前那张', async
 
   await openTablePanel(page);
   await page.waitForTimeout(4000);
+
+  // **先等作用域落定**:项目钉定是异步的,钉定一到,面板会重取并落到默认表 ——
+  // 在那之前点的表会被这次重取盖掉。等两张表都上了页签再开始切,去掉这场赛跑
+  // (全量跑里偶发红,单跑却过,就是差在这几百毫秒)。
+  await expect
+    .poll(
+      async () => (await page.locator('[data-testid=sheet-tabs] .group\\/tab').allInnerTexts())
+        .join('|'),
+      { timeout: 30_000, intervals: [500] },
+    )
+    .toContain(localName);
 
   // 来回切三次,每次都要求"当前页签"和"屏幕上的列"对得上。
   for (const name of [cloud!.name, localName, cloud!.name, localName]) {
@@ -785,3 +818,108 @@ declare global {
     __veylinTest?: { openTablePanel?: () => void };
   }
 }
+
+/**
+ * **预览里直接"导入到表格面板"。**
+ *
+ * 用户原话:中间能点开预览、右侧却打不开,能不能预览完直接选右侧打开。
+ * 对表格来说,"打开"的正确含义不是再看一遍概览,而是**把它变成表格面板里那张
+ * 能筛选、统计、被 table_query 用的表** —— agent 侧早有 table_import_file,
+ * 人这条路一直缺着。
+ */
+test('预览里能把表格直接导进表格面板', async ({ page, request }) => {
+  const folder = await makeFixtureFolder();
+  const name = `预览导入-${Date.now()}`;
+  await request.post(`${API}/api/projects`, { data: { name, sources: [] } });
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 });
+
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+  // 先说一句进对话:预览浮层要量聊天区的尺寸,项目页上量不到就整个不渲染
+  // (实测:在项目页点附件没有任何反应)。
+  await composer.fill('说一句知道了就行。');
+  await composer.press('Enter');
+  await waitForAssistantText(page, 1);
+
+  const chatComposer = page.locator('textarea:visible').first();
+  await chatComposer.click();
+  await page.waitForTimeout(1000);
+  await dropFile(page, join(folder, XLSX_NAME), XLSX_NAME);
+
+  // 点文件名打开预览。外层那个触发器是 display:contents —— 没有盒子,
+  // Playwright 判为不可见、点不到(踩过)。
+  // **点附件卡本身,别按文件名找。** 文件名在页面上有好几处(引用栏也会显示),
+  // getByText().first() 会点中不是附件的那个 —— 合并同事的引用功能后就栽了一次。
+  await page
+    .locator('.aui-attachment-document-card')
+    .locator('visible=true')
+    .first()
+    .click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible({ timeout: 20_000 });
+
+  await dialog.getByRole('button', { name: '导入到表格面板' }).click();
+
+  // 导完要**带过去**:面板打开,而且新表就是当前这张(名字取自文件名)。
+  const sheetName = XLSX_NAME.replace(/\.[^.]+$/, '');
+  await expect(page.locator('[data-panel-kind=table]')).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(
+      async () => (await page
+        .locator('[data-testid=sheet-tabs] .group\\/tab.bg-primary')
+        .allInnerTexts()).join('').replace(/\s+/g, ''),
+      { timeout: 30_000, intervals: [1000] },
+    )
+    .toContain(sheetName);
+
+  // 真有数据才算导进来了 —— 只看到一个页签不算。
+  const threadId = await latestThreadId(request);
+  const sheets = (
+    await (await request.get(`${API}/api/table/sheets?threadId=${threadId}`)).json()
+  ).sheets as Array<{ id: string; name: string }>;
+  const sheet = sheets.find((s) => s.name === sheetName);
+  expect(sheet, `没建出「${sheetName}」这张表`).toBeTruthy();
+  const data = await (
+    await request.get(
+      `${API}/api/table?sheet=${encodeURIComponent(sheet!.id)}&threadId=${threadId}`,
+    )
+  ).json();
+  expect((data.rows as unknown[]).length, '导进来的表是空的').toBeGreaterThan(0);
+});
+
+/**
+ * **什么都没有的时候,表格面板要立刻是一张空表,不是永远"加载中"。**
+ *
+ * 用户原话:项目没绑数据源、context 里也没有 excel,打开表格组件就该直接是空表;
+ * "加载"只该出现在真要去 Compass 拉、或真有文件要导的时候。
+ *
+ * 实测过的坑:面板首屏用的是**未解析的默认名** `main`,而服务端回的是解析后的
+ * `me~main` —— "迟到响应守卫"一比对不相等,把首屏这份正确数据丢掉了,
+ * loading 永远清不掉。
+ */
+test('没有数据源也没有文件时,表格面板直接是空表', async ({ page }) => {
+  await page.goto('/');
+  // 先开一条新对话:全量跑时上一条测试可能把界面停在项目页,而项目页盖住全屏、
+  // 右侧面板是隐藏的(这也正是"什么都没有的新对话"这个场景本身)。
+  await openSidebar(page);
+  await page.getByRole('button', { name: 'New Chat' }).first().click();
+  await page.waitForTimeout(2000);
+  await openTablePanel(page);
+
+  await expect
+    .poll(
+      async () => (await page.locator('[data-panel-kind=table]').innerText()).replace(/\s+/g, ' '),
+      { timeout: 20_000, intervals: [1000] },
+    )
+    .not.toMatch(/加载表格数据|Loading table data/);
+
+  // 空表也要是**能用的表**:工具条在,不是一块白板。
+  await expect(page.getByRole('button', { name: /行|Rows/ }).first()).toBeVisible({
+    timeout: 10_000,
+  });
+});

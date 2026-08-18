@@ -4,8 +4,8 @@ import {
   FolderIcon,
   FolderOpenIcon,
   LoaderIcon,
+  PencilIcon,
   PlusIcon,
-  SquarePenIcon,
 } from 'lucide-react';
 import {
   useCallback,
@@ -234,7 +234,7 @@ const ProjectRow: FC<{ project: ProjectInfo; indices: number[]; threadIds: reado
             {creating ? (
               <LoaderIcon className="size-3.5 animate-spin" aria-hidden />
             ) : (
-              <SquarePenIcon className="size-3.5" aria-hidden />
+              <PencilIcon className="size-3.5" aria-hidden />
             )}
           </Button>
         </div>

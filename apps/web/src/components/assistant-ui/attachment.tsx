@@ -31,6 +31,11 @@ import {
   previewAttachment,
   type PreviewState,
 } from "@/lib/attachment-preview";
+import { importFileToNewSheet } from '@/lib/import-to-table';
+import { requestSheetSelection } from '@/lib/pending-sheet-selection';
+import { previewOpenTarget } from '@/lib/preview-open-action';
+import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
+import { useRightSidebar } from '@/components/ui/sidebar';
 import { DocumentPreview } from "@/components/features/document-preview";
 
 function fileTypeLabel(name: string, contentType?: string): string {
@@ -247,6 +252,37 @@ const DocumentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<PreviewState>({ state: "idle" });
   const [dataUrl, setDataUrl] = useState<string | undefined>(undefined);
+  const [importing, setImporting] = useState(false);
+  // 没有全局 toast(表格面板那个是它自己的局部状态)—— 失败就在弹窗里就地说,
+  // 别静默:人点了"导入"却什么都没发生,是最难查的一种。
+  const [importError, setImportError] = useState<string | null>(null);
+  const panels = usePanelTabs();
+  const { setOpen: setRightOpen } = useRightSidebar();
+  const threadId = useAuiState(
+    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId ?? s.threadListItem.id,
+  );
+
+  /** 导进一张**新表**并把表格面板打开到它上面。 */
+  const importToTable = async () => {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const out = await importFileToNewSheet(file, threadId);
+      if (!out.ok) {
+        setImportError(out.message);
+        return;
+      }
+      // 导完就带过去:不切的话人得自己在一堆页签里找那张新表(它还可能不是当前表)。
+      requestSheetSelection(out.sheetName);
+      setRightOpen(true);
+      void panels.open('table');
+      setOpen(false);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImporting(false);
+    }
+  };
   const bounds = useChatColumnBounds(open);
 
   useEffect(() => {
@@ -307,16 +343,34 @@ const DocumentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
                     name={name}
                     payload={preview.payload}
                     action={
-                      dataUrl ? (
-                        // 打不开也走得下去 —— 这正是"没有可预览的内容"缺的那一步。
-                        <a
-                          href={dataUrl}
-                          download={name}
-                          className="text-foreground inline-flex items-center gap-1.5 text-xs underline underline-offset-4"
-                        >
-                          下载原件
-                        </a>
-                      ) : null
+                      <div className="flex items-center gap-3">
+                        {/* **表格的"打开"= 导进表格面板。** 预览只是概览(前几行),
+                            能筛选、统计、被 table_query 用的是那张表 —— 这条路
+                            agent 早就有(table_import_file),人却没有。 */}
+                        {previewOpenTarget(name) === 'table' && file ? (
+                          <button
+                            type="button"
+                            disabled={importing}
+                            onClick={() => void importToTable()}
+                            className="text-foreground inline-flex items-center gap-1.5 text-xs underline underline-offset-4 disabled:opacity-50"
+                          >
+                            {importing ? '导入中…' : '导入到表格面板'}
+                          </button>
+                        ) : null}
+                        {importError ? (
+                          <span className="text-destructive text-xs">{importError}</span>
+                        ) : null}
+                        {dataUrl ? (
+                          // 打不开也走得下去 —— 这正是"没有可预览的内容"缺的那一步。
+                          <a
+                            href={dataUrl}
+                            download={name}
+                            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs underline underline-offset-4"
+                          >
+                            下载原件
+                          </a>
+                        ) : null}
+                      </div>
                     }
                   />
                 )}

@@ -16,14 +16,19 @@ import { startWindowDrag } from '@/lib/window-drag';
 export function WorkspaceMain({
   children,
   className,
+  fill = false,
 }: {
   children: ReactNode;
   className?: string;
+  /** Fill the workspace height instead of growing with content (project page
+   * pins the thread list so expanding cards don't shove it off-screen). */
+  fill?: boolean;
 }) {
   return (
     <main
       className={cn(
-        'relative min-h-0 min-w-0 flex-1 overflow-y-auto',
+        'relative min-h-0 min-w-0 flex-1',
+        fill ? 'overflow-hidden' : 'overflow-y-auto',
         className,
       )}
     >
@@ -32,7 +37,12 @@ export function WorkspaceMain({
         className="absolute inset-x-0 top-0 z-0 h-14"
         onMouseDown={startWindowDrag}
       />
-      <div className="pointer-events-none relative z-10 px-8 pt-10 pb-8 [&>*]:pointer-events-auto">
+      <div
+        className={cn(
+          'pointer-events-none relative z-10 px-8 pt-10 pb-8 [&>*]:pointer-events-auto',
+          fill && 'flex h-full min-h-0 flex-col',
+        )}
+      >
         {children}
       </div>
     </main>

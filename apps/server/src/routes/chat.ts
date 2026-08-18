@@ -76,6 +76,7 @@ import {
   restoreTodosFromHistoryIfEmpty,
   requireThreadOwnership,
   resolveThreadForRead,
+  setProject,
   touchThreadActivity,
 } from '../thread-state.js';
 import { buildReminderBlock } from '../reminders.js';
@@ -88,6 +89,7 @@ import {
 import { rescheduleLoopFromState } from '../loop-scheduler.js';
 import { buildChatSystemBlocks } from '../chat-system-blocks.js';
 import { isMemoryStoreFailure, syncThreadMessagesFromClient } from '../thread-sync.js';
+import { isValidProjectPin } from './threads.js';
 import { isDatastoreFailure, withDatastoreFallback } from '../store-errors.js';
 import {
   mastraMessagesToAgentContext,
@@ -560,7 +562,21 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     // the shared prelude (pin → entry-level pin, once) + the UNCHANGED pure
     // scoping functions + the pooled compass overlay — see its docstring for
     // the guarantee-preservation notes.
-    const threadProjectPin = threadRowState?.project ?? null;
+    // **第一条消息可能跑在钉定前面。** 项目页的输入框是 focus 时才异步
+    // 「建线程 + 钉项目」的,而发送不等它 —— 打字快一点,这一轮看到的就是
+    // "没有项目":agent 回"当前会话没有绑定项目",够不到项目文件夹(用户实测)。
+    // 客户端带上"我从哪个项目页发的",这里补钉。**只信提示不越权**:
+    // 必须是本租户启用的项目,且只在还没钉的时候补 —— 已经有钉定就不许改,
+    // 换项目只能走显式的 POST /api/project。
+    let threadProjectPin = threadRowState?.project ?? null;
+    const projectHint = (body as { projectHint?: unknown }).projectHint;
+    if (!threadProjectPin && typeof projectHint === 'string' && projectHint) {
+      if (await isValidProjectPin(ctx.tenantId, projectHint)) {
+        await setProject(threadId, projectHint).catch(() => undefined);
+        threadProjectPin = projectHint;
+        threadRowState = (await getThreadState(threadId)) ?? threadRowState;
+      }
+    }
     const mcpScope = await resolveChatMcpScope({
       tenantId: ctx.tenantId,
       threadProjectPin,

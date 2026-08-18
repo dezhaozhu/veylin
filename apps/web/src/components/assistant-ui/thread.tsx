@@ -11,8 +11,13 @@ import { McpAppToolFallback } from "@/components/assistant-ui/mcp-app-tool";
 import { ToolGroupBlock } from "@/components/assistant-ui/tool-group";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { ComposerContextUsage } from "@/components/assistant-ui/composer-context-usage";
+import { quoteThreadIds } from "@/lib/pending-quote";
+import { sendComposerDraft } from "@/lib/send-composer-draft";
+import { usePendingQuote, usePendingSkill } from "@/lib/use-composer-settings";
 import { ComposerChipsRow } from "@/components/assistant-ui/composer-mention/composer-chips-row";
+import { ComposerQuoteBar } from "@/components/assistant-ui/composer-quote-bar";
 import { ComposerAttachmentDropzone } from "@/components/assistant-ui/composer-attachment-dropzone";
+import { ComposerDropOverlay } from "@/components/assistant-ui/composer-drop-overlay";
 import { ComposerMentionInput } from "@/components/assistant-ui/composer-mention/composer-mention-input";
 import { ComposerModeChips } from "@/components/assistant-ui/composer-mode-chips";
 import { ComposerPlusMenu } from "@/components/assistant-ui/composer-plus-menu";
@@ -218,7 +223,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; hasNoMessages: boolean }> = ({
 
   return (
     <ThreadPrimitive.Root
-      className="aui-root aui-thread-root bg-background @container flex h-full min-h-0 flex-col"
+      className="aui-root aui-thread-root bg-background @container relative flex h-full min-h-0 flex-col"
       style={{
         ["--thread-max-width" as string]: "44rem",
         ["--composer-bg" as string]:
@@ -233,6 +238,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; hasNoMessages: boolean }> = ({
         className="relative flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto scroll-smooth"
       >
         <div
+          data-slot="aui_thread-column"
           className={cn(
             "mx-auto flex w-full min-w-0 max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4",
             isEmpty && "justify-center",
@@ -289,9 +295,9 @@ const ThreadRoot: FC<{ isEmpty: boolean; hasNoMessages: boolean }> = ({
             <ComposerStatusBar />
           </ThreadPrimitive.ViewportFooter>
         </div>
-        <ThreadQuestionRail />
         <ThreadSelectionAskToolbar />
       </ThreadPrimitive.Viewport>
+      <ThreadQuestionRail />
     </ThreadPrimitive.Root>
   );
 };
@@ -359,13 +365,14 @@ export const Composer: FC<{
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full min-w-0 flex-col">
       <ComposerAttachmentDropzone asChild>
-        <div className="flex w-full min-w-0 flex-col gap-2 data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:border-ring data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:border-dashed data-[dragging=true]:[&_[data-slot=aui_composer-shell]]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]">
+        <div className="group/composer-drop flex w-full min-w-0 flex-col gap-2">
           <ComposerQueue />
           <div
             data-slot="aui_composer-shell"
-            className="border-border/60 focus-within:border-border dark:border-muted-foreground/15 dark:focus-within:border-muted-foreground/30 flex w-full min-w-0 flex-col gap-2 overflow-hidden rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] focus-within:shadow-[0_6px_24px_-8px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.05)] dark:shadow-none"
+            className="border-border/60 focus-within:border-border dark:border-muted-foreground/15 dark:focus-within:border-muted-foreground/30 relative flex w-full min-w-0 flex-col gap-2 overflow-hidden rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow,min-height] focus-within:shadow-[0_6px_24px_-8px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.05)] group-data-[dragging=true]/composer-drop:min-h-36 dark:shadow-none"
           >
             <ComposerChipsRow />
+            <ComposerQuoteBar />
             <ComposerMentionInput
               placeholder={t("thread.composerPlaceholder")}
               className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
@@ -375,6 +382,7 @@ export const Composer: FC<{
               onKeyDown={onKeyDown}
             />
             <ComposerAction {...(projectName ? { projectName } : {})} />
+            <ComposerDropOverlay />
           </div>
         </div>
       </ComposerAttachmentDropzone>
@@ -384,6 +392,13 @@ export const Composer: FC<{
 
 const ComposerAction: FC<{ projectName?: string }> = ({ projectName }) => {
   const { t } = useTranslation();
+  const aui = useAui();
+  const { pendingQuote } = usePendingQuote();
+  const { pendingSkill } = usePendingSkill();
+  const canSend = useAuiState((s) => s.composer.canSend);
+  const sendable =
+    canSend || Boolean(pendingQuote?.trim()) || Boolean(pendingSkill);
+
   return (
     <div className="aui-composer-action-wrapper grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-1 gap-y-1">
       <div className="flex min-w-0 items-center gap-1 overflow-hidden">
@@ -395,19 +410,23 @@ const ComposerAction: FC<{ projectName?: string }> = ({ projectName }) => {
         <ComposerContextUsage className="@max-[22rem]:hidden" />
         <ModelPicker className="min-w-0" />
         <AuiIf condition={(s) => !s.thread.isRunning}>
-          <ComposerPrimitive.Send asChild>
-            <TooltipIconButton
-              tooltip={t("thread.sendMessage")}
-              side="bottom"
-              type="button"
-              variant="default"
-              size="icon"
-              className="aui-composer-send size-7 shrink-0 rounded-full"
-              aria-label={t("thread.sendMessage")}
-            >
-              <ArrowUpIcon className="aui-composer-send-icon size-4.5" />
-            </TooltipIconButton>
-          </ComposerPrimitive.Send>
+          <TooltipIconButton
+            tooltip={t("thread.sendMessage")}
+            side="bottom"
+            type="button"
+            variant="default"
+            size="icon"
+            className="aui-composer-send size-7 shrink-0 rounded-full"
+            disabled={!sendable}
+            aria-label={t("thread.sendMessage")}
+            onClick={() =>
+              sendComposerDraft(aui.composer(), {
+                threadIds: quoteThreadIds(aui.threadListItem().getState()),
+              })
+            }
+          >
+            <ArrowUpIcon className="aui-composer-send-icon size-4.5" />
+          </TooltipIconButton>
         </AuiIf>
         <AuiIf condition={(s) => s.thread.isRunning}>
           <ComposerPrimitive.Cancel asChild>
