@@ -259,45 +259,22 @@ async function historyOf(request: APIRequestContext, threadId: string): Promise<
 /**
  * 打开右侧的表格面板。
  *
- * 两道坎都是真几何,不是玄学:右栏可能整个收着(按钮 x<0);也可能开着、但被
- * 左侧栏挤到**视口右边之外**(实测 x=1660,视口 1600)—— 后者 Playwright 报的是
- * "outside of the viewport",force 也点不动。收起左侧栏就腾出来了。
+ * **走 app 自己的 API,不靠几何。** 从前是去点那个"选面板类型"的大卡片:右栏
+ * 可能整个收着、可能开着却被左栏挤到视口外、卡片还在动画里 —— 三种情况轮流
+ * 失败,红了却与产品无关(实测让两条测试反复变红,我一度以为是产品坏了)。
+ * dev 钩子暴露的就是面板自己的 open('table')。
  */
 async function openTablePanel(page: Page): Promise<void> {
-  const tableTab = page.getByRole('button', { name: 'Table' }).first();
-  const width = page.viewportSize()?.width ?? 1280;
-  const fits = async () => {
-    const box = await tableTab.boundingBox().catch(() => null);
-    return box != null && box.x > 0 && box.x + box.width <= width;
-  };
-
-  if (!(await fits())) {
-    // 先把右栏展开(它自己那个 toggle 在视口外,只看视口内的)
-    const toggles = await page.getByRole('button', { name: 'Toggle Sidebar' }).all();
-    const boxes = await Promise.all(
-      toggles.map(async (t) => [t, (await t.boundingBox())?.x ?? -1] as const),
-    );
-    const inView = boxes.filter(([, x]) => x > 0 && x < width).sort((a, b) => b[1] - a[1]);
-    if (inView[0]) await inView[0][0].click();
-    await page.waitForTimeout(1200);
-  }
-  if (!(await fits())) {
-    // 还是放不下 —— 收起左侧栏腾地方。
-    await page.getByRole('button', { name: /Close sidebar|Toggle Sidebar/ }).first().click();
-    await page.waitForTimeout(1200);
-  }
-  await tableTab.click();
-  await page.waitForTimeout(1500);
-
-  // **打不开就直接说打不开。** 从前这里默默返回,后面关于表格内容的断言全红,
-  // 看起来像产品坏了 —— 其实是面板压根没开(实测栽过一次)。
-  const tabs = page.locator('[data-testid=sheet-tabs]');
-  if (!(await tabs.isVisible().catch(() => false))) {
-    await page.getByRole('button', { name: /Close sidebar|Toggle Sidebar/ }).first().click();
-    await page.waitForTimeout(1000);
-    await tableTab.click({ force: true });
-  }
-  await expect(tabs, '表格面板没打开 —— 后面的断言与产品无关').toBeVisible({ timeout: 20_000 });
+  await page.waitForFunction(() => Boolean(window.__veylinTest?.openTablePanel), undefined, {
+    timeout: 30_000,
+  });
+  await page.evaluate(() => window.__veylinTest!.openTablePanel());
+  // 判"面板开了"看容器上的 data-panel-kind,别看页签栏 —— 空作用域下表格走
+  // 空状态早退,页签栏根本不渲染,拿它当判据会冤枉面板(踩过一轮)。
+  await expect(
+    page.locator('[data-panel-kind=table]'),
+    '表格面板没打开 —— 后面的断言与产品无关',
+  ).toBeVisible({ timeout: 20_000 });
 }
 
 /**
@@ -483,12 +460,18 @@ test('本地表 + Compass 云端表,能一起读', async ({ page, request }) => 
  * 判据不是"点了没报错",而是**屏幕上这一刻显示的列,属于当前选中的那张表**。
  */
 test('大表 ⇄ 小表来回切,屏幕上的列始终属于当前那张', async ({ page, request }) => {
-  // **暂时红着,钉住而不是删掉。** 现象:面板开着、页签也在,但选中那张表没有列头。
-  // 已逐一排除(都实测过,不是推断):隔离栈的配置改动(退回照旧红)、依赖漂移
-  // (两边 ag-grid 36.0.1、lockfile 相同)、几何分支那条提交(合进主线后仍红)、
-  // 线程没归项目(已补 waitPinned,现在过)、面板没打开(已补断言,现在过)。
-  // 它守的那个不变式(迟到响应不许盖住当前表)另有单测 sheet-payload-guard 覆盖,
-  // 所以先不挡合并。下一步:从 trace 里取失败截图看画面。
+  /**
+   * **已知未修:点了切不过去。** 这一轮把结论收窄到了一句话 —— 云端工序表
+   * (7219 行)加载之后,点别的表页签,**高亮仍停在「工序」**:不是内容没跟上,
+   * 是压根没切。这正是用户最早报的「点不动」;之前修掉的是另一条机制
+   * (迟到响应把当前表盖掉),标签本身不切是新的一条。
+   *
+   * 沿途已排除(都实测,不是推断):面板没打开(改用 app 自己的 open API)、
+   * 测试数据不干净(小表改成测试自己按唯一名建、走 REST 导入)、
+   * 视图没进对话(项目页盖屏时面板是 hidden)、
+   * compass 异步拉表抢当前表(已加"用户选过就别抢"的守卫,仍红)。
+   * 下一刀:在 switchSheet 里打点,看 activeSheetId 是被谁改回去的。
+   */
   test.fail();
   const folder = await makeFixtureFolder();
   const listed = await (await request.get(`${API}/api/projects`)).json();
@@ -516,24 +499,50 @@ test('大表 ⇄ 小表来回切,屏幕上的列始终属于当前那张', async
   const cloud = sheets.find((s) => s.source?.server === 'compass');
   test.skip(!cloud, '这个项目里没有云端表');
 
-  await composer.fill('把项目文件夹里的 开发组件.xlsx 导入表格面板,建一张新表。');
+  // **小表自己造,不靠模型去导。** 共用的数据目录里堆着历次跑剩的同名空表
+  // (开发组件导入、开发组件-导入、Sheet 2..8…),按名字点很容易点中一张空的 ——
+  // 于是断言红了,看起来像"切表坏了",其实是测试数据不干净(实测栽过一次)。
+  const localName = `小表-${Date.now()}`;
+  const created = await request.post(`${API}/api/table/sheets`, {
+    data: { name: localName, threadId },
+  });
+  expect((await created.json()).ok, '小表没建出来').toBeTruthy();
+  const localId = (await (await request.get(`${API}/api/table/sheets?threadId=${threadId}`)).json())
+    .sheets.find((x: { name: string; id: string }) => x.name === localName)!.id;
+  await request.post(`${API}/api/table/import`, {
+    data: {
+      sheet: localId,
+      threadId,
+      column_names: ['型号', '数量'],
+      rows: [{ 型号: 'CZ225', 数量: '2' }],
+    },
+  });
+
+  // 先说一句把视图带进对话:项目页是盖住全屏的,右侧面板在它下面是隐藏的,
+  // 直接开面板会开在看不见的地方(实测:容器在、visible 为 false)。
+  await composer.fill('说一句知道了就行。');
   await composer.press('Enter');
   await waitForAssistantText(page, 1);
 
   await openTablePanel(page);
-  await page.waitForTimeout(6000);
+  await page.waitForTimeout(4000);
 
-  const localName = XLSX_NAME.replace(/\.[^.]+$/, '');
   // 来回切三次,每次都要求"当前页签"和"屏幕上的列"对得上。
   for (const name of [cloud!.name, localName, cloud!.name, localName]) {
     await page.getByRole('button', { name, exact: true }).first().click();
+    // 先分清"点了没切过去"和"切了但内容没跟":选中的页签会变成实心。
+    await expect
+      .poll(async () => (await page
+        .locator('[data-testid=sheet-tabs] .group\\/tab.bg-primary')
+        .allInnerTexts()).join('').replace(/\s+/g, ''), { timeout: 20_000, intervals: [500] })
+      .toContain(name.replace(/\s+/g, ''));
     // 切表是异步的:等到这张表自己的列真的上了屏。
     const marker = name === localName ? '型号' : '订单号';
     await expect
-      .poll(async () => (await page.locator('.ag-header-cell-text').allInnerTexts()).join('|'), {
-        timeout: 60_000,
-        intervals: [1000],
-      })
+      .poll(
+        async () => (await page.locator('[data-panel-kind=table]').innerText()).replace(/\s+/g, ' '),
+        { timeout: 60_000, intervals: [1000] },
+      )
       .toContain(marker);
   }
 });
@@ -770,3 +779,9 @@ test('答到一半刷新,那一轮还能接上', async ({ page, request }) => {
     // 一大半 —— 第一版写 20,48 字都能"通过",等于没测。
     .toBeGreaterThan(120);
 });
+
+declare global {
+  interface Window {
+    __veylinTest?: { openTablePanel?: () => void };
+  }
+}

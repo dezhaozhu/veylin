@@ -39,7 +39,13 @@ export function RightPanel() {
         onClose={close}
         onOpen={open}
       />
-      <div className="min-h-0 flex-1 overflow-hidden">
+      {/* data-panel-kind:哪种面板正开着。e2e 靠它确认"面板开了",而不是靠
+          面板内部某个只在有数据时才渲染的元素(表格空作用域走的是空状态早退,
+          页签栏根本不渲染 —— 断言会冤枉面板)。 */}
+      <div
+        className="min-h-0 flex-1 overflow-hidden"
+        {...(activeTab ? { 'data-panel-kind': activeTab.kind } : {})}
+      >
         {activeTab && Content ? (
           <Content
             key={activeTab.id}

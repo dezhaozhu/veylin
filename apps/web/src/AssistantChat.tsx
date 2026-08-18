@@ -41,6 +41,7 @@ import { AppTitlebarControls } from '@/components/assistant-ui/app-titlebar-cont
 import { ThreadHeaderToolbar } from '@/components/assistant-ui/thread-header-toolbar';
 import { ThreadListSidebar } from '@/components/assistant-ui/threadlist-sidebar';
 import { PanelTabsProvider } from '@/components/assistant-ui/right-panel/panel-tabs-context';
+import { DevPanelOpener } from '@/components/assistant-ui/right-panel/dev-panel-opener';
 import { SettingsPanelProvider, useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { WorkspaceNavigationProvider } from '@/hooks/use-workspace-navigation';
 import { WorkspaceViewFrame } from '@/components/features/workspace-view-frame';
@@ -80,6 +81,7 @@ function ChatShell() {
         <PanelTabsProvider>
         <SidebarProvider>
         <RightSidebarProvider>
+          <DevPanelOpener />
           <AppTitlebarControls />
           <ChatPanelRatioSync />
           <DesktopInteractionGuard />

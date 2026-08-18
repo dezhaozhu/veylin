@@ -31,6 +31,21 @@ describe('默认表的退路', () => {
     assert.equal(tryResolveTableSheetId(undefined, scope), main.id);
   });
 
+  it('**显式要 main、而这个作用域没有 main** → 也退到第一张', () => {
+    // 面板首屏就是拿字面量 'main' 去要的(activeSheetId 的初值),而项目作用域
+    // 里的表叫「组件」「开发组件」…… 没人叫 main。从前这里直接 404,界面上
+    // 就是一条红条「表格数据加载失败:sheet not found」(用户重启 dev 仍在报)。
+    const scope = projectScope(`p3-${Date.now()}`);
+    const sheet = createTableSheet('组件', scope)!;
+    assert.equal(tryResolveTableSheetId('main', scope), sheet.id);
+  });
+
+  it('**要一个真不存在的名字,还是要报不存在** —— 别把打错的表名也悄悄换掉', () => {
+    const scope = projectScope(`p4-${Date.now()}`);
+    createTableSheet('组件', scope);
+    assert.equal(tryResolveTableSheetId('压根没有这张', scope), null);
+  });
+
   it('作用域里一张表都没有,才是真的没有', () => {
     assert.equal(tryResolveTableSheetId(undefined, projectScope(`empty-${Date.now()}`)), null);
   });
