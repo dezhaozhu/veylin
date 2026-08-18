@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { decideCompassLoad } from '@/lib/compass-schedule-load';
 import { shouldApplyPayload } from '@/lib/sheet-payload-guard';
 import { consumeSheetSelection } from '@/lib/pending-sheet-selection';
+import { columnToReveal } from '@/lib/new-columns';
 import { isStaleSheetError } from '@/lib/stale-sheet-recovery';
 import { panelScopeKey } from '@/lib/panel-scope-key';
 import { useProjectsOrNull } from '@/lib/projects-sync';
@@ -618,6 +619,8 @@ export function TableGrid() {
   const importInputRef = useRef<HTMLInputElement>(null);
   // AG-Grid API ref — populated in onGridReady
   const gridApiRef = useRef<GridApi<TableRow> | null>(null);
+  /** 上一批列:用来认出这次多了哪一列(applyPayload 依赖为空,只能用 ref)。 */
+  const columnDefsRef = useRef<TableColumnDef[]>([]);
   // Ref mirror of selectedColumnKey — read by AgColumnHeader on refreshHeader()
   const selectedColumnKeyRef = useRef<string | null>(null);
   // Ref mirror of rows — used in async paste handler to avoid stale closure
@@ -877,6 +880,33 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     setPreviewData(null);
   }, []);
 
+  /**
+   * **新加的列要自己滚到眼前。**
+   *
+   * agent 加完列,面板只是把列表换掉 —— 新列常在横向滚动之外,人根本看不见,
+   * 于是以为"没加上"(用户实测:算完均价说加了备注,他在屏幕上找不到)。
+   * 首屏不滚:那时每一列都是"新"的,滚过去只会把视线甩到最右边。
+   */
+  const revealNewColumn = useCallback((next: TableColumnDef[]) => {
+    const target = columnToReveal(
+      columnDefsRef.current.map((c) => c.key),
+      next.map((c) => c.key),
+    );
+    columnDefsRef.current = next;
+    if (!target) return;
+    // 等这一批列真的上了屏再滚 —— setColumnDefs 之后 AG-Grid 还没认识这一列。
+    setTimeout(() => {
+      const api = gridApiRef.current;
+      if (!api) return;
+      try {
+        api.ensureColumnVisible(target);
+        api.flashCells({ columns: [target] });
+      } catch {
+        /* 列还没就绪就算了 —— 这是锦上添花,不该为它报错 */
+      }
+    }, 120);
+  }, []);
+
   const applyPayload = useCallback((data: SchedulePayload, initial: boolean) => {
     // 有人请求"导完切到这张表"(预览里的导入)—— 页签一到齐就切过去,只生效一次。
     const wanted = data.sheets ? consumeSheetSelection() : null;
@@ -895,7 +925,10 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     // 空数组也要照收:换到一个还没装过表的项目时,页签就该空掉,而不是留着
     // 上一个作用域的页签(那正是"个人区看得见项目的表"那个病的另一半)。
     if (data.sheets) setSheets(data.sheets);
-    if (data.columns) setColumnDefs(data.columns);
+    if (data.columns) {
+      setColumnDefs(data.columns);
+      revealNewColumn(data.columns);
+    }
     const next = data.rows ?? [];
     setLoading(false);
     if (Date.now() < editingUntil.current) return;
@@ -903,7 +936,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     if (serialized === lastSerialized.current) return;
     lastSerialized.current = serialized;
     setRows(next);
-  }, []);
+  }, [revealNewColumn]);
 
   const load = useCallback(
     async (sheetId: string, initial: boolean) => {
@@ -1955,7 +1988,10 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         rows?: TableRow[];
       };
       if (!data.ok) return;
-      if (data.columns) setColumnDefs(data.columns);
+      if (data.columns) {
+        setColumnDefs(data.columns);
+        revealNewColumn(data.columns);
+      }
       if (data.rows) {
         editingUntil.current = Date.now() + 3000;
         lastSerialized.current = JSON.stringify(data.rows);
