@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { McpAppActionBridge } from '@/components/assistant-ui/mcp-app-action-bridge';
 import { ToolFallback } from '@/components/assistant-ui/tool-fallback';
 import { placeComposerCaret } from '@/lib/composer-caret';
+import { toolPartName } from '@/lib/tool-part-name';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
 import { DocumentEditResult } from '@/components/assistant-ui/document-edit-result';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
@@ -44,6 +45,11 @@ function loadAppTools(threadId: string | undefined): Promise<Record<string, stri
       .then((r) => (r.ok ? r.json() : { tools: {} }))
       .then((d: { tools?: Record<string, string> }) => d.tools ?? {})
       .catch(() => ({}));
+    // **空表不留缓存。** 第一帧还没有 threadId 时问到的是个人区,答案必然是空;
+    // 把它永久缓存住,这条线程后面再也不会去问第二次。
+    void promise.then((m) => {
+      if (Object.keys(m).length === 0) appToolsPromiseByThread.delete(key);
+    });
     appToolsPromiseByThread.set(key, promise);
   }
   return promise;
@@ -86,7 +92,11 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
   const p = props as unknown as Record<string, unknown>;
 
 
-  const uri = appTools[p.toolName as string];
+  // **工具名要两种形状都认。** AI SDK v5 的 part 把名字编进 `type`
+  // (`tool-get_gantt`),只读 `p.toolName` 会拿到 undefined —— 于是查不到 ui://
+  // 资源,widget 全体静默消失:界面不报错,agent 照样答话、还声称"图已渲染"
+  // (实测,用户报「甘特图现在不行了」)。仓里 tool-group 一直是两种都认的。
+  const uri = appTools[toolPartName(p) ?? ''];
   // getMcpAppFromToolPart (inside McpAppRenderer) reads the part's `.mcp.app`.
   // Inject it for tools that declare a ui:// resource so the app renders inline.
   const part = uri
