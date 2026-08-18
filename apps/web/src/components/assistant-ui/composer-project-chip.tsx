@@ -23,6 +23,7 @@ import { plusMenuPlacement, type PlusMenuPlacement } from '@/lib/plus-menu-place
 import { projectPickerRows, shortPath } from '@/lib/project-picker';
 import { createProject, invalidateProjects, useProjects } from '@/lib/projects-sync';
 import { invalidateThreadProjects } from '@/lib/thread-projects-sync';
+import { writeCachedThreadProject } from '@/lib/project-sync';
 import { useProjectScope } from '@/lib/use-composer-settings';
 import { cn } from '@/lib/utils';
 
@@ -35,6 +36,9 @@ async function pinThread(threadId: string, project: string | null): Promise<void
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ threadId, project }),
   });
+  // 两份缓存都写:共享那份是分组用的,本地那份是 chip 在共享还没有条目时的兜底。
+  // 只写共享的话,取消钉定后本地那份还留着旧项目,chip 会显示成没取消(兜底反噬)。
+  writeCachedThreadProject(threadId, project);
   invalidateThreadProjects();
 }
 

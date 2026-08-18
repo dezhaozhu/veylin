@@ -16,19 +16,18 @@
  */
 import { useCallback, useEffect, useRef, useState, type FC } from 'react';
 
-import { useAui, useAuiState } from '@assistant-ui/react';
+import { useAuiState } from '@assistant-ui/react';
 
 import { Composer } from '@/components/assistant-ui/thread';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
-import { postThreadProject, writeCachedThreadProject } from '@/lib/project-sync';
 import { setPendingProjectHint } from '@/lib/pending-project-hint';
-import { invalidateThreadProjects } from '@/lib/thread-projects-sync';
+import { useEnterProjectThread } from './use-project-thread';
 
 export const ProjectComposer: FC<{ projectId: string; projectName: string }> = ({
   projectId,
   projectName,
 }) => {
-  const aui = useAui();
+  const enterProjectThread = useEnterProjectThread();
   const { closeWorkspace } = useSettingsPanel();
   const [error, setError] = useState<string | null>(null);
   const preparing = useRef(false);
@@ -41,15 +40,9 @@ export const ProjectComposer: FC<{ projectId: string; projectName: string }> = (
     if (prepared.current || preparing.current) return;
     preparing.current = true;
     try {
-      await aui.threads().switchToNewThread();
-      const item = aui.threads().item('main');
-      // 强制初始化:拿到真的 threadId 才能立刻钉,否则第一条消息会落在
-      // 一个还没归属的线程里 —— 而"它属于哪个项目"正是这整套上下文的前提。
-      const initialized = await item.initialize();
-      const rid = initialized.remoteId ?? initialized.externalId ?? item.getState().id;
-      const confirmed = await postThreadProject(rid, projectId);
-      writeCachedThreadProject(rid, confirmed ?? projectId);
-      invalidateThreadProjects();
+      // 在项目页打字 = 开一条新对话,所以不复用已有的(reuse: false)。
+      // 钉定那套(强制 initialize 拿真 id 再钉)在 hook 里,和卡片那条路共用。
+      await enterProjectThread(projectId, { reuse: false });
       prepared.current = true;
       armed.current = true;
       setError(null);
@@ -59,7 +52,7 @@ export const ProjectComposer: FC<{ projectId: string; projectName: string }> = (
     } finally {
       preparing.current = false;
     }
-  }, [aui, projectId]);
+  }, [enterProjectThread, projectId]);
 
   // 发出去之后让位给对话本身。armed 保证只对**这次**准备好的线程生效,
   // 不会因为切到别的历史线程就把项目页关掉。

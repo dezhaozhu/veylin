@@ -98,6 +98,28 @@ describe('文件夹里的文件也算上下文', () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
+  /**
+   * 实测:项目页上下文卡里点开一份快照,右侧显示「这个文件没法在这里打开」。
+   * 因为快照名是**光名字**,而它躺在 `快照/` 里 —— 预览按项目根目录找,找不到。
+   * 「生成/」「文稿/」都带着目录前缀,快照必须一样,否则每个拿到这个名字的人
+   * (预览、agent 的文件清单)都得各自记得补一次。
+   */
+  it('快照名带着「快照/」—— 拿到名字就能直接读到文件', async () => {
+    const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'ctx-'));
+    try {
+      mkdirSync(join(dir, '快照'));
+      writeFileSync(join(dir, '快照', '工序 快照 2026-08-18.xlsx'), 'x');
+      const out = await listProjectFiles(dir);
+      assert.deepEqual(
+        out.snapshots.map((f) => f.name),
+        ['快照/工序 快照 2026-08-18.xlsx'],
+      );
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('**不列我们自己的仓** —— .veylin 是实现细节,不是给人看的东西', async () => {
     const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
