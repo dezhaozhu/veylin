@@ -22,7 +22,7 @@ import {
   listTableRows,
   stampTableSheetSource,
 } from './table-store.js';
-import { PERSONAL_SCOPE } from './table-scope.js';
+import { threadScope } from './table-scope.js';
 
 const folder = mkdtempSync(join(tmpdir(), 'import-guard-'));
 
@@ -33,7 +33,7 @@ function writeXlsx(name: string, aoa: unknown[][]): string {
   return name;
 }
 
-/** 工具在个人区跑(不用项目库),文件夹直接由这个假 ctx 供给。 */
+/** 工具在这条对话自己的作用域里跑(不在项目里),文件夹直接由这个假 ctx 供给。 */
 const ctx = {
   requestContext: {
     get: (k: string) =>
@@ -46,7 +46,7 @@ const run = (input: object) => (buildTableTools().table_import_file.execute as a
 
 describe('table_import_file 的护栏', () => {
   it('**盖不到云端来的表上** —— 戳子说 Compass、内容却是本地文件,是最难查的谎', async () => {
-    const cloud = createTableSheet(`工序-${Date.now()}`, PERSONAL_SCOPE)!;
+    const cloud = createTableSheet(`工序-${Date.now()}`, threadScope('th-guard'))!;
     importTableSheet(cloud.id, ['order_id'], [{ order_id: '云端原有' }]);
     // 无 DB 的纯内存套件里 persist 是尽力而为(同 table-selection-tool.test.ts 的容忍);
     // 内存里的 meta 已经打上戳,护栏要看的就是它。
@@ -64,7 +64,7 @@ describe('table_import_file 的护栏', () => {
   });
 
   it('普通的本地表,同名照旧整表替换 —— 护栏只挡有出处戳的那种', async () => {
-    const local = createTableSheet(`本地表-${Date.now()}`, PERSONAL_SCOPE)!;
+    const local = createTableSheet(`本地表-${Date.now()}`, threadScope('th-guard'))!;
     importTableSheet(local.id, ['a'], [{ a: '旧' }]);
 
     const file = writeXlsx('新的.xlsx', [['a'], ['新']]);

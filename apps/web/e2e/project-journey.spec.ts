@@ -1149,3 +1149,50 @@ test('反复打开表格面板,不会一路堆出空表', async ({ page, request
   const again = await sheetNames();
   expect(again, `每开一条新对话点一下面板就多一张空表:${again.join(',')}`).toEqual(first);
 });
+
+/**
+ * **不在项目里时,表只属于这一轮对话。**
+ *
+ * 用户实测:开一条新对话、点开表格面板,里面是上一条对话传的表 —— 而两者毫无
+ * 关系。从前所有临时对话共用一个"个人区",于是彼此都能看见对方的表。
+ * 用户原话:「上次的表应该只存在于上次上传的对话里」。
+ */
+test('新对话看不到上一条临时对话的表', async ({ page, request }) => {
+  await page.goto('/');
+  await openSidebar(page);
+
+  // —— 第一条临时对话(不进任何项目):建一张带名字的表。
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await composer.fill('说一句知道了就行。');
+  await composer.press('Enter');
+  await waitForAssistantText(page, 1);
+  const first = await latestThreadId(request);
+  const mine = `只属于第一条对话-${Date.now()}`;
+  await request.post(`${API}/api/table/sheets`, { data: { name: mine, threadId: first } });
+
+  // —— 再开一条临时对话,不该看见上面那张表。
+  await page.getByRole('button', { name: 'New Chat' }).first().click();
+  await page.waitForTimeout(1500);
+  const composer2 = page.locator('textarea:visible').first();
+  await composer2.click();
+  await composer2.fill('也说一句知道了就行。');
+  await composer2.press('Enter');
+  await waitForAssistantText(page, 1);
+  const second = await latestThreadId(request);
+  expect(second, '这应该是另一条对话').not.toBe(first);
+
+  const namesOf = async (threadId: string): Promise<string[]> => {
+    const body = await (
+      await request.get(`${API}/api/table/sheets?threadId=${encodeURIComponent(threadId)}`)
+    ).json();
+    return (body.sheets as Array<{ name: string }>).map((s) => s.name);
+  };
+  expect(await namesOf(second), '新对话里看见了上一条对话的表').not.toContain(mine);
+  expect(await namesOf(first), '第一条对话自己的表反而没了').toContain(mine);
+
+  // 界面上也确认一次 —— 面板里不该出现那张表的页签。
+  await openTablePanel(page);
+  await page.waitForTimeout(2000);
+  await expect(page.getByRole('button', { name: mine, exact: true })).toHaveCount(0);
+});
