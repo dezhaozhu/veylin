@@ -139,4 +139,18 @@ describe('formatProjectFilesBlock', () => {
     const many = Array.from({ length: 60 }, (_, i) => ({ name: `f${i}.md`, bytes: 10 }));
     assert.match(formatProjectFilesBlock('/p', many), /另有 10 个文件/);
   });
+
+  it('几何/CAD 文件单列,指到 import_model 而不是 project_file_read', () => {
+    const block = formatProjectFilesBlock('/p', [], [{ name: 'shaft.step', bytes: 13_000 }]);
+    assert.match(block, /shaft\.step/);
+    assert.match(block, /import_model/, 'CAD 文件必须明说走 caliper import_model');
+    assert.match(block, /绝对路径/, '要教 agent 拼绝对路径');
+    assert.doesNotMatch(block, /没有文件/, '有几何文件就不是空的');
+  });
+
+  it('只有几何文件时,不冒出"要看内容用 project_file_read"那条文档指引', () => {
+    const block = formatProjectFilesBlock('/p', [], [{ name: 'a.stl', bytes: 999 }]);
+    // 文档指引那句才带 table_query;几何那句只是反向提醒"不要用 project_file_read"
+    assert.doesNotMatch(block, /table_query/, '没有可读文档就别放文档读取指引');
+  });
 });

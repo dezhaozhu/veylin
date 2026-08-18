@@ -10,7 +10,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { listProjectFiles, summarizeConnectors } from './project-context.js';
+import { listProjectFiles, scanProjectGeometry, summarizeConnectors } from './project-context.js';
 
 const sheet = (name: string, source: unknown) => ({ id: `p_x~${name}`, name, source } as never);
 
@@ -106,6 +106,43 @@ describe('文件夹里的文件也算上下文', () => {
     try {
       mkdirSync(join(dir, '.veylin')); writeFileSync(join(dir, '.veylin', 'manifest.json'), '{}');
       assert.equal((await listProjectFiles(dir)).files.length, 0);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('scanProjectGeometry', () => {
+  it('列出 CAD 文件,带大小;非几何文件不列', async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'geo-'));
+    try {
+      writeFileSync(join(dir, 'shaft.step'), 'ISO-10303');
+      writeFileSync(join(dir, 'flange.STP'), 'x');       // 大小写不敏感
+      writeFileSync(join(dir, 'part.stl'), 'x');
+      writeFileSync(join(dir, '说明.docx'), 'x');          // 文档不进几何清单
+      writeFileSync(join(dir, 'notes.txt'), 'x');
+      const out = await scanProjectGeometry(dir);
+      assert.deepEqual(out.map((f) => f.name).sort(), ['flange.STP', 'part.stl', 'shaft.step']);
+      assert.ok(out.every((f) => f.bytes > 0));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('文件夹不存在不报错,返回空', async () => {
+    assert.deepEqual(await scanProjectGeometry('/no/such/folder/xyz'), []);
+  });
+
+  it('不下钻子目录 / 不列 .veylin、快照', async () => {
+    const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'geo2-'));
+    try {
+      mkdirSync(join(dir, '快照')); writeFileSync(join(dir, '快照', 'snap.step'), 'x');
+      mkdirSync(join(dir, 'sub')); writeFileSync(join(dir, 'sub', 'deep.step'), 'x');
+      writeFileSync(join(dir, 'top.step'), 'x');
+      const out = await scanProjectGeometry(dir);
+      assert.deepEqual(out.map((f) => f.name), ['top.step']);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
