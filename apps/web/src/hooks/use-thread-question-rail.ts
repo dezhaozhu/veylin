@@ -17,11 +17,11 @@ function resolveScrollRatio(
   viewport: HTMLElement,
   element: HTMLElement,
 ): number {
-  const maxScroll = Math.max(viewport.scrollHeight - viewport.clientHeight, 1);
+  const span = Math.max(viewport.scrollHeight, 1);
   const viewportRect = viewport.getBoundingClientRect();
   const elementRect = element.getBoundingClientRect();
   const offsetTop = elementRect.top - viewportRect.top + viewport.scrollTop;
-  return Math.min(1, Math.max(0, offsetTop / maxScroll));
+  return Math.min(1, Math.max(0, offsetTop / span));
 }
 
 function markersEqual(

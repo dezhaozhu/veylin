@@ -1,35 +1,78 @@
-import { useState, type FC } from 'react';
+import { useLayoutEffect, useState, type FC } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
-import {
-  THREAD_QUESTION_RAIL_MIN_COUNT,
-} from '@/lib/thread-question-nav';
+import { THREAD_QUESTION_RAIL_MIN_COUNT } from '@/lib/thread-question-nav';
 import { useThreadQuestionRail } from '@/hooks/use-thread-question-rail';
 
+const ROOT_SELECTOR = '.aui-thread-root';
+
+type RailBox = {
+  top: number;
+  height: number;
+  right: number;
+};
+
+function useFixedThreadRight(): RailBox | null {
+  const [box, setBox] = useState<RailBox | null>(null);
+
+  useLayoutEffect(() => {
+    const root = document.querySelector<HTMLElement>(ROOT_SELECTOR);
+    if (!root) return;
+
+    const sync = () => {
+      const r = root.getBoundingClientRect();
+      setBox({
+        top: r.top,
+        height: r.height,
+        right: Math.max(4, Math.round(window.innerWidth - r.right + 8)),
+      });
+    };
+
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(root);
+    window.addEventListener('resize', sync);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', sync);
+    };
+  }, []);
+
+  return box;
+}
+
+/**
+ * ChatGPT minimap: a fixed column of thin ticks on the right.
+ * Hover reveals the title list; click jumps to that turn.
+ */
 export const ThreadQuestionRail: FC = () => {
   const { t } = useTranslation();
-  const { questions, markers, activeId, scrollToQuestion } = useThreadQuestionRail();
-  const [expanded, setExpanded] = useState(false);
+  const { questions, activeId, scrollToQuestion } = useThreadQuestionRail();
+  const box = useFixedThreadRight();
+  const [open, setOpen] = useState(false);
 
-  if (questions.length < THREAD_QUESTION_RAIL_MIN_COUNT) return null;
+  if (
+    typeof document === 'undefined' ||
+    !box ||
+    questions.length < THREAD_QUESTION_RAIL_MIN_COUNT
+  ) {
+    return null;
+  }
 
-  return (
+  return createPortal(
     <div
-      className="pointer-events-none absolute inset-y-0 right-0 z-20 hidden @min-[56rem]:block"
-      aria-hidden={!expanded}
+      className="pointer-events-none fixed z-20"
+      style={{ top: box.top, height: box.height, right: box.right }}
     >
       <div
-        className={cn(
-          'pointer-events-auto sticky top-1/2 flex -translate-y-1/2 flex-col items-end',
-          expanded ? 'w-[220px]' : 'w-5',
-        )}
-        onMouseEnter={() => setExpanded(true)}
-        onMouseLeave={() => setExpanded(false)}
+        className="pointer-events-auto absolute top-1/2 right-0 -translate-y-1/2"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
       >
-        {expanded ? (
-          <div
-            className="bg-popover text-popover-foreground mr-2 max-h-[min(70vh,28rem)] w-full overflow-y-auto rounded-xl border p-2 shadow-md"
-            role="navigation"
+        {open ? (
+          <nav
+            className="bg-muted/80 max-h-[min(70vh,28rem)] w-56 overflow-y-auto rounded-2xl px-2.5 py-2 shadow-sm backdrop-blur-sm"
             aria-label={t('thread.questionRailLabel')}
           >
             <ul className="flex flex-col gap-0.5">
@@ -39,9 +82,13 @@ export const ThreadQuestionRail: FC = () => {
                   <li key={question.id}>
                     <button
                       type="button"
+                      title={question.label}
+                      aria-current={active ? 'location' : undefined}
                       className={cn(
-                        'hover:bg-accent w-full rounded-lg px-2.5 py-2 text-left text-sm leading-snug transition-colors',
-                        active && 'bg-accent font-medium',
+                        'w-full truncate rounded-lg px-2 py-1.5 text-left text-[12px] leading-5 transition-colors',
+                        active
+                          ? 'bg-foreground/8 text-foreground font-medium'
+                          : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground',
                       )}
                       onClick={() => scrollToQuestion(question.id)}
                     >
@@ -51,37 +98,37 @@ export const ThreadQuestionRail: FC = () => {
                 );
               })}
             </ul>
-          </div>
+          </nav>
         ) : (
-          <div
-            className="relative mr-1 h-[min(70vh,20rem)] w-5"
-            role="navigation"
+          <nav
+            className="flex w-7 flex-col items-end gap-1"
             aria-label={t('thread.questionRailLabel')}
           >
-            {markers.map((marker) => {
-              const active = marker.id === activeId;
+            {questions.map((question) => {
+              const active = question.id === activeId;
               return (
                 <button
-                  key={marker.id}
+                  key={question.id}
                   type="button"
-                  title={marker.label}
-                  aria-label={marker.label}
-                  className="absolute right-0 flex h-4 w-full items-center justify-end"
-                  style={{ top: `${marker.ratio * 100}%`, transform: 'translateY(-50%)' }}
-                  onClick={() => scrollToQuestion(marker.id)}
+                  title={question.label}
+                  aria-label={question.label}
+                  aria-current={active ? 'location' : undefined}
+                  className="flex h-[3px] w-full items-center justify-end"
+                  onClick={() => scrollToQuestion(question.id)}
                 >
                   <span
                     className={cn(
-                      'bg-border block h-px rounded-full transition-all',
-                      active ? 'bg-foreground/70 w-3.5' : 'w-2 opacity-70',
+                      'block h-px rounded-full',
+                      active ? 'bg-foreground/65 w-5' : 'bg-foreground/30 w-4',
                     )}
                   />
                 </button>
               );
             })}
-          </div>
+          </nav>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
