@@ -8,8 +8,8 @@
  * 拿到半截内容当全部。表格只给概览(页签/表头/前几行)并明说"要分析请导进来用
  * table_query";读不了的类型直接说读不了,并给一条可行的替代。
  */
-import { readFile, stat } from 'node:fs/promises';
-import { relative, resolve } from 'node:path';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { dirname, relative, resolve } from 'node:path';
 
 import {
   extractDocument,
@@ -80,6 +80,27 @@ export async function readProjectFileBytes(
     return await readFile(target);
   } catch {
     return null;
+  }
+}
+
+/**
+ * 往项目文件夹里写一个文本文件(带同一道"只能在项目文件夹里"的守卫)。
+ * 目录不存在就建 —— 导出到 `分析/清单.csv` 这种路径应该直接работать,
+ * 不该让人先去建目录。
+ */
+export async function writeProjectFile(
+  folder: string,
+  name: string,
+  content: string,
+): Promise<boolean> {
+  const target = insideFolder(folder, name);
+  if (!target) return false;
+  try {
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, content, 'utf8');
+    return true;
+  } catch {
+    return false;
   }
 }
 
