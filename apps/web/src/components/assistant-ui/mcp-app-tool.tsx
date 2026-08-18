@@ -12,7 +12,7 @@ import { McpAppActionBridge } from '@/components/assistant-ui/mcp-app-action-bri
 import { ToolFallback } from '@/components/assistant-ui/tool-fallback';
 import { placeComposerCaret } from '@/lib/composer-caret';
 import { toolPartName } from '@/lib/tool-part-name';
-import { appToolsCacheKey } from '@/lib/app-tools-key';
+import { useAppTools } from '@/lib/use-app-tools';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
 import { DocumentEditResult } from '@/components/assistant-ui/document-edit-result';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
@@ -30,53 +30,6 @@ function mcpHostUrl(threadId: string | undefined): string {
   return threadId ? `/api/mcp-apps/host?threadId=${encodeURIComponent(threadId)}` : '/api/mcp-apps/host';
 }
 
-// toolName → ui:// resource map, fetched from the server (derived from each
-// tool's _meta.ui.resourceUri). mastra doesn't forward that metadata onto the
-// AI SDK tool-call part, so we look it up by tool name and inject it — generic
-// across any tool/server that declares an MCP App UI, no hardcoding. Cached
-// per threadId — different threads can have different project-pin-scoped
-// tool sets, see routes/mcp-apps.ts's resolveScopedServerNames.
-const appToolsPromiseByThread = new Map<string, Promise<Record<string, string>>>();
-function loadAppTools(
-  threadId: string | undefined,
-  projectId: string | undefined,
-): Promise<Record<string, string>> {
-  // 键里带上钉定:映射取决于线程钉在哪个项目,而项目页是"先建线程、后钉项目",
-  // 中间那一刻问到的必然是空表(实测:widget 全体不渲染,而且再也不会自己好)。
-  const key = appToolsCacheKey(threadId, projectId);
-  let promise = appToolsPromiseByThread.get(key);
-  if (!promise) {
-    const url = threadId ? `/api/mcp-apps/tools?threadId=${encodeURIComponent(threadId)}` : '/api/mcp-apps/tools';
-    promise = fetch(url)
-      .then((r) => (r.ok ? r.json() : { tools: {} }))
-      .then((d: { tools?: Record<string, string> }) => d.tools ?? {})
-      .catch(() => ({}));
-    // **空表不留缓存。** 第一帧还没有 threadId 时问到的是个人区,答案必然是空;
-    // 把它永久缓存住,这条线程后面再也不会去问第二次。
-    void promise.then((m) => {
-      if (Object.keys(m).length === 0) appToolsPromiseByThread.delete(key);
-    });
-    appToolsPromiseByThread.set(key, promise);
-  }
-  return promise;
-}
-
-function useAppTools(
-  threadId: string | undefined,
-  projectId: string | undefined,
-): Record<string, string> {
-  const [map, setMap] = useState<Record<string, string>>({});
-  useEffect(() => {
-    let alive = true;
-    loadAppTools(threadId, projectId).then((m) => {
-      if (alive) setMap(m);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [threadId, projectId]);
-  return map;
-}
 
 /**
  * Tool-call renderer with MCP Apps support. When a tool declares a `ui://`
