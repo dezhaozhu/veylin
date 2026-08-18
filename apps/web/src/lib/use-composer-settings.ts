@@ -1,6 +1,12 @@
 import { useAui, useAuiState } from '@assistant-ui/store';
 import { useThreadProjectsOrNull } from '@/lib/thread-projects-sync';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  getPendingQuote,
+  onPendingQuoteChange,
+  quoteThreadIds,
+  setPendingQuote as writePendingQuote,
+} from '@/lib/pending-quote';
 import {
   getChatSettings,
   onChatSettingsChange,
@@ -33,7 +39,6 @@ import {
 } from '@/lib/goal-loop-sync';
 import { requestSilentChatContinue } from '@/lib/silent-chat-continue';
 import { requestChatStop } from '@/lib/chat-stop';
-import { useState } from 'react';
 import {
   fetchGroupedMcpServers,
   readCachedGroupedMcpServers,
@@ -424,6 +429,26 @@ export function useAttachedBrowserTab() {
     setChatSettings({ attachedBrowserTab: tab });
   }, []);
   return { attachedBrowserTab, setAttachedBrowserTab };
+}
+
+export function usePendingQuote() {
+  const localId = useAuiState((s) => s.threadListItem.id);
+  const remoteId = useAuiState(
+    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId ?? null,
+  );
+  const threadIds = quoteThreadIds({ id: localId, remoteId });
+  const threadKey = threadIds.join('\0');
+  const [, bump] = useState(0);
+  useEffect(() => onPendingQuoteChange(() => bump((n) => n + 1)), []);
+
+  const pendingQuote = getPendingQuote(threadIds);
+  const setPendingQuote = useCallback(
+    (text: string | null) => {
+      writePendingQuote(threadKey ? threadKey.split('\0') : [], text);
+    },
+    [threadKey],
+  );
+  return { pendingQuote, setPendingQuote };
 }
 
 export function useMcpEnabled() {

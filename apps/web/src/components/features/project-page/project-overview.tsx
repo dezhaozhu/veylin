@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FC } from 'react';
-import { ThreadListPrimitive, useAuiState } from '@assistant-ui/react';
-import { CheckIcon, FolderOpen, LoaderIcon, PencilIcon, PlusIcon, SearchIcon } from 'lucide-react';
+import { CheckIcon, PencilIcon, PlusIcon, SearchIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import {
-  ThreadActivityContext,
-  ThreadListItem,
-} from '@/components/assistant-ui/thread-list-item';
-import { PageHeader, SectionHeading } from '@/components/features/settings/page-header';
+import { PageHeader } from '@/components/features/settings/page-header';
 import { useWorkspaceCollapsedInset } from '@/components/features/workspace-view-frame';
 import { WorkspaceMain } from '@/components/features/workspace-main';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
@@ -27,8 +22,6 @@ import {
 } from '@/lib/project-folder';
 import { normalizeTypedPath } from '@/lib/project-folder-pick';
 import { describeFreshness } from '@/lib/freshness';
-import { useThreadProjects } from '@/lib/thread-projects-sync';
-import { useThreadActivityMap } from '@/lib/use-thread-activity';
 import { startWindowDrag } from '@/lib/window-drag';
 import { SceneCardCell } from './scene-card-cell';
 import { sceneCardColumns, type McpAppToolsByServer } from './scene-card-grid';
@@ -40,6 +33,7 @@ import {
   type SceneNarrative,
 } from './scene-card-merge';
 import { SceneCardMergeTable } from './scene-card-merge-table';
+import { SceneCardSummaryPanel } from './scene-card-summary-panel';
 import { ProjectComposer } from './project-composer';
 import { ContextPanel, flattenContext } from './context-panel';
 import { ContextCards } from './context-cards';
@@ -62,7 +56,7 @@ export function ProjectWorkspace() {
           onMouseDown={startWindowDrag}
         />
       ) : null}
-      <WorkspaceMain>
+      <WorkspaceMain fill>
         <ProjectOverview />
       </WorkspaceMain>
     </div>
@@ -97,10 +91,8 @@ function useProjectAppToolsByServer(projectId: string | undefined): McpAppToolsB
   return byServer;
 }
 
-/** The 项目首页: header (name + source labels), cards grid (rows = sources ×
- * columns = servers exposing get_scene_card), and the project's thread list.
- * Deliberately the ONLY chrome this page adds — no composer additions, no
- * status rows; each card's density lives inside the server-rendered widget. */
+/** The 项目首页: header (name + source labels) and cards grid (rows = sources ×
+ * columns = servers exposing get_scene_card). Threads stay in the left rail. */
 const ProjectOverview: FC = () => {
   const { t } = useTranslation();
   const { projectPage } = useSettingsPanel();
@@ -130,18 +122,22 @@ const ProjectOverview: FC = () => {
   // 标题**在两栏之上**,不在左列里 —— 放进左列的话,右栏会从标题的高度开始,
   // 于是右上角那张卡比左边的内容还高一截(实测:看起来就是没对齐)。
   return (
-    <div className="mx-auto w-full max-w-6xl px-1">
-      <PageHeader title={project.name} {...(subtitle ? { description: subtitle } : {})} />
-      <div className="flex gap-6">
-        <div className="flex min-w-0 flex-1 flex-col">
+    <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col px-1">
+      <PageHeader
+        className="mb-3 shrink-0"
+        title={project.name}
+        {...(subtitle ? { description: subtitle } : {})}
+      />
+      <div className="flex min-h-0 flex-1 gap-10">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col pr-1">
+            <ProjectCardsGrid project={project} byServer={byServer} />
+          </div>
           <ProjectComposer projectId={project.id} projectName={project.name} />
-          <ProjectCardsGrid project={project} byServer={byServer} />
-          <ProjectThreads projectId={project.id} />
         </div>
         {/* 右栏是"有什么",不是"做什么":文件夹、上下文这些是配置和素材,
             它们该在手边,不该挡在路上。 */}
-        <aside className="hidden w-80 shrink-0 lg:block">
-          {/* 一张卡、细线分段 —— 三个孤立的边框看起来就是三块没关系的东西。 */}
+        <aside className="hidden min-h-0 w-72 shrink-0 overflow-y-auto overscroll-contain lg:block">
           <RailCard>
             <ProjectInstructionsSection project={project} />
             <ProjectSourcesSection project={project} />
@@ -188,7 +184,7 @@ const ProjectWorkflowsSection: FC<{ project: ProjectInfo }> = ({ project }) => {
     <RailSection
       title="工作流"
       {...(list.length
-        ? { hint: `${list.length} 个${scheduled.length ? ` · ${scheduled.length} 个有定时` : ''}` }
+        ? { hint: String(list.length) }
         : {})}
     >
       {list.length === 0 ? (
@@ -403,6 +399,7 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
   const [picking, setPicking] = useState(false);
   const [typing, setTyping] = useState(false);
   const availability = folderPickAvailability();
+  const shownFolder = folder;
 
   useEffect(() => { setFolder(project.folder); }, [project.folder]);
 
@@ -440,17 +437,9 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
         label: folder ? '换一个文件夹' : '选一个文件夹',
         onClick: () => (availability.canPick ? void choose() : setTyping(true)),
       }}
-      {...(folder ? { hint: folder } : {})}
+      {...(shownFolder ? { hint: shownFolder } : {})}
     >
-      {!folder && !typing ? (
-        // 说的是**没设会怎样**,不是"没设"。而且一句话说完 —— 原来那句长到被截断,
-        // 读者只看到"导入…"。
-        <RailEmpty>
-          文件夹给的是<b>读的权限</b>:需要时才去看,不会整个塞进上下文。<br />
-          真正算上下文的,是你导入时留档的那些原件。
-        </RailEmpty>
-      ) : null}
-      {typing || (!availability.canPick && !folder) ? (
+      {typing && !shownFolder ? (
         <RailInlineInput
           placeholder="把文件夹路径粘到这里"
           submitLabel="使用"
@@ -467,9 +456,6 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
           在访达中显示
         </button>
       ) : null}
-      {!availability.canPick && !folder ? (
-        <p className="text-muted-foreground mt-1 text-xs">{availability.reason}</p>
-      ) : null}
       {error ? <p className="text-destructive mt-1 text-xs">{error}</p> : null}
     </RailSection>
   );
@@ -483,11 +469,6 @@ type ProjectContext = {
   files?: Array<{ name: string; bytes: number; at: string; where: 'folder' | 'generated' | 'draft' }>;
   connectors: Array<{ server: string; tenant?: string; oldestLoadedAt: string; sheets: string[] }>;
 };
-
-/** 三类文件各自的说法 —— 它们不是一回事,人要能一眼分清。 */
-const FILE_WHERE = { folder: '文件夹里', generated: '生成的', draft: '文稿' } as const;
-
-const kb = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 /**
  * 项目里到底有什么(形状取自 Claude 项目页的 Context 栏)。
@@ -523,17 +504,18 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
 
   const kw = q.trim().toLowerCase();
   const hit = (s: string) => !kw || s.toLowerCase().includes(kw);
+  const shown = data;
   // 搜索是**过滤已经在这儿的东西**,不是去后端再查一遍 —— 这一栏本来就是全量。
-  const connectors = (data?.connectors ?? []).filter(
+  const connectors = (shown?.connectors ?? []).filter(
     (c) => hit(c.tenant ?? c.server) || c.sheets.some(hit),
   );
-  const originals = (data?.originals ?? []).filter((f) => hit(f.name));
-  const snapshots = (data?.snapshots ?? []).filter((f) => hit(f.name));
+  const originals = (shown?.originals ?? []).filter((f) => hit(f.name));
+  const snapshots = (shown?.snapshots ?? []).filter((f) => hit(f.name));
   // 文件夹里躺着的文件也算 —— 漏掉它们,项目页会显示"上下文是空的",而文件夹里
   // 明明放着四份文档(实测)。
-  const files = (data?.files ?? []).filter((f) => hit(f.name));
-  const total = data
-    ? data.connectors.length + data.originals.length + data.snapshots.length + (data.files?.length ?? 0)
+  const files = (shown?.files ?? []).filter((f) => hit(f.name));
+  const total = shown
+    ? shown.connectors.length + shown.originals.length + shown.snapshots.length + (shown.files?.length ?? 0)
     : 0;
   // 过滤在卡片之前做完 —— 搜索是筛"已经在这儿的东西",卡片只管怎么摆。
   const cards = useMemo(
@@ -583,9 +565,9 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
           onChange={(e) => setQ(e.target.value)}
         />
       ) : null}
-      {panelOpen && data ? (
+      {panelOpen && shown ? (
         <ContextPanel
-          items={flattenContext(data)}
+          items={flattenContext(shown)}
           projectId={project.id}
           onClose={() => setPanelOpen(false)}
           // 右栏收起时只加一个 tab 等于什么也没发生 —— 人点了「在右侧打开」,
@@ -595,22 +577,13 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
       ) : null}
 
       {connectors.length > 0 ? (
-        <div className="mb-2">
-          <p className="text-muted-foreground mb-1 text-xs">连接器（会变，看刷新时间）</p>
-          <ul className="space-y-1">
-            {connectors.map((c) => (
-              <li key={`${c.server}-${c.tenant ?? ''}`} className="flex items-baseline gap-2 text-xs">
-                <span className="font-medium">{c.tenant ?? c.server}</span>
-                <span className="text-muted-foreground min-w-0 flex-1 truncate">
-                  {c.sheets.join('、')}
-                </span>
-                <span className="text-muted-foreground shrink-0">
-                  {describeFreshness(c.oldestLoadedAt)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <ul className="mb-2 space-y-1">
+          {connectors.slice(0, 2).map((c) => (
+            <li key={`${c.server}-${c.tenant ?? ''}`} className="truncate text-xs">
+              {c.tenant ?? c.server}
+            </li>
+          ))}
+        </ul>
       ) : null}
 
       {cards.length > 0 ? (
@@ -629,6 +602,30 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
     </RailSection>
   );
 };
+
+/**
+ * 体检卡加载占位:必须先占住和成卡差不多的高度。
+ * 空转圈只有 min-h-24 时,卡一出来会把下面的对话列表整段顶下去。
+ */
+function SceneCardSummarySkeleton() {
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col gap-3">
+      <section className="border-border/60 shrink-0 rounded-xl border px-4 py-3.5">
+        <div className="flex items-center gap-2">
+          <div className="bg-muted h-4 w-28 animate-pulse rounded" />
+          <div className="bg-muted h-5 w-24 animate-pulse rounded-full" />
+        </div>
+        <div className="bg-muted mt-2 h-3 w-64 animate-pulse rounded" />
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="bg-muted/50 h-14 animate-pulse rounded-lg" />
+          ))}
+        </div>
+      </section>
+      <div className="border-border/60 bg-muted/20 min-h-0 flex-1 animate-pulse rounded-lg border" />
+    </div>
+  );
+}
 
 /**
  * The cards area, in one of two shapes:
@@ -655,8 +652,8 @@ const ProjectCardsGrid: FC<{
   // settles as a failed card and the page degrades to side-by-side.
   if (byServer === null || entries === null) {
     return (
-      <div className="text-muted-foreground mb-8 flex min-h-24 items-center justify-center">
-        <LoaderIcon className="size-4 animate-spin" aria-label={t('projectPage.loading')} />
+      <div className="flex min-h-0 flex-1 flex-col" aria-busy="true" aria-label={t('projectPage.loading')}>
+        <SceneCardSummarySkeleton />
       </div>
     );
   }
@@ -668,15 +665,15 @@ const ProjectCardsGrid: FC<{
   // 眼前这批卡有多旧 + 一个手动刷新 —— 不定时轮询(用户定的规矩),但要能看出
   // 它是什么时候的,也要能自己叫它更新。
   const freshness = (
-    <div className="text-muted-foreground mb-2 flex items-center gap-2 text-xs">
-      <span>{at ? describeFreshness(at).replace('刷新', '更新') : '刚打开'}</span>
+    <div className="mb-1.5 flex shrink-0 justify-end">
       <button
         type="button"
         onClick={refresh}
         disabled={revalidating}
-        className="hover:text-foreground underline underline-offset-2 disabled:opacity-50"
+        className="text-muted-foreground hover:text-foreground text-[11px] disabled:opacity-50"
+        title={at ? describeFreshness(at) : undefined}
       >
-        {revalidating ? '核对中…' : '刷新'}
+        {revalidating ? '…' : '刷新'}
       </button>
     </div>
   );
@@ -709,84 +706,48 @@ const ProjectCardsGrid: FC<{
   }
 
   return (
-    <div className="mb-8">
+    <div className="flex min-h-0 flex-1 flex-col">
       {freshness}
       <div
-        className="grid gap-4"
+        className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-4"
         style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
       >
-      {entries.map((entry: SceneCardEntry) => (
-        <SceneCardCell
-          key={`${entry.source}::${entry.server}`}
-          hostUrl={hostUrl}
-          resourceUri={entry.resourceUri}
-          server={entry.server}
-          source={entry.source}
-          projectId={project.id}
-          fetched={entry.fetched}
-          args={entry.args}
-          argsKey={entry.argsKey}
-        />
-      ))}
+      {entries.map((entry: SceneCardEntry) => {
+        const key = `${entry.source}::${entry.server}`;
+        if (entry.fetched.status === 'ready') {
+          const rows = extractDisplayRows(entry.fetched.result);
+          if (rows) {
+            const narrative = extractNarrative(entry.source, entry.fetched.result);
+            return (
+              <SceneCardSummaryPanel
+                key={key}
+                rows={rows}
+                source={entry.source}
+                projectId={project.id}
+                narrative={
+                  narrative
+                    ? { text: narrative.text, generatedAt: narrative.generatedAt }
+                    : null
+                }
+              />
+            );
+          }
+        }
+        return (
+          <SceneCardCell
+            key={key}
+            hostUrl={hostUrl}
+            resourceUri={entry.resourceUri}
+            server={entry.server}
+            source={entry.source}
+            projectId={project.id}
+            fetched={entry.fetched}
+            args={entry.args}
+            argsKey={entry.argsKey}
+          />
+        );
+      })}
       </div>
     </div>
-  );
-};
-
-/** The project's thread bucket, reusing the sidebar's exact item rendering
- * (ThreadListPrimitive.ItemByIndex + ThreadListItem) and the same
- * triple-fallback pin keying as thread-list.tsx's partitionByProject.
- * Clicking a thread switches to it as usual; the wrapper's closeWorkspace
- * returns the main area to the chat view (same idiom as the sidebar's
- * SidebarContent onClick). */
-const ProjectThreads: FC<{ projectId: string }> = ({ projectId }) => {
-  const { t } = useTranslation();
-  const { closeWorkspace } = useSettingsPanel();
-  const threadIds = useAuiState((s) => s.threads.threadIds);
-  const threadItems = useAuiState((s) => s.threads.threadItems);
-  const threadProjects = useThreadProjects();
-  const activity = useThreadActivityMap();
-
-  const indices = useMemo(() => {
-    const itemsById = new Map(threadItems.map((item) => [item.id, item]));
-    const result: number[] = [];
-    threadIds.forEach((id, index) => {
-      const item = itemsById.get(id);
-      // Triple fallback — see thread-list.tsx partitionByProject: the local id
-      // of a brand-new thread later BECOMES its remoteId, so this resolves to
-      // the key the pin was posted under.
-      const key = item?.remoteId ?? item?.externalId ?? id;
-      if (threadProjects[key] === projectId) result.push(index);
-    });
-    const time = (index: number) =>
-      itemsById.get(threadIds[index]!)?.lastMessageAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
-    result.sort((a, b) => time(b) - time(a));
-    return result;
-  }, [threadIds, threadItems, threadProjects, projectId]);
-
-  return (
-    <section>
-      <SectionHeading title={t('projectPage.threads')} count={indices.length} />
-      <ThreadActivityContext.Provider value={activity}>
-        <ThreadListPrimitive.Root
-          className="aui-root flex flex-col gap-0.5"
-          onClick={indices.length > 0 ? closeWorkspace : undefined}
-        >
-          {indices.length === 0 ? (
-            <p className="text-muted-foreground text-sm italic">
-              {t('threadList.emptyProject')}
-            </p>
-          ) : (
-            indices.map((index) => (
-              <ThreadListPrimitive.ItemByIndex
-                key={threadIds[index]}
-                index={index}
-                components={{ ThreadListItem }}
-              />
-            ))
-          )}
-        </ThreadListPrimitive.Root>
-      </ThreadActivityContext.Provider>
-    </section>
   );
 };

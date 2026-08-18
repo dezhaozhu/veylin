@@ -28,7 +28,7 @@ import { listThreadActivity } from '../thread-activity.js';
 import { isMemoryStoreFailure, syncThreadMessagesFromClient } from '../thread-sync.js';
 import { runPostCompactCleanup } from '../post-compact-cleanup.js';
 import { isDatastoreFailure } from '../store-errors.js';
-import { generateThreadTitle } from '../thread-title.js';
+import { generateThreadTitle, isUnusableTitle } from '../thread-title.js';
 import {
   mastraMessagesToAgentContext,
   mastraMessagesToUi,
@@ -336,7 +336,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
     const ctx = await deps.resolveContext(req.headers);
     await ensureThreadState({ threadId, tenantId: ctx.tenantId, resourceId: ctx.userId });
     const existing = await getThreadState(threadId);
-    if (existing?.title?.trim()) {
+    if (existing?.title?.trim() && !isUnusableTitle(existing.title)) {
       return { title: existing.title };
     }
     const messages = body.messages ?? [];

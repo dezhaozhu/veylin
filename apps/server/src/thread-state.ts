@@ -29,6 +29,7 @@ import {
 import {
   firstUserText,
   generateThreadTitle,
+  isUnusableTitle,
   truncateTitle,
 } from './thread-title.js';
 import type { ModelKey } from '@veylin/runtime';
@@ -648,7 +649,9 @@ export async function ensureThreadTitleIfMissing(
   },
 ): Promise<string | null> {
   const existing = await getThreadState(threadId);
-  if (existing?.title?.trim()) return existing.title;
+  if (existing?.title?.trim() && !isUnusableTitle(existing.title)) {
+    return existing.title;
+  }
 
   let source: readonly unknown[] = requestMessages;
   if (!firstUserText(source) && options?.memory && options.resourceId) {
@@ -696,6 +699,7 @@ export async function listThreadsForResource(
   return Promise.all(
     rows.map(async (row) => {
       let title = row.title?.trim() || undefined;
+      if (title && isUnusableTitle(title)) title = undefined;
       if (!title && memory) {
         const derived = await deriveThreadTitleFromMemory(memory, row.threadId, resourceId);
         if (derived) {

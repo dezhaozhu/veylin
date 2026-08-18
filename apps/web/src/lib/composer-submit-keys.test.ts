@@ -42,6 +42,22 @@ describe('composer-submit-keys', () => {
       composerHasSendableDraft({ composerEmpty: true, hasPendingSkill: false }),
       false,
     );
+    assert.equal(
+      composerHasSendableDraft({ composerEmpty: true, hasPendingQuote: true }),
+      true,
+    );
+  });
+
+  it('resolveEnterWhileRunning queues with pending quote only', () => {
+    assert.equal(
+      resolveEnterWhileRunning({
+        isRunning: true,
+        canQueue: true,
+        composerEmpty: true,
+        hasPendingQuote: true,
+      }),
+      'queue',
+    );
   });
 
   it('resolveEnterWhileRunning queues with pending skill only', () => {

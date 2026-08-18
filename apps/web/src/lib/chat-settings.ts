@@ -29,6 +29,8 @@ export interface ChatSettings {
   pendingSkillInsertAt: number;
   /** Browser page attached via @ mention for the next message. */
   attachedBrowserTab: AttachedBrowserTab | null;
+  /** Selected thread text to ask about — shown as a GPT-style quote bar, not raw `>`. */
+  pendingQuote: string | null;
   /** MCP server on/off; omitted or true means enabled. */
   mcpEnabled: Record<string, boolean>;
 }
@@ -44,6 +46,7 @@ const DEFAULTS: ChatSettings = {
   pendingSkill: null,
   pendingSkillInsertAt: 0,
   attachedBrowserTab: null,
+  pendingQuote: null,
   mcpEnabled: {},
 };
 

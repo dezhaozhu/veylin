@@ -1,5 +1,6 @@
 import type { ThreadMessage } from '@assistant-ui/react';
 import { isTaskNotificationText } from '@veylin/shared';
+import { splitQuotedPrefix } from './thread-selection-ask';
 
 export type ThreadQuestionItem = {
   id: string;
@@ -24,9 +25,11 @@ export function collectThreadQuestions(
     if (message.role !== 'user') continue;
     const text = readUserMessageText(message);
     if (!text || isTaskNotificationText(text)) continue;
+    const { quote, body } = splitQuotedPrefix(text);
+    const labelSource = body.trim() || quote || text;
     items.push({
       id: message.id,
-      label: truncateQuestionLabel(text),
+      label: truncateQuestionLabel(labelSource),
     });
   }
   return items;
@@ -38,4 +41,4 @@ export function truncateQuestionLabel(text: string, max = MAX_LABEL_LENGTH): str
   return `${singleLine.slice(0, max - 1)}…`;
 }
 
-export const THREAD_QUESTION_RAIL_MIN_COUNT = 2;
+export const THREAD_QUESTION_RAIL_MIN_COUNT = 1;

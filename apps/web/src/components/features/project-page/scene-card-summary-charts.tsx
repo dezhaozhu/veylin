@@ -19,15 +19,6 @@ function toneColor(tone: string | undefined): string {
   }
 }
 
-function honestyCaptionKey(seg: HonestySegment): string | null {
-  const hay = `${seg.key} ${seg.label}`;
-  if (/missing|缺失/.test(hay)) return 'honestyCaptionMissing';
-  if (/real|true|truth|真值|真实/.test(hay)) return 'honestyCaptionReal';
-  if (/infer|deriv|推断/.test(hay)) return 'honestyCaptionInferred';
-  if (/guess|猜测/.test(hay)) return 'honestyCaptionGuess';
-  return null;
-}
-
 /** Proportional honesty strip — the primary visual for data quality. */
 export const HonestyBarChart: FC<{
   segments: readonly HonestySegment[];
@@ -51,25 +42,19 @@ export const HonestyBarChart: FC<{
           />
         ))}
       </div>
-      <ul className="mt-2.5 flex flex-wrap gap-x-3 gap-y-1.5 text-xs">
-        {segments.map((seg) => {
-          const captionKey = honestyCaptionKey(seg);
-          return (
-            <li key={seg.key} className="text-muted-foreground flex items-center gap-1.5">
-              <span
-                className="inline-block size-2 shrink-0 rounded-full"
-                style={{ backgroundColor: toneColor(seg.tone) }}
-              />
-              <span>
-                {seg.label}{' '}
-                <span className="text-foreground font-medium tabular-nums">{seg.num}</span>
-                {captionKey ? (
-                  <span className="text-muted-foreground/80"> · {t(`projectPage.${captionKey}`)}</span>
-                ) : null}
-              </span>
-            </li>
-          );
-        })}
+      <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+        {segments.map((seg) => (
+          <li key={seg.key} className="text-muted-foreground flex items-center gap-1.5">
+            <span
+              className="inline-block size-2 shrink-0 rounded-full"
+              style={{ backgroundColor: toneColor(seg.tone) }}
+            />
+            <span>
+              {seg.label}{' '}
+              <span className="text-foreground font-medium tabular-nums">{seg.num}</span>
+            </span>
+          </li>
+        ))}
       </ul>
     </div>
   );
@@ -189,12 +174,7 @@ export const RulesHitRing: FC<{ rate: RulesHitRate; className?: string }> = ({
           {Math.round(pct * 100)}%
         </text>
       </svg>
-      <div className="min-w-0 text-xs">
-        <p className="font-semibold">{t('projectPage.chartRules')}</p>
-        <p className="text-muted-foreground mt-0.5 tabular-nums">
-          {t('projectPage.chartRulesDetail', { hit: rate.hit, active: rate.active })}
-        </p>
-      </div>
+      <p className="text-xs font-medium">{t('projectPage.chartRules')}</p>
     </div>
   );
 };

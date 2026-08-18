@@ -11,6 +11,10 @@ import {
 } from 'react';
 import { addComposerFiles } from '@/lib/add-composer-files';
 
+function isFileDrag(event: React.DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes('Files');
+}
+
 type ComposerAttachmentDropzoneProps = React.HTMLAttributes<HTMLDivElement> & {
   asChild?: boolean;
   render?: ReactElement;
@@ -27,7 +31,7 @@ export const ComposerAttachmentDropzone = forwardRef<
 
   const handleDragEnterCapture = useCallback(
     (e: React.DragEvent) => {
-      if (disabled) return;
+      if (disabled || !isFileDrag(e)) return;
       e.preventDefault();
       setIsDragging(true);
     },
@@ -36,8 +40,9 @@ export const ComposerAttachmentDropzone = forwardRef<
 
   const handleDragOverCapture = useCallback(
     (e: React.DragEvent) => {
-      if (disabled) return;
+      if (disabled || !isFileDrag(e)) return;
       e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
       if (!isDragging) setIsDragging(true);
     },
     [disabled, isDragging],

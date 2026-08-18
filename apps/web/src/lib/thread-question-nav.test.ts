@@ -48,6 +48,25 @@ describe('thread-question-nav', () => {
     ]);
   });
 
+  it('uses the typed question, not the quoted prefix, as the rail label', () => {
+    const items = collectThreadQuestions([
+      {
+        id: 'u1',
+        role: 'user',
+        content: [{ type: 'text', text: '> 甘特图 (get_gantt)\n\n这是什么' }],
+        createdAt: new Date(),
+      },
+      {
+        id: 'u2',
+        role: 'user',
+        content: [{ type: 'text', text: '下一步' }],
+        createdAt: new Date(),
+      },
+    ] as ThreadMessage[]);
+
+    assert.equal(items[0]?.label, '这是什么');
+  });
+
   it('truncates long labels', () => {
     const label = truncateQuestionLabel('a'.repeat(60), 20);
     assert.equal(label.endsWith('…'), true);

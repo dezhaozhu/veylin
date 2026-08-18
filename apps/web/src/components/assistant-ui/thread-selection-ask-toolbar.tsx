@@ -5,28 +5,24 @@ import { useTranslation } from 'react-i18next';
 import { useAui } from '@assistant-ui/store';
 import { Button } from '@/components/ui/button';
 import { placeComposerCaret } from '@/lib/composer-caret';
-import {
-  clearThreadTextSelection,
-  formatSelectionAskComposerText,
-} from '@/lib/thread-selection-ask';
+import { clearThreadTextSelection } from '@/lib/thread-selection-ask';
 import { useThreadSelectionAsk } from '@/hooks/use-thread-selection-ask';
+import { usePendingQuote } from '@/lib/use-composer-settings';
 
 export const ThreadSelectionAskToolbar: FC = () => {
   const { t } = useTranslation();
   const aui = useAui();
+  const { setPendingQuote } = usePendingQuote();
   const { anchor, dismiss } = useThreadSelectionAsk();
 
   const askAboutSelection = useCallback(() => {
     if (!anchor) return;
-    const composer = aui.composer();
-    const current = composer.getState().text;
-    const prefix = formatSelectionAskComposerText(anchor.text);
-    const next = current.trim() ? `${current.trimEnd()}\n\n${prefix}` : prefix;
-    composer.setText(next);
+    setPendingQuote(anchor.text);
     clearThreadTextSelection();
     dismiss();
-    placeComposerCaret(next.length);
-  }, [anchor, aui, dismiss]);
+    const current = aui.composer().getState().text;
+    placeComposerCaret(current.length);
+  }, [anchor, aui, dismiss, setPendingQuote]);
 
   if (!anchor) return null;
 
