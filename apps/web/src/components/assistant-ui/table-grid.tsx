@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { decideCompassLoad } from '@/lib/compass-schedule-load';
 import { shouldApplyPayload } from '@/lib/sheet-payload-guard';
+import { consumeSheetSelection } from '@/lib/pending-sheet-selection';
 import { isStaleSheetError } from '@/lib/stale-sheet-recovery';
 import { panelScopeKey } from '@/lib/panel-scope-key';
 import { useProjectsOrNull } from '@/lib/projects-sync';
@@ -870,6 +871,15 @@ export function TableGrid() {
   }, []);
 
   const applyPayload = useCallback((data: SchedulePayload, initial: boolean) => {
+    // 有人请求"导完切到这张表"(预览里的导入)—— 页签一到齐就切过去,只生效一次。
+    const wanted = data.sheets ? consumeSheetSelection() : null;
+    if (wanted) {
+      const target = data.sheets?.find((s) => s.name === wanted);
+      if (target) {
+        activeSheetIdRef.current = target.id;
+        setActiveSheetId(target.id);
+      }
+    }
     // **迟到的响应不许盖住当前这张表。** 切表会重建 SSE,旧连接的 onopen 会用
     // 过期闭包再拉一次上一张表;不挡的话,你点了开发组件、屏幕上却是 Sheet 1 的
     // 空表 —— 用户看到的就是「点不动」(实测日志:08:12:49 点开发组件,

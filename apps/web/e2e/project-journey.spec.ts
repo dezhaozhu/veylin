@@ -430,10 +430,12 @@ test('本地表 + Compass 云端表,能一起读', async ({ page, request }) => 
   const names = sheets.map((s) => s.name).join('/');
 
   const fromCloud = sheets.find((s) => s.source?.server === 'compass');
-  // **必须是这一次导进来的那张**。第一版写成"任何一张没有 source 的表",
-  // 结果被上一轮跑剩下的旧表蒙混过关:那一轮 agent 其实只建了个空壳,
-  // 断言却是绿的 —— 弱断言和没测一样。
-  const fromLocal = sheets.find((s) => s.name === XLSX_NAME.replace(/\.[^.]+$/, ''));
+  // 既不能写死表名,也不能松到"任何一张没有 source 的表":
+  //  · 写死 →「开发组件」被模型起成「开发组件导入」就红,测的成了它的命名习惯;
+  //  · 太松 → 上一轮跑剩的空壳表也能蒙混过关(那一轮 agent 只建了壳,断言却绿)。
+  // 取中间:名字里带「开发组件」、且不是云端来的那张;有没有行下面单独验。
+  const stem = XLSX_NAME.replace(/\.[^.]+$/, '');
+  const fromLocal = sheets.find((s) => !s.source && s.name.includes(stem));
   expect(fromCloud, `作用域里没有云端表,现有:${names}`).toBeTruthy();
   expect(fromLocal, `没有「开发组件」这张本地表,现有:${names}`).toBeTruthy();
 
@@ -460,19 +462,6 @@ test('本地表 + Compass 云端表,能一起读', async ({ page, request }) => 
  * 判据不是"点了没报错",而是**屏幕上这一刻显示的列,属于当前选中的那张表**。
  */
 test('大表 ⇄ 小表来回切,屏幕上的列始终属于当前那张', async ({ page, request }) => {
-  /**
-   * **已知未修:点了切不过去。** 这一轮把结论收窄到了一句话 —— 云端工序表
-   * (7219 行)加载之后,点别的表页签,**高亮仍停在「工序」**:不是内容没跟上,
-   * 是压根没切。这正是用户最早报的「点不动」;之前修掉的是另一条机制
-   * (迟到响应把当前表盖掉),标签本身不切是新的一条。
-   *
-   * 沿途已排除(都实测,不是推断):面板没打开(改用 app 自己的 open API)、
-   * 测试数据不干净(小表改成测试自己按唯一名建、走 REST 导入)、
-   * 视图没进对话(项目页盖屏时面板是 hidden)、
-   * compass 异步拉表抢当前表(已加"用户选过就别抢"的守卫,仍红)。
-   * 下一刀:在 switchSheet 里打点,看 activeSheetId 是被谁改回去的。
-   */
-  test.fail();
   const folder = await makeFixtureFolder();
   const listed = await (await request.get(`${API}/api/projects`)).json();
   const guolu = (listed.projects as Array<{ id: string; name: string; sources: string[] }>)
@@ -785,3 +774,70 @@ declare global {
     __veylinTest?: { openTablePanel?: () => void };
   }
 }
+
+/**
+ * **预览里直接"导入到表格面板"。**
+ *
+ * 用户原话:中间能点开预览、右侧却打不开,能不能预览完直接选右侧打开。
+ * 对表格来说,"打开"的正确含义不是再看一遍概览,而是**把它变成表格面板里那张
+ * 能筛选、统计、被 table_query 用的表** —— agent 侧早有 table_import_file,
+ * 人这条路一直缺着。
+ */
+test('预览里能把表格直接导进表格面板', async ({ page, request }) => {
+  const folder = await makeFixtureFolder();
+  const name = `预览导入-${Date.now()}`;
+  await request.post(`${API}/api/projects`, { data: { name, sources: [] } });
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 });
+
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+  // 先说一句进对话:预览浮层要量聊天区的尺寸,项目页上量不到就整个不渲染
+  // (实测:在项目页点附件没有任何反应)。
+  await composer.fill('说一句知道了就行。');
+  await composer.press('Enter');
+  await waitForAssistantText(page, 1);
+
+  const chatComposer = page.locator('textarea:visible').first();
+  await chatComposer.click();
+  await page.waitForTimeout(1000);
+  await dropFile(page, join(folder, XLSX_NAME), XLSX_NAME);
+
+  // 点文件名打开预览。外层那个触发器是 display:contents —— 没有盒子,
+  // Playwright 判为不可见、点不到(踩过)。
+  await page.getByText(XLSX_NAME, { exact: false }).locator('visible=true').first().click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible({ timeout: 20_000 });
+
+  await dialog.getByRole('button', { name: '导入到表格面板' }).click();
+
+  // 导完要**带过去**:面板打开,而且新表就是当前这张(名字取自文件名)。
+  const sheetName = XLSX_NAME.replace(/\.[^.]+$/, '');
+  await expect(page.locator('[data-panel-kind=table]')).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(
+      async () => (await page
+        .locator('[data-testid=sheet-tabs] .group\\/tab.bg-primary')
+        .allInnerTexts()).join('').replace(/\s+/g, ''),
+      { timeout: 30_000, intervals: [1000] },
+    )
+    .toContain(sheetName);
+
+  // 真有数据才算导进来了 —— 只看到一个页签不算。
+  const threadId = await latestThreadId(request);
+  const sheets = (
+    await (await request.get(`${API}/api/table/sheets?threadId=${threadId}`)).json()
+  ).sheets as Array<{ id: string; name: string }>;
+  const sheet = sheets.find((s) => s.name === sheetName);
+  expect(sheet, `没建出「${sheetName}」这张表`).toBeTruthy();
+  const data = await (
+    await request.get(
+      `${API}/api/table?sheet=${encodeURIComponent(sheet!.id)}&threadId=${threadId}`,
+    )
+  ).json();
+  expect((data.rows as unknown[]).length, '导进来的表是空的').toBeGreaterThan(0);
+});
