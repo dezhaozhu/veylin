@@ -20,7 +20,9 @@ import {
   shouldInterceptTabForQueue,
   composerHasSendableDraft,
 } from '@/lib/composer-submit-keys';
-import { usePendingSkill } from '@/lib/use-composer-settings';
+import { quoteThreadIds } from '@/lib/pending-quote';
+import { sendComposerDraft } from '@/lib/send-composer-draft';
+import { usePendingQuote, usePendingSkill } from '@/lib/use-composer-settings';
 import { cn } from '@/lib/utils';
 import { useAui } from '@assistant-ui/store';
 
@@ -149,6 +151,7 @@ export const ComposerQueue: FC = () => {
 export function useComposerSubmitKeys(): (e: KeyboardEvent) => void {
   const aui = useAui();
   const { pendingSkill } = usePendingSkill();
+  const { pendingQuote } = usePendingQuote();
   return useCallback(
     (e: KeyboardEvent) => {
       if (isImeComposing(e)) return;
@@ -162,14 +165,17 @@ export function useComposerSubmitKeys(): (e: KeyboardEvent) => void {
         canQueue: thread.capabilities.queue,
         composerEmpty: composer.isEmpty,
         hasPendingSkill: Boolean(pendingSkill),
+        hasPendingQuote: Boolean(pendingQuote),
       };
 
       if (e.key === 'Tab' && !e.shiftKey) {
         if (!shouldInterceptTabForQueue(keyState)) return;
-        if (!composer.canSend) return;
+        if (!composer.canSend && !composerHasSendableDraft(keyState)) return;
         e.preventDefault();
         e.stopPropagation();
-        aui.composer().send();
+        sendComposerDraft(aui.composer(), {
+          threadIds: quoteThreadIds(aui.threadListItem().getState()),
+        });
         return;
       }
 
@@ -177,21 +183,23 @@ export function useComposerSubmitKeys(): (e: KeyboardEvent) => void {
 
       if (!keyState.isRunning) {
         if (!composerHasSendableDraft(keyState)) return;
-        if (!composer.canSend) return;
         e.preventDefault();
         e.stopPropagation();
-        aui.composer().send();
+        sendComposerDraft(aui.composer(), {
+          threadIds: quoteThreadIds(aui.threadListItem().getState()),
+        });
         return;
       }
 
       const enterAction = resolveEnterWhileRunning(keyState);
       if (enterAction === 'ignore') return;
-      if (!composer.canSend) return;
 
       e.preventDefault();
       e.stopPropagation();
-      aui.composer().send();
+      sendComposerDraft(aui.composer(), {
+        threadIds: quoteThreadIds(aui.threadListItem().getState()),
+      });
     },
-    [aui, pendingSkill],
+    [aui, pendingQuote, pendingSkill],
   );
 }

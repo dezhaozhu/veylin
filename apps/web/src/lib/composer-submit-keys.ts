@@ -4,6 +4,8 @@ export type ComposerSubmitKeyState = {
   composerEmpty: boolean;
   /** Selected /skill chip counts as sendable draft even when the text area is empty. */
   hasPendingSkill?: boolean;
+  /** Quoted selection inside the composer also counts as sendable. */
+  hasPendingQuote?: boolean;
 };
 
 export type ComposerKeyEvent = {
@@ -24,9 +26,9 @@ export function isImeComposing(event: ComposerKeyEvent): boolean {
 
 /** True when the user has text and/or a pending skill chip to send. */
 export function composerHasSendableDraft(
-  state: Pick<ComposerSubmitKeyState, 'composerEmpty' | 'hasPendingSkill'>,
+  state: Pick<ComposerSubmitKeyState, 'composerEmpty' | 'hasPendingSkill' | 'hasPendingQuote'>,
 ): boolean {
-  return !state.composerEmpty || Boolean(state.hasPendingSkill);
+  return !state.composerEmpty || Boolean(state.hasPendingSkill) || Boolean(state.hasPendingQuote);
 }
 
 /**
@@ -44,7 +46,10 @@ export function resolveEnterWhileRunning(
 
 /** Tab queues the current draft while a run is active. */
 export function shouldInterceptTabForQueue(
-  state: Pick<ComposerSubmitKeyState, 'isRunning' | 'canQueue' | 'composerEmpty' | 'hasPendingSkill'>,
+  state: Pick<
+    ComposerSubmitKeyState,
+    'isRunning' | 'canQueue' | 'composerEmpty' | 'hasPendingSkill' | 'hasPendingQuote'
+  >,
 ): boolean {
   return state.isRunning && state.canQueue && composerHasSendableDraft(state);
 }

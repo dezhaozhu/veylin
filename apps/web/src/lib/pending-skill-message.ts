@@ -1,6 +1,8 @@
 import type { UIMessage } from 'ai';
 import { getChatSettings } from '@/lib/chat-settings';
 import { stampMessageWithSentAt } from '@/lib/message-timestamp';
+import { getPendingQuote } from '@/lib/pending-quote';
+import { applyQuotePrefixToMessage } from '@/lib/thread-selection-ask';
 
 export const PENDING_SKILL_DATA_PART = 'data-veylin-pendingSkill';
 
@@ -32,8 +34,13 @@ export function readPendingSkillFromMessage(message: {
 /** Stamp pending /skill onto the outgoing user message for display + persistence. */
 export function stampOutgoingUserMessage<T extends { metadata?: unknown; parts?: unknown[] }>(
   message: T,
+  threadIds: readonly string[] = [],
 ): T {
-  const stamped = stampMessageWithSentAt(message);
+  const pendingQuote = getPendingQuote(threadIds)?.trim() ?? null;
+  const quoted = pendingQuote
+    ? applyQuotePrefixToMessage(message, pendingQuote)
+    : message;
+  const stamped = stampMessageWithSentAt(quoted);
   const { pendingSkill } = getChatSettings();
   if (!pendingSkill) return stamped;
 
@@ -60,6 +67,7 @@ export function stampOutgoingUserMessage<T extends { metadata?: unknown; parts?:
 
 export function stampOutgoingUiMessage<UI_MESSAGE extends UIMessage>(
   message: UI_MESSAGE,
+  threadIds: readonly string[] = [],
 ): UI_MESSAGE {
-  return stampOutgoingUserMessage(message);
+  return stampOutgoingUserMessage(message, threadIds);
 }

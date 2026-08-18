@@ -8,7 +8,7 @@ import {
   useComposerMentionAnchor,
   type MentionTrigger,
 } from '@/components/assistant-ui/composer-mention/use-composer-mention';
-import { usePendingSkill } from '@/lib/use-composer-settings';
+import { usePendingQuote, usePendingSkill } from '@/lib/use-composer-settings';
 import { isImeComposing } from '@/lib/composer-submit-keys';
 import { useOverlayDismiss } from '@/lib/overlay-dismiss';
 
@@ -24,6 +24,7 @@ export const ComposerMentionInput: FC<ComposerMentionInputProps> = ({
   const [mentionTrigger, setMentionTrigger] = useState<MentionTrigger | null>(null);
   const [slashTrigger, setSlashTrigger] = useState<MentionTrigger | null>(null);
   const { pendingSkill, setPendingSkill } = usePendingSkill();
+  const { pendingQuote, setPendingQuote } = usePendingQuote();
   const composerEmpty = useAuiState((s) => s.composer.isEmpty);
 
   const menuOpen = mentionTrigger != null || slashTrigger != null;
@@ -92,16 +93,19 @@ export const ComposerMentionInput: FC<ComposerMentionInputProps> = ({
         }
       }
 
-      if (
-        event.key === 'Backspace' &&
-        pendingSkill &&
-        composerEmpty &&
-        !menuActive
-      ) {
-        setPendingSkill(null);
-        event.preventDefault();
-        onKeyDown?.(event);
-        return;
+      if (event.key === 'Backspace' && composerEmpty && !menuActive) {
+        if (pendingSkill) {
+          setPendingSkill(null);
+          event.preventDefault();
+          onKeyDown?.(event);
+          return;
+        }
+        if (pendingQuote) {
+          setPendingQuote(null);
+          event.preventDefault();
+          onKeyDown?.(event);
+          return;
+        }
       }
 
       onKeyDown?.(event);
@@ -118,8 +122,10 @@ export const ComposerMentionInput: FC<ComposerMentionInputProps> = ({
       mentionTrigger,
       slashTrigger,
       pendingSkill,
+      pendingQuote,
       composerEmpty,
       setPendingSkill,
+      setPendingQuote,
       closeMenus,
     ],
   );

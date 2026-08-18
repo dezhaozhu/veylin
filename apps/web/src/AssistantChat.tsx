@@ -152,7 +152,7 @@ export function AssistantChat() {
     },
     onFinish: () => {
       useNetworkReconnectStore.getState().clearTransientBanner();
-      setChatSettings({ pendingSkill: null, attachedBrowserTab: null });
+      setChatSettings({ pendingSkill: null, attachedBrowserTab: null, pendingQuote: null });
     },
     adapters: {
       attachments: new CompositeAttachmentAdapter([

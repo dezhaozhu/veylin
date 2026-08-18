@@ -43,6 +43,7 @@ import {
 } from './use-external-history';
 import { stampInterruptedAssistant, stampMessageWithSentAt } from "./message-timestamp";
 import { stampOutgoingUserMessage } from "./pending-skill-message";
+import { clearPendingQuote } from "./pending-quote";
 import { createMessageQueueWithDrafts } from "./create-message-queue-with-drafts";
 import { setComposerQueueRuntime } from "./composer-queue-runtime";
 import { setSilentChatContinue } from "./silent-chat-continue";
@@ -263,6 +264,8 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     getThreadId,
     ensureThreadInitialized,
   } = adapter;
+  const outgoingThreadIds = () =>
+    [getThreadId?.(), chatHelpers.id].filter((id): id is string => Boolean(id));
   const contextAdapters = useRuntimeAdapters();
   const [toolStatuses, setToolStatuses] = useState<
     Record<string, ToolExecutionStatus>
@@ -1254,7 +1257,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
       chatHelpers.setMessages((current) => [
         ...current,
         toUIMessage<UI_MESSAGE>(
-          stampOutgoingUserMessage(createMessage),
+          stampOutgoingUserMessage(createMessage, outgoingThreadIds()),
           message.role,
         ),
       ]);
@@ -1298,12 +1301,13 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
     }
     // Pending loop: do not start here. The model analyzes completeness and calls loop_set.
 
-    await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage), {
+    await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage, outgoingThreadIds()), {
       metadata: message.runConfig,
     });
     // A real user turn starts a fresh trajectory and clears Stop suppression.
     clearToolContinuationSuppression();
-    setChatSettings({ pendingSkill: null });
+    setChatSettings({ pendingSkill: null, pendingQuote: null });
+    clearPendingQuote(outgoingThreadIds());
   };
 
   dispatchNewRef.current = handleNew;
@@ -1385,7 +1389,7 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         chatHelpers.setMessages((current) => [
           ...sliceMessagesForLinearEdit(current, message.sourceId, message.parentId),
           toUIMessage<UI_MESSAGE>(
-            stampOutgoingUserMessage(createMessage),
+            stampOutgoingUserMessage(createMessage, outgoingThreadIds()),
             message.role,
           ),
         ]);
@@ -1424,10 +1428,11 @@ export const useAISDKRuntimeWithQueue = <UI_MESSAGE extends UIMessage = UIMessag
         setTimingPruneEpoch((n) => n + 1);
       }
       chatHelpers.setMessages(sliced);
-      await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage), {
+      await chatHelpers.sendMessage(stampOutgoingUserMessage(createMessage, outgoingThreadIds()), {
         metadata: message.runConfig,
       });
-      setChatSettings({ pendingSkill: null });
+      setChatSettings({ pendingSkill: null, pendingQuote: null });
+      clearPendingQuote(outgoingThreadIds());
     },
     onDelete: async (messageId) => {
       const threadMessages = runtimeRef.current.thread.getState().messages;
