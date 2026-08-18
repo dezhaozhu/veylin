@@ -9,6 +9,9 @@ import {
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { McpAppToolFallback } from "@/components/assistant-ui/mcp-app-tool";
 import { ToolGroupBlock } from "@/components/assistant-ui/tool-group";
+import { useAppTools } from "@/lib/use-app-tools";
+import { toolPartName } from "@/lib/tool-part-name";
+import { useThreadProjects } from "@/lib/thread-projects-sync";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { ComposerContextUsage } from "@/components/assistant-ui/composer-context-usage";
 import { quoteThreadIds } from "@/lib/pending-quote";
@@ -519,6 +522,15 @@ const AssistantMessage: FC = () => {
     [parts, finalProseIdx],
   );
   const [workedForOpen, setWorkedForOpen] = useState(false);
+  // 哪些工具带着要给人看的 widget —— 它们不进折叠块。
+  const widgetThreadId = useAuiState(
+    (s) => s.threadListItem.remoteId ?? s.threadListItem.externalId ?? s.threadListItem.id,
+  );
+  const widgetThreadProjects = useThreadProjects();
+  const widgetTools = useAppTools(
+    widgetThreadId,
+    widgetThreadId ? widgetThreadProjects[widgetThreadId] : undefined,
+  );
   const workedForPrimaryStartRef = useRef<number | null>(null);
   // First group-worked-for in this render pass owns the label.
   workedForPrimaryStartRef.current = null;
@@ -543,6 +555,14 @@ const AssistantMessage: FC = () => {
       if (index >= 0 && index === tailVisibleIdx) {
         return [];
       }
+      // **带 ui:// widget 的工具部件不折。** 甘特图、驾驶舱、场景卡是给人看的
+      // 产物,不是"我干了些什么"的细节 —— 折进「Worked for」等于没有:HTML 照样
+      // 取回来,DOM 里却什么都没有,因为那个块是 hidden 的(用户实测「甘特图
+      // 现在不行了」,查到最后就是这一格)。
+      {
+        const name = toolPartName(part);
+        if (name && widgetTools[name]) return [];
+      }
       if (index < 0 || index >= foldedPrefixEnd) {
         return baseAssistantGroupBy(part, context) as readonly AssistantGroupKey[];
       }
@@ -561,6 +581,7 @@ const AssistantMessage: FC = () => {
     tailVisibleIdx,
     foldedPrefixEnd,
     runPhase,
+    widgetTools,
   ]);
 
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
