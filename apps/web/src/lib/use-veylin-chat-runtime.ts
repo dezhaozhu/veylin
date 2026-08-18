@@ -43,6 +43,20 @@ const useDynamicChatTransport = <UI_MESSAGE extends UIMessage = UIMessage>(
   );
 };
 
+/**
+ * **同一条可恢复流只重连一次。**
+ *
+ * 守卫从前挂在组件的 ref 上,而上面那个 `[id]` effect 会把它重置。React 严格模式
+ * 下 effect 会「挂载→清理→再挂载」,于是重置发生在第一次恢复之后 —— 第二条重连
+ * 就此发出。实测服务端两条都伺候了:第一条把 5869 字节全写出去(dropped=0),
+ * 第二条只走了 426 字节就断;而**赢走消息状态的是被截断的第二条** —— 刷新之后
+ * 那一轮就只剩残句(基线 198 字 → 65 字)。
+ *
+ * 按流 id 去重:同一条流恢复过就不再恢复。刷新会换新页面、模块状态归零,
+ * 不影响下一次真正的恢复。
+ */
+const resumedStreamIds = new Set<string>();
+
 function useChatThreadRuntime<UI_MESSAGE extends UIMessage = UIMessage>(
   options?: UseChatRuntimeOptions<UI_MESSAGE> & { resume?: boolean },
 ): AssistantRuntime {
@@ -139,6 +153,8 @@ function useChatThreadRuntime<UI_MESSAGE extends UIMessage = UIMessage>(
     if (resumeFiredRef.current) return;
     const pending = resumableStorage.getStreamId();
     if (!pending) return;
+    // 严格模式会把上面那个 effect 的重置再跑一遍 —— 组件级的 ref 拦不住第二次。
+    if (resumedStreamIds.has(pending)) return;
 
     // Stale stream ids on empty threads (e.g. new chat) must not trigger resume.
     if (chat.messages.length === 0) {
@@ -149,6 +165,7 @@ function useChatThreadRuntime<UI_MESSAGE extends UIMessage = UIMessage>(
     }
 
     resumeFiredRef.current = true;
+    resumedStreamIds.add(pending);
     const threadId = remoteId ?? id;
 
     // A finished conversation is not resumable. The server's `activity === 'running'`
