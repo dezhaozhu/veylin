@@ -504,7 +504,13 @@ export function tryResolveTableSheetId(
   }
   if (sheetStore.has(value)) return sheetBelongsToScope(value, scope) ? value : null;
   const byShortName = sheetIdFor(scope, value);
-  return sheetStore.has(byShortName) ? byShortName : null;
+  if (sheetStore.has(byShortName)) return byShortName;
+  // **要的是「默认表」,而这个作用域没有叫 main 的表** —— 同上,退到已有的第一张。
+  // 面板首屏就是拿字面量 'main' 去要的(activeSheetId 的初值),而项目里的表叫
+  // 「组件」「开发组件」…… 谁也不叫 main;从前这里 404,界面上就是一条红条。
+  // 只对默认名放行:打错的表名仍然照实说不存在。
+  if (value === DEFAULT_TABLE_SHEET) return listTableSheets(scope)[0]?.id ?? null;
+  return null;
 }
 
 /** 内部用:只按 id 取,不问作用域(mutator 拿到的已经是解析过的 id)。 */

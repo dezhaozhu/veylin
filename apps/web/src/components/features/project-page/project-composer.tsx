@@ -76,7 +76,8 @@ export const ProjectComposer: FC<{ projectId: string; projectName: string }> = (
       </p>
       {/* 不自动聚焦:聚焦=「我要说话」,是新建并钉定线程的信号。自动聚焦会让
           每次打开项目页都留下一条空对话(实测踩到)。 */}
-      <Composer autoFocus={false} />
+      {/* chip 显示**本页项目**:这时候还没有线程,读当前线程会答成上次那个。 */}
+      <Composer autoFocus={false} projectName={projectName} />
       {error ? <p className="text-destructive mt-1 text-xs">{error}</p> : null}
     </section>
   );

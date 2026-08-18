@@ -41,6 +41,7 @@ import { AppTitlebarControls } from '@/components/assistant-ui/app-titlebar-cont
 import { ThreadHeaderToolbar } from '@/components/assistant-ui/thread-header-toolbar';
 import { ThreadListSidebar } from '@/components/assistant-ui/threadlist-sidebar';
 import { PanelTabsProvider } from '@/components/assistant-ui/right-panel/panel-tabs-context';
+import { DevPanelOpener } from '@/components/assistant-ui/right-panel/dev-panel-opener';
 import { SettingsPanelProvider, useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { WorkspaceNavigationProvider } from '@/hooks/use-workspace-navigation';
 import { WorkspaceViewFrame } from '@/components/features/workspace-view-frame';
@@ -80,6 +81,7 @@ function ChatShell() {
         <PanelTabsProvider>
         <SidebarProvider>
         <RightSidebarProvider>
+          <DevPanelOpener />
           <AppTitlebarControls />
           <ChatPanelRatioSync />
           <DesktopInteractionGuard />
@@ -221,6 +223,9 @@ export function AssistantChat() {
           mcpEnabled: s.mcpEnabled,
           pendingSkill: s.pendingSkill ?? undefined,
           attachedBrowser: s.attachedBrowserTab ?? undefined,
+          // 用户本地时区 —— 服务端据此告诉模型"现在几点"。桌面端服务端就在本机,
+          // 但工作站/远端部署时两者不在一个时区,而"今天"是本地语义。
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           workspacePanel: readWorkspacePanelContext(),
           forceReplace: consumeForceReplaceNextChat(),
           locale: resolveAppLanguage(i18n.resolvedLanguage ?? i18n.language),

@@ -72,7 +72,11 @@ export default defineConfig({
       url: baseURL,
       reuseExistingServer: true,
       timeout: 180_000,
-      env: { VITE_API_URL: API },
+      // **只给代理用,不给浏览器看见。** VITE_ 前缀的变量会被注入客户端,而
+      // api-base.ts 一旦看见 VITE_API_URL 就会安装那个"失败换地址重发"的 shim ——
+      // 隔离栈于是比真实 dev 多一条重发路径,测出来的东西不能代表用户环境
+      // (我就为此追过一个假 bug)。
+      env: { E2E_API_URL: API },
     },
   ],
 });

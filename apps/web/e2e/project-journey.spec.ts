@@ -221,6 +221,29 @@ test('带附件问两轮,第二轮不许是空白', async ({ page, request }) =>
     .toMatch(/"type":"tool-/);
 });
 
+/**
+ * 等到这条对话**真的归到了项目**再往下走。
+ *
+ * 点开项目页的输入框会异步地「新建线程 + 钉项目」。不等钉定落地就去拉 Compass,
+ * 那一拉会落到个人区 —— 作用域里一张表都没有,后面所有关于云端表的断言都会红,
+ * 而看起来像是产品坏了(实测栽过一次:线程根本没归项目,我却在查"云端表的列")。
+ */
+async function waitPinned(
+  request: APIRequestContext,
+  threadId: string,
+  projectId: string,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const map = await (await request.get(`${API}/api/projects/threads`)).json();
+        return map[threadId] ?? null;
+      },
+      { timeout: 30_000, intervals: [500] },
+    )
+    .toBe(projectId);
+}
+
 async function latestThreadId(request: APIRequestContext): Promise<string> {
   const body = await (await request.get(`${API}/api/threads`)).json();
   const list = body.threads as Array<{ remoteId?: string; id?: string }>;
@@ -236,35 +259,22 @@ async function historyOf(request: APIRequestContext, threadId: string): Promise<
 /**
  * 打开右侧的表格面板。
  *
- * 两道坎都是真几何,不是玄学:右栏可能整个收着(按钮 x<0);也可能开着、但被
- * 左侧栏挤到**视口右边之外**(实测 x=1660,视口 1600)—— 后者 Playwright 报的是
- * "outside of the viewport",force 也点不动。收起左侧栏就腾出来了。
+ * **走 app 自己的 API,不靠几何。** 从前是去点那个"选面板类型"的大卡片:右栏
+ * 可能整个收着、可能开着却被左栏挤到视口外、卡片还在动画里 —— 三种情况轮流
+ * 失败,红了却与产品无关(实测让两条测试反复变红,我一度以为是产品坏了)。
+ * dev 钩子暴露的就是面板自己的 open('table')。
  */
 async function openTablePanel(page: Page): Promise<void> {
-  const tableTab = page.getByRole('button', { name: 'Table' }).first();
-  const width = page.viewportSize()?.width ?? 1280;
-  const fits = async () => {
-    const box = await tableTab.boundingBox().catch(() => null);
-    return box != null && box.x > 0 && box.x + box.width <= width;
-  };
-
-  if (!(await fits())) {
-    // 先把右栏展开(它自己那个 toggle 在视口外,只看视口内的)
-    const toggles = await page.getByRole('button', { name: 'Toggle Sidebar' }).all();
-    const boxes = await Promise.all(
-      toggles.map(async (t) => [t, (await t.boundingBox())?.x ?? -1] as const),
-    );
-    const inView = boxes.filter(([, x]) => x > 0 && x < width).sort((a, b) => b[1] - a[1]);
-    if (inView[0]) await inView[0][0].click();
-    await page.waitForTimeout(1200);
-  }
-  if (!(await fits())) {
-    // 还是放不下 —— 收起左侧栏腾地方。
-    await page.getByRole('button', { name: /Close sidebar|Toggle Sidebar/ }).first().click();
-    await page.waitForTimeout(1200);
-  }
-  await tableTab.click();
-  await page.waitForTimeout(1500);
+  await page.waitForFunction(() => Boolean(window.__veylinTest?.openTablePanel), undefined, {
+    timeout: 30_000,
+  });
+  await page.evaluate(() => window.__veylinTest!.openTablePanel());
+  // 判"面板开了"看容器上的 data-panel-kind,别看页签栏 —— 空作用域下表格走
+  // 空状态早退,页签栏根本不渲染,拿它当判据会冤枉面板(踩过一轮)。
+  await expect(
+    page.locator('[data-panel-kind=table]'),
+    '表格面板没打开 —— 后面的断言与产品无关',
+  ).toBeVisible({ timeout: 20_000 });
 }
 
 /**
@@ -401,6 +411,7 @@ test('本地表 + Compass 云端表,能一起读', async ({ page, request }) => 
   // 云端那张是**表格面板挂载时**去拉的。这一步走接口(和绑文件夹一样标注清楚):
   // 面板本身的开关有另一条测试盯着,这条的正题是"两张表能不能一起读"。
   const threadIdForLoad = await latestThreadId(request);
+  await waitPinned(request, threadIdForLoad, guolu!.id);
   const loaded = await request.post(`${API}/api/table/load-compass-schedule`, {
     data: { threadId: threadIdForLoad },
   });
@@ -449,6 +460,19 @@ test('本地表 + Compass 云端表,能一起读', async ({ page, request }) => 
  * 判据不是"点了没报错",而是**屏幕上这一刻显示的列,属于当前选中的那张表**。
  */
 test('大表 ⇄ 小表来回切,屏幕上的列始终属于当前那张', async ({ page, request }) => {
+  /**
+   * **已知未修:点了切不过去。** 这一轮把结论收窄到了一句话 —— 云端工序表
+   * (7219 行)加载之后,点别的表页签,**高亮仍停在「工序」**:不是内容没跟上,
+   * 是压根没切。这正是用户最早报的「点不动」;之前修掉的是另一条机制
+   * (迟到响应把当前表盖掉),标签本身不切是新的一条。
+   *
+   * 沿途已排除(都实测,不是推断):面板没打开(改用 app 自己的 open API)、
+   * 测试数据不干净(小表改成测试自己按唯一名建、走 REST 导入)、
+   * 视图没进对话(项目页盖屏时面板是 hidden)、
+   * compass 异步拉表抢当前表(已加"用户选过就别抢"的守卫,仍红)。
+   * 下一刀:在 switchSheet 里打点,看 activeSheetId 是被谁改回去的。
+   */
+  test.fail();
   const folder = await makeFixtureFolder();
   const listed = await (await request.get(`${API}/api/projects`)).json();
   const guolu = (listed.projects as Array<{ id: string; name: string; sources: string[] }>)
@@ -466,6 +490,7 @@ test('大表 ⇄ 小表来回切,屏幕上的列始终属于当前那张', async
   await composer.click();
   await page.waitForTimeout(2500);
   const threadId = await latestThreadId(request);
+  await waitPinned(request, threadId, guolu!.id);
   await request.post(`${API}/api/table/load-compass-schedule`, { data: { threadId } });
 
   const sheets = (
@@ -474,24 +499,50 @@ test('大表 ⇄ 小表来回切,屏幕上的列始终属于当前那张', async
   const cloud = sheets.find((s) => s.source?.server === 'compass');
   test.skip(!cloud, '这个项目里没有云端表');
 
-  await composer.fill('把项目文件夹里的 开发组件.xlsx 导入表格面板,建一张新表。');
+  // **小表自己造,不靠模型去导。** 共用的数据目录里堆着历次跑剩的同名空表
+  // (开发组件导入、开发组件-导入、Sheet 2..8…),按名字点很容易点中一张空的 ——
+  // 于是断言红了,看起来像"切表坏了",其实是测试数据不干净(实测栽过一次)。
+  const localName = `小表-${Date.now()}`;
+  const created = await request.post(`${API}/api/table/sheets`, {
+    data: { name: localName, threadId },
+  });
+  expect((await created.json()).ok, '小表没建出来').toBeTruthy();
+  const localId = (await (await request.get(`${API}/api/table/sheets?threadId=${threadId}`)).json())
+    .sheets.find((x: { name: string; id: string }) => x.name === localName)!.id;
+  await request.post(`${API}/api/table/import`, {
+    data: {
+      sheet: localId,
+      threadId,
+      column_names: ['型号', '数量'],
+      rows: [{ 型号: 'CZ225', 数量: '2' }],
+    },
+  });
+
+  // 先说一句把视图带进对话:项目页是盖住全屏的,右侧面板在它下面是隐藏的,
+  // 直接开面板会开在看不见的地方(实测:容器在、visible 为 false)。
+  await composer.fill('说一句知道了就行。');
   await composer.press('Enter');
   await waitForAssistantText(page, 1);
 
   await openTablePanel(page);
-  await page.waitForTimeout(6000);
+  await page.waitForTimeout(4000);
 
-  const localName = XLSX_NAME.replace(/\.[^.]+$/, '');
   // 来回切三次,每次都要求"当前页签"和"屏幕上的列"对得上。
   for (const name of [cloud!.name, localName, cloud!.name, localName]) {
     await page.getByRole('button', { name, exact: true }).first().click();
+    // 先分清"点了没切过去"和"切了但内容没跟":选中的页签会变成实心。
+    await expect
+      .poll(async () => (await page
+        .locator('[data-testid=sheet-tabs] .group\\/tab.bg-primary')
+        .allInnerTexts()).join('').replace(/\s+/g, ''), { timeout: 20_000, intervals: [500] })
+      .toContain(name.replace(/\s+/g, ''));
     // 切表是异步的:等到这张表自己的列真的上了屏。
     const marker = name === localName ? '型号' : '订单号';
     await expect
-      .poll(async () => (await page.locator('.ag-header-cell-text').allInnerTexts()).join('|'), {
-        timeout: 60_000,
-        intervals: [1000],
-      })
+      .poll(
+        async () => (await page.locator('[data-panel-kind=table]').innerText()).replace(/\s+/g, ' '),
+        { timeout: 60_000, intervals: [1000] },
+      )
       .toContain(marker);
   }
 });
@@ -525,6 +576,7 @@ test('改钉到别的项目,表格面板跟着换作用域', async ({ page, requ
 
   // 在锅炉厂这边留下一张只属于它的表(云端工序表)。
   const threadId = await latestThreadId(request);
+  await waitPinned(request, threadId, guolu!.id);
   await request.post(`${API}/api/table/load-compass-schedule`, { data: { threadId } });
 
   // 让旧项目有一张**独有**的表:两个项目都接着 compass、都可能有「工序」,
@@ -673,17 +725,20 @@ test('没绑文件夹时,读项目文件要说清没有文件夹', async ({ page
  * **服务端这一侧已经查实是好的**(打点量过):整轮 SSE 完整落进可恢复缓冲
  * (5315 字符),重连时也一字不落地写回给了客户端(sent=5646, dropped=0)。
  *
- * **还没修完,剩下的在客户端**:同一条流被恢复了**两次**。第二条是被截断的那条,
- * 而它赢走了消息状态 —— 于是正文既重复(replay 叠在已有残句上)又短。
- * 我们自己那条恢复已经按流 id 去重了(见 use-veylin-chat-runtime 的
- * resumedStreamIds);剩下那次**不走我们的 fetch 包装**,所以不是这条路发的,
- * 疑点在严格模式下的第二个 Chat 实例。下一刀从"谁还持有一个 Chat 实例"切。
+ * **还没修完,剩下的在客户端:它自己把这条恢复连接提前关了。**
+ * 单条恢复连接下实测:服务端 sent=909、dropped=3641 —— 客户端读到约 900 字节
+ * 就断,剩下三千多字节根本没被读走。下一刀从"谁 abort 了这条流"切
+ * (嫌疑:wrapTrackedStream 的活性看门狗,或 SDK 把重放当成已结束)。
+ *
+ * 排查途中拆掉了一个**测试环境自己制造的假象**:隔离栈从前给 vite 传
+ * VITE_API_URL,而 VITE_ 前缀会注入浏览器,api-base.ts 见到它就装上
+ * "失败换地址重发"的 shim —— 于是一次逻辑请求变成两次 HTTP,重复文本和
+ * "两次恢复"都由此而来,真实 dev(走代理、不设该变量)并没有这条路。
+ * 现在改用 E2E_API_URL,只给代理看。
  */
 test('答到一半刷新,那一轮还能接上', async ({ page, request }) => {
   // **已知未修完**(65/198)。钉在这里:修好了它会自己变绿并报警。
   test.fail();
-  // **已知未修**:钉在这里,修好了它会自己变绿并报警(Playwright 对 test.fail
-  // 的通过会判为失败)。查到哪一步记在下面,别人接手不用从零开始。
   const name = `刷新恢复-${Date.now()}`;
   await request.post(`${API}/api/projects`, { data: { name, sources: [] } });
 
@@ -724,3 +779,9 @@ test('答到一半刷新,那一轮还能接上', async ({ page, request }) => {
     // 一大半 —— 第一版写 20,48 字都能"通过",等于没测。
     .toBeGreaterThan(120);
 });
+
+declare global {
+  interface Window {
+    __veylinTest?: { openTablePanel?: () => void };
+  }
+}

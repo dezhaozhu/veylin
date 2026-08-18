@@ -21,8 +21,14 @@ export const RailCard: FC<{ children: ReactNode }> = ({ children }) => (
 
 export const RailSection: FC<{
   title: string;
-  /** 右上角那个动作(通常是"加")。 */
-  action?: { label: string; onClick: () => void; title?: string };
+  /**
+   * 右上角那个动作。**给图标,不给字。**
+   *
+   * 从前是「改」「加」「换」「全部」四个汉字按钮,挤在标题右边,四段各说各的,
+   * 一眼扫过去像四个不相干的链接(用户原话:太丑)。改成同一位置、同一尺寸的
+   * 图标钮:形状承担"这是个按钮",文字退到 tooltip 里当解释。
+   */
+  action?: { icon: ReactNode; label: string; onClick: () => void };
   /** 一句话:没内容时说"放什么",有内容时可以不给。 */
   hint?: string;
   children?: ReactNode;
@@ -33,11 +39,12 @@ export const RailSection: FC<{
       {action ? (
         <button
           type="button"
-          title={action.title ?? action.label}
+          title={action.label}
+          aria-label={action.label}
           onClick={action.onClick}
-          className="text-muted-foreground hover:bg-muted hover:text-foreground -mr-1 rounded-md px-1.5 py-0.5 text-sm"
+          className="text-muted-foreground hover:bg-muted hover:text-foreground -mr-1 flex size-7 shrink-0 items-center justify-center rounded-md transition-colors"
         >
-          {action.label}
+          {action.icon}
         </button>
       ) : null}
     </div>

@@ -38,7 +38,14 @@ async function pinThread(threadId: string, project: string | null): Promise<void
   invalidateThreadProjects();
 }
 
-export const ComposerProjectChip: FC = () => {
+export const ComposerProjectChip: FC<{
+  /**
+   * 项目页把**本页项目**直接给过来:那儿在用户动手之前还没有线程,读"当前线程
+   * 钉在哪"会答成上次打开的那个项目(实测:caliper 页面上显示「111」)。
+   * 给了就只显示、不给选 —— 这一页的项目不是待选项。
+   */
+  fixedProjectName?: string;
+}> = ({ fixedProjectName }) => {
   const { t } = useTranslation();
   const { threadId, currentProject } = useProjectScope();
   const projects = useProjects();
@@ -79,6 +86,18 @@ export const ComposerProjectChip: FC = () => {
     },
     [close, threadId],
   );
+
+  if (fixedProjectName) {
+    return (
+      <span
+        className="text-muted-foreground inline-flex h-7 max-w-[10rem] min-w-0 shrink-0 items-center gap-1 rounded-full px-2.5 text-xs"
+        title={fixedProjectName}
+      >
+        <FolderIcon className="size-3 shrink-0" />
+        <span className="truncate">{fixedProjectName}</span>
+      </span>
+    );
+  }
 
   if (projects.length === 0) return null;
 

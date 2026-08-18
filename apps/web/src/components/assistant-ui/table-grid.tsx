@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { decideCompassLoad } from '@/lib/compass-schedule-load';
 import { shouldApplyPayload } from '@/lib/sheet-payload-guard';
+import { isStaleSheetError } from '@/lib/stale-sheet-recovery';
 import { panelScopeKey } from '@/lib/panel-scope-key';
 import { useProjectsOrNull } from '@/lib/projects-sync';
 import { useThreadProjectsOrNull } from '@/lib/thread-projects-sync';
@@ -635,6 +636,8 @@ export function TableGrid() {
    * 改钉到别的项目之后,面板还摆着上一个项目的表(实测)。
    * 两个修复互相绊脚,记在这儿。
    */
+  /** 用户自己点过表没有 —— 点过之后,异步回来的自动切换就不该再抢。 */
+  const userPickedSheetRef = useRef(false);
   const selectSheet = useCallback((id: string) => {
     activeSheetIdRef.current = id;
     setActiveSheetId(id);
@@ -895,20 +898,35 @@ export function TableGrid() {
           if (initial) setLoadError(null);
           return;
         } catch (err) {
+          // **记着的那张表不在这个作用域里 —— 退回默认表,不报红。**
+          // 面板会记住"上次在看哪张表",而那个 id 常常属于上一个项目;换过来
+          // 之后服务端认不出,直接 404。人什么也没做错,不该看见一条红条
+          // (实测:重启 dev 仍在报「表格数据加载失败:sheet not found」)。
+          const message = err instanceof Error ? err.message : '';
+          if (isStaleSheetError(message) && sheetId) {
+            try {
+              const fallback = await fetchSchedule(undefined, threadIdRef.current);
+              if (fallback.sheet) selectSheet(fallback.sheet);
+              applyPayload(fallback, true);
+              setLoadError(null);
+              return;
+            } catch {
+              /* 默认表也取不到 —— 那是真故障,落到下面照常报 */
+            }
+          }
           if (i < attempts - 1) {
             await sleep(400 * (i + 1));
             continue;
           }
           if (initial) {
-            const message = err instanceof Error ? err.message : t('table.loadFailedGeneric');
-            setLoadError(message);
-            showToast(t('table.loadError', { error: message }), 'error');
+            setLoadError(message || t('table.loadFailedGeneric'));
+            showToast(t('table.loadError', { error: message || t('table.loadFailedGeneric') }), 'error');
             applyPayload(emptySchedulePayload(sheetId), true);
           }
         }
       }
     },
-    [applyPayload, showToast, t],
+    [applyPayload, showToast, t, selectSheet],
   );
 
   const switchSheet = useCallback(
@@ -935,10 +953,11 @@ export function TableGrid() {
       pendingViewRef.current =
         groupBy.length || Object.keys(filterModel).length ? { filterModel, groupBy } : null;
       pendingAnchorRef.current = anchor;
-      setActiveSheetId(sheetId);
+      userPickedSheetRef.current = true;
+      selectSheet(sheetId);
       setLoading(true);
     },
-    [activeSheetId, resetSheetUiState],
+    [activeSheetId, resetSheetUiState, selectSheet],
   );
 
   const confirmDeleteSheet = async () => {
@@ -1054,7 +1073,11 @@ export function TableGrid() {
         }>(res);
         if (cancelled) return;
         if (data.ok && data.sheet) {
-          setActiveSheetId(data.sheet);
+          // **用户已经点过别的表就别抢。** Compass 是面板挂载后异步拉的,
+          // 拉回来再切一次当前表 —— 人在这中间点了小表,会被硬拽回「工序」
+          // (实测:大表小表来回切时,刚点完就被弹回去)。
+          if (userPickedSheetRef.current) return;
+          selectSheet(data.sheet);
         } else if (!data.ok) {
           showToast(data.error ?? t('table.compassUnavailable'), 'error');
         }

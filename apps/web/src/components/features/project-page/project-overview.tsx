@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FC } from 'react';
 import { ThreadListPrimitive, useAuiState } from '@assistant-ui/react';
-import { FolderOpen, LoaderIcon } from 'lucide-react';
+import { CheckIcon, FolderOpen, LoaderIcon, PencilIcon, PlusIcon, SearchIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   ThreadActivityContext,
@@ -193,7 +193,7 @@ const ProjectWorkflowsSection: FC<{ project: ProjectInfo }> = ({ project }) => {
     >
       {list.length === 0 ? (
         <RailEmpty>
-          聊出一套做法之后,在那条消息上点<br />「结晶成工作流」,下次一键重跑。
+          在消息上点「结晶成工作流」,<br />下次一键重跑。
         </RailEmpty>
       ) : (
         <ul className="space-y-1">
@@ -237,8 +237,13 @@ const ProjectInstructionsSection: FC<{ project: ProjectInfo }> = ({ project }) =
   return (
     <RailSection
       title="项目说明"
-      action={{ label: editing ? '完成' : project.instructions ? '改' : '＋',
-                onClick: () => (editing ? void save() : setEditing(true)) }}
+      action={{
+        icon: editing ? <CheckIcon className="size-4" /> : project.instructions
+          ? <PencilIcon className="size-4" />
+          : <PlusIcon className="size-4" />,
+        label: editing ? '完成' : project.instructions ? '改说明' : '写一句说明',
+        onClick: () => (editing ? void save() : setEditing(true)),
+      }}
     >
       {editing ? (
         <textarea
@@ -254,7 +259,7 @@ const ProjectInstructionsSection: FC<{ project: ProjectInfo }> = ({ project }) =
           {project.instructions}
         </p>
       ) : (
-        <RailEmpty>写一句这个项目要做什么。<br />它会跟着进这个项目的每一次对话。</RailEmpty>
+        <RailEmpty>写一句这个项目要做什么,<br />它会进入这里的每次对话。</RailEmpty>
       )}
       {error ? <p className="text-destructive mt-1 text-xs">{error}</p> : null}
     </RailSection>
@@ -303,7 +308,11 @@ const ProjectSourcesSection: FC<{ project: ProjectInfo }> = ({ project }) => {
       action={
         // managed 项目不给动作 —— 后端 403,给了就是个只会失败的按钮。
         granted.length && !project.managed
-          ? { label: editing ? '完成' : '加', onClick: () => setEditing((v) => !v) }
+          ? {
+              icon: editing ? <CheckIcon className="size-4" /> : <PlusIcon className="size-4" />,
+              label: editing ? '完成' : '加数据源',
+              onClick: () => setEditing((v) => !v),
+            }
           : undefined
       }
       {...(project.sources.length
@@ -315,7 +324,7 @@ const ProjectSourcesSection: FC<{ project: ProjectInfo }> = ({ project }) => {
         // **不写"排产"** —— 数据源是接远端系统这件事本身,今天是排产,以后可能是
         // 质量、设备。写死一个领域,别的接进来时这句话就成了假话。
         <RailEmpty>
-          还没接远端系统。<br />接上之后,对话里就能直接查它那边的实时数据。
+          接上远端系统,<br />就能直接查它那边的实时数据。
         </RailEmpty>
       ) : null}
       {editing ? (
@@ -427,8 +436,8 @@ const ProjectFolderRow: FC<{ project: ProjectInfo }> = ({ project }) => {
     <RailSection
       title="项目文件夹"
       action={{
-        label: folder ? '换' : '＋',
-        title: folder ? '换一个文件夹' : '选一个文件夹',
+        icon: folder ? <PencilIcon className="size-4" /> : <PlusIcon className="size-4" />,
+        label: folder ? '换一个文件夹' : '选一个文件夹',
         onClick: () => (availability.canPick ? void choose() : setTyping(true)),
       }}
       {...(folder ? { hint: folder } : {})}
@@ -546,9 +555,15 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
     <RailSection
       title="上下文"
       {...(total > 0
-        ? { action: { label: '全部', title: '打开上下文面板(搜索 + 预览)', onClick: () => setPanelOpen(true) } }
+        ? {
+            action: {
+              icon: <SearchIcon className="size-4" />,
+              label: '搜索和预览',
+              onClick: () => setPanelOpen(true),
+            },
+          }
         : {})}
-      {...(total === 0 ? {} : { hint: `${total} 项 · 对话里可以直接引用` })}
+      {...(total === 0 ? {} : { hint: `${total} 项 · 可直接引用` })}
     >
       {total === 0 ? (
         // 空状态说清**放什么**,而不是整段消失 —— 消失的话人不知道这里可以放东西。
@@ -556,7 +571,7 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
         // 讲的是同一件事,人分不清区别 —— 而远端数据会变、本地留档不会变,
         // 这个区别恰恰是最该讲清楚的。
         <RailEmpty>
-          把表格导进来、或给项目设一个文件夹,<br />之后在对话里就能直接引用这些文件。
+          导入表格,或给项目设一个文件夹,<br />之后在对话里直接引用。
         </RailEmpty>
       ) : null}
       {/* 侧栏里超过一屏就没法看了 —— 多的交给面板,这里只给搜索当快筛。 */}

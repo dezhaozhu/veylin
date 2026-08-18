@@ -344,7 +344,15 @@ export const Composer: FC<{
    * "我要说话"的信号来新建并钉定线程,自动聚焦会让每次浏览都留下一条空对话。
    */
   autoFocus?: boolean;
-}> = ({ autoFocus = true }) => {
+  /**
+   * 项目页专用:**这一页的项目**。
+   *
+   * 输入框上的项目 chip 平时读"当前线程钉在哪";可项目页在你动手之前还没有
+   * 线程,挂着的是上次打开的那条 —— 于是「caliper-几何测试」的页面上,chip 显示
+   * 的是「111」(用户实测)。这一页的项目不该由别的线程来回答。
+   */
+  projectName?: string;
+}> = ({ autoFocus = true, projectName }) => {
   const { t } = useTranslation();
   const onKeyDown = useComposerSubmitKeys();
 
@@ -366,7 +374,7 @@ export const Composer: FC<{
               aria-label={t("thread.composerAriaLabel")}
               onKeyDown={onKeyDown}
             />
-            <ComposerAction />
+            <ComposerAction {...(projectName ? { projectName } : {})} />
           </div>
         </div>
       </ComposerAttachmentDropzone>
@@ -374,13 +382,13 @@ export const Composer: FC<{
   );
 };
 
-const ComposerAction: FC = () => {
+const ComposerAction: FC<{ projectName?: string }> = ({ projectName }) => {
   const { t } = useTranslation();
   return (
     <div className="aui-composer-action-wrapper grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-1 gap-y-1">
       <div className="flex min-w-0 items-center gap-1 overflow-hidden">
         <ComposerPlusMenu />
-        <ComposerProjectChip />
+        <ComposerProjectChip {...(projectName ? { fixedProjectName: projectName } : {})} />
         <ComposerModeChips />
       </div>
       <div className="relative z-10 flex min-w-0 shrink-0 items-center justify-end gap-0.5 overflow-visible">
