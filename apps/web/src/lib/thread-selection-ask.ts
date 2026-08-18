@@ -64,12 +64,14 @@ export function splitQuotedPrefix(text: string): { quote: string | null; body: s
   const lines = text.split('\n');
   const quoted: string[] = [];
   let i = 0;
-  while (i < lines.length && /^>/.test(lines[i])) {
-    quoted.push(lines[i].replace(/^>\s?/, ''));
+  // 取值一次再用:仓库开了 noUncheckedIndexedAccess,`lines[i]` 的类型是
+  // `string | undefined`,直接 .replace/.trim 过不了类型(合并同事那条时 tsc 报的)。
+  for (let line = lines[i]; line !== undefined && /^>/.test(line); line = lines[i]) {
+    quoted.push(line.replace(/^>\s?/, ''));
     i += 1;
   }
   if (quoted.length === 0) return { quote: null, body: text };
-  while (i < lines.length && lines[i].trim() === '') i += 1;
+  while (i < lines.length && (lines[i] ?? '').trim() === '') i += 1;
   return { quote: quoted.join('\n').trim() || null, body: lines.slice(i).join('\n') };
 }
 
