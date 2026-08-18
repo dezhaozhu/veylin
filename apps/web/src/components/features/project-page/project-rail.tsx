@@ -33,7 +33,7 @@ export const RailSection: FC<{
   hint?: string;
   children?: ReactNode;
 }> = ({ title, action, hint, children }) => (
-  <section className="px-3 py-3">
+  <section className="px-4 py-3.5">
     <div className="flex items-center justify-between gap-2">
       <h3 className="text-foreground text-sm font-medium">{title}</h3>
       {action ? (
@@ -48,7 +48,11 @@ export const RailSection: FC<{
         </button>
       ) : null}
     </div>
-    {hint ? <p className="text-muted-foreground mt-0.5 text-xs">{hint}</p> : null}
+    {hint ? (
+      <p className="text-muted-foreground mt-0.5 truncate text-xs" title={hint}>
+        {hint}
+      </p>
+    ) : null}
     {children ? <div className="mt-2">{children}</div> : null}
   </section>
 );

@@ -409,6 +409,30 @@ export function computeDeltas(
   return out;
 }
 
+export type GlanceChange = { label: string; delta: number };
+
+/**
+ * Hero numbers for the "since last visit" line. Changed keys first; fill with
+ * unchanged heroes so first glance still says something concrete.
+ */
+export function pickGlanceChanges(
+  heroes: readonly DisplayRow[],
+  deltas: Record<string, number>,
+  hasPrevious: boolean,
+  limit = 3,
+): GlanceChange[] {
+  if (!hasPrevious || limit <= 0) return [];
+  const numeric = heroes.filter((h) => typeof h.num === 'number');
+  const changed: GlanceChange[] = [];
+  const same: GlanceChange[] = [];
+  for (const h of numeric) {
+    const d = deltas[h.key];
+    if (typeof d === 'number' && d !== 0) changed.push({ label: h.label, delta: d });
+    else same.push({ label: h.label, delta: 0 });
+  }
+  return [...changed, ...same].slice(0, limit);
+}
+
 export type SceneVisitSnapshot = {
   at: string;
   nums: Record<string, number>;

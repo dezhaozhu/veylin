@@ -22,6 +22,7 @@ import {
   extractRulesHitRate,
   groupDisplayBySection,
   groupSectionsByTab,
+  pickGlanceChanges,
   pickKeyMetrics,
   readSceneSnapshot,
   recommendationKey,
@@ -35,9 +36,8 @@ import {
 import { useOpenCorrection } from './use-open-correction';
 
 /**
- * Chart-first checkup glance:
- *   trust ring + honesty bar + rules ring → scale KPIs → capacity bars
- * Text judgment / findings / narrative stay behind “查看结论与明细”.
+ * Default glance matches the chat shell: title, status, four numbers.
+ * Charts, judgment, findings, and narrative stay behind “详细检查”.
  */
 export const SceneCardSummaryPanel: FC<{
   rows: readonly DisplayRow[];
@@ -96,11 +96,23 @@ export const SceneCardSummaryPanel: FC<{
     };
   }, [projectId, source, rows]);
 
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [capacityOpen, setCapacityOpen] = useState(false);
+  const [narrativeOpen, setNarrativeOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTabId | null>(null);
   const effectiveTab = activeTab ?? tabGroups[0]?.tab ?? null;
   const checkedAt = narrative?.generatedAt ?? previousAt;
-  const changedCount = Object.keys(deltas).length;
+  const glanceChanges = useMemo(
+    () => pickGlanceChanges(heroes, deltas, previousAt != null),
+    [heroes, deltas, previousAt],
+  );
+  const glanceChip =
+    trust?.band === 'blocked'
+      ? 'glanceChipBlocked'
+      : trust?.band === 'caution'
+        ? 'glanceChipCaution'
+        : 'glanceChipReady';
+  const topCapacity = capacityBars[0] ?? null;
 
   const report = (row: DisplayRow) => {
     openCorrection(source, {
@@ -131,188 +143,235 @@ export const SceneCardSummaryPanel: FC<{
     attention.length > 0 && trust != null && trust.band !== 'blocked';
 
   return (
-    <div className={cn('mb-8 flex w-full flex-col gap-5', className)}>
-      <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="min-w-0">
-          <h2 className="text-base font-semibold tracking-tight">
-            {t('projectPage.checkupTitle')}
-          </h2>
-          <p className="text-muted-foreground text-xs">
-            {t('projectPage.checkupSubtitle')}
-          </p>
-        </div>
-        {checkedAt ? (
-          <p className="text-muted-foreground text-[11px] tabular-nums">
-            {t('projectPage.lastUpdated')} {formatGeneratedAt(checkedAt)}
-          </p>
-        ) : null}
-      </header>
+    <div className={cn('flex h-full min-h-0 w-full flex-col gap-3', className)}>
+      <section className="border-border/60 shrink-0 rounded-xl border px-4 py-3.5">
+        <header className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold tracking-tight">
+                {t('projectPage.checkupTitle')}
+              </h2>
+              <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-[11px]">
+                {t(`projectPage.${glanceChip}`)}
+                {attention.length > 0
+                  ? ` · ${t('projectPage.glanceIssues', { count: attention.length })}`
+                  : ''}
+              </span>
+            </div>
+            <p className="text-muted-foreground mt-1.5 text-xs leading-relaxed">
+              {previousAt ? (
+                <>
+                  {t('projectPage.sinceLastPrefix')}
+                  {glanceChanges.length > 0 ? '：' : ' · '}
+                  {glanceChanges.map((c, i) => (
+                    <span key={`${c.label}-${i}`}>
+                      {i > 0 ? ' · ' : null}
+                      {c.delta === 0
+                        ? t('projectPage.glanceChangeSame', { label: c.label })
+                        : t('projectPage.glanceChangeDelta', {
+                            label: c.label,
+                            delta: `${c.delta > 0 ? '+' : ''}${c.delta}`,
+                          })}
+                    </span>
+                  ))}
+                  {checkedAt ? (
+                    <span className="tabular-nums">
+                      {glanceChanges.length > 0 ? ' · ' : ''}
+                      {formatGeneratedAt(previousAt)}
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                t('projectPage.firstVisitBaseline')
+              )}
+            </p>
+          </div>
+        </header>
 
-      {/* Visual glance cluster */}
-      <section className="border-border/60 bg-muted/15 flex flex-col gap-5 rounded-xl border px-5 py-5">
-        <div className="grid gap-5 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-8">
-          {trust ? <TrustScoreRing score={trust.score} band={trust.band} /> : null}
-          {honesty.length > 0 ? <HonestyBarChart segments={honesty} /> : null}
-          {rulesRate ? <RulesHitRing rate={rulesRate} /> : null}
-        </div>
-        {capacityBars.length > 0 ? (
-          <>
-            <div className="border-border/50 border-t" />
-            <CapacityBarChart bars={capacityBars} truncated={capacityTruncated} />
-          </>
+        {heroes.length > 0 ? (
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {heroes.map((h) => {
+              const delta = typeof h.num === 'number' ? deltas[h.key] : undefined;
+              return (
+                <div key={h.key} className="bg-muted/50 min-w-0 rounded-lg px-3 py-2.5">
+                  <p className="text-lg font-semibold tracking-tight tabular-nums">
+                    {typeof h.num === 'number' ? formatInt(h.num) : h.value}
+                    {delta != null ? (
+                      <span className="ml-1.5 align-middle">
+                        <DeltaBadge delta={delta} />
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="text-muted-foreground mt-0.5 text-[11px]">{h.label}</p>
+                </div>
+              );
+            })}
+          </div>
         ) : null}
       </section>
 
-      {/* Scale numbers */}
-      {heroes.length > 0 ? (
-        <section
-          className="grid gap-3"
-          style={{
-            gridTemplateColumns: `repeat(${Math.min(heroes.length, 4)}, minmax(0, 1fr))`,
-          }}
-        >
-          {heroes.map((h) => {
-            const delta = typeof h.num === 'number' ? deltas[h.key] : undefined;
-            return (
-              <div key={h.key} className="bg-muted/40 group/hero relative rounded-xl px-3 py-2.5">
-                <p className="text-muted-foreground text-[11px] font-medium tracking-wide">
-                  {h.label}
-                </p>
-                <p className="mt-0.5 flex items-baseline gap-1.5">
-                  <span className="text-xl font-semibold tracking-tight tabular-nums">
-                    {typeof h.num === 'number' ? formatInt(h.num) : h.value}
-                  </span>
-                  {delta != null ? <DeltaBadge delta={delta} /> : null}
-                </p>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-foreground absolute top-2 right-2 text-[10px] opacity-0 transition-opacity group-hover/hero:opacity-100 focus-visible:opacity-100"
-                  onClick={() => report(h)}
-                >
-                  {t('projectPage.reportWrong')}
-                </button>
-              </div>
-            );
-          })}
-        </section>
-      ) : null}
-
-      {previousAt ? (
-        <p className="text-muted-foreground -mt-2 text-[11px]">
-          {changedCount > 0
-            ? t('projectPage.changedSinceVisit', {
-                count: changedCount,
-                date: formatGeneratedAt(previousAt),
-              })
-            : t('projectPage.unchangedSinceVisit', {
-                date: formatGeneratedAt(previousAt),
-              })}
-        </p>
-      ) : (
-        <p className="text-muted-foreground -mt-2 text-[11px]">
-          {t('projectPage.firstVisitBaseline')}
-        </p>
-      )}
-
-      {/* Text judgment + findings + narrative — on demand */}
-      <details
-        className="border-border/60 rounded-lg border"
-        open={detailsOpen}
-        onToggle={(e) => setDetailsOpen((e.target as HTMLDetailsElement).open)}
+      {/* Text judgment + findings + narrative — fills leftover height; scrolls inside */}
+      <div
+        className={cn(
+          'border-border/60 flex min-h-0 flex-col rounded-lg border',
+          detailsOpen && 'flex-1',
+        )}
       >
-        <summary className="hover:bg-muted/40 cursor-pointer list-none px-3 py-2.5 text-sm font-medium [&::-webkit-details-marker]:hidden">
-          <span className="flex items-center gap-2">
-            <ChevronDownIcon
-              className={cn(
-                'text-muted-foreground size-4 shrink-0 transition-transform',
-                detailsOpen ? 'rotate-0' : '-rotate-90',
-              )}
-            />
-            {t('projectPage.viewDetails')}
-            {attention.length > 0 ? (
-              <span className="text-muted-foreground text-xs font-normal">
-                · {t('projectPage.verdictIssuesLine', { count: attention.length })}
-              </span>
-            ) : null}
-          </span>
-        </summary>
+        <button
+          type="button"
+          className="hover:bg-muted/40 flex shrink-0 items-center gap-2 px-3 py-2.5 text-left text-sm font-medium"
+          aria-expanded={detailsOpen}
+          onClick={() => setDetailsOpen((v) => !v)}
+        >
+          <ChevronDownIcon
+            className={cn(
+              'text-muted-foreground size-4 shrink-0 transition-transform',
+              detailsOpen ? 'rotate-0' : '-rotate-90',
+            )}
+          />
+          {t('projectPage.viewDetails')}
+        </button>
 
-        <div className="border-border/50 flex flex-col gap-5 border-t px-3 py-3">
-          <div className="min-w-0">
-            <p className="text-muted-foreground text-xs font-medium tracking-wide">
+        {detailsOpen ? (
+        <div className="border-border/50 flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain border-t px-3 py-3">
+          {(trust || honesty.length > 0 || rulesRate || capacityBars.length > 0) ? (
+            <section className="flex flex-col gap-3">
+              <div className="grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-6">
+                {trust ? <TrustScoreRing score={trust.score} band={trust.band} /> : null}
+                {honesty.length > 0 ? <HonestyBarChart segments={honesty} /> : null}
+                {rulesRate ? <RulesHitRing rate={rulesRate} /> : null}
+              </div>
+              {capacityBars.length > 0 ? (
+                <div>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground flex w-full items-center gap-2 text-left text-xs"
+                    onClick={() => setCapacityOpen((v) => !v)}
+                    aria-expanded={capacityOpen}
+                  >
+                    <ChevronDownIcon
+                      className={cn(
+                        'size-3.5 shrink-0 transition-transform',
+                        capacityOpen ? 'rotate-0' : '-rotate-90',
+                      )}
+                    />
+                    <span>
+                      <span className="text-foreground font-medium">{t('projectPage.chartCapacity')}</span>
+                      {' · '}
+                      {topCapacity
+                        ? t('projectPage.capacityGlance', {
+                            count: capacityBars.length + (capacityTruncated ?? 0),
+                            name: topCapacity.label,
+                            k: topCapacity.num,
+                          })
+                        : t('projectPage.capacityGlancePlain', { count: capacityBars.length })}
+                    </span>
+                  </button>
+                  {capacityOpen ? (
+                    <div className="mt-3">
+                      <CapacityBarChart bars={capacityBars} truncated={capacityTruncated} />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
+          <section className="min-w-0">
+            <p className="text-muted-foreground text-[11px] font-medium tracking-wide">
               {t('projectPage.aiJudgment')}
             </p>
-            {showSplitVerdict ? (
-              <div className="mt-1">
-                <p className="text-sm font-semibold">{t('projectPage.verdictLeadUsable')}</p>
-                <p className="text-muted-foreground mt-0.5 text-xs">
-                  {t('projectPage.verdictIssuesLine', { count: attention.length })}
+            <h3 className="mt-1 text-base font-semibold tracking-tight">
+              {showSplitVerdict
+                ? t('projectPage.verdictLeadUsable')
+                : t(`projectPage.${verdict.key}`, verdict.params)}
+            </h3>
+            <p className="text-muted-foreground mt-1.5 text-xs leading-relaxed">
+              {t(`projectPage.${recommend}`)}
+            </p>
+
+            {attention.length > 0 ? (
+              <div className="mt-4">
+                <p className="text-muted-foreground mb-2 text-[11px] font-medium">
+                  {t('projectPage.attentionTitle')}
+                  <span className="ml-1.5 tabular-nums">{attention.length}</span>
                 </p>
+                <ul className="flex flex-col gap-2">
+                  {attention.map((item, i) => {
+                    const metric = formatMetric(item);
+                    return (
+                      <li
+                        key={item.id}
+                        className="bg-muted/45 flex items-start justify-between gap-3 rounded-lg px-3 py-2.5"
+                      >
+                        <div className="flex min-w-0 gap-2.5">
+                          <span className="text-muted-foreground w-5 shrink-0 pt-0.5 text-[11px] tabular-nums">
+                            {String(i + 1).padStart(2, '0')}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium leading-snug">
+                              {t(`projectPage.${item.titleKey}`)}
+                            </p>
+                            <p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
+                              {t(`projectPage.${item.detailKey}`, item.detailParams)}
+                            </p>
+                          </div>
+                        </div>
+                        {metric ? (
+                          <span className="text-foreground/80 shrink-0 pt-0.5 text-xs font-medium tabular-nums">
+                            {metric}
+                          </span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
-            ) : (
-              <p className="mt-1 text-sm font-semibold">
-                {t(`projectPage.${verdict.key}`, verdict.params)}
-              </p>
-            )}
+            ) : null}
+
             {positives.length > 0 ? (
-              <ul className="mt-2.5 flex flex-col gap-1">
+              <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
                 {positives.map((p) => (
-                  <li key={p.id} className="flex items-start gap-2 text-xs">
-                    <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-emerald-700 dark:text-emerald-400" />
-                    <span>{t(`projectPage.${p.titleKey}`)}</span>
+                  <li
+                    key={p.id}
+                    className="text-muted-foreground flex items-center gap-1.5 text-[11px]"
+                  >
+                    <CheckIcon className="size-3 shrink-0 text-emerald-700/80 dark:text-emerald-400/80" />
+                    {t(`projectPage.${p.titleKey}`)}
                   </li>
                 ))}
               </ul>
             ) : null}
-            <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
-              <span className="text-foreground/85 font-medium">
-                {t('projectPage.recommendLabel')}
-              </span>{' '}
-              {t(`projectPage.${recommend}`)}
-            </p>
-          </div>
-
-          {attention.length > 0 ? (
-            <ol className="divide-border/35 divide-y">
-              {attention.map((item, i) => {
-                const metric = formatMetric(item);
-                return (
-                  <li key={item.id} className="flex items-start justify-between gap-3 py-2.5">
-                    <div className="flex min-w-0 gap-2">
-                      <span className="text-muted-foreground w-5 shrink-0 text-xs tabular-nums">
-                        {String(i + 1).padStart(2, '0')}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">{t(`projectPage.${item.titleKey}`)}</p>
-                        <p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
-                          {t(`projectPage.${item.detailKey}`, item.detailParams)}
-                        </p>
-                      </div>
-                    </div>
-                    {metric ? (
-                      <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-                        {metric}
-                      </span>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ol>
-          ) : null}
+          </section>
 
           {narrative ? (
-            <div className="min-w-0">
-              <div className="text-muted-foreground mb-1 flex flex-wrap items-baseline gap-x-2 text-xs">
+            <div className="border-border/50 min-w-0 border-t pt-3">
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground flex w-full items-center gap-2 text-left text-xs"
+                aria-expanded={narrativeOpen}
+                onClick={() => setNarrativeOpen((v) => !v)}
+              >
+                <ChevronDownIcon
+                  className={cn(
+                    'size-3.5 shrink-0 transition-transform',
+                    narrativeOpen ? 'rotate-0' : '-rotate-90',
+                  )}
+                />
                 <span className="font-medium">{t('projectPage.narrative')}</span>
                 {narrative.generatedAt ? (
-                  <span>
+                  <span className="ml-auto tabular-nums">
                     {t('projectPage.narrativeAt', {
                       date: formatGeneratedAt(narrative.generatedAt),
                     })}
                   </span>
                 ) : null}
-              </div>
-              <p className="text-sm leading-relaxed">{narrative.text}</p>
+              </button>
+              {narrativeOpen ? (
+                <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
+                  {narrative.text}
+                </p>
+              ) : null}
             </div>
           ) : null}
 
@@ -384,7 +443,8 @@ export const SceneCardSummaryPanel: FC<{
             </>
           ) : null}
         </div>
-      </details>
+        ) : null}
+      </div>
     </div>
   );
 };

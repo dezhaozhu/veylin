@@ -70,7 +70,7 @@ export const ProjectComposer: FC<{ projectId: string; projectName: string }> = (
   }, [messageCount, closeWorkspace]);
 
   return (
-    <section className="mb-6" onFocusCapture={() => void prepare()}>
+    <section className="mt-4 shrink-0" onFocusCapture={() => void prepare()}>
       <p className="text-muted-foreground mb-1.5 text-xs">
         在「{projectName}」里问点什么 —— 新对话会自动归到这个项目
       </p>

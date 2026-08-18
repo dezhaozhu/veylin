@@ -14,6 +14,7 @@ import {
   extractRulesHitRate,
   groupDisplayBySection,
   groupSectionsByTab,
+  pickGlanceChanges,
   pickKeyMetrics,
   recommendationKey,
   remainingDisplayRows,
@@ -224,5 +225,25 @@ describe('trust / attention / detail tabs', () => {
       positives.map((p) => p.id),
       ['scale', 'capacity'],
     );
+  });
+});
+
+describe('pickGlanceChanges', () => {
+  it('returns nothing on first visit', () => {
+    const heroes = [row('problem.orders', '问题结构', '订单', '4,601', 4601)];
+    assert.deepEqual(pickGlanceChanges(heroes, { 'problem.orders': 12 }, false), []);
+  });
+
+  it('lists changed heroes before unchanged', () => {
+    const heroes = [
+      row('problem.orders', '问题结构', '订单', '4,601', 4601),
+      row('problem.l2', '问题结构', '二级工序', '30,923', 30923),
+      row('rules.active', '规则健康', '有效规则', '96 条', 96),
+    ];
+    assert.deepEqual(pickGlanceChanges(heroes, { 'rules.active': -2 }, true), [
+      { label: '有效规则', delta: -2 },
+      { label: '订单', delta: 0 },
+      { label: '二级工序', delta: 0 },
+    ]);
   });
 });
