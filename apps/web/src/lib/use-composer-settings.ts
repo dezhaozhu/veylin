@@ -47,6 +47,8 @@ import {
 import {
   fetchThreadProject,
   readCachedThreadProject,
+  subscribeThreadProject,
+  threadProjectStamp,
   writeCachedThreadProject,
 } from '@/lib/project-sync';
 
@@ -500,13 +502,22 @@ export function useProjectScope() {
     const cached = readCachedThreadProject(threadId);
     if (cached !== undefined) setCurrentProject(cached);
     let cancelled = false;
+    // 别人写了就跟着更新 —— 项目页是"先切线程、再钉",钉定落地时这条 effect
+    // 早就跑完了,没有这条订阅,界面会一直停在"没有项目"(用户实测)。
+    const off = subscribeThreadProject(() => {
+      const now = readCachedThreadProject(threadId);
+      if (now !== undefined) setCurrentProject(now);
+    });
+    // 查询**先发后到**会把已经钉好的值盖回 null。取一次戳记,回来对一下。
+    const at = threadProjectStamp(threadId);
     void fetchThreadProject(threadId).then((project) => {
-      if (cancelled) return;
+      if (cancelled || threadProjectStamp(threadId) !== at) return;
       writeCachedThreadProject(threadId, project);
       setCurrentProject(project);
     });
     return () => {
       cancelled = true;
+      off();
     };
   }, [threadId]);
 
@@ -515,9 +526,14 @@ export function useProjectScope() {
   // 于是这份往往在钉定之前就读完并缓存了 null —— 输入框上的 chip 就一直显示
   // 「项目」(未归属),而这条对话明明已经归在项目里(实测)。
   // 以有监听的那份为准,自己这份只当它还没加载时的兜底。
+  //
+  // **但共享那份对刚建出来的线程还没有条目**:项目页点一张上下文卡、或在输入框里
+  // 打第一个字,线程是这一刻才建的,`shared[threadId]` 是 undefined —— 从前写成
+  // `?? null`,等于把本地这份**已经知道**的钉定丢掉,chip 显示成"没有项目",
+  // 人会以为自己掉进了个人对话(用户实测,e2e 对账过:服务端其实钉对了)。
+  // 共享那份有条目就听它(改钉、取消钉定以它为准),没有才用本地这份兜底。
   const shared = useThreadProjectsOrNull();
-  const pin =
-    shared && threadId ? (shared[threadId] ?? null) : currentProject;
+  const pin = (shared && threadId ? shared[threadId] : undefined) ?? currentProject;
 
   return { threadId, groupedServers, currentProject: pin };
 }

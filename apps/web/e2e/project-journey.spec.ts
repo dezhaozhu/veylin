@@ -12,7 +12,7 @@
  *   npx playwright test -c playwright.isolated.config.ts
  */
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,6 +23,7 @@ const XLSX_NAME = '开发组件.xlsx';
 const DOCX_NAME = '技术交流.docx';
 const PPTX_NAME = '汇报.pptx';
 const PDF_NAME = '标书.pdf';
+const SNAP_NAME = '工序 快照 2026-08-18 06-02.xlsx';
 
 /** 真文件,不是占位符 —— 抽取器读不了假 zip。 */
 async function makeFixtureFolder(): Promise<string> {
@@ -986,4 +987,108 @@ test('点空表也能切过去,切完还能切回来', async ({ page, request })
       .poll(activeTab, { timeout: 20_000, intervals: [500] })
       .toContain(target.replace(/\s+/g, ''));
   }
+});
+
+/**
+ * **快照卡点开就该看得见,而且人不许被扔到别的项目里。**
+ *
+ * 用户实测(上重):点开上下文里那张「工序 快照 …xlsx」,右侧显示「这个文件没法
+ * 在这里打开」,而且人落到了「caliper-测试」那条对话里。两处各有一个洞:
+ *  · 快照名是**光名字**,可它躺在「快照/」下 —— 预览按项目根目录找,自然找不到;
+ *  · 项目页要给右侧面板让位而关掉,底下露出来的是上次那条对话,属于别的项目。
+ *    面板显示 A 的文件、脚下站在 B 的对话里,下一句话就发错项目。
+ */
+test('点开快照:内容打得开,人还留在这个项目里', async ({ page, request }) => {
+  const folder = mkdtempSync(join(tmpdir(), 'veylin-e2e-snap-'));
+  mkdirSync(join(folder, '快照'));
+  const XLSX = await import('xlsx');
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.json_to_sheet([{ 订单号: 'G22342', 工序: '粗车', 资源: '1#6.3m立车' }]),
+    '工序',
+  );
+  writeFileSync(
+    join(folder, '快照', SNAP_NAME),
+    XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }),
+  );
+
+  const mk = async (name: string) =>
+    (await (await request.post(`${API}/api/projects`, { data: { name, sources: [] } })).json())
+      .project as { id: string; name: string };
+  const stamp = Date.now();
+  const home = await mk(`快照之家-${stamp}`);
+  const elsewhere = await mk(`别处-${stamp}`);
+  await request.patch(`${API}/api/projects/${home.id}`, { data: { folder } });
+
+  await page.goto('/');
+  await openSidebar(page);
+
+  // —— 先让"当前对话"落在**另一个项目**里(点输入框就会切一条钉着它的新线程)。
+  await page.getByText(elsewhere.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: elsewhere.name })).toBeVisible({ timeout: 15_000 });
+  await page.locator('textarea:visible').first().click();
+  await page.waitForTimeout(2500);
+  await waitPinned(request, await latestThreadId(request), elsewhere.id);
+
+  // —— 再进有快照的那个项目,点那张卡。
+  await page.getByText(home.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: home.name })).toBeVisible({ timeout: 15_000 });
+  const card = page.getByRole('button', { name: new RegExp(SNAP_NAME) }).first();
+  await expect(card, 'context 里没有这张快照卡').toBeVisible({ timeout: 20_000 });
+  await card.click();
+
+  // 1) 打得开 —— 内容真出来,而不是那句"没法在这里打开"。
+  //    表格预览是渲染进沙箱 iframe 的,得进到 frame 里找。
+  await expect(page.getByText('这个文件没法在这里打开')).toHaveCount(0);
+  await expect(
+    page.frameLocator('iframe').first().getByText('G22342').first(),
+    '快照没读出来',
+  ).toBeVisible({ timeout: 30_000 });
+
+  const map = await (await request.get(`${API}/api/projects/threads`)).json();
+  const now = await latestThreadId(request);
+  console.log('  [对账] 当前最新线程', now, '钉在', map[now] ?? '【没钉】', '应为', home.id);
+
+  // 2) 人还在这个项目里 —— 输入框上那个 chip 的可访问名恰好等于项目名
+  await expect(
+    page.getByRole('button', { name: home.name, exact: true }).last(),
+    '被扔进别的项目了',
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('button', { name: elsewhere.name, exact: true })).toHaveCount(0);
+});
+
+/**
+ * **在项目页里说话,这条对话就该归这个项目。**
+ *
+ * 用户实测(上重/锅炉):在项目页输入框里发消息,对话却成了个人对话。
+ * 根因在客户端:`switchToNewThread()` 之后 `item('main')` 读的是 React 那份旧快照,
+ * 可能还指着**上一条**线程 —— 钉子钉在了上一条上,你正在说的这条反而没归属。
+ * (侧栏的「在项目里新开对话」早就绕开了这个坑,项目页这条没有。)
+ */
+test('在项目页里说话,这条对话归这个项目', async ({ page, request }) => {
+  const name = `项目页说话-${Date.now()}`;
+  const project = (
+    await (await request.post(`${API}/api/projects`, { data: { name, sources: [] } })).json()
+  ).project as { id: string; name: string };
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(project.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: project.name })).toBeVisible({ timeout: 15_000 });
+
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await composer.fill('说一句知道了就行。');
+  await composer.press('Enter');
+  await waitForAssistantText(page, 1);
+
+  // 消息落在哪条线程,哪条线程就得钉着这个项目。
+  await waitPinned(request, await latestThreadId(request), project.id);
+
+  // 而且界面上也要认 —— chip 显示的是项目名,不是「项目」(未归属)。
+  await expect(
+    page.getByRole('button', { name: project.name, exact: true }).last(),
+    'chip 上没显示项目 —— 用户看到的就是"变成个人对话"',
+  ).toBeVisible({ timeout: 20_000 });
 });

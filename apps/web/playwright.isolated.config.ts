@@ -60,7 +60,11 @@ export default defineConfig({
       command: 'npx tsx apps/server/src/server.ts',
       cwd: repoRoot,
       url: `${API}/health`,
-      reuseExistingServer: true,
+      // **不复用。** 这条命令是 `tsx src/server.ts`,没有 watch —— 复用等于把几
+      // 小时前起的那个进程当成"当前代码"在测。实测踩过:服务端的修复已经在文件里、
+      // 单测也绿,e2e 却一直红,查了半天才发现 :8799 上那个进程比修复还老。
+      // 端口被占时宁可直接报错:一个说得出口的失败,好过一次假的验证。
+      reuseExistingServer: false,
       timeout: 180_000,
       stdout: 'ignore',
       stderr: 'pipe',

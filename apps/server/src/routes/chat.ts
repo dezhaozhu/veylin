@@ -934,7 +934,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
           ]);
           projectFilesBlock = formatProjectFilesBlock(folder, [
             ...archived.originals.map((f) => ({ name: f.name, bytes: f.bytes })),
-            ...archived.snapshots.map((f) => ({ name: `快照/${f.name}`, bytes: f.bytes })),
+            ...archived.snapshots.map((f) => ({ name: f.name, bytes: f.bytes })),
             ...inbox.pending.map((f) => ({ name: f.name, bytes: f.bytes })),
           ], geometry.map((f) => ({ name: f.name, bytes: f.bytes })));
         }

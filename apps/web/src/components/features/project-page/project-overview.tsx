@@ -22,6 +22,7 @@ import {
 } from '@/lib/project-folder';
 import { normalizeTypedPath } from '@/lib/project-folder-pick';
 import { describeFreshness } from '@/lib/freshness';
+import { useEnterProjectThread } from './use-project-thread';
 import { startWindowDrag } from '@/lib/window-drag';
 import { SceneCardCell } from './scene-card-cell';
 import { sceneCardColumns, type McpAppToolsByServer } from './scene-card-grid';
@@ -488,6 +489,7 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
   const { openDocument } = usePanelTabs();
   const { setOpen: setRightOpen } = useRightSidebar();
   const { closeWorkspace } = useSettingsPanel();
+  const enterProjectThread = useEnterProjectThread();
   const [data, setData] = useState<ProjectContext | null>(null);
   const [q, setQ] = useState('');
   const [panelOpen, setPanelOpen] = useState(false);
@@ -531,11 +533,25 @@ const ProjectContextSection: FC<{ project: ProjectInfo }> = ({ project }) => {
   // 卡片和上下文面板里的「在右侧打开」是同一件事,别写两份。
   const openInRightPanel = useCallback(
     (name: string) => {
-      openDocument({ projectId: project.id, name });
       setRightOpen(true);
-      closeWorkspace();
+      // **顺序是有讲究的:先落线程,再开文档。**
+      //
+      // 1) 先落到本项目的对话 —— 项目页要给右侧面板让位而关掉,底下露出来的是你
+      //    上次看的那条,可能属于别的项目(实测:在「上重」点开快照,人落到了
+      //    「caliper-测试」里,右边却显示上重的文件)。面板和对话各说各的,下一句
+      //    就发错项目了。
+      // 2) **面板标签是按线程存的**,切线程会把标签冲掉 —— 先开文档再切,标签当场
+      //    消失,右边只剩"选面板类型"那张空卡(e2e 里当场复现)。
+      void (async () => {
+        try {
+          await enterProjectThread(project.id);
+        } finally {
+          openDocument({ projectId: project.id, name });
+          closeWorkspace();
+        }
+      })();
     },
-    [openDocument, project.id, setRightOpen, closeWorkspace],
+    [openDocument, project.id, setRightOpen, closeWorkspace, enterProjectThread],
   );
 
   return (
