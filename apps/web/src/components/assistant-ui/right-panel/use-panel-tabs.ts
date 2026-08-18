@@ -76,6 +76,13 @@ export interface PanelTabsApi {
    * 开出三个一模一样的 tab,是把"我已经打开它了"这件事讲成了三份。
    */
   openDocument: (doc: { projectId: string; name: string }) => void;
+  /** 把对话里那张图摊到右侧 —— 同一个 widget,面板只提供尺寸。 */
+  openWidget: (w: {
+    threadId?: string | undefined;
+    resourceUri: string;
+    title?: string | undefined;
+    part: unknown;
+  }) => void;
   /** The pending schedule-grid drill (null when none), read by TableGrid. */
   scheduleFilter: PendingScheduleFilter | null;
   /** Drop the pending drill once TableGrid has consumed it. */
@@ -329,10 +336,43 @@ export function usePanelTabsState(): PanelTabsApi {
     [commit],
   );
 
+  /**
+   * 图表面板:**一张图一格**,同一张图再点就是激活已有的那格。
+   *
+   * 排产甘特这类图在对话流里天生挤(消息栏就那么宽),所以给它一个"在右侧打开",
+   * 和文件预览那条路一样。内容仍是同一个 widget —— 面板只提供尺寸。
+   */
+  const openWidget = useCallback(
+    (w: {
+      threadId?: string | undefined;
+      resourceUri: string;
+      title?: string | undefined;
+      part: unknown;
+    }) => {
+      const current = stateRef.current;
+      const existing = current.tabs.find(
+        (t) => t.kind === 'widget' && (t.state as { resourceUri?: string })?.resourceUri === w.resourceUri,
+      );
+      const state = { threadId: w.threadId, resourceUri: w.resourceUri, part: w.part };
+      if (existing) {
+        // 同一张图重开:换成最新那次的数据,不再堆一格。
+        const tabs = current.tabs.map((t) => (t.id === existing.id ? { ...t, state } : t));
+        commit({ tabs, activeId: existing.id });
+        return;
+      }
+      const tab = createTab('widget');
+      tab.state = state;
+      if (w.title) tab.title = w.title;
+      commit({ tabs: [...current.tabs, tab], activeId: tab.id });
+    },
+    [commit],
+  );
+
   const clearScheduleFilter = useCallback(() => setScheduleFilter(null), []);
 
   return {
     openDocument,
+    openWidget,
     tabs: state.tabs,
     activeId: state.activeId,
     activeTab,

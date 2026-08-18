@@ -13,7 +13,7 @@
  *
  * label/description/defaultTitle hold i18n keys, resolved with t() at render.
  */
-import { BookOpen, Box, FileText, Globe, Table, Workflow } from 'lucide-react';
+import { BarChart3, BookOpen, Box, FileText, Globe, Table, Workflow } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { TableGrid } from '@/components/assistant-ui/table-grid';
 import { WebBrowserPanel } from '@/components/assistant-ui/right-panel/panels/web-browser-panel';
@@ -21,6 +21,7 @@ import { RagPanel } from '@/components/assistant-ui/right-panel/panels/rag-panel
 import { WorkflowPanel } from '@/components/assistant-ui/right-panel/panels/workflow-panel';
 import { Viewer3dPanel } from '@/components/assistant-ui/right-panel/panels/viewer3d-panel';
 import { DocPanel } from '@/components/assistant-ui/right-panel/panels/doc-panel';
+import { WidgetPanel } from '@/components/assistant-ui/right-panel/panels/widget-panel';
 import type { PanelContentProps, PanelKind, PanelKindDef } from './panel-types';
 
 // Fork seam: our AG-Grid TableGrid manages its own sheet tabs (workspace-wide,
@@ -92,6 +93,18 @@ export const PANEL_KINDS: PanelKindDef[] = [
     // 打开时还不知道是哪份文件 —— 由「在右侧打开」把 projectId/name 填进来。
     createState: () => ({ projectId: undefined, name: undefined }),
     Component: DocPanel,
+  },
+  {
+    // 图表面板不进「+」菜单:它没有"空着新建"的用法 —— 内容只能来自对话里
+    // 已经生成的那张图(点图上的「在右侧打开」)。放进菜单等于给一个点开
+    // 永远是空的格子。
+    kind: 'widget',
+    label: 'panels.widget.label',
+    description: 'panels.widget.desc',
+    icon: <BarChart3 className="size-4" />,
+    defaultTitle: 'panels.widget.label',
+    createState: () => ({ threadId: undefined, resourceUri: undefined, part: undefined }),
+    Component: WidgetPanel,
   },
   {
     kind: '3d',
