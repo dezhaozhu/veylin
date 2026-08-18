@@ -42,8 +42,8 @@ const PdfCover: FC<{ projectId: string; name: string }> = ({ projectId, name }) 
   }, [seen, src, projectId, name]);
 
   return (
-    <div ref={setEl} className="bg-muted/40 mb-1.5 h-20 overflow-hidden rounded">
-      {src ? <img src={src} alt="" className="h-20 w-full object-cover object-top" /> : null}
+    <div ref={setEl} className="bg-muted/40 mb-1.5 h-14 shrink-0 overflow-hidden rounded">
+      {src ? <img src={src} alt="" className="h-14 w-full object-cover object-top" /> : null}
     </div>
   );
 };
@@ -62,7 +62,10 @@ export const ContextCards: FC<{
         title={card.name}
         onClick={() => (card.kind === 'folder' ? onOpenFolder() : onOpenFile(card.name))}
         className={cn(
-          'border-border/70 hover:border-border hover:bg-muted/40 group flex h-[92px] flex-col',
+          // **高度不能写死**:带封面的卡比纯文字卡高一截,写死 92px 会把文字压在
+          // 封面上叠成一团(实测截图里 PDF 那张就是这样)。min-h 保证空卡不塌,
+          // 有封面的自己长高。
+          'border-border/70 hover:border-border hover:bg-muted/40 group flex min-h-[92px] flex-col',
           'rounded-lg border p-2 text-left transition-colors',
         )}
       >
