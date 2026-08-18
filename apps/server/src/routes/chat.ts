@@ -909,17 +909,18 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         const { getProject } = await import('../project-store.js');
         const folder = (await getProject(ctx.tenantId, projectPin))?.folder;
         if (folder) {
-          const { listProjectFiles } = await import('../project-context.js');
+          const { listProjectFiles, scanProjectGeometry } = await import('../project-context.js');
           const { scanProjectInbox } = await import('../project-inbox.js');
-          const [archived, inbox] = await Promise.all([
+          const [archived, inbox, geometry] = await Promise.all([
             listProjectFiles(folder),
             scanProjectInbox(folder),
+            scanProjectGeometry(folder),
           ]);
           projectFilesBlock = formatProjectFilesBlock(folder, [
             ...archived.originals.map((f) => ({ name: f.name, bytes: f.bytes })),
             ...archived.snapshots.map((f) => ({ name: `快照/${f.name}`, bytes: f.bytes })),
             ...inbox.pending.map((f) => ({ name: f.name, bytes: f.bytes })),
-          ]);
+          ], geometry.map((f) => ({ name: f.name, bytes: f.bytes })));
         }
       } catch {
         /* 读不到文件夹就不放这一段 —— 它是陈述,不该让一轮对话失败 */

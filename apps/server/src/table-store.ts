@@ -1333,26 +1333,43 @@ export async function resetTableStore(): Promise<void> {
  * 才走 `project_file_read`。这就是「文件夹即上下文」的正确形状:知道这里有什么,
  * 不等于把它们塞进去。
  */
+function formatFileSize(bytes: number): string {
+  return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024
+    ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export function formatProjectFilesBlock(
   folder: string | null | undefined,
   files: Array<{ name: string; bytes: number }>,
+  // 几何/CAD 文件单列:它们不走 veylin 的 project_file_read(读不了二进制),而是交给
+  // caliper 的 import_model 按绝对路径分析。分开说,agent 才不会去读然后碰壁。
+  geometry: Array<{ name: string; bytes: number }> = [],
 ): string {
   if (!folder) return '';
-  if (files.length === 0) {
+  if (files.length === 0 && geometry.length === 0) {
     return `# 项目文件夹\n\n\`${folder}\` —— 目前没有文件。`;
   }
   const lines = [
     '# 项目文件夹',
     '',
-    `\`${folder}\` 里有这些文件。**这里只是清单,内容没有被读进来** —— 要看内容用 \`project_file_read\`(表格用 \`table_query\`)。`,
+    `\`${folder}\` 里有这些文件。**这里只是清单,内容没有被读进来。**`,
     '',
   ];
-  for (const f of files.slice(0, 50)) {
-    const size = f.bytes < 1024 ? `${f.bytes} B` : f.bytes < 1024 * 1024
-      ? `${Math.round(f.bytes / 1024)} KB` : `${(f.bytes / 1024 / 1024).toFixed(1)} MB`;
-    lines.push(`- \`${f.name}\` · ${size}`);
+  if (files.length > 0) {
+    lines.push('要看内容用 `project_file_read`(表格用 `table_query`):', '');
+    for (const f of files.slice(0, 50)) lines.push(`- \`${f.name}\` · ${formatFileSize(f.bytes)}`);
+    if (files.length > 50) lines.push(`- …另有 ${files.length - 50} 个文件`);
   }
-  if (files.length > 50) lines.push(`- …另有 ${files.length - 50} 个文件`);
+  if (geometry.length > 0) {
+    if (files.length > 0) lines.push('');
+    lines.push(
+      '**几何/CAD 文件** —— 要分析这些,调 caliper 的 `import_model`,path 传【上面文件夹路径 + 文件名】' +
+      '拼成的绝对路径;不要用 `project_file_read`(它读不了二进制几何):',
+      '',
+    );
+    for (const f of geometry.slice(0, 50)) lines.push(`- \`${f.name}\` · ${formatFileSize(f.bytes)}`);
+    if (geometry.length > 50) lines.push(`- …另有 ${geometry.length - 50} 个文件`);
+  }
   return lines.join('\n');
 }
 
