@@ -42,11 +42,11 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/health': {
-        target: process.env.VITE_API_URL ?? 'http://127.0.0.1:8787',
+        target: process.env.E2E_API_URL ?? process.env.VITE_API_URL ?? 'http://127.0.0.1:8787',
         changeOrigin: true,
       },
       '/api': {
-        target: process.env.VITE_API_URL ?? 'http://127.0.0.1:8787',
+        target: process.env.E2E_API_URL ?? process.env.VITE_API_URL ?? 'http://127.0.0.1:8787',
         changeOrigin: true,
       },
     },
