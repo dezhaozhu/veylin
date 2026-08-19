@@ -225,3 +225,44 @@ describe('在右侧打开一份文档', () => {
     assert.equal(findDocTab(tabs, { projectId: 'p', name: '表格' }), undefined);
   });
 });
+
+/**
+ * 图表面板不把整张图的数据写进 localStorage(2026-08-18)。
+ *
+ * 一张上重的甘特图是 **356 KB**;localStorage 一共约 5 MB,而且这里是**所有线程
+ * 共用一个 key**。十来张图就撑满,写失败又被 catch 吞掉 —— 表现是所有面板页签
+ * 一起悄悄失去持久化,没有任何报错。
+ *
+ * 图的数据本来就是"这一轮对话的产物":刷新之后回对话里重开即可,面板自己有
+ * 空状态说这句话。所以页签只存**指向哪张图**,不存图。
+ */
+describe('图表页签不存图本身', () => {
+  beforeEach(installMemoryStorage);
+
+  it('落盘时丢掉 part,只留 resourceUri/threadId', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } =
+      await import('./panel-tabs-storage.ts');
+    const big = { output: { lanes: Array.from({ length: 500 }, (_, i) => ({ id: i })) } };
+    saveThreadPanelTabs('t1', {
+      activeId: 'w1',
+      tabs: [{
+        id: 'w1', kind: 'widget', title: '甘特',
+        state: { threadId: 't1', resourceUri: 'ui://widget/gantt.html', part: big },
+      }],
+    } as never);
+    const st = ((loadThreadPanelTabs('t1').tabs[0] ?? {}) as { state?: Record<string, unknown> }).state ?? {};
+    assert.equal(st.part, undefined, '整张图被写进了 localStorage');
+    assert.equal(st.resourceUri, 'ui://widget/gantt.html', '指向哪张图要留着');
+  });
+
+  it('别的面板不受影响', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } =
+      await import('./panel-tabs-storage.ts');
+    saveThreadPanelTabs('t2', {
+      activeId: 'd1',
+      tabs: [{ id: 'd1', kind: 'doc', title: 'x', state: { projectId: 'p', name: 'a.xlsx' } }],
+    } as never);
+    const st = ((loadThreadPanelTabs('t2').tabs[0] ?? {}) as { state?: Record<string, unknown> }).state ?? {};
+    assert.equal(st.name, 'a.xlsx');
+  });
+});
