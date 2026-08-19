@@ -5,6 +5,7 @@ import { consumeSheetSelection } from '@/lib/pending-sheet-selection';
 import { columnToReveal } from '@/lib/new-columns';
 import { isStaleSheetError } from '@/lib/stale-sheet-recovery';
 import { panelScopeKey } from '@/lib/panel-scope-key';
+import { findSheetIdByShortName, isSheet } from '@/lib/sheet-short-name';
 import { useProjectsOrNull } from '@/lib/projects-sync';
 import { useThreadProjectsOrNull } from '@/lib/thread-projects-sync';
 import { createPortal } from 'react-dom';
@@ -78,6 +79,8 @@ type TableEvent =
 // The schedule sheet's 二级 rows expand to their 三级 (设备级) ops, fetched on
 // demand from /api/schedule-detail (→ Compass get_workorder_rows). Read-only.
 const EMPTY_RANGE: SelectionScope = { rowKeys: [], columns: [] };
+// **短名**,不是面板拿到的 id —— 项目里真 id 是 `p_<项目>~schedule`。一律用
+// `isSheet(activeSheetId, …)` 比较(见 sheet-short-name.ts:二三级展开就是栽在这)。
 const SCHEDULE_SHEET_ID = 'schedule';
 const ORDER_SHEET_ID = 'orders';
 
@@ -1325,14 +1328,16 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       // fallback then applies the filter. If the schedule sheet isn't
       // bootstrapped yet, the bootstrap load makes it active and the same
       // fallback fires (no throw when the id isn't present yet).
-      if (activeSheetId === SCHEDULE_SHEET_ID) {
+      if (isSheet(activeSheetId, SCHEDULE_SHEET_ID)) {
         applyPendingScheduleFilter();
       } else {
-        setActiveSheetId(SCHEDULE_SHEET_ID);
+        // 真 id,不是短名:项目里这张表叫 `p_<项目>~schedule`,切到短名等于切到一张
+        // 不存在的表(见 sheet-short-name.ts)。
+        setActiveSheetId(findSheetIdByShortName(sheets, SCHEDULE_SHEET_ID) ?? SCHEDULE_SHEET_ID);
       }
     }
     clearScheduleFilter();
-  }, [scheduleFilter, activeSheetId, applyPendingScheduleFilter, clearScheduleFilter]);
+  }, [scheduleFilter, activeSheetId, sheets, applyPendingScheduleFilter, clearScheduleFilter]);
 
   // Fallback for a drill that landed before rows finished loading (mirrors the
   // pending-chart rows effect): apply once rows are on screen.
@@ -1581,7 +1586,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       commitRows(merged, new Set([rowKey(updatedRow)]));
 
       // B2: on the schedule sheet, governed edits also go into the Compass draft
-      if (activeSheetId === SCHEDULE_SHEET_ID) {
+      if (isSheet(activeSheetId, SCHEDULE_SHEET_ID)) {
         void proposeGovernedEdit(
           updatedRow as unknown as Record<string, unknown>,
           columnKey,
@@ -1739,7 +1744,8 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
   // sheet (per-订单 → full 三级 route: order rows carry order_id but no stage_code,
   // so the same detail fetch returns the whole route unfiltered).
   const proMasterDetail =
-    (activeSheetId === SCHEDULE_SHEET_ID || activeSheetId === ORDER_SHEET_ID) && proEnterprise;
+    (isSheet(activeSheetId, SCHEDULE_SHEET_ID) || isSheet(activeSheetId, ORDER_SHEET_ID))
+    && proEnterprise;
 
   // Generic Enterprise affordances for EVERY sheet (no sheet-specific logic —
   // Veylin stays a generic host): drag-to-group row grouping, columns/filters
@@ -1825,7 +1831,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     // Data columns
     for (const def of columnDefs) {
       const isEditable =
-        activeSheetId === SCHEDULE_SHEET_ID ? GOVERNED_EDIT_FIELDS.has(def.key) : true;
+        isSheet(activeSheetId, SCHEDULE_SHEET_ID) ? GOVERNED_EDIT_FIELDS.has(def.key) : true;
       const baseColDef: ColDef<TableRow> = {
         field: def.key,
         colId: def.key,
@@ -1836,7 +1842,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         pinned: def.frozen ? ('left' as const) : undefined,
         editable: isEditable,
         // Hover cue on the schedule sheet's governed-edit cells (改资源/日期→propose).
-        cellClass: activeSheetId === SCHEDULE_SHEET_ID && isEditable ? 'veylin-editable' : undefined,
+        cellClass: isSheet(activeSheetId, SCHEDULE_SHEET_ID) && isEditable ? 'veylin-editable' : undefined,
         // Full value on hover — helps any truncated cell (IDs, long names).
         tooltipValueGetter: (p) => (p.value == null || p.value === '' ? null : String(p.value)),
         cellDataType: false,
@@ -1933,7 +1939,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     // Schedule-sheet only: a hidden "排产月" column (derived YYYY-MM from `start`)
     // so pivot mode can build a time-axis load matrix (资源/分厂 × 月). Hidden by
     // default — no clutter in the normal view; drag it in from the columns panel.
-    if (activeSheetId === SCHEDULE_SHEET_ID && columnDefs.some((d) => d.key === 'start')) {
+    if (isSheet(activeSheetId, SCHEDULE_SHEET_ID) && columnDefs.some((d) => d.key === 'start')) {
       defs.push({
         colId: '__month__',
         headerName: '排产月',
@@ -2553,7 +2559,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       </div>
 
       {/* B2 draft bar — schedule sheet only, when Compass draft has pending ops */}
-      {activeSheetId === SCHEDULE_SHEET_ID && draftOps > 0 ? (
+      {isSheet(activeSheetId, SCHEDULE_SHEET_ID) && draftOps > 0 ? (
         <div className="border-border bg-muted/50 flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
           <span className="text-muted-foreground">
             {t('table.draftBar', { count: draftOps })}
