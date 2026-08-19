@@ -13,6 +13,7 @@ import {
   getSelection,
   clearSelections,
   formatSelectionToken,
+  listSelectionIds,
   MAX_SELECTIONS_PER_THREAD,
 } from './table-selection.js';
 
@@ -71,9 +72,26 @@ describe('table selection reference', () => {
     assert.ok(getSelection('t1', ` ${sel.id} `), '前后空白也不该挡住');
   });
 
+  it('表名一起抄过来也认 —— token 里 id 前面就贴着表名', () => {
+    // 真实翻车(2026-08-18 上重):token 是 @表格[p_8657…~schedule · 4 行 · 列: product_class
+    // #2d71be5a],agent 传 selection_id="p_8657…~schedule#2d71be5a" → 查不到 → 用户看到
+    // "选区已过期,请重新圈选"。选区登记成功(日志 200),会话也没错 —— 是我们的 id 解析
+    // 只挡了"开头的 #"这一半。id 在最后一个 # 之后,认它。
+    const sel = registerSelection({ threadId: 't1', sheet: 'p_x~schedule', rowKeys: ['r1'], columns: [] });
+    assert.ok(getSelection('t1', `p_x~schedule#${sel.id}`), '表名限定的 id 应当取得到');
+    assert.ok(getSelection('t1', `@表格[p_x~schedule · 1 行 #${sel.id}]`), '整条 token 抄过来也应认');
+  });
+
   it('剥了 # 也不能把别的 id 认成自己', () => {
     registerSelection({ threadId: 't1', sheet: 's', rowKeys: ['r1'], columns: [] });
     assert.equal(getSelection('t1', '#deadbeef'), undefined);
+  });
+
+  it('本会话现有哪些选区 —— 查不到时要能说人话,而不是断言"已过期"', () => {
+    const a = registerSelection({ threadId: 't1', sheet: 's', rowKeys: ['r1'], columns: [] });
+    const b = registerSelection({ threadId: 't1', sheet: 's', rowKeys: ['r2'], columns: [] });
+    assert.deepEqual(listSelectionIds('t1'), [a.id, b.id]);
+    assert.deepEqual(listSelectionIds('t2'), []);
   });
 
   it('an empty selection is refused — there is nothing to reference', () => {

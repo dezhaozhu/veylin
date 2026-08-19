@@ -62,7 +62,39 @@ describe('table_get + selection', () => {
 
     const out = await get(buildTableTools(), { sheet: sheet.id, selection_id: sel.id }, ctxFor('th'));
 
-    assert.match(out.warning, /不在本会话里/);
+    assert.match(out.warning, /没认出选区 id.*属于别的会话/s, '话要说得准:是这条会话里没有它');
     assert.equal(out.rows, undefined);
+  });
+
+  it('表名限定的 selection_id 照样取得到 —— agent 常常把 id 前面的表名一起抄过来', async () => {
+    // 2026-08-18 上重实测:传的是 "p_…~schedule#2d71be5a",于是用户被告知"选区已过期,
+    // 请重新圈选" —— 选区好好的。
+    const sheet = createTableSheet(`sel4-${Date.now()}`, threadScope('th'))!;
+    importTableSheet(sheet.id, ['order_id'], [{ order_id: 'A' }, { order_id: 'B' }]);
+    const rows = listTableRows(sheet.id);
+    const sel = registerSelection({
+      threadId: 'th', sheet: sheet.id, rowKeys: [tableRowKey(rows[0]!)], columns: [],
+    });
+
+    const out = await get(buildTableTools(),
+      { sheet: sheet.id, selection_id: `${sheet.id}#${sel.id}` }, ctxFor('th'));
+
+    assert.equal(out.warning, undefined, '不该再回"已过期"');
+    assert.equal(out.rows.length, 1);
+  });
+
+  it('真认不出时,说清楚本会话有哪些选区 —— 不把"没认出"说成"已过期"', async () => {
+    const sheet = createTableSheet(`sel5-${Date.now()}`, threadScope('th'))!;
+    importTableSheet(sheet.id, ['order_id'], [{ order_id: 'A' }]);
+    const sel = registerSelection({
+      threadId: 'th', sheet: sheet.id,
+      rowKeys: [tableRowKey(listTableRows(sheet.id)[0]!)], columns: [],
+    });
+
+    const out = await get(buildTableTools(),
+      { sheet: sheet.id, selection_id: 'deadbeef' }, ctxFor('th'));
+
+    assert.match(out.warning, new RegExp(sel.id), '把现有的 id 报出来,让 agent 自己纠正');
+    assert.doesNotMatch(out.warning, /已过期/);
   });
 });

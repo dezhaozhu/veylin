@@ -58,12 +58,29 @@ export function registerSelection(input: {
   return sel;
 }
 
+/**
+ * agent 抄过来的 `selection_id` → 真正的 id。
+ *
+ * 人看到的 token 是 `@表格[p_x~schedule · 4 行 · 列: product_class #2d71be5a]`,id 前面
+ * 就贴着表名。实测抄错过两种(都让用户看到假的"选区已过期"):`#2d71be5a`(连井号)、
+ * `p_x~schedule#2d71be5a`(连表名)。**id 是最后一个 `#` 之后那截**,按这条剥,整条
+ * token 抄过来也认。剥完仍是精确查表 —— 不做模糊匹配,认不出就认不出。
+ */
+export function normalizeSelectionId(id: string): string {
+  const raw = String(id ?? '').trim();
+  const afterHash = raw.slice(raw.lastIndexOf('#') + 1);
+  // 整条 token 抄过来时尾巴上还挂着 `]`;id 本身只有十六进制。
+  return afterHash.trim().replace(/[^A-Za-z0-9].*$/, '');
+}
+
 export function getSelection(threadId: string, id: string): TableSelection | undefined {
-  // 人看到的 token 是 `#a1b2c3d4`,agent 常常把井号一起抄进 selection_id。剥掉再查
-  // —— 否则一个好好的选区会被回成"已过期,请重新圈选",而人明明刚圈完。
-  const key = String(id ?? '').trim().replace(/^#+/, '');
   // 按会话隔离:别的会话取不到 —— 与项目钉定同一条边界。
-  return store.get(threadId)?.get(key);
+  return store.get(threadId)?.get(normalizeSelectionId(id));
+}
+
+/** 本会话现在还有哪些选区(最老在前)。查不到时用来说人话,而不是断言"已过期"。 */
+export function listSelectionIds(threadId: string): string[] {
+  return [...(store.get(threadId)?.keys() ?? [])];
 }
 
 export function clearSelections(): void {

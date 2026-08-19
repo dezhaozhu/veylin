@@ -34,7 +34,7 @@ const cellValueSchema = z.union([z.string(), z.number()]);
 
 import { unwrapMcpPayload } from './mcp-payload.js';
 import { resolveCompassServer } from './mcp-scoping.js';
-import { getSelection } from './table-selection.js';
+import { getSelection, listSelectionIds, normalizeSelectionId } from './table-selection.js';
 import {
   PERSONAL_SCOPE,
   projectScope,
@@ -815,10 +815,17 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
         ? getSelection(readThreadId(ctx) ?? '', String(input.selection_id))
         : undefined;
       if (input.selection_id && !selection) {
+        // **别把"我没认出"说成"用户的选区过期了"** —— 实测就是这么骗到人的:agent 把
+        // 表名连着 id 抄进来(已在 normalizeSelectionId 里认下),用户却被要求重新圈选。
+        // 真认不出时,把本会话现有的 id 报出来,让 agent 先自己纠正。
+        const live = listSelectionIds(readThreadId(ctx) ?? '');
         return {
           sheet,
-          warning: `选区 #${String(input.selection_id).trim().replace(/^#+/, '')}`
-            + ' 不在本会话里(可能已过期或属于别的会话);请让用户重新圈选。',
+          warning: `没认出选区 id「${normalizeSelectionId(String(input.selection_id))}」。`
+            + (live.length
+              ? `本会话现有选区:${live.map((x) => `#${x}`).join('、')} —— 若是其中之一请改用它;`
+                + '都不是,才需要让用户重新圈选。'
+              : '本会话还没有登记过选区(可能属于别的会话,或服务重启过);请让用户重新圈选。'),
         };
       }
 
