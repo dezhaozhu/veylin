@@ -59,7 +59,11 @@ export const WidgetPanel: FC<PanelContentProps> = ({ tab }) => {
   const RenderAny = Render as unknown as (p: Record<string, unknown>) => ReactElement;
   const part = { ...stored, mcp: { app: { resourceUri: s.resourceUri } } };
   return (
-    <div className="h-full w-full overflow-auto p-2">
+    // **让 widget 撑满面板。** 渲染器自己那层容器是按内联场景定的固定高(实测
+    // 150px),iframe 只填满它 —— 于是"在右侧打开"之后图反而比对话里还小,
+    // 完全没解决"显示不全"。面板的全部意义就是给尺寸,所以这里把直接子元素
+    // 拉到满高;宽度本来就是 100%。
+    <div className="h-full w-full p-2 [&>div]:h-full">
       <RenderAny {...part} />
     </div>
   );
