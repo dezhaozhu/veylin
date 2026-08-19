@@ -12,6 +12,7 @@ import { McpAppActionBridge } from '@/components/assistant-ui/mcp-app-action-bri
 import { ToolFallback } from '@/components/assistant-ui/tool-fallback';
 import { placeComposerCaret } from '@/lib/composer-caret';
 import { PanelRightIcon } from 'lucide-react';
+import { useRightSidebar } from '@/components/ui/sidebar';
 import { toolPartName } from '@/lib/tool-part-name';
 import { useAppTools } from '@/lib/use-app-tools';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
@@ -92,6 +93,7 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
   // schedule (from panel context), never selected by the message. focusScheduleFilter
   // opens the panel and stashes the OpenGridFilter for the grid to apply client-side.
   const { focusScheduleFilter, openWidget } = usePanelTabs();
+  const { setOpen: setRightOpen } = useRightSidebar();
   const handleOpenGrid = useCallback(
     (filter: OpenGridFilter) => {
       void focusScheduleFilter(filter);
@@ -125,14 +127,18 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
           <div className="flex justify-end">
             <button
               type="button"
-              onClick={() =>
+              onClick={() => {
+                // **先把右栏拉开再加页签。** 只加页签的话,抽屉收着时人看到的是
+                // "点了没反应" —— 面板在屏幕外,和没开一样(文档那条路一直是
+                // 两件事一起做的,这里漏了,截图才看出来)。
+                setRightOpen(true);
                 openWidget({
                   threadId,
                   resourceUri: uri,
                   title: toolPartName(p) ?? undefined,
                   part: p,
-                })
-              }
+                });
+              }}
               className="text-muted-foreground hover:text-foreground hover:bg-muted -mr-1 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs transition-colors"
             >
               <PanelRightIcon className="size-3.5" />
