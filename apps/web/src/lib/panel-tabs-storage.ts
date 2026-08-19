@@ -2,7 +2,11 @@ import type { PanelKind, PanelTab } from '@/components/assistant-ui/right-panel/
 
 const BY_THREAD_STORAGE_KEY = 'right_panel_tabs_by_thread';
 
-const KNOWN_KINDS = new Set<PanelKind>(['table', 'web', 'rag', 'workflow']);
+// 落盘时认得的面板种类。**漏一种,那种页签刷新就没了** —— `doc` 和 `3d` 一直
+// 不在这个集合里,所以在右侧打开的文档/模型从来撑不过一次刷新(2026-08-18 补)。
+const KNOWN_KINDS = new Set<PanelKind>([
+  'table', 'web', 'rag', 'workflow', 'doc', '3d', 'widget',
+]);
 
 /** Non-web panel kinds may only keep one tab per thread. */
 const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow']);
@@ -80,6 +84,16 @@ function normalizeState(parsed: Partial<PanelTabsStoredState> | null | undefined
         // Keep kind label stable; page titles live in tab.state.
         title: tab.title || 'panels.web.label',
       };
+    }
+    if (tab.kind === 'widget') {
+      // **不把整张图写进 localStorage。** 一张上重的甘特是 356 KB,而这里是所有
+      // 线程共用一个 key、总额度约 5 MB —— 十来张就撑满,写失败还被 catch 吞掉,
+      // 表现是所有面板页签一起悄悄失去持久化,没有任何报错。
+      //
+      // 图的数据本来就是"这一轮对话的产物":刷新后回对话里重开即可(面板的空状态
+      // 就是这么说的)。页签只存**指向哪张图**。
+      const { part: _dropped, ...rest } = (tab.state ?? {}) as Record<string, unknown>;
+      return { ...tab, state: rest };
     }
     if (tab.kind === 'table') {
       return {
