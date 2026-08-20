@@ -1,9 +1,8 @@
 /**
- * 项目页顶部的输入框:进了项目就能直接说话。
+ * 项目页底部的输入框:进了项目就能直接说话。
  *
  * **用的就是对话里那个真 composer**(thread.tsx 的 `Composer`),不是复刻一个 ——
- * 原来这里自己搭了个简化 textarea,于是同一件事在两个地方长得不一样、能力也不
- * 一样(缺 + 号、附件、技能、模型选择),而用户没道理理解这个区别。
+ * 自己搭简化 textarea 会少掉 + / 附件 / 项目标签 / 模型选择,两个地方长得也不一样。
  *
  * **但真 composer 是挂在"当前线程"上的**,而项目页的当前线程是你上次打开的那个 ——
  * 直接挂上去,消息会发进一个不相干的旧对话,而且发出去了才看得出来。
@@ -71,10 +70,15 @@ export const ProjectComposer: FC<{ projectId: string; projectName: string }> = (
         setPendingProjectHint(projectId);
         void prepare();
       }}
+      style={{
+        // 和 thread.tsx 对话根上那三个变量同一份:不写的话圆角/浅底/内边距
+        // 全掉,输入框会变成白底方框,和外面那个问答框对不上。
+        ['--composer-bg' as string]:
+          'color-mix(in oklab, var(--color-muted) 30%, var(--color-background))',
+        ['--composer-radius' as string]: '1.5rem',
+        ['--composer-padding' as string]: '8px',
+      }}
     >
-      <p className="text-muted-foreground mb-1.5 text-xs">
-        在「{projectName}」里问点什么 —— 新对话会自动归到这个项目
-      </p>
       {/* 不自动聚焦:聚焦=「我要说话」,是新建并钉定线程的信号。自动聚焦会让
           每次打开项目页都留下一条空对话(实测踩到)。 */}
       {/* chip 显示**本页项目**:这时候还没有线程,读当前线程会答成上次那个。 */}

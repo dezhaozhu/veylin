@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FC } from 'react';
-import { CheckIcon, PencilIcon, PlusIcon, SearchIcon } from 'lucide-react';
+import { CheckIcon, PencilIcon, PlusIcon, SearchIcon, SquarePenIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/features/settings/page-header';
 import { useWorkspaceCollapsedInset } from '@/components/features/workspace-view-frame';
@@ -236,7 +236,7 @@ const ProjectInstructionsSection: FC<{ project: ProjectInfo }> = ({ project }) =
       title="项目说明"
       action={{
         icon: editing ? <CheckIcon className="size-4" /> : project.instructions
-          ? <PencilIcon className="size-4" />
+          ? <SquarePenIcon className="size-4" />
           : <PlusIcon className="size-4" />,
         label: editing ? '完成' : project.instructions ? '改说明' : '写一句说明',
         onClick: () => (editing ? void save() : setEditing(true)),
