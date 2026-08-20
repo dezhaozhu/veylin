@@ -15,14 +15,47 @@
  * batch(拼炉)三种标记从 toGanttTasks 带出来,画在条上并配一份图例;截断要
  * 明说"这窗口还有 N 条没画",不能悄悄少画。
  */
-import { useEffect, useState, type FC } from 'react';
+import { useEffect, useRef, useState, type FC, type Ref } from 'react';
 import { useAuiState } from '@assistant-ui/react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { loadDhtmlxGantt, type GanttModule } from '@/lib/dhtmlx-gantt-loader';
 import { toGanttTasks, type GanttTask, type GanttWindowPayload } from '@/lib/gantt-window-model';
 import { ganttErrorMessage, resolveGanttThreadId } from '@/lib/gantt-request';
+import { orderIdForTask, resolveFocusTarget } from '@/lib/gantt-focus';
+import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import type { PanelContentProps } from '../panel-types';
+
+/**
+ * dhtmlx-gantt's imperative instance — reached through a `ref` on the
+ * `<Gantt>` element, not a prop: v10's `ReactGanttProps` has no click
+ * callback (tasks/links/resources/.../className — no onTaskClick; verified
+ * against `node_modules/@dhx/react-gantt/dist/dhtmlxgantt.react.es.d.ts` on
+ * a machine that has the package installed). The wrapper's own
+ * `ReactGanttRef` shape is `{ instance: GanttStatic | null }`, and the
+ * package even ships a `useGanttEvent(ganttRef, eventName, handler)` hook
+ * built for exactly this — attach on mount, detach on unmount.
+ *
+ * **Why this file doesn't call that hook**: `useGanttEvent` would have to be
+ * pulled off the dynamically-`import()`ed module object (this package is an
+ * optional private-registry dependency — see dhx-react-gantt.d.ts — so it's
+ * never statically imported), and a hook reached that way isn't safe to call
+ * unconditionally every render: before `avail` resolves it doesn't exist yet,
+ * and calling `undefined(...)` — or skipping the call — makes the number of
+ * hooks invoked differ between renders, which breaks React's hook-order
+ * invariant. A plain `useEffect` (one of THIS component's own hooks, always
+ * called) reading `ganttRef.current?.instance.attachEvent/detachEvent`
+ * itself sidesteps that entirely and is what `useGanttEvent` does internally
+ * anyway. Loosely typed: the package isn't a build-time dependency this repo
+ * can type-check strictly against.
+ */
+type GanttStaticLike = {
+  attachEvent?: (name: string, handler: (id: unknown) => unknown) => string;
+  detachEvent?: (id: string) => void;
+  showTask?: (id: string) => void;
+  selectTask?: (id: string) => void;
+};
+type GanttRefLike = { instance: GanttStaticLike | null };
 
 export type GanttView = 'resource' | 'workshop' | 'order';
 export type GanttPanelState = { view?: GanttView };
@@ -122,6 +155,64 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [avail.state, threadId, view]);
 
+  // Hooks below read `tasks`, so it has to be computed before them — and
+  // ALL hooks have to run before the avail-state early returns further down
+  // (rules of hooks: a component can't call a different number of hooks on
+  // different renders). Pure computation from `load`, safe to run every render.
+  const ready = load.state === 'ready';
+  const { tasks, truncatedNote }: { tasks: GanttTask[]; truncatedNote: string | null } = ready
+    ? toGanttTasks(load.payload)
+    : { tasks: [], truncatedNote: null };
+  const droppedCount = ready ? (load.payload.truncated?.bars_dropped ?? 0) : 0;
+
+  // 表格↔甘特双向定位(gantt-focus.ts)。
+  const { focusScheduleFilter, ganttFocus, clearGanttFocus } = usePanelTabs();
+  // Populated by React when `<Gantt ref={ganttRef}>` mounts (only once
+  // load.state === 'ready' — see the JSX below); null until then.
+  const ganttRef = useRef<GanttRefLike | null>(null);
+
+  // 甘特 → 表格:点一条 bar,顺 parent 链倒查它的订单号,复用已有的
+  // focusScheduleFilter 定位路径 —— 不另造一套(见该函数的调用处说明)。
+  // 泳道父行没有订单号可言(orderIdForTask 对它诚实回 undefined),点了不动作。
+  // `tasks` in the deps re-runs this whenever a fresh window lands (including
+  // the very first time `<Gantt>` actually mounts and populates ganttRef).
+  useEffect(() => {
+    const instance = ganttRef.current?.instance;
+    if (!instance || typeof instance.attachEvent !== 'function') return;
+    const handlerId = instance.attachEvent('onTaskClick', (id: unknown) => {
+      const orderId = orderIdForTask(tasks, String(id));
+      if (orderId) void focusScheduleFilter({ order_id: orderId });
+      return true; // 放行默认的选中态,不拦事件
+    });
+    return () => {
+      if (typeof instance.detachEvent === 'function') instance.detachEvent(handlerId);
+    };
+  }, [tasks, focusScheduleFilter]);
+
+  // 表格 → 甘特:消费 focusGanttJob 暂存的 target。等这一窗数据落地
+  // (load.state === 'ready')再判定,不对着还没到位的空 tasks 误判"找不到"。
+  // resolveFocusTarget 找不到就回 null——这里的处理就是"不动",不瞎滚一个
+  // (gantt-focus.ts 的核心约束)。只尝试一次:同一窗口内不会因为再等等就
+  // 突然命中,真找不到留给"换窗口"的后续工作(task 7 之外)。
+  useEffect(() => {
+    if (!ganttFocus) return;
+    if (load.state !== 'ready') return;
+    const targetId = resolveFocusTarget(tasks, ganttFocus.target);
+    clearGanttFocus();
+    if (!targetId) return;
+    const instance = ganttRef.current?.instance;
+    try {
+      instance?.showTask?.(targetId);
+    } catch {
+      /* best-effort scroll-into-view */
+    }
+    try {
+      instance?.selectTask?.(targetId);
+    } catch {
+      /* best-effort highlight */
+    }
+  }, [ganttFocus, load, tasks, clearGanttFocus]);
+
   if (avail.state === 'checking') {
     return <p className="text-muted-foreground p-6 text-sm">{t('panels.gantt.loading')}</p>;
   }
@@ -129,13 +220,8 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
     return <p className="text-muted-foreground p-6 text-sm leading-relaxed">{t('panels.gantt.unavailable')}</p>;
   }
 
-  const ready = load.state === 'ready';
-  const { tasks, truncatedNote }: { tasks: GanttTask[]; truncatedNote: string | null } = ready
-    ? toGanttTasks(load.payload)
-    : { tasks: [], truncatedNote: null };
-  const droppedCount = ready ? (load.payload.truncated?.bars_dropped ?? 0) : 0;
-
   const Gantt = (avail.mod as Record<string, unknown>).default as FC<{
+    ref?: Ref<GanttRefLike>;
     tasks?: unknown[];
     config?: Record<string, unknown>;
     templates?: Record<string, unknown>;
@@ -185,7 +271,13 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
           <p className="text-muted-foreground p-6 text-sm">{t('panels.gantt.loading')}</p>
         )}
         {load.state === 'ready' && (
-          <Gantt tasks={tasks} config={{ readonly: true }} templates={{ task_class: taskClass }} className="h-full w-full" />
+          <Gantt
+            ref={ganttRef}
+            tasks={tasks}
+            config={{ readonly: true }}
+            templates={{ task_class: taskClass }}
+            className="h-full w-full"
+          />
         )}
       </div>
     </div>

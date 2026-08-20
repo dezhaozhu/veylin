@@ -54,6 +54,8 @@ import { exportTableToExcel, parseTableExcelFile } from '@/lib/table-excel';
 import { buildGovernedEditBody, GOVERNED_EDIT_FIELDS } from '@/lib/schedule-edit';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import { isLateOnlyGridFilter, type OpenGridFilter } from '@/lib/correction-bridge';
+import { useRightSidebar } from '@/components/ui/sidebar';
+import { isDhtmlxAvailable } from '@/lib/dhtmlx-gantt-loader';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 
 type TableColumnType = 'text' | 'number' | 'status' | 'sparkline';
@@ -595,7 +597,11 @@ export function TableGrid() {
   const aui = useAui();
   // 排产即导航: a cockpit drill (focusScheduleFilter) stashes an OpenGridFilter
   // here; we position the already-loaded grid via an AG-Grid external filter.
-  const { scheduleFilter, clearScheduleFilter } = usePanelTabs();
+  const { scheduleFilter, clearScheduleFilter, focusGanttJob } = usePanelTabs();
+  // 表格↔甘特双向定位, table→gantt half: pulling the right sidebar open is
+  // the CALLER's job (same split as mcp-app-tool.tsx's openWidget call site —
+  // usePanelTabsState can't reach useRightSidebar, see its focusGanttJob doc).
+  const { setOpen: setRightOpen } = useRightSidebar();
   const [sheets, setSheets] = useState<TableSheet[]>([]);
   const [activeSheetId, setActiveSheetId] = useState('main');
   const [columnDefs, setColumnDefs] = useState<TableColumnDef[]>([]);
@@ -1667,14 +1673,36 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
   // AG-Grid selection changed → sync React selectedRows (used by toolbar + totals)
   const onSelectionChanged = useCallback(
     (event: SelectionChangedEvent<TableRow>) => {
-      const selected = event.api
-        .getSelectedNodes()
-        .filter((n) => n.data != null)
-        .map((n) => rowKey(n.data!));
+      const nodes = event.api.getSelectedNodes().filter((n) => n.data != null);
+      const selected = nodes.map((n) => rowKey(n.data!));
       setSelectedRows(new Set(selected));
       if (selected.length > 0) clearColumnSelection();
+
+      // 表格→甘特(双向定位):只在排产表且**只选中一行**时触发 —— 多选或
+      // 别的表选中的是什么行、该定位到哪一条根本没有唯一答案,不动作。
+      // isDhtmlxAvailable() 挡在最前面:没装商业包时甘特页签本就不出现
+      // (task 6),这里再从表格把它拽出来就前功尽弃(见 focusGanttJob 调用
+      // 处的说明)。
+      if (
+        nodes.length === 1 &&
+        isSheet(activeSheetIdRef.current, SCHEDULE_SHEET_ID) &&
+        isDhtmlxAvailable()
+      ) {
+        const row = nodes[0]!.data as TableRow;
+        const jobId = row['job_id'];
+        const orderId = row['order_id'];
+        if (jobId != null && jobId !== '') {
+          // 拉开右栏与加页签必须一起做:只加页签的话,抽屉收着时人看到的
+          // 是"点了没反应"(mcp-app-tool.tsx 那条注释记的就是这个)。
+          setRightOpen(true);
+          void focusGanttJob({
+            jobId: String(jobId),
+            ...(orderId != null && orderId !== '' ? { orderId: String(orderId) } : {}),
+          });
+        }
+      }
     },
-    [clearColumnSelection],
+    [clearColumnSelection, focusGanttJob, setRightOpen],
   );
 
   const onGridReady = useCallback((event: GridReadyEvent<TableRow>) => {

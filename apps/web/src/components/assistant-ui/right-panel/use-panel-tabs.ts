@@ -34,8 +34,12 @@ function createTab(
   };
 }
 
-/** Only web may have multiple tabs; table/rag/workflow are singletons. */
-const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow']);
+/** Only web may have multiple tabs; table/rag/workflow/gantt are singletons.
+ * `gantt` joined this set for the same reason `table` did (see the comment
+ * on `open`'s table branch): without it, every table-row selection that
+ * drills into the gantt would `createTab('gantt')` again instead of
+ * activating the one already open — a duplicate tab per click. */
+const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow', 'gantt']);
 
 function closeWebTabs(tabs: PanelTab[]): void {
   if (!isTauri()) return;
@@ -55,6 +59,16 @@ export interface PendingScheduleFilter {
   at: number;
 }
 
+/** What table→gantt定位 wants to land on — `resolveFocusTarget`'s `want` shape
+ * (gantt-focus.ts). `at` makes a repeat drill onto the same job re-notify,
+ * same idiom as PendingScheduleFilter.at. Consumed by GanttPanel once its
+ * tasks are on screen; `resolveFocusTarget` decides whether it actually
+ * resolves inside the currently-loaded window — this store doesn't guess. */
+export interface PendingGanttFocus {
+  target: { jobId?: string; orderId?: string };
+  at: number;
+}
+
 export interface PanelTabsApi {
   tabs: PanelTab[];
   activeId: string | null;
@@ -71,6 +85,12 @@ export interface PanelTabsApi {
    * Opens the 'table' panel exactly like open('table'), then stashes the filter
    * for the grid to apply client-side once its rows are loaded. */
   focusScheduleFilter: (filter: OpenGridFilter) => void | Promise<void>;
+  /** Open/focus the gantt panel AND stash a target for it to scroll to
+   * (表格↔甘特双向定位, table→gantt half). Same shape as focusScheduleFilter:
+   * opens the 'gantt' tab, then stashes `target` for GanttPanel to resolve
+   * client-side (via resolveFocusTarget) once its tasks are loaded — this
+   * store never resolves/scrolls itself. */
+  focusGanttJob: (target: { jobId?: string; orderId?: string }) => void | Promise<void>;
   /**
    * 在右侧打开一份项目文件(只读)。同名文件**复用已开的那个 tab** —— 连点三次
    * 开出三个一模一样的 tab,是把"我已经打开它了"这件事讲成了三份。
@@ -87,6 +107,10 @@ export interface PanelTabsApi {
   scheduleFilter: PendingScheduleFilter | null;
   /** Drop the pending drill once TableGrid has consumed it. */
   clearScheduleFilter: () => void;
+  /** The pending gantt-focus target (null when none), read by GanttPanel. */
+  ganttFocus: PendingGanttFocus | null;
+  /** Drop the pending focus once GanttPanel has consumed it. */
+  clearGanttFocus: () => void;
 }
 
 /** Right-panel tab store. Use via PanelTabsProvider / usePanelTabs(). */
@@ -105,6 +129,13 @@ export function usePanelTabsState(): PanelTabsApi {
   // already open can't re-fetch to position it — it stashes here and TableGrid
   // applies it client-side once rows are on screen.
   const [scheduleFilter, setScheduleFilter] = useState<PendingScheduleFilter | null>(null);
+  // Pending gantt-focus target (表格↔甘特双向定位, table→gantt half). Same
+  // stash-and-consume idiom as scheduleFilter above — GanttPanel is a
+  // workspace singleton too (see SINGLETON_PANEL_KINDS) and may already be
+  // mounted when a table selection arrives, so it can't just re-fetch to
+  // reposition; it applies the stashed target client-side once its own
+  // tasks are on screen.
+  const [ganttFocus, setGanttFocus] = useState<PendingGanttFocus | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const threadIdRef = useRef(threadId);
@@ -319,6 +350,22 @@ export function usePanelTabsState(): PanelTabsApi {
     [open],
   );
 
+  const focusGanttJob = useCallback(
+    (target: { jobId?: string; orderId?: string }) => {
+      // Same shape as focusScheduleFilter: open/activate the gantt tab through
+      // the singleton path (SINGLETON_PANEL_KINDS now includes 'gantt'), then
+      // stash the target for GanttPanel to resolve once its tasks are live.
+      // Pulling the right sidebar open is the CALLER's job, not this store's
+      // (this hook runs inside PanelTabsProvider, which sits ABOVE
+      // RightSidebarProvider in AssistantChat.tsx — it structurally cannot
+      // reach useRightSidebar(). mcp-app-tool.tsx's openWidget call site is
+      // the precedent: setRightOpen(true) sits next to the call, not inside it).
+      void open('gantt');
+      setGanttFocus({ target, at: Date.now() });
+    },
+    [open],
+  );
+
   const openDocument = useCallback(
     (doc: { projectId: string; name: string }) => {
       const current = stateRef.current;
@@ -369,6 +416,7 @@ export function usePanelTabsState(): PanelTabsApi {
   );
 
   const clearScheduleFilter = useCallback(() => setScheduleFilter(null), []);
+  const clearGanttFocus = useCallback(() => setGanttFocus(null), []);
 
   return {
     openDocument,
@@ -383,7 +431,10 @@ export function usePanelTabsState(): PanelTabsApi {
     focusWebTab,
     focusRagCitation,
     focusScheduleFilter,
+    focusGanttJob,
     scheduleFilter,
     clearScheduleFilter,
+    ganttFocus,
+    clearGanttFocus,
   };
 }
