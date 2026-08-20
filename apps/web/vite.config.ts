@@ -43,16 +43,29 @@ const hasDhx = (() => {
  * 本身一行代码。
  */
 const DHX_STUB_ID = '\0virtual:dhx-react-gantt-stub';
+// react-gantt.css(2026-08-19,评审后追加):dhtmlx-gantt-loader.ts's
+// loadDhtmlxGanttCss() dynamically imports this sibling stylesheet — it's a
+// SEPARATE literal specifier from the bare package id above, so it needs its
+// OWN stub entry here. Same failure mode as the JS module (see the long
+// comment below): Vite's dev transform speculatively resolves every literal
+// dynamic-import string in a file at transpile time, independent of whether
+// the call is actually reached at runtime, so gating the call site on
+// "package already confirmed present" doesn't exempt this path from needing
+// a stub too.
+const DHX_CSS_ID = '@dhx/react-gantt/dist/react-gantt.css';
+const DHX_CSS_STUB_ID = '\0virtual:dhx-react-gantt-css-stub';
 function dhxDevStubPlugin(): Plugin {
   return {
     name: 'dhx-gantt-dev-stub',
     apply: 'serve',
     resolveId(id) {
-      if (id === '@dhx/react-gantt' && !hasDhx) return DHX_STUB_ID;
+      if (hasDhx) return null;
+      if (id === '@dhx/react-gantt') return DHX_STUB_ID;
+      if (id === DHX_CSS_ID) return DHX_CSS_STUB_ID;
       return null;
     },
     load(id) {
-      if (id !== DHX_STUB_ID) return null;
+      if (id !== DHX_STUB_ID && id !== DHX_CSS_STUB_ID) return null;
       return [
         "const e = new Error(\"Cannot find package '@dhx/react-gantt'\");",
         "e.code = 'ERR_MODULE_NOT_FOUND';",
@@ -95,7 +108,10 @@ export default defineConfig({
     // Keep esbuild for CSS minification (safe override, harmless here).
     cssMinify: 'esbuild',
     rollupOptions: {
-      external: hasDhx ? [] : ['@dhx/react-gantt'],
+      // Rollup's `external` matches exact strings, not prefixes — the CSS
+      // subpath (loadDhtmlxGanttCss's dynamic import) needs its own entry,
+      // it isn't covered by the bare package id above.
+      external: hasDhx ? [] : ['@dhx/react-gantt', DHX_CSS_ID],
     },
   },
   server: {

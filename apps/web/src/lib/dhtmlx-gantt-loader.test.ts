@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadDhtmlxGantt, isDhtmlxAvailable, __setCachedForTests } from './dhtmlx-gantt-loader.js';
+import {
+  loadDhtmlxGantt,
+  loadDhtmlxGanttCss,
+  isDhtmlxAvailable,
+  __setCachedForTests,
+  __setCssLoadedForTests,
+} from './dhtmlx-gantt-loader.js';
 
 describe('isDhtmlxAvailable 三态', () => {
   // 每条用例先用测试专用出口把 `cached` 摆到它要断言的那一态,不依赖其它用例跑没
@@ -60,5 +66,27 @@ describe('未安装 vs 装了但初始化炸 —— 诊断信息要能分清', (
     assert.equal(calls.length, 2);
     assert.match(String(calls[0][0]), /未安装/);
     assert.match(String(calls[1][0]), /已安装但/);
+  });
+});
+
+describe('react-gantt.css 加载 —— 有包/没包两个方向都要静', () => {
+  it('有包:importer 成功就回 true', async () => {
+    const ok = await loadDhtmlxGanttCss({ importer: async () => undefined });
+    assert.equal(ok, true);
+  });
+
+  it('没包:importer 抛也不往外抛,回 false —— 样式缺失不该炸整个面板', async () => {
+    const ok = await loadDhtmlxGanttCss({ importer: async () => { throw new Error('not found'); } });
+    assert.equal(ok, false);
+  });
+
+  it('已经加载过(缓存里是 true)且没传 importer 时,直接回 true —— 不会去碰真实的动态 import', async () => {
+    __setCssLoadedForTests(true);
+    try {
+      const ok = await loadDhtmlxGanttCss();
+      assert.equal(ok, true);
+    } finally {
+      __setCssLoadedForTests(false);
+    }
   });
 });

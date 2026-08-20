@@ -68,6 +68,45 @@ export function isDhtmlxAvailable(): boolean {
   return cached != null;
 }
 
+let cssLoaded = false;
+
+/**
+ * The stylesheet is a sibling asset in the same optional package
+ * (`dist/react-gantt.css`) — the JS module alone renders unstyled (labels
+ * overlap into unreadable text; 评审实测 2026-08-19). Nobody in this repo
+ * imported it, so this was a real bug, not a hypothetical one.
+ *
+ * Callers must only invoke this AFTER `loadDhtmlxGantt()` has already
+ * resolved the JS module successfully (gantt-panel.tsx does this) — that's
+ * what makes it safe to skip the same dev-server construction
+ * `loadDhtmlxGantt` needs: a literal dynamic `import()` of a package
+ * subpath is *speculatively* resolved by Vite's dev transform the moment
+ * this file is transpiled, regardless of whether the call below actually
+ * runs (see vite.config.ts's `dhxDevStubPlugin`, which stubs both the JS
+ * package id and this CSS path). Gating the *call site* on "JS already
+ * loaded" doesn't change that static-resolution risk, so the stub still has
+ * to cover this path too — but it does mean this function is only ever
+ * reached at runtime when the package is genuinely present.
+ *
+ * Best-effort: a missing/failed stylesheet degrades to unstyled bars, not a
+ * broken panel — never throws, callers fire-and-forget it (`void`).
+ */
+export async function loadDhtmlxGanttCss(
+  opts: { importer?: () => Promise<unknown> } = {},
+): Promise<boolean> {
+  if (cssLoaded && !opts.importer) return true;
+  const importer =
+    opts.importer ?? (() => import(/* @vite-ignore */ '@dhx/react-gantt/dist/react-gantt.css'));
+  try {
+    await importer();
+    if (!opts.importer) cssLoaded = true;
+    return true;
+  } catch (err) {
+    console.debug('[dhtmlx-gantt-loader] react-gantt.css 加载失败,甘特会照常渲染但没有样式:', err);
+    return false;
+  }
+}
+
 /**
  * TEST-ONLY. 生产代码不许调用。
  *
@@ -80,4 +119,12 @@ export function isDhtmlxAvailable(): boolean {
  */
 export function __setCachedForTests(value: GanttModule | null | undefined): void {
   cached = value;
+}
+
+/** TEST-ONLY, same reasoning as `__setCachedForTests` — `loadDhtmlxGanttCss`'s
+ * cache-write is also a no-op when a custom `importer` is passed, so a test
+ * exercising "already loaded, return true without calling importer again"
+ * needs a direct way to seed that state. */
+export function __setCssLoadedForTests(value: boolean): void {
+  cssLoaded = value;
 }

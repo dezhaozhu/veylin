@@ -15,11 +15,11 @@
  * batch(拼炉)三种标记从 toGanttTasks 带出来,画在条上并配一份图例;截断要
  * 明说"这窗口还有 N 条没画",不能悄悄少画。
  */
-import { useEffect, useRef, useState, type FC, type Ref } from 'react';
+import { useEffect, useMemo, useRef, useState, type FC, type Ref } from 'react';
 import { useAuiState } from '@assistant-ui/react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
-import { loadDhtmlxGantt, type GanttModule } from '@/lib/dhtmlx-gantt-loader';
+import { loadDhtmlxGantt, loadDhtmlxGanttCss, type GanttModule } from '@/lib/dhtmlx-gantt-loader';
 import { toGanttTasks, type GanttTask, type GanttWindowPayload } from '@/lib/gantt-window-model';
 import { ganttErrorMessage, resolveGanttThreadId } from '@/lib/gantt-request';
 import { orderIdForTask, resolveFocusTarget } from '@/lib/gantt-focus';
@@ -61,6 +61,17 @@ export type GanttView = 'resource' | 'workshop' | 'order';
 export type GanttPanelState = { view?: GanttView };
 
 const VIEWS: GanttView[] = ['resource', 'workshop', 'order'];
+
+/**
+ * `open_tree_initially`(评审 2026-08-19,Task 6 遗留):没这条,泳道父行
+ * (`type: 'project'`)默认全折叠 —— 打开面板第一眼看到的是一列收起来的泳道
+ * 名,看不见任何 bar,而"看得见负荷"正是这个面板存在的理由(spec §1)。
+ * 一个模块级常量,避免每次渲染都传一个新的 config 对象字面量给 `<Gantt>`。
+ *
+ * 30k 级数据下若默认全展开明显卡顿,不要自己降级回折叠 —— 那是下一刀
+ * (真数据规模调参)的取舍,这里先如实展开、把观察结果记进报告。
+ */
+const GANTT_CONFIG = { readonly: true, open_tree_initially: true };
 
 /** 三种诚实标记对应的视觉表达——工业静音色,不用红绿灯语义(晚了是"要核对
  * 的事实",不是"警报")。Tailwind 类名以字面量出现在这个文件里,构建时能被
@@ -122,6 +133,10 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
       if (!alive) return;
       const ok = mod != null && (mod as Record<string, unknown>).default != null;
       setAvail(ok ? { state: 'available', mod: mod as GanttModule } : { state: 'unavailable' });
+      // 只有确认 JS 模块真的装了(mod 解出来了)才去拉样式表 —— loadDhtmlxGanttCss
+      // 自己的注释解释了为什么这个先后关系是安全的(不会重新踩 vite dev 那个坑)。
+      // 没样式不该拖垮整个面板:失败就照旧渲染,fire-and-forget。
+      if (ok) void loadDhtmlxGanttCss();
     });
     return () => {
       alive = false;
@@ -158,11 +173,21 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
   // Hooks below read `tasks`, so it has to be computed before them — and
   // ALL hooks have to run before the avail-state early returns further down
   // (rules of hooks: a component can't call a different number of hooks on
-  // different renders). Pure computation from `load`, safe to run every render.
+  // different renders).
+  //
+  // **`useMemo`, not a plain per-render computation** (评审 2026-08-19):
+  // `toGanttTasks` always returns a fresh array/object, so without memoizing
+  // on `load` alone, EVERY render (switching views, i18n, `updateState`, …)
+  // produces a new `tasks` reference — and the two effects below that key off
+  // `tasks` (attach/detach the click handler, resolve a pending focus) would
+  // tear down and rebuild on each of those unrelated renders. Harmless at toy
+  // scale, real churn at 30k tasks. `[load]` is the only real dependency —
+  // `toGanttTasks` is pure over `load.payload`.
   const ready = load.state === 'ready';
-  const { tasks, truncatedNote }: { tasks: GanttTask[]; truncatedNote: string | null } = ready
-    ? toGanttTasks(load.payload)
-    : { tasks: [], truncatedNote: null };
+  const { tasks, truncatedNote } = useMemo<{ tasks: GanttTask[]; truncatedNote: string | null }>(
+    () => (load.state === 'ready' ? toGanttTasks(load.payload) : { tasks: [], truncatedNote: null }),
+    [load],
+  );
   const droppedCount = ready ? (load.payload.truncated?.bars_dropped ?? 0) : 0;
 
   // 表格↔甘特双向定位(gantt-focus.ts)。
@@ -274,7 +299,7 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
           <Gantt
             ref={ganttRef}
             tasks={tasks}
-            config={{ readonly: true }}
+            config={GANTT_CONFIG}
             templates={{ task_class: taskClass }}
             className="h-full w-full"
           />
