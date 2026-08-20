@@ -141,6 +141,12 @@ function ganttWindowUrl(threadId: string | undefined, view: GanttView): string {
  * 的完整推理)——`GanttChart` 只在 `GanttPanel` 判定 `load.state === 'ready'`
  * 之后才被创建,整个生命周期里 `mod` 恒定存在,所以下面对 `mod.useGanttEvent`
  * 的调用是无条件的、每次渲染都跑同一行,不违反 hooks 规则。
+ *
+ * **INVARIANT —— 不要把这个组件拆成两个**:`<Gantt>` 的渲染和下面这两处事件
+ * 接线必须留在同一个组件、同一次挂载周期里。拆开(哪怕只是把
+ * `useGanttEvent`/消费 `focusGanttJob` 的那个 effect 挪去父组件或另一个
+ * 子组件)会让 StrictMode 双跑的边界重新错开,复现文件头描述的那个"点了没
+ * 反应"——症状和上一轮一模一样,而且不会有任何编译期或类型层面的提示。
  */
 type GanttChartProps = {
   mod: GanttModule;
@@ -162,13 +168,29 @@ function GanttChart({ mod, tasks, focusScheduleFilter, ganttFocus, clearGanttFoc
   }>;
   const useGanttEvent = modRecord.useGanttEvent as UseGanttEventFn;
 
+  // **`tasksRef`,latest-ref 模式(评审 2026-08-19 追)**:官方 `useGanttEvent`
+  // 的依赖数组是 `[ganttRef, eventName]`(读过编译源确认的,见文件头)——不含
+  // `handler`,所以传进去的这个箭头函数只在依赖变化时重新 attach,而不是每次
+  // 渲染都换一个。如果 handler 直接闭包捕获 `tasks`,一旦出现"`GanttChart`
+  // 不卸载、但换了一批新窗口数据"的路径(当前实现里 `tasks` 变化总是伴随一次
+  // 完整卸载重挂,但那是**巧合的调用方式**,不是这个组件自己能保证的不变量;
+  // 以后加后台刷新/翻页/expand 之类不卸载就换数据的路径),handler 就会拿着
+  // 过期的那一批数据去找订单号,查不到就悄悄不动作 —— 又是一次"点了没反应",
+  // 而且不会报错。用一个每次渲染都更新的 ref 存最新 `tasks`,handler 从 ref
+  // 读而不是从闭包读,这样无论官方 hook 的依赖数组将来怎么写、无论 handler
+  // 本身多久重新 attach 一次,查到的永远是当次点击时最新的一批数据。不去改
+  // `useGanttEvent` 的调用姿势(比如硬塞 `tasks` 进某个依赖位置)骗它重新
+  // attach —— 那是在赌库的实现细节,细节一变这里又得重新踩一遍坑。
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+
   // 甘特 → 表格:点一条 bar,顺 parent 链倒查它的订单号,复用已有的
   // focusScheduleFilter 定位路径 —— 不另造一套(见该函数的调用处说明)。
   // 泳道父行没有订单号可言(orderIdForTask 对它诚实回 undefined),点了不动作。
   // 官方 `useGanttEvent`:attach on mount / detach on unmount,和 `<Gantt>`
   // 同一个组件、同一次挂载生命周期——这正是修复 race 的关键(见文件头)。
   useGanttEvent(ganttRef, 'onTaskClick', (id: unknown) => {
-    const orderId = orderIdForTask(tasks, String(id));
+    const orderId = orderIdForTask(tasksRef.current, String(id));
     if (orderId) void focusScheduleFilter({ order_id: orderId });
     return true; // 放行默认的选中态,不拦事件
   });
