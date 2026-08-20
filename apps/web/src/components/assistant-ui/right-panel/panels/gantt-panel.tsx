@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { loadDhtmlxGantt, type GanttModule } from '@/lib/dhtmlx-gantt-loader';
 import { toGanttTasks, type GanttTask, type GanttWindowPayload } from '@/lib/gantt-window-model';
+import { ganttErrorMessage, resolveGanttThreadId } from '@/lib/gantt-request';
 import type { PanelContentProps } from '../panel-types';
 
 export type GanttView = 'resource' | 'workshop' | 'order';
@@ -70,10 +71,13 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
   const { t } = useTranslation();
   // 同 table-grid.tsx / mcp-app-tool.tsx:线程首条消息之前只有本地 composer id,
   // 之后服务端才分配 remoteId/externalId——取错这个会导致"表格看得见、甘特
-  // 看不见"。
+  // 看不见"。三个原始字段分开取(而不是在 selector 里就 `??` 掉两个),让完整
+  // 的 remoteId ?? externalId ?? localId 判定都落在 resolveGanttThreadId 这个
+  // 纯函数里,能被单测覆盖。
   const localId = useAuiState((s) => s.threadListItem.id);
-  const remoteId = useAuiState((s) => s.threadListItem.remoteId ?? s.threadListItem.externalId);
-  const threadId = remoteId ?? localId ?? undefined;
+  const remoteId = useAuiState((s) => s.threadListItem.remoteId);
+  const externalId = useAuiState((s) => s.threadListItem.externalId);
+  const threadId = resolveGanttThreadId({ id: localId, remoteId, externalId });
 
   const panelState = (tab.state ?? {}) as GanttPanelState;
   const view = panelState.view ?? 'resource';
@@ -103,8 +107,8 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
         if (!alive) return;
         if (!body.ok) {
           // 409(没钉项目)/502(Compass 报错)都带一句给人看的话——原样显示,
-          // 不要吞掉换成"加载失败"。
-          setLoad({ state: 'error', message: body.message ?? t('panels.gantt.loadFailed') });
+          // 不要吞掉换成"加载失败"。判定本身在 ganttErrorMessage 里,单测覆盖。
+          setLoad({ state: 'error', message: ganttErrorMessage(body, t('panels.gantt.loadFailed')) });
           return;
         }
         setLoad({ state: 'ready', payload: body });
@@ -174,10 +178,13 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
         </p>
       )}
 
+      {/* 出错就不挂甘特区——之前的版本在错误横幅下面还挂着一个 tasks=[] 的空
+          <Gantt>,看起来像是"数据是空的"而不是"这次请求失败了"。 */}
       <div className="min-h-0 flex-1">
-        {load.state === 'loading' ? (
+        {load.state === 'loading' && (
           <p className="text-muted-foreground p-6 text-sm">{t('panels.gantt.loading')}</p>
-        ) : (
+        )}
+        {load.state === 'ready' && (
           <Gantt tasks={tasks} config={{ readonly: true }} templates={{ task_class: taskClass }} className="h-full w-full" />
         )}
       </div>

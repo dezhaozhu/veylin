@@ -5,7 +5,7 @@ const BY_THREAD_STORAGE_KEY = 'right_panel_tabs_by_thread';
 // 落盘时认得的面板种类。**漏一种,那种页签刷新就没了** —— `doc` 和 `3d` 一直
 // 不在这个集合里,所以在右侧打开的文档/模型从来撑不过一次刷新(2026-08-18 补)。
 const KNOWN_KINDS = new Set<PanelKind>([
-  'table', 'web', 'rag', 'workflow', 'doc', '3d', 'widget',
+  'table', 'web', 'rag', 'workflow', 'doc', '3d', 'widget', 'gantt',
 ]);
 
 /** Non-web panel kinds may only keep one tab per thread. */

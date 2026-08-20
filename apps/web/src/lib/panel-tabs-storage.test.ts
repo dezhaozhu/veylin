@@ -69,6 +69,21 @@ describe('panel-tabs-storage per-thread', () => {
     assert.deepEqual(loadThreadPanelTabs('t2'), { tabs: [], activeId: null });
   });
 
+  // 回归测试:KNOWN_KINDS 是个手写的白名单,漏一种落盘时那种页签就"刷新即丢"
+  // ——doc/3d 曾经这样丢过(见上面那条注释,2026-08-18 修的)。gantt 刚加进来时
+  // 也漏了同一个坑,这条测试钉住不再复发。
+  it('persists a gantt tab across reload (regression: doc/3d 曾经因为漏在 KNOWN_KINDS 里刷新即丢)', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } = await import('./panel-tabs-storage.ts');
+    saveThreadPanelTabs('t-gantt', {
+      tabs: [{ id: 'tab_g1', kind: 'gantt', title: 'panels.gantt.label', state: { view: 'resource' } }],
+      activeId: 'tab_g1',
+    });
+
+    assert.equal(loadThreadPanelTabs('t-gantt').tabs.length, 1);
+    assert.equal(loadThreadPanelTabs('t-gantt').tabs[0]?.kind, 'gantt');
+    assert.equal(loadThreadPanelTabs('t-gantt').activeId, 'tab_g1');
+  });
+
   it('migrates local id bucket to remote id', async () => {
     const { loadThreadPanelTabs, saveThreadPanelTabs, migrateThreadPanelTabs } =
       await import('./panel-tabs-storage.ts');

@@ -27,26 +27,21 @@ function isModuleNotFoundError(err: unknown): boolean {
   );
 }
 
-// **Vite dev-server 施工点(2026-08-19,task 6 实测挖出)**:`/* @vite-ignore */`
-// 只对"Vite 静态分析器根本读不出目标是什么"的动态 import 生效(它只压那种情况
-// 下的一句警告)。当参数是一个**字面量字符串**——像 `import('@dhx/react-gantt')`
-// 这样——Vite 的 import-analysis 插件不管有没有这个注释都会走
-// `this.resolve(specifier)`,包缺席时直接在 `vite dev` 里对这个模块的请求回
-// 500,而且这个 500 会把整棵动态 import 链(一路到 AssistantChat.tsx)一起拖
-// 垮,变成全屏错误边界——不是"这个面板打不开",是整个应用打不开。`vite build`
-// 不会踩这个坑(Rollup 走的是 `build.rollupOptions.external`,是另一条路),这
-// 也是为什么上一刀(task 5)的两个方向构建都是绿的——那时候这个 loader 还没有
-// 被任何组件真正调用过。绕过办法是把说明符从字面量挪成变量:Vite 的动态-import
-// 词法扫描器只在能从源码里直接读出一个字符串字面量时才会尝试解析,读到的是一个
-// 标识符就不行——那就落回"没法静态分析"的分支,`@vite-ignore` 在那条分支上才
-// 真正生效。
-const DHX_GANTT_SPECIFIER = '@dhx/react-gantt';
-
+// **`vite dev` 施工点(2026-08-19,评审后实测挖出;完整推理见 vite.config.ts
+// 里 `dhxDevStubPlugin` 的注释)**:包缺席时,`import('@dhx/react-gantt')` 在
+// `vite dev` 下会在**转译这个文件的时候**(不是运行的时候)让 Vite 尝试
+// resolve 这个说明符,失败就对这次转译请求整体回 500,把发起它的那条动态
+// import 链一路拖垮到 AssistantChat.tsx,变成全屏错误边界。`/* @vite-ignore */`
+// 对这种"参数是字面量字符串"的 resolve 不生效(只压"读不出目标是什么"那一
+// 类的警告)。修法不在这个文件里:`vite.config.ts` 的 `dhxDevStubPlugin` 在
+// dev server 里让这次 resolve 本身成功(解析到一个虚拟桩模块),桩模块求值
+// 时抛出一个 `code: 'ERR_MODULE_NOT_FOUND'` 的错误——下面这段 try/catch 原样
+// 接住它,和包真的不存在时走同一条分类分支,这个文件不需要知道任何 dev-only 细节。
 export async function loadDhtmlxGantt(
   opts: { importer?: () => Promise<unknown> } = {},
 ): Promise<GanttModule | null> {
   if (cached !== undefined && !opts.importer) return cached;
-  const importer = opts.importer ?? (() => import(/* @vite-ignore */ DHX_GANTT_SPECIFIER));
+  const importer = opts.importer ?? (() => import(/* @vite-ignore */ '@dhx/react-gantt'));
   try {
     const mod = (await importer()) as GanttModule;
     if (!opts.importer) cached = mod;

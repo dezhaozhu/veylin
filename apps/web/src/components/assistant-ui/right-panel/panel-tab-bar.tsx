@@ -28,7 +28,7 @@ import {
 } from '@/lib/titlebar-layout';
 import { cn } from '@/lib/utils';
 import { startWindowDrag } from '@/lib/window-drag';
-import { PANEL_KINDS, getPanelKindDef } from './panel-registry';
+import { getAvailablePanelKinds, getPanelKindDef } from './panel-registry';
 import { PANEL_TAB_MENU_CLOSED_EVENT } from './panel-events';
 import type { PanelKind, PanelTab } from './panel-types';
 
@@ -141,7 +141,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
       const { Menu } = await import('@tauri-apps/api/menu');
       const { LogicalPosition } = await import('@tauri-apps/api/dpi');
       const menu = await Menu.new({
-        items: PANEL_KINDS.map((def) => ({
+        items: getAvailablePanelKinds().map((def) => ({
           id: def.kind,
           text: t(def.label),
           action: () => {
@@ -177,7 +177,7 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
               onClick={(e) => e.stopPropagation()}
             >
               <ComposerMenuPanel className="w-[220px] p-1 shadow-lg">
-                {PANEL_KINDS.map((def) => (
+                {getAvailablePanelKinds().map((def) => (
                   <ComposerMenuRow
                     key={def.kind}
                     icon={def.icon}

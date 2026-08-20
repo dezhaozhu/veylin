@@ -1,7 +1,7 @@
 import { BarChart3, BookOpen, Box, FileText, Globe, SquareGanttChart, Table, Workflow } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
-import { PANEL_KINDS } from './panel-registry';
+import { getAvailablePanelKinds } from './panel-registry';
 import type { PanelKind } from './panel-types';
 
 const EMPTY_ICONS: Record<PanelKind, typeof Table> = {
@@ -26,7 +26,7 @@ export function PanelEmptyState({
   return (
     <div className="flex h-full items-center justify-center p-6">
       <div className="grid w-full max-w-[17.5rem] grid-cols-2 gap-2.5">
-        {PANEL_KINDS.map((def) => {
+        {getAvailablePanelKinds().map((def) => {
           const Icon = EMPTY_ICONS[def.kind];
           return (
             <button

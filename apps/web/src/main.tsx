@@ -15,6 +15,7 @@ import {
   setEnterpriseBootstrap,
   whenEnterpriseSettled,
 } from '@/lib/ag-grid-enterprise-state';
+import { loadDhtmlxGantt } from '@/lib/dhtmlx-gantt-loader';
 import i18n from '@/i18n';
 import { App } from './App';
 import './index.css';
@@ -51,6 +52,16 @@ startupCheckpoint('react_shell');
     setEnterpriseBootstrap(bootstrap);
   }
 }
+
+// dhtmlx gantt: same optional-dependency shape as AG-Grid Enterprise above.
+// Kicked off here (module top-level, in parallel with the AG-Grid bootstrap
+// and the API health check below) rather than inside StartupGate's effect —
+// starting it only after waitForApiReady() resolves would serialize the
+// dynamic import behind the health probe for no reason, adding to startup
+// latency. loadDhtmlxGantt() is itself idempotent-once-settled (caches into
+// its own module-scope `cached`), so this eager call and any later call from
+// gantt-panel.tsx just await the same settled value.
+const dhtmlxProbe = loadDhtmlxGantt();
 
 if (import.meta.env.DEV) {
   void import('./lib/dev-test-hooks').then((m) => m.installDevTestHooks());
@@ -217,9 +228,15 @@ function StartupGate() {
     const failsafe = window.setTimeout(() => removeSplash(), 45_000);
     setStartupError(null);
     void waitForApiReady(signal)
-      // Ensure AG-Grid Enterprise (if entitled) has settled before mounting any grid,
-      // so master-detail props are only set once the module is registered.
-      .then(() => whenEnterpriseSettled())
+      // Ensure AG-Grid Enterprise (if entitled) has settled AND the dhtmlx gantt
+      // probe has resolved before mounting anything, so:
+      //  - master-detail props are only set once the Enterprise module is registered
+      //  - isDhtmlxAvailable() is deterministic by the time getAvailablePanelKinds()
+      //    (panel-tab-bar.tsx / panel-empty-state.tsx) is first called — see the doc
+      //    comment on getAvailablePanelKinds() in panel-registry.tsx. Run the two
+      //    probes in parallel (they're independent) rather than chaining them, so
+      //    dhtmlx doesn't add to startup latency on top of the Enterprise wait.
+      .then(() => Promise.all([whenEnterpriseSettled(), dhtmlxProbe]))
       .then(() => {
         if (signal.cancelled) return;
         setReady(true);

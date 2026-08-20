@@ -5,6 +5,7 @@
  * | Tab       | Role                                      | vs Automate                          |
  * |-----------|-------------------------------------------|--------------------------------------|
  * | Table     | Editable spreadsheet grid (table store)   | Automate = single-step cron/event    |
+ * | Gantt     | READ-ONLY resource Gantt(dhtmlx,可选依赖装不到就不出现)|                       |
  * | Web       | Embedded browser for read_open_page       |   -> Agent prompt, separate storage  |
  * | Knowledge | RAG upload, search, citations + KG        | Workflow = multi-step executable DAG |
  * | Workflow  | Visual DAG editor + real execution engine | Both share InProcQueue / cron / hook |
@@ -23,6 +24,7 @@ import { Viewer3dPanel } from '@/components/assistant-ui/right-panel/panels/view
 import { DocPanel } from '@/components/assistant-ui/right-panel/panels/doc-panel';
 import { WidgetPanel } from '@/components/assistant-ui/right-panel/panels/widget-panel';
 import { GanttPanel } from '@/components/assistant-ui/right-panel/panels/gantt-panel';
+import { isDhtmlxAvailable } from '@/lib/dhtmlx-gantt-loader';
 import type { PanelContentProps, PanelKind, PanelKindDef } from './panel-types';
 
 // Fork seam: our AG-Grid TableGrid manages its own sheet tabs (workspace-wide,
@@ -65,8 +67,16 @@ export const PANEL_KINDS: PanelKindDef[] = [
   },
   {
     // 与表格并列的另一种读法(spec §4)——只读渲染,第一刀不做拖动/插单。
-    // dhtmlx 是可选依赖(私有源、许可禁止再分发);装不到时面板自己渲染一行
-    // 说明,不是错误,所以这里始终注册,不做条件过滤。
+    // dhtmlx 是可选依赖(私有源、许可禁止再分发)。**这个条目在 PANEL_KINDS
+    // 里始终注册**——`getPanelKindDef('gantt')` 必须永远能解析,否则一个在
+    // 装了包的机器上创建、后来被同步/持久化到没装包的机器上的甘特页签会直接
+    // 打不开(面板组件自己内部处理"没装包"的优雅降级,见 gantt-panel.tsx)。
+    // 但"+"菜单/空状态启动器**不**用 PANEL_KINDS 本身——那两处改用下面的
+    // `getAvailablePanelKinds()`,按 isDhtmlxAvailable() 把这一项过滤掉,
+    // 装不到包时新建入口就不出现(与 AG-Grid Enterprise 那条缝同形:
+    // main.tsx 在渲染 App 之前就把 dhtmlx 的可选加载探测完,所以这里读到的
+    // isDhtmlxAvailable() 永远是"已经解析好的"那个值,不会有"未知"态被
+    // 误当成"不可用"而把装了包的机器的页签也藏掉)。
     kind: 'gantt',
     label: 'panels.gantt.label',
     description: 'panels.gantt.desc',
@@ -143,4 +153,24 @@ const PANEL_KIND_MAP: Record<PanelKind, PanelKindDef> = PANEL_KINDS.reduce(
 
 export function getPanelKindDef(kind: PanelKind): PanelKindDef | undefined {
   return PANEL_KIND_MAP[kind];
+}
+
+/**
+ * `PANEL_KINDS` filtered down to what's actually launchable **right now** —
+ * for the "+" menu / empty-state launcher only. `PANEL_KINDS` itself (and
+ * `getPanelKindDef`) stay unfiltered on purpose: a persisted tab of a kind
+ * that's since become unavailable must still resolve to its component so it
+ * can render its own graceful "not available" content, instead of the tab
+ * silently losing its definition.
+ *
+ * Evaluated fresh on every call (not memoized at module scope) because
+ * `isDhtmlxAvailable()` starts undetermined and only becomes deterministic
+ * once `loadDhtmlxGantt()` settles. That's safe here specifically because
+ * main.tsx's `StartupGate` awaits the dhtmlx probe (alongside the AG-Grid
+ * Enterprise one) before `<App/>` — and therefore this component tree —
+ * ever mounts. Call this from render bodies (not module scope), same as
+ * `isAgGridEnterpriseReady()` is only read from render bodies.
+ */
+export function getAvailablePanelKinds(): PanelKindDef[] {
+  return PANEL_KINDS.filter((def) => def.kind !== 'gantt' || isDhtmlxAvailable());
 }
