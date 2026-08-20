@@ -1,23 +1,24 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadDhtmlxGantt, isDhtmlxAvailable } from './dhtmlx-gantt-loader.js';
-
-// 注意:模块级缓存(`cached`)是单例,下面按文件书写顺序执行(node:test 默认顺序
-// 跑),"未加载"这条必须排在任何一次 loadDhtmlxGantt 调用之前,否则读到的就不是
-// 真·初始态了。
+import { loadDhtmlxGantt, isDhtmlxAvailable, __setCachedForTests } from './dhtmlx-gantt-loader.js';
 
 describe('isDhtmlxAvailable 三态', () => {
-  it('未加载:进程刚起、还没调过 loadDhtmlxGantt,回 false', () => {
+  // 每条用例先用测试专用出口把 `cached` 摆到它要断言的那一态,不依赖其它用例跑没
+  // 跑过、跑的顺序是什么——`loadDhtmlxGantt({ importer })` 本身对缓存零副作用
+  // (见 dhtmlx-gantt-loader.ts 里的写守卫),所以三态没法靠它间接驱动出来。
+
+  it('未加载:模块级缓存还没写过(undefined),回 false', () => {
+    __setCachedForTests(undefined);
     assert.equal(isDhtmlxAvailable(), false);
   });
 
-  it('加载成功后回 true', async () => {
-    await loadDhtmlxGantt({ importer: async () => ({ Gantt: () => null }) });
+  it('加载成功:缓存里是真模块,回 true', () => {
+    __setCachedForTests({ Gantt: () => null });
     assert.equal(isDhtmlxAvailable(), true);
   });
 
-  it('加载失败后回 false —— 不管是"没装"还是"装了但炸了",都算不可用', async () => {
-    await loadDhtmlxGantt({ importer: async () => { throw new Error('boom'); } });
+  it('加载失败:缓存里是 null,回 false —— 不管是"没装"还是"装了但炸了",都算不可用', () => {
+    __setCachedForTests(null);
     assert.equal(isDhtmlxAvailable(), false);
   });
 });
