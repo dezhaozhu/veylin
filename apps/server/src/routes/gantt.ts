@@ -10,6 +10,14 @@ import type { ServerDeps } from './types.js';
 
 const VIEWS = new Set(['resource', 'workshop', 'order']);
 
+/**
+ * 面板量级超时,别继承 compass-rest.ts 里 120s 的 BULK_FETCH_TIMEOUT_MS ——
+ * 那个默认值是按"30k 行全量拉取"口径设的(/ui/grid/data 探针)。甘特是交互式
+ * 面板:一次只拉一个时间窗 + 一页泳道,不是全量,Compass 卡住不该让人对着
+ * 转圈等两分钟才看到报错。
+ */
+const GANTT_FETCH_TIMEOUT_MS = 20_000;
+
 export function buildGanttQuery(q: Record<string, unknown>): Record<string, string> {
   const out: Record<string, string> = {};
   const view = String(q.view ?? 'resource');
@@ -38,7 +46,9 @@ export function registerGanttRoutes(app: FastifyInstance, deps: ServerDeps): voi
       reply.code(409);
       return { ok: false, message: ganttUnavailableMessage() };
     }
-    const r = await fetchCompassData(scope.rest, '/data/gantt-window', buildGanttQuery(q));
+    const r = await fetchCompassData(scope.rest, '/data/gantt-window', buildGanttQuery(q), {
+      timeoutMs: GANTT_FETCH_TIMEOUT_MS,
+    });
     if (!r.ok) {
       reply.code(502);
       return { ok: false, message: r.error };
