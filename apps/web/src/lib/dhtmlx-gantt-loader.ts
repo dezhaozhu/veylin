@@ -27,11 +27,26 @@ function isModuleNotFoundError(err: unknown): boolean {
   );
 }
 
+// **Vite dev-server 施工点(2026-08-19,task 6 实测挖出)**:`/* @vite-ignore */`
+// 只对"Vite 静态分析器根本读不出目标是什么"的动态 import 生效(它只压那种情况
+// 下的一句警告)。当参数是一个**字面量字符串**——像 `import('@dhx/react-gantt')`
+// 这样——Vite 的 import-analysis 插件不管有没有这个注释都会走
+// `this.resolve(specifier)`,包缺席时直接在 `vite dev` 里对这个模块的请求回
+// 500,而且这个 500 会把整棵动态 import 链(一路到 AssistantChat.tsx)一起拖
+// 垮,变成全屏错误边界——不是"这个面板打不开",是整个应用打不开。`vite build`
+// 不会踩这个坑(Rollup 走的是 `build.rollupOptions.external`,是另一条路),这
+// 也是为什么上一刀(task 5)的两个方向构建都是绿的——那时候这个 loader 还没有
+// 被任何组件真正调用过。绕过办法是把说明符从字面量挪成变量:Vite 的动态-import
+// 词法扫描器只在能从源码里直接读出一个字符串字面量时才会尝试解析,读到的是一个
+// 标识符就不行——那就落回"没法静态分析"的分支,`@vite-ignore` 在那条分支上才
+// 真正生效。
+const DHX_GANTT_SPECIFIER = '@dhx/react-gantt';
+
 export async function loadDhtmlxGantt(
   opts: { importer?: () => Promise<unknown> } = {},
 ): Promise<GanttModule | null> {
   if (cached !== undefined && !opts.importer) return cached;
-  const importer = opts.importer ?? (() => import(/* @vite-ignore */ '@dhx/react-gantt'));
+  const importer = opts.importer ?? (() => import(/* @vite-ignore */ DHX_GANTT_SPECIFIER));
   try {
     const mod = (await importer()) as GanttModule;
     if (!opts.importer) cached = mod;

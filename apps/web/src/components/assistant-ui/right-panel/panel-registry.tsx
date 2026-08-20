@@ -13,7 +13,7 @@
  *
  * label/description/defaultTitle hold i18n keys, resolved with t() at render.
  */
-import { BarChart3, BookOpen, Box, FileText, Globe, Table, Workflow } from 'lucide-react';
+import { BarChart3, BookOpen, Box, FileText, Globe, SquareGanttChart, Table, Workflow } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { TableGrid } from '@/components/assistant-ui/table-grid';
 import { WebBrowserPanel } from '@/components/assistant-ui/right-panel/panels/web-browser-panel';
@@ -22,6 +22,7 @@ import { WorkflowPanel } from '@/components/assistant-ui/right-panel/panels/work
 import { Viewer3dPanel } from '@/components/assistant-ui/right-panel/panels/viewer3d-panel';
 import { DocPanel } from '@/components/assistant-ui/right-panel/panels/doc-panel';
 import { WidgetPanel } from '@/components/assistant-ui/right-panel/panels/widget-panel';
+import { GanttPanel } from '@/components/assistant-ui/right-panel/panels/gantt-panel';
 import type { PanelContentProps, PanelKind, PanelKindDef } from './panel-types';
 
 // Fork seam: our AG-Grid TableGrid manages its own sheet tabs (workspace-wide,
@@ -46,6 +47,10 @@ function Viewer3dPanelEntry(props: PanelContentProps) {
   return <Viewer3dPanel {...props} />;
 }
 
+function GanttPanelEntry(props: PanelContentProps) {
+  return <GanttPanel {...props} />;
+}
+
 /** All registered panel kinds. Order drives the "+" menu. */
 export const PANEL_KINDS: PanelKindDef[] = [
   {
@@ -57,6 +62,18 @@ export const PANEL_KINDS: PanelKindDef[] = [
     // Sheet is created when the user opens a table tab (+), then bound here.
     createState: () => ({ sheetId: null as string | null }),
     Component: TablePanel,
+  },
+  {
+    // 与表格并列的另一种读法(spec §4)——只读渲染,第一刀不做拖动/插单。
+    // dhtmlx 是可选依赖(私有源、许可禁止再分发);装不到时面板自己渲染一行
+    // 说明,不是错误,所以这里始终注册,不做条件过滤。
+    kind: 'gantt',
+    label: 'panels.gantt.label',
+    description: 'panels.gantt.desc',
+    icon: <SquareGanttChart className="size-4" />,
+    defaultTitle: 'panels.gantt.label',
+    createState: () => ({ view: 'resource' }),
+    Component: GanttPanelEntry,
   },
   {
     kind: 'web',
