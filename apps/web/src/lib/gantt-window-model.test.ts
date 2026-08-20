@@ -57,4 +57,54 @@ describe('甘特窗口 → dhtmlx 数据', () => {
     assert.equal(tasks.find((t) => t.id === 'job:J1')!.orderId, 'O1');
     assert.equal(tasks.find((t) => t.id === 'lane:WC10')!.orderId, undefined);
   });
+
+  // 最终评审 F3:spec §5 点名的四种诚实标记(拼炉/会凉/超载/锁定)之前只画了
+  // 两种 —— violations.max_lag / violations.cap_overloads 被原样收下却一眼
+  // 没画。字段形状按 gantt_service.py 源码 + tests/api/test_gantt_service.py
+  // 钉定:max_lag 项带 task_id(= bar 的 job_id),cap_overloads 项只聚合到
+  // resource(定位不到具体哪根 bar,只能落在泳道父行)。
+  it('violations.max_lag 命中的 job 加 maxlag 标记', () => {
+    const withMaxLag = {
+      ...payload,
+      violations: { max_lag: [{ task_id: 'J1', allowed_days: 1, exceeded_by_days: 4 }] },
+    };
+    const bar = toGanttTasks(withMaxLag).tasks.find((t) => t.id === 'job:J1')!;
+    assert.ok(bar.marks.includes('maxlag'));
+  });
+
+  it('violations.cap_overloads 命中的泳道父行加 overload 标记,不是子 bar', () => {
+    const withOverload = {
+      ...payload,
+      violations: { cap_overloads: [{ resource: 'WC10', month: '2026-09', over: 2 }] },
+    };
+    const { tasks } = toGanttTasks(withOverload);
+    const lane = tasks.find((t) => t.id === 'lane:WC10')!;
+    const bar = tasks.find((t) => t.id === 'job:J1')!;
+    assert.ok(lane.marks.includes('overload'));
+    assert.ok(!bar.marks.includes('overload'));
+  });
+
+  it('没有 violations 字段时不炸 —— 空标记,不是抛错', () => {
+    const bare = { ...payload, violations: undefined };
+    const { tasks } = toGanttTasks(bare);
+    assert.deepEqual(tasks.find((t) => t.id === 'lane:WC10')!.marks, []);
+  });
+
+  // 最终评审 F5:order 视角泳道级截断(4,218 条泳道、lane_limit=20 时只显示
+  // 20 条)之前零诚实标记 —— truncatedNote 只看 bars_dropped(泳道内条数截
+  // 断),不比较 meta.lane_total 与实际返回的泳道数。
+  it('lanesHidden = 真实泳道总数 - 实际返回的泳道数', () => {
+    // fixture 的 meta.lane_total 是 3,但只返回了 1 条泳道(WC10)。
+    assert.equal(toGanttTasks(payload).lanesHidden, 2);
+  });
+
+  it('泳道没被截断时 lanesHidden 是 0', () => {
+    const full = { ...payload, meta: { ...payload.meta, lane_total: 1 } };
+    assert.equal(toGanttTasks(full).lanesHidden, 0);
+  });
+
+  it('meta 缺 lane_total 时不假装截断 —— 退回按实际返回的泳道数算', () => {
+    const noMeta = { ...payload, meta: undefined };
+    assert.equal(toGanttTasks(noMeta).lanesHidden, 0);
+  });
 });

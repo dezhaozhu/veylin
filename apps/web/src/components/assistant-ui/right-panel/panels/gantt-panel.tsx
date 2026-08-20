@@ -96,7 +96,34 @@ const VIEWS: GanttView[] = ['resource', 'workshop', 'order'];
  * 30k 级数据下若默认全展开明显卡顿,不要自己降级回折叠 —— 那是下一刀
  * (真数据规模调参)的取舍,这里先如实展开、把观察结果记进报告。
  */
-const GANTT_CONFIG = { readonly: true, open_tree_initially: true };
+/**
+ * `grid_width` / `columns`(2026-08-19 最终评审 F6):**真机诊断实证**,不是
+ * 猜的 —— 1512px 笔记本 + 面板默认宽度(拖动手柄裸测出来是 472px,不是文档
+ * 写的 400,`chat-panel-ratio-sync.tsx` 会在挂载后把它和聊天区比例同步一次)
+ * 时,dhtmlx 自己的任务列表(`.gantt_grid`,不是这一刀关心的 AG-Grid 表格)
+ * 用它未设置 `grid_width` 时的内置默认列(Task name / Start time / Duration
+ * / 加号)量出来固定吃掉 389px —— 与容器宽度无关,容器越窄,时间轴
+ * (`.gantt_task`)剩下的就越少(472px 容器下只剩 64px,不够画出一根 bar 或
+ * 一天的刻度)。**验证过不是挂载时序/ResizeObserver 的问题**:真机把面板拖
+ * 宽到 921px,`.gantt_grid` 仍然纹丝不动是 389px,`.gantt_task` 跟着长到
+ * 514px —— 说明 grid 是固定像素、不随容器缩放,不是"量早了、没重新量"。
+ *
+ * 修法:显式给列(去掉默认的 Start time 列——开始时间已经是 bar 在时间轴上
+ * 的位置,这里的任务列表首要任务是认出"是哪一单",不是复述时间轴已经在说的
+ * 事),`text` 用 `'*'` 占满 `grid_width` 里除 `duration` 之外的剩余空间,
+ * `grid_width` 从"未设置(即 389px 的内置默认)"降到 190 —— 面板最小宽度
+ * (`RIGHT_SIDEBAR_WIDTH_MIN` = 280px)时也能留出 90px 时间轴,默认 472px
+ * 时留出约 280px,是之前的四倍多。
+ */
+const GANTT_CONFIG = {
+  readonly: true,
+  open_tree_initially: true,
+  grid_width: 190,
+  columns: [
+    { name: 'text', tree: true, width: '*', label: 'Task name' },
+    { name: 'duration', width: 56, align: 'center', label: 'Duration' },
+  ],
+};
 
 /** 三种诚实标记对应的视觉表达——工业静音色,不用红绿灯语义(晚了是"要核对
  * 的事实",不是"警报")。Tailwind 类名以字面量出现在这个文件里,构建时能被
@@ -105,12 +132,19 @@ const MARK_CLASSES: Record<string, string> = {
   late: 'border-l-4 border-amber-500',
   frozen: 'bg-slate-200/70 dark:bg-slate-700/50',
   batch: 'ring-1 ring-inset ring-blue-400',
+  // 'maxlag'(会凉)与 'overload'(超载)—— spec §5 点名的四种诚实标记里,
+  // 之前只画了两种(2026-08-19 最终评审 F3)。overload 落在泳道父行上,用
+  // 边框而不是背景/环,免得和它自己下面 late/frozen 的 bar 视觉打架。
+  maxlag: 'ring-1 ring-inset ring-rose-400',
+  overload: 'border-2 border-dashed border-rose-500',
 };
 
 const MARK_LEGEND: Array<{ mark: keyof typeof MARK_CLASSES; dot: string; labelKey: string }> = [
   { mark: 'late', dot: 'bg-amber-500', labelKey: 'panels.gantt.markLate' },
   { mark: 'frozen', dot: 'bg-slate-500', labelKey: 'panels.gantt.markFrozen' },
   { mark: 'batch', dot: 'bg-blue-500', labelKey: 'panels.gantt.markBatch' },
+  { mark: 'maxlag', dot: 'bg-rose-400', labelKey: 'panels.gantt.markMaxLag' },
+  { mark: 'overload', dot: 'bg-rose-500', labelKey: 'panels.gantt.markOverload' },
 ];
 
 type Load =
@@ -302,8 +336,15 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
   // scale, real churn at 30k tasks. `[load]` is the only real dependency —
   // `toGanttTasks` is pure over `load.payload`.
   const ready = load.state === 'ready';
-  const { tasks, truncatedNote } = useMemo<{ tasks: GanttTask[]; truncatedNote: string | null }>(
-    () => (load.state === 'ready' ? toGanttTasks(load.payload) : { tasks: [], truncatedNote: null }),
+  const { tasks, truncatedNote, lanesHidden } = useMemo<{
+    tasks: GanttTask[];
+    truncatedNote: string | null;
+    lanesHidden: number;
+  }>(
+    () =>
+      load.state === 'ready'
+        ? toGanttTasks(load.payload)
+        : { tasks: [], truncatedNote: null, lanesHidden: 0 },
     [load],
   );
   const droppedCount = ready ? (load.payload.truncated?.bars_dropped ?? 0) : 0;
@@ -323,7 +364,7 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-border flex items-center justify-between gap-2 border-b p-2">
+      <div className="border-border flex flex-wrap items-center justify-between gap-2 border-b p-2">
         <div className="flex items-center gap-1">
           {VIEWS.map((v) => (
             <Button
@@ -338,9 +379,11 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
             </Button>
           ))}
         </div>
-        <div className="text-muted-foreground flex items-center gap-3 text-xs">
+        {/* flex-wrap(2026-08-19 F6 顺带):五种标记在窄面板宽度下放不下一行,
+            折成一行 justify-between 会挤爆滚出屏幕 —— 允许换行,别裁掉。 */}
+        <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
           {MARK_LEGEND.map(({ mark, dot, labelKey }) => (
-            <span key={mark} className="flex items-center gap-1">
+            <span key={mark} className="flex items-center gap-1 whitespace-nowrap">
               <span className={`size-2 rounded-full ${dot}`} aria-hidden />
               {t(labelKey)}
             </span>
@@ -354,6 +397,14 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
       {truncatedNote && (
         <p className="text-muted-foreground bg-muted/40 border-border border-b px-3 py-1.5 text-xs">
           {t('panels.gantt.truncated', { count: droppedCount })}
+        </p>
+      )}
+      {/* 泳道级截断(spec §5 缺口,2026-08-19 最终评审 F5):跟上面那条各说
+          各的事实,都为 0 时都不出现。用词按"诚实要用户语言"——说具体域词
+          (订单/资源/车间),不说 lane_limit / 泳道级截断这类内部机制词。 */}
+      {lanesHidden > 0 && (
+        <p className="text-muted-foreground bg-muted/40 border-border border-b px-3 py-1.5 text-xs">
+          {t('panels.gantt.lanesHidden', { count: lanesHidden, unit: t(`panels.gantt.lanesHiddenUnit.${view}`) })}
         </p>
       )}
 

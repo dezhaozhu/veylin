@@ -45,6 +45,12 @@
       "label": "Gantt",
       "desc": "Read-only resource Gantt — another way to read the same schedule as the table",
       "truncated": "{{count}} more bars in this window are not drawn",
+      "lanesHidden": "{{count}} more {{unit}} are not shown",
+      "lanesHiddenUnit": {
+        "resource": "resources",
+        "workshop": "workshops",
+        "order": "orders"
+      },
       "unavailable": "The Gantt dependency (a licensed private-registry package) isn't installed on this machine, so the Gantt view isn't available right now — use the Table tab for now.",
       "loading": "Loading…",
       "loadFailed": "Couldn't load the Gantt window",
@@ -55,7 +61,9 @@
       },
       "markLate": "Late",
       "markFrozen": "Locked/manual",
-      "markBatch": "Batched"
+      "markBatch": "Batched",
+      "markMaxLag": "Would cool down",
+      "markOverload": "Overloaded"
     }
   },
   "subagent": {

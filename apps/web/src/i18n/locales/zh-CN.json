@@ -45,6 +45,12 @@
       "label": "甘特",
       "desc": "只读的资源甘特——表格旁边的另一种排产读法",
       "truncated": "这个窗口还有 {{count}} 条没画出来",
+      "lanesHidden": "另有 {{count}} 个{{unit}}没画出来",
+      "lanesHiddenUnit": {
+        "resource": "资源",
+        "workshop": "车间",
+        "order": "订单"
+      },
       "unavailable": "这台机器没有装甘特看板依赖(私有源授权),暂时看不了甘特视图——先用表格页签接着看。",
       "loading": "读取中…",
       "loadFailed": "读不到甘特窗口",
@@ -55,7 +61,9 @@
       },
       "markLate": "晚了",
       "markFrozen": "锁定/人工",
-      "markBatch": "拼炉"
+      "markBatch": "拼炉",
+      "markMaxLag": "会凉",
+      "markOverload": "超载"
     }
   },
   "subagent": {

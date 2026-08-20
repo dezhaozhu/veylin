@@ -597,7 +597,7 @@ export function TableGrid() {
   const aui = useAui();
   // 排产即导航: a cockpit drill (focusScheduleFilter) stashes an OpenGridFilter
   // here; we position the already-loaded grid via an AG-Grid external filter.
-  const { scheduleFilter, clearScheduleFilter, focusGanttJob } = usePanelTabs();
+  const { scheduleFilter, clearScheduleFilter, focusGanttJob, tabs: panelTabs } = usePanelTabs();
   // 表格↔甘特双向定位, table→gantt half: pulling the right sidebar open is
   // the CALLER's job (same split as mcp-app-tool.tsx's openWidget call site —
   // usePanelTabsState can't reach useRightSidebar, see its focusGanttJob doc).
@@ -797,6 +797,18 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       // 停在别处等于让人以为自己找错了。
       showToast(t('table.anchorNotHere', { anchor }), 'error');
       return;
+    }
+    // **分页要先翻到那一页,不然 ensureNodeVisible 是白喊**(真机实测挖出来的,
+    // 甘特→表格定位那条评审要求 F4 才第一次真正走到这条路径——之前唯一在用的
+    // 调用方多半巧合地落在第一页,从没暴露过)。这张表恒定开着 AG-Grid 分页
+    // (`pagination` + `paginationPageSize={500}`,见下方 <AgGridReact>):
+    // `ensureNodeVisible` 只管"在当前页里滚到看得见",目标行在别的页时它什么
+    // 都不做——不报错、不提示,表现就是"点了没反应"。行到哪页由它在排序过滤
+    // 后的序号决定,先翻页,`ensureNodeVisible` 才有意义。
+    const pageSize = api.paginationGetPageSize?.() ?? 0;
+    const rowIndex = hits[0]!.rowIndex;
+    if (pageSize > 0 && rowIndex != null) {
+      api.paginationGoToPage?.(Math.floor(rowIndex / pageSize));
     }
     api.ensureNodeVisible(hits[0]!, 'middle');
     api.flashCells({ rowNodes: hits });
@@ -1319,10 +1331,13 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     }
   }, [rows, activeSheetId, drawPendingChart]);
 
-  // A cockpit drill arrives via the panel store → position the grid. Only "late"
-  // activates the external filter (the sole field compass emits); anything else
-  // just leaves the grid open, unpositioned. Never throws. `scheduleFilter.at`
-  // makes repeat drills of the same filter re-fire.
+  // A cockpit drill arrives via the panel store → position the grid. "late"
+  // activates the external filter (the sole status compass emits); an
+  // `order_id` drill (甘特点条→表格定位,spec §4) positions to that one order
+  // via the grain-anchor mechanism instead — same split as the two panel-store
+  // paths (focusScheduleFilter vs the anchor set by sheet switches). Anything
+  // else just leaves the grid open, unpositioned. Never throws.
+  // `scheduleFilter.at` makes repeat drills of the same filter re-fire.
   useEffect(() => {
     if (!scheduleFilter) return;
     if (isLateOnlyGridFilter(scheduleFilter.filter)) {
@@ -1341,9 +1356,27 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         // 不存在的表(见 sheet-short-name.ts)。
         setActiveSheetId(findSheetIdByShortName(sheets, SCHEDULE_SHEET_ID) ?? SCHEDULE_SHEET_ID);
       }
+    } else if (scheduleFilter.filter.order_id) {
+      // 甘特点条→表格定位:复用现成的焦段锚点(rowMatchesAnchor 认 order_id
+      // 也认 wbs),不新写"找不到怎么办" —— locatePendingAnchor 已有诚实
+      // toast 与滚动/闪烁,已排产表就直接定位,不是排产表先切过去,行到齐后
+      // 的兜底 effect(下面那个 pendingAnchorRef 的 effect)会补跑。
+      pendingAnchorRef.current = scheduleFilter.filter.order_id;
+      if (isSheet(activeSheetId, SCHEDULE_SHEET_ID)) {
+        locatePendingAnchor();
+      } else {
+        setActiveSheetId(findSheetIdByShortName(sheets, SCHEDULE_SHEET_ID) ?? SCHEDULE_SHEET_ID);
+      }
     }
     clearScheduleFilter();
-  }, [scheduleFilter, activeSheetId, sheets, applyPendingScheduleFilter, clearScheduleFilter]);
+  }, [
+    scheduleFilter,
+    activeSheetId,
+    sheets,
+    applyPendingScheduleFilter,
+    locatePendingAnchor,
+    clearScheduleFilter,
+  ]);
 
   // Fallback for a drill that landed before rows finished loading (mirrors the
   // pending-chart rows effect): apply once rows are on screen.
@@ -1683,8 +1716,14 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       // isDhtmlxAvailable() 挡在最前面:没装商业包时甘特页签本就不出现
       // (task 6),这里再从表格把它拽出来就前功尽弃(见 focusGanttJob 调用
       // 处的说明)。
+      // **甘特页签必须已经开着才联动。** 表格与甘特是同一个面板的两个页签
+      // (right-panel.tsx 只渲染 activeTab),裸选中就切页签 = 把表格卸载重载
+      // —— 装了商业包的同事,表格从此没法正常点(最终评审 F1)。没开甘特就
+      // 什么都不做;不新造双击/右键这类手势,那是本刀范围外的新 UI 词汇。
+      const ganttTabOpen = panelTabs.some((tab) => tab.kind === 'gantt');
       if (
         nodes.length === 1 &&
+        ganttTabOpen &&
         isSheet(activeSheetIdRef.current, SCHEDULE_SHEET_ID) &&
         isDhtmlxAvailable()
       ) {
@@ -1702,7 +1741,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         }
       }
     },
-    [clearColumnSelection, focusGanttJob, setRightOpen],
+    [clearColumnSelection, focusGanttJob, panelTabs, setRightOpen],
   );
 
   const onGridReady = useCallback((event: GridReadyEvent<TableRow>) => {
