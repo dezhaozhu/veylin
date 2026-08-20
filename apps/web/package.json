@@ -61,6 +61,9 @@
     "xlsx": "^0.18.5",
     "zustand": "^5.0.14"
   },
+  "optionalDependencies": {
+    "@dhx/react-gantt": "^10.0.1"
+  },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
     "@types/katex": "^0.16.8",

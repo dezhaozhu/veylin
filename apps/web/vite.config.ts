@@ -3,6 +3,19 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath, URL } from 'node:url';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+// @dhx/react-gantt(dhtmlx 甘特)是可选依赖 —— 私有源 + 许可禁止再分发,公开仓不带包。
+// 装得到就正常打进去;装不到就把它列为 external,rollup 不去解析一个不存在的包,
+// 构建照样过(运行时该功能的页签由 dhtmlx-gantt-loader.ts 静默不出现)。
+const hasDhx = (() => {
+  try {
+    createRequire(import.meta.url).resolve('@dhx/react-gantt');
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 // @caliper/viewer 真包通过 node_modules 软链接入(ln -s <caliper>/packages/viewer
 // node_modules/@caliper/viewer);存在则打真 3D 查看器,否则落 shim 兜底。
@@ -36,6 +49,9 @@ export default defineConfig({
   build: {
     // Keep esbuild for CSS minification (safe override, harmless here).
     cssMinify: 'esbuild',
+    rollupOptions: {
+      external: hasDhx ? [] : ['@dhx/react-gantt'],
+    },
   },
   server: {
     port: 5174,
