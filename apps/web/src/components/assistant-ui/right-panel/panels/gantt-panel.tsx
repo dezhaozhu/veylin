@@ -24,6 +24,7 @@ import { toGanttTasks, type GanttTask, type GanttWindowPayload } from '@/lib/gan
 import { ganttErrorMessage, resolveGanttThreadId } from '@/lib/gantt-request';
 import { orderIdForTask, resolveFocusTarget } from '@/lib/gantt-focus';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
+import type { PanelTabsApi } from '@/components/assistant-ui/right-panel/use-panel-tabs';
 import type { PanelContentProps } from '../panel-types';
 
 /**
@@ -32,22 +33,36 @@ import type { PanelContentProps } from '../panel-types';
  * callback (tasks/links/resources/.../className — no onTaskClick; verified
  * against `node_modules/@dhx/react-gantt/dist/dhtmlxgantt.react.es.d.ts` on
  * a machine that has the package installed). The wrapper's own
- * `ReactGanttRef` shape is `{ instance: GanttStatic | null }`, and the
- * package even ships a `useGanttEvent(ganttRef, eventName, handler)` hook
- * built for exactly this — attach on mount, detach on unmount.
+ * `ReactGanttRef` shape is `{ instance: GanttStatic | null }`.
  *
- * **Why this file doesn't call that hook**: `useGanttEvent` would have to be
- * pulled off the dynamically-`import()`ed module object (this package is an
- * optional private-registry dependency — see dhx-react-gantt.d.ts — so it's
- * never statically imported), and a hook reached that way isn't safe to call
- * unconditionally every render: before `avail` resolves it doesn't exist yet,
- * and calling `undefined(...)` — or skipping the call — makes the number of
- * hooks invoked differ between renders, which breaks React's hook-order
- * invariant. A plain `useEffect` (one of THIS component's own hooks, always
- * called) reading `ganttRef.current?.instance.attachEvent/detachEvent`
- * itself sidesteps that entirely and is what `useGanttEvent` does internally
- * anyway. Loosely typed: the package isn't a build-time dependency this repo
- * can type-check strictly against.
+ * **2026-08-19 追:上一版在这里手写 `useEffect` 读 `ganttRef.current?.instance`
+ * 接线,真机(上重 2611 条真数据)证明它坏了——`onTaskClick` 从不回调,直接对
+ * 拿到的 instance 调 `getTask` 抛 `Cannot read properties of undefined
+ * (reading 'tasksStore')`。根因不是"随便哪个 effect 都会抖",是**挂载时序对
+ * 不上**:`<Gantt>` 只在 `load.state === 'ready'` 之后才第一次出现在树里
+ * (真数据 fetch 慢,这一刻发生在 GanttPanel 自己早就挂载完之后的一次**更新**
+ * 里),而 React 19 StrictMode 的"挂载→卸载→再挂载"双跑只套在**这一次提交里
+ * 新出现的 Fiber**上——`<Gantt>` 自己的初始化 effect(内部 `ja.getGanttInstance()`
+ * 建一个全新实例)是新出现的,会被双跑:建 instance1→destroy→建 instance2,
+ * 最终活着驱动 DOM 的是 instance2。但 GanttPanel 本身在这次提交里只是"更新"
+ * (它早挂载过了),它自己声明的 effect 只跑一次——如果这个 effect 就在这一次
+ * 单跑里把 `ganttRef.current?.instance` 存进局部变量再 `attachEvent`,拿到的
+ * 是 instance1,而 instance1 转眼就被 `<Gantt>` 自己的第二遍挂载销毁掉了。
+ * 小 mock 数据不复现,是因为 fetch 够快时 GanttPanel 和 `<Gantt>` 常常在同一
+ * 次初始挂载提交里一起出现,那样 GanttPanel 的 effect 也会被同一轮双跑覆盖,
+ * 第二遍能重新拿到 instance2——时序偶然对上了,不代表接线本身是对的。
+ *
+ * **修法**:把"渲染 `<Gantt>` + 接事件线"钉在同一个组件(`GanttChart`,下面)
+ * 里,让它们**总在同一次提交里一起挂载/卸载**——StrictMode 双跑就会把两者
+ * 一起套进去,第二遍(最终活着的那遍)重新读到的就是真正驱动 DOM 的实例。
+ * 官方导出的 `useGanttEvent(ganttRef, eventName, handler)` 正是给这个场景用
+ * 的("attach on mount, detach on unmount"),因为它的落点现在跟 `<Gantt>`
+ * 同一个组件、同一次挂载,不是因为这个 hook 本身有什么特殊魔法——读过它的
+ * 实现(dhtmlxgantt.react.es.js)确认它内部也就是同一个"effect 里读
+ * `ganttRef.current?.instance`"的形状,真正起作用的是挂载边界对齐了。用它
+ * 而不是手写等价 effect,是因为组件生命周期已定(`GanttChart` 整个生命周期
+ * 里 `mod` 恒定存在),按规则调用 hook 没有条件调用的顾虑,直接复用官方实现
+ * 省得再维护一份 attach/detach 的样板。
  */
 type GanttStaticLike = {
   attachEvent?: (name: string, handler: (id: unknown) => unknown) => string;
@@ -56,6 +71,16 @@ type GanttStaticLike = {
   selectTask?: (id: string) => void;
 };
 type GanttRefLike = { instance: GanttStaticLike | null };
+/** `useGanttEvent`'s real signature (dhtmlxgantt.react.es.d.ts):
+ * `(ganttRef, eventName, handler, options?) => void`. Pulled off the
+ * dynamically-`import()`ed module object at runtime — loosely typed like
+ * `GanttModule` itself, since the package isn't a build-time dependency this
+ * repo can type-check strictly against in every checkout. */
+type UseGanttEventFn = (
+  ganttRef: { current: GanttRefLike | null },
+  eventName: string,
+  handler: (...args: unknown[]) => unknown,
+) => void;
 
 export type GanttView = 'resource' | 'workshop' | 'order';
 export type GanttPanelState = { view?: GanttView };
@@ -109,6 +134,77 @@ function ganttWindowUrl(threadId: string | undefined, view: GanttView): string {
   const q = new URLSearchParams({ view });
   if (threadId) q.set('threadId', threadId);
   return `/api/gantt/window?${q}`;
+}
+
+/**
+ * `<Gantt>` 本体 + 双向定位接线,钉在同一个组件里(见文件头 2026-08-19 追记
+ * 的完整推理)——`GanttChart` 只在 `GanttPanel` 判定 `load.state === 'ready'`
+ * 之后才被创建,整个生命周期里 `mod` 恒定存在,所以下面对 `mod.useGanttEvent`
+ * 的调用是无条件的、每次渲染都跑同一行,不违反 hooks 规则。
+ */
+type GanttChartProps = {
+  mod: GanttModule;
+  tasks: GanttTask[];
+  focusScheduleFilter: PanelTabsApi['focusScheduleFilter'];
+  ganttFocus: PanelTabsApi['ganttFocus'];
+  clearGanttFocus: PanelTabsApi['clearGanttFocus'];
+};
+
+function GanttChart({ mod, tasks, focusScheduleFilter, ganttFocus, clearGanttFocus }: GanttChartProps) {
+  const ganttRef = useRef<GanttRefLike | null>(null);
+  const modRecord = mod as Record<string, unknown>;
+  const Gantt = modRecord.default as FC<{
+    ref?: Ref<GanttRefLike>;
+    tasks?: unknown[];
+    config?: Record<string, unknown>;
+    templates?: Record<string, unknown>;
+    className?: string;
+  }>;
+  const useGanttEvent = modRecord.useGanttEvent as UseGanttEventFn;
+
+  // 甘特 → 表格:点一条 bar,顺 parent 链倒查它的订单号,复用已有的
+  // focusScheduleFilter 定位路径 —— 不另造一套(见该函数的调用处说明)。
+  // 泳道父行没有订单号可言(orderIdForTask 对它诚实回 undefined),点了不动作。
+  // 官方 `useGanttEvent`:attach on mount / detach on unmount,和 `<Gantt>`
+  // 同一个组件、同一次挂载生命周期——这正是修复 race 的关键(见文件头)。
+  useGanttEvent(ganttRef, 'onTaskClick', (id: unknown) => {
+    const orderId = orderIdForTask(tasks, String(id));
+    if (orderId) void focusScheduleFilter({ order_id: orderId });
+    return true; // 放行默认的选中态,不拦事件
+  });
+
+  // 表格 → 甘特:消费 focusGanttJob 暂存的 target。`GanttChart` 只在
+  // load.state === 'ready' 时才存在,不需要再判一次 load 状态。
+  // resolveFocusTarget 找不到就回 null——这里的处理就是"不动",不瞎滚一个
+  // (gantt-focus.ts 的核心约束)。只尝试一次:同一窗口内不会因为再等等就
+  // 突然命中,真找不到留给"换窗口"的后续工作(task 7 之外)。
+  useEffect(() => {
+    if (!ganttFocus) return;
+    const targetId = resolveFocusTarget(tasks, ganttFocus.target);
+    clearGanttFocus();
+    if (!targetId) return;
+    const instance = ganttRef.current?.instance;
+    try {
+      instance?.showTask?.(targetId);
+    } catch {
+      /* best-effort scroll-into-view */
+    }
+    try {
+      instance?.selectTask?.(targetId);
+    } catch {
+      /* best-effort highlight */
+    }
+  }, [ganttFocus, tasks, clearGanttFocus]);
+
+  return (
+    <Gantt
+      ref={ganttRef}
+      tasks={tasks}
+      config={GANTT_CONFIG}
+      templates={{ task_class: taskClass }}
+      className="h-full w-full"
+    />
+  );
 }
 
 export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
@@ -190,53 +286,11 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
   );
   const droppedCount = ready ? (load.payload.truncated?.bars_dropped ?? 0) : 0;
 
-  // 表格↔甘特双向定位(gantt-focus.ts)。
+  // 表格↔甘特双向定位(gantt-focus.ts)。接线(ganttRef + useGanttEvent +
+  // 消费 focusGanttJob)全部下沉进 GanttChart —— 理由见文件头那段
+  // 2026-08-19 追记:必须让"渲染 `<Gantt>`"和"接事件线"总在同一次挂载/卸载
+  // 里发生,不能分属两个组件。
   const { focusScheduleFilter, ganttFocus, clearGanttFocus } = usePanelTabs();
-  // Populated by React when `<Gantt ref={ganttRef}>` mounts (only once
-  // load.state === 'ready' — see the JSX below); null until then.
-  const ganttRef = useRef<GanttRefLike | null>(null);
-
-  // 甘特 → 表格:点一条 bar,顺 parent 链倒查它的订单号,复用已有的
-  // focusScheduleFilter 定位路径 —— 不另造一套(见该函数的调用处说明)。
-  // 泳道父行没有订单号可言(orderIdForTask 对它诚实回 undefined),点了不动作。
-  // `tasks` in the deps re-runs this whenever a fresh window lands (including
-  // the very first time `<Gantt>` actually mounts and populates ganttRef).
-  useEffect(() => {
-    const instance = ganttRef.current?.instance;
-    if (!instance || typeof instance.attachEvent !== 'function') return;
-    const handlerId = instance.attachEvent('onTaskClick', (id: unknown) => {
-      const orderId = orderIdForTask(tasks, String(id));
-      if (orderId) void focusScheduleFilter({ order_id: orderId });
-      return true; // 放行默认的选中态,不拦事件
-    });
-    return () => {
-      if (typeof instance.detachEvent === 'function') instance.detachEvent(handlerId);
-    };
-  }, [tasks, focusScheduleFilter]);
-
-  // 表格 → 甘特:消费 focusGanttJob 暂存的 target。等这一窗数据落地
-  // (load.state === 'ready')再判定,不对着还没到位的空 tasks 误判"找不到"。
-  // resolveFocusTarget 找不到就回 null——这里的处理就是"不动",不瞎滚一个
-  // (gantt-focus.ts 的核心约束)。只尝试一次:同一窗口内不会因为再等等就
-  // 突然命中,真找不到留给"换窗口"的后续工作(task 7 之外)。
-  useEffect(() => {
-    if (!ganttFocus) return;
-    if (load.state !== 'ready') return;
-    const targetId = resolveFocusTarget(tasks, ganttFocus.target);
-    clearGanttFocus();
-    if (!targetId) return;
-    const instance = ganttRef.current?.instance;
-    try {
-      instance?.showTask?.(targetId);
-    } catch {
-      /* best-effort scroll-into-view */
-    }
-    try {
-      instance?.selectTask?.(targetId);
-    } catch {
-      /* best-effort highlight */
-    }
-  }, [ganttFocus, load, tasks, clearGanttFocus]);
 
   if (avail.state === 'checking') {
     return <p className="text-muted-foreground p-6 text-sm">{t('panels.gantt.loading')}</p>;
@@ -244,14 +298,6 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
   if (avail.state === 'unavailable') {
     return <p className="text-muted-foreground p-6 text-sm leading-relaxed">{t('panels.gantt.unavailable')}</p>;
   }
-
-  const Gantt = (avail.mod as Record<string, unknown>).default as FC<{
-    ref?: Ref<GanttRefLike>;
-    tasks?: unknown[];
-    config?: Record<string, unknown>;
-    templates?: Record<string, unknown>;
-    className?: string;
-  }>;
 
   return (
     <div className="flex h-full flex-col">
@@ -296,12 +342,12 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
           <p className="text-muted-foreground p-6 text-sm">{t('panels.gantt.loading')}</p>
         )}
         {load.state === 'ready' && (
-          <Gantt
-            ref={ganttRef}
+          <GanttChart
+            mod={avail.mod}
             tasks={tasks}
-            config={GANTT_CONFIG}
-            templates={{ task_class: taskClass }}
-            className="h-full w-full"
+            focusScheduleFilter={focusScheduleFilter}
+            ganttFocus={ganttFocus}
+            clearGanttFocus={clearGanttFocus}
           />
         )}
       </div>
