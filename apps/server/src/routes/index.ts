@@ -23,12 +23,14 @@ import { registerRagRoutes } from './rag.js';
 import { registerViewer3dRoutes } from './viewer3d.js';
 import { registerMcpAppsRoutes } from './mcp-apps.js';
 import { registerEnterpriseRoutes } from './enterprise.js';
+import { registerDesktopAuthRoutes } from '../desktop-auth/routes.js';
 
 export async function registerApiRoutes(app: FastifyInstance, deps: ServerDeps): Promise<void> {
   registerHealthRoutes(app, deps);
   registerModelSettingsRoutes(app, deps);
   registerLangfuseSettingsRoutes(app, deps);
   registerEnterpriseRoutes(app, deps);
+  registerDesktopAuthRoutes(app);
   registerSkillsRoutes(app, deps);
   registerHooksRoutes(app, deps);
   registerPluginsRoutes(app, deps);

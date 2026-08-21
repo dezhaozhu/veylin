@@ -3,9 +3,12 @@
 export type MembershipRole = 'owner' | 'admin' | 'member';
 
 export type IdentitySession = {
+  /** Local resource owner id (desktop: installId). */
   userId: string;
   email?: string;
   displayName?: string;
+  /** Platform account id when logged in; never used as local resourceId. */
+  platformUserId?: string;
 };
 
 export type IdentityPort = {

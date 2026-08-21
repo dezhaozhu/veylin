@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronsUpDown, Loader2, LogOut, Settings } from 'lucide-react';
+import { ChevronsUpDown, Loader2, LogIn, LogOut, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { buttonVariants } from '@/components/ui/button';
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
+import { DesktopLoginDialog } from '@/components/assistant-ui/desktop-login-dialog';
 import { useAppUpdater } from '@/hooks/use-app-updater';
 import { useSession, logout } from '@/hooks/use-session';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
@@ -16,7 +17,7 @@ function initials(name: string): string {
 }
 
 export function SidebarUserMenu() {
-  const { user } = useSession();
+  const { user, isDesktop, loggedIn, platformConfigured, refresh } = useSession();
   const { openAppSettings } = useSettingsPanel();
   const {
     updateAvailable,
@@ -25,14 +26,18 @@ export function SidebarUserMenu() {
     checkError,
     installError,
     installUpdate,
-    refresh,
+    refresh: refreshUpdater,
     clearErrors,
   } = useAppUpdater();
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  const displayName = user?.name ?? 'Dev User';
+  const displayName = user?.name ?? t('userMenu.signedOut');
+  const subtitle = loggedIn
+    ? user?.email || user?.platformUserId || t('userMenu.signedIn')
+    : t('userMenu.signedOut');
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -65,7 +70,7 @@ export function SidebarUserMenu() {
                 className="text-primary mt-1 underline"
                 onClick={() => {
                   clearErrors();
-                  void refresh();
+                  void refreshUpdater();
                 }}
               >
                 {t('splash.retry')}
@@ -84,14 +89,29 @@ export function SidebarUserMenu() {
             <span className="flex-1">{t('userMenu.settings')}</span>
           </button>
           <div className="bg-border my-1 h-px" />
-          <button
-            type="button"
-            className="hover:bg-accent flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm"
-            onClick={() => void logout()}
-          >
-            <LogOut className="text-muted-foreground size-4" />
-            <span>{t('userMenu.logOut')}</span>
-          </button>
+          {isDesktop && !loggedIn && platformConfigured && (
+            <button
+              type="button"
+              className="hover:bg-accent flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm"
+              onClick={() => {
+                close();
+                setLoginOpen(true);
+              }}
+            >
+              <LogIn className="text-muted-foreground size-4" />
+              <span>{t('userMenu.signIn')}</span>
+            </button>
+          )}
+          {(!isDesktop || loggedIn) && (
+            <button
+              type="button"
+              className="hover:bg-accent flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm"
+              onClick={() => void logout()}
+            >
+              <LogOut className="text-muted-foreground size-4" />
+              <span>{t('userMenu.logOut')}</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -109,7 +129,7 @@ export function SidebarUserMenu() {
             </Avatar>
             <div className="grid min-w-0 flex-1 pl-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">{displayName}</span>
-              <span className="text-muted-foreground truncate text-xs">free</span>
+              <span className="text-muted-foreground truncate text-xs">{subtitle}</span>
             </div>
             {updateAvailable && (
               <span
@@ -145,6 +165,12 @@ export function SidebarUserMenu() {
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
+
+      <DesktopLoginDialog
+        open={loginOpen}
+        onOpenChange={setLoginOpen}
+        onSuccess={() => void refresh()}
+      />
     </div>
   );
 }

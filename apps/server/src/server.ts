@@ -463,6 +463,11 @@ async function main() {
   };
   await registerApiRoutes(app, deps);
 
+  if (isDesktopAuth) {
+    const { startEntitlementsRefreshLoop } = await import('./desktop-auth/service.js');
+    startEntitlementsRefreshLoop();
+  }
+
   // Self-heals a remote MCP server left disconnected after boot/reconnect
   // (e.g. an ssh tunnel blip during mac sleep) by periodically re-running the
   // same rebuildMcp path the manual /api/mcp-servers/reconnect route uses —

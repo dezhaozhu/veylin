@@ -1,6 +1,7 @@
 import type { MembershipRole, OrgDirectoryPort, OrgMembership } from '../types.js';
 import { resolveTenantForUser, DEV_TENANT_ID } from '../../tenant.js';
 import { listMembershipsByTenant } from '@veylin/db';
+import { isDesktopAuth } from '../../auth.js';
 
 const READ_HINT = /^(get_|list_|search_|find_|read_|query_|fetch_|describe_|count_)/i;
 const WRITE_HINT = /^(create_|update_|delete_|remove_|write_|set_|put_|post_|patch_|mutate_)/i;
@@ -16,7 +17,8 @@ export function createPersonalOrgDirectoryPort(): OrgDirectoryPort {
   return {
     id: 'personal-tenant',
     async resolveTenant(userId: string, displayName?: string): Promise<OrgMembership> {
-      if (userId === 'dev-user') {
+      // Desktop: installId is the resource owner; still one shared DEV tenant.
+      if (isDesktopAuth || userId === 'dev-user') {
         return { tenantId: DEV_TENANT_ID, role: 'owner' };
       }
       const tenantId = await resolveTenantForUser(userId, displayName);

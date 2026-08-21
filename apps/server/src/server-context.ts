@@ -1,6 +1,7 @@
 import { isDesktopAuth } from './auth.js';
 import { DEV_TENANT_ID } from './tenant.js';
 import { getEnterprisePorts } from './ports/index.js';
+import { getOrCreateInstallId } from './desktop-auth/install-id.js';
 
 export class UnauthorizedError extends Error {
   constructor() {
@@ -18,15 +19,15 @@ export async function resolveContext(headers: Record<string, string | string[] |
 
   if (isDesktopAuth || ports.identity.id === 'desktop') {
     const session = await ports.identity.getSession(headers);
-    const membership = await ports.org.resolveTenant(
-      session?.userId ?? 'dev-user',
-      session?.displayName,
-    );
+    // Local threads key off installId (resourceId === userId). Keep desktop on DEV_TENANT.
+    const installId = session?.userId || getOrCreateInstallId();
     return {
-      userId: session?.userId ?? 'dev-user',
-      tenantId: membership.tenantId || DEV_TENANT_ID,
-      role: membership.role,
-      authed: false as boolean,
+      userId: installId,
+      installId,
+      platformUserId: session?.platformUserId ?? null,
+      tenantId: DEV_TENANT_ID,
+      role: 'owner' as const,
+      authed: Boolean(session?.platformUserId),
     };
   }
 
@@ -37,6 +38,8 @@ export async function resolveContext(headers: Record<string, string | string[] |
   const membership = await ports.org.resolveTenant(session.userId, session.displayName);
   return {
     userId: session.userId,
+    installId: null as string | null,
+    platformUserId: session.platformUserId ?? null,
     tenantId: membership.tenantId,
     role: membership.role,
     authed: true as boolean,
