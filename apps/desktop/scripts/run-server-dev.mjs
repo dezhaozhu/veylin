@@ -134,7 +134,12 @@ async function watchHealth() {
       continue;
     }
     consecutiveHealthFailures += 1;
-    const startupGraceElapsed = Date.now() - childStartedAt >= 60_000;
+    // 60s → 300s(2026-08-25):实测这个仓的启动要 **144 秒**(嵌入库的 clog 已经
+    // 涨到 536MB,启动要重放它)。60 秒宽限 + 3 次探测 ≈ 75 秒就 SIGTERM,而重放
+    // 每次从头开始 —— 于是一旦重启就再也起不来,日志里只有无穷无尽的
+    // "waiting for startup grace"。**这不是把问题藏起来**:真正的债是那个 clog
+    // 该压实/轮转,但在那之前,宽限期至少要大于真实启动时间,否则连开发都进行不下去。
+    const startupGraceElapsed = Date.now() - childStartedAt >= 300_000;
     if (startupGraceElapsed && consecutiveHealthFailures >= 3) {
       logLine('health probe failed repeatedly; restarting tsx watch process');
       child.kill('SIGTERM');
