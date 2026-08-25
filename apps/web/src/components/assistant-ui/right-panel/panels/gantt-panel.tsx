@@ -15,13 +15,13 @@
  * batch(拼炉)三种标记从 toGanttTasks 带出来,画在条上并配一份图例;截断要
  * 明说"这窗口还有 N 条没画",不能悄悄少画。
  */
-import { useEffect, useMemo, useRef, useState, type FC, type Ref } from 'react';
+import { useEffect, useMemo, useRef, useState, type FC, type Ref, useCallback } from 'react';
 import { useAuiState } from '@assistant-ui/react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { loadDhtmlxGantt, loadDhtmlxGanttCss, type GanttModule } from '@/lib/dhtmlx-gantt-loader';
 import { toGanttTasks, type GanttTask, type GanttWindowPayload } from '@/lib/gantt-window-model';
-import { ganttErrorMessage, resolveGanttThreadId } from '@/lib/gantt-request';
+import { ganttErrorMessage, resolveGanttThreadId, ganttWindowUrl, withExpanded } from '@/lib/gantt-request';
 import { orderIdForTask, resolveFocusTarget } from '@/lib/gantt-focus';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import type { PanelTabsApi } from '@/components/assistant-ui/right-panel/use-panel-tabs';
@@ -164,11 +164,6 @@ function taskClass(_start: unknown, _end: unknown, task: unknown): string {
     .join(' ');
 }
 
-function ganttWindowUrl(threadId: string | undefined, view: GanttView): string {
-  const q = new URLSearchParams({ view });
-  if (threadId) q.set('threadId', threadId);
-  return `/api/gantt/window?${q}`;
-}
 
 /**
  * `<Gantt>` 本体 + 双向定位接线,钉在同一个组件里(见文件头 2026-08-19 追记
@@ -183,6 +178,8 @@ function ganttWindowUrl(threadId: string | undefined, view: GanttView): string {
  * 反应"——症状和上一轮一模一样,而且不会有任何编译期或类型层面的提示。
  */
 type GanttChartProps = {
+  /** 展开某条二级时回调它的订单号(泳道父行等无订单可展时给 undefined)。 */
+  onExpandOrder: (orderId: string | undefined) => void;
   mod: GanttModule;
   tasks: GanttTask[];
   focusScheduleFilter: PanelTabsApi['focusScheduleFilter'];
@@ -190,7 +187,8 @@ type GanttChartProps = {
   clearGanttFocus: PanelTabsApi['clearGanttFocus'];
 };
 
-function GanttChart({ mod, tasks, focusScheduleFilter, ganttFocus, clearGanttFocus }: GanttChartProps) {
+function GanttChart({ mod, tasks, focusScheduleFilter, ganttFocus, clearGanttFocus,
+                     onExpandOrder }: GanttChartProps) {
   const ganttRef = useRef<GanttRefLike | null>(null);
   const modRecord = mod as Record<string, unknown>;
   const Gantt = modRecord.default as FC<{
@@ -227,6 +225,14 @@ function GanttChart({ mod, tasks, focusScheduleFilter, ganttFocus, clearGanttFoc
     const orderId = orderIdForTask(tasksRef.current, String(id));
     if (orderId) void focusScheduleFilter({ order_id: orderId });
     return true; // 放行默认的选中态,不拦事件
+  });
+
+  // 展开一条二级 → 把它的三级取回来。同样顺 parent 链倒查订单号:children 是按
+  // **订单**建键的(joint 的 job_id/WBS 属于二级行的 order_id),不是按二级 job_id。
+  // 泳道父行没有订单号,展开它不触发取数(orderIdForTask 诚实回 undefined)。
+  useGanttEvent(ganttRef, 'onTaskOpened', (id: unknown) => {
+    onExpandOrder(orderIdForTask(tasksRef.current, String(id)));
+    return true;
   });
 
   // 表格 → 甘特:消费 focusGanttJob 暂存的 target。`GanttChart` 只在
@@ -296,13 +302,16 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
   }, []);
 
   const [load, setLoad] = useState<Load>({ state: 'loading' });
+  /** 已展开的订单号。换视角时清空 —— 那是另一棵树了。 */
+  const [expanded, setExpanded] = useState<string[]>([]);
   useEffect(() => {
     if (avail.state !== 'available') return;
     let alive = true;
+    setExpanded([]);   // 换视角 = 另一棵树,旧的展开清单不再对应任何父行
     setLoad({ state: 'loading' });
     void (async () => {
       try {
-        const res = await fetch(ganttWindowUrl(threadId, view));
+        const res = await fetch(ganttWindowUrl(threadId, view, expandedRef.current));
         const body = (await res.json()) as GanttWindowPayload & { ok: boolean; message?: string };
         if (!alive) return;
         if (!body.ok) {
@@ -335,6 +344,36 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
   // tear down and rebuild on each of those unrelated renders. Harmless at toy
   // scale, real churn at 30k tasks. `[load]` is the only real dependency —
   // `toGanttTasks` is pure over `load.payload`.
+  // **展开走一条独立的取数路径,绝不碰 `load.state`。**
+  //
+  // 若图省事复用主 effect(把 `expanded` 加进它的依赖),它会先 `setLoad({loading})`
+  // —— 而 `<GanttChart>` 只在 `ready` 时存在,于是图**卸载**、树收起、用户刚展开的
+  // 那一条被收回去;他再展开,又卸载一次。展开在界面上永远打不开,而且没有任何报错。
+  // 所以这里只在成功后把新 payload 合进 `ready`,让图自始至终挂着(handler 读的是
+  // latest-ref,换数据不会拿到过期的那一批)。
+  const expandedRef = useRef<string[]>(expanded);
+  expandedRef.current = expanded;
+  useEffect(() => {
+    if (expanded.length === 0 || load.state !== 'ready') return;
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch(ganttWindowUrl(threadId, view, expanded));
+        const body = (await res.json()) as GanttWindowPayload & { ok: boolean };
+        if (!alive || !body.ok) return; // 展开失败就维持现状:树还在,只是没有子行
+        setLoad((prev) => (prev.state === 'ready' ? { state: 'ready', payload: body } : prev));
+      } catch {
+        /* 同上:展开取数失败不该把整张图打掉 */
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, threadId, view]);
+
+  const handleExpandOrder = useCallback((orderId: string | undefined) => {
+    setExpanded((cur) => withExpanded(cur, orderId) ?? cur);
+  }, []);
+
   const ready = load.state === 'ready';
   const { tasks, truncatedNote, lanesHidden } = useMemo<{
     tasks: GanttTask[];
@@ -421,6 +460,7 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
             focusScheduleFilter={focusScheduleFilter}
             ganttFocus={ganttFocus}
             clearGanttFocus={clearGanttFocus}
+            onExpandOrder={handleExpandOrder}
           />
         )}
       </div>

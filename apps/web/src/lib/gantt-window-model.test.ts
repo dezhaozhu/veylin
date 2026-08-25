@@ -108,3 +108,42 @@ describe('甘特窗口 → dhtmlx 数据', () => {
     assert.equal(toGanttTasks(noMeta).lanesHidden, 0);
   });
 });
+
+describe('三级子行的 id', () => {
+  const twoStagesOneOrder = {
+    meta: { view: 'resource', lane_total: 1 },
+    lanes: [{
+      lane: 'WC10', kind: 'resource', total_bars: 2,
+      bars: [
+        {
+          job_id: 'L2-1', order_id: 'MO-1', label: 'MO-1·下料',
+          start: '2026-09-01', end: '2026-09-02', resource: 'WC10',
+          children: [{ _work_order_id: 'T0001', op_seq: 10, op_name: '下料',
+                       planned_start: '2026-09-01', planned_end: '2026-09-01' }],
+        },
+        {
+          job_id: 'L2-2', order_id: 'MO-1', label: 'MO-1·焊接',
+          start: '2026-09-03', end: '2026-09-04', resource: 'WC10',
+          children: [{ _work_order_id: 'T0001', op_seq: 10, op_name: '下料',
+                       planned_start: '2026-09-01', planned_end: '2026-09-01' }],
+        },
+      ],
+    }],
+    truncated: null,
+  };
+
+  it('用三级行自己的身份,不是 undefined', () => {
+    const { tasks } = toGanttTasks(twoStagesOneOrder as never);
+    const kids = tasks.filter((t) => t.parent?.startsWith('job:') && t.id.startsWith('wo:'));
+    assert.equal(kids.length, 2);
+    assert.ok(kids.every((k) => !k.id.includes('undefined')), `子行 id 里不该有 undefined: ${kids.map((k) => k.id).join(',')}`);
+  });
+
+  it('同一订单的多条二级共享同一份三级时,子行 id 不许相撞', () => {
+    // children 按订单号建键,所以同订单的每条二级都会挂上同一批三级。
+    // id 若只取三级自身,两个父行下就是同一个 id —— dhtmlx 的树会直接乱。
+    const { tasks } = toGanttTasks(twoStagesOneOrder as never);
+    const ids = tasks.map((t) => t.id);
+    assert.equal(new Set(ids).size, ids.length, `id 撞了: ${ids.join(',')}`);
+  });
+});

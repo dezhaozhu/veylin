@@ -43,3 +43,37 @@ export function ganttErrorMessage(
   const msg = body?.message;
   return typeof msg === 'string' && msg.length > 0 ? msg : fallback;
 }
+
+export type GanttView = 'resource' | 'workshop' | 'order';
+
+/**
+ * 面板取数的 URL。从 gantt-panel.tsx 搬过来,因为 `expand` 让它有了真正的判断
+ * (空列表不该带参数),而判断就该有测试。
+ */
+export function ganttWindowUrl(
+  threadId: string | undefined,
+  view: GanttView,
+  expand: readonly string[] = [],
+): string {
+  const q = new URLSearchParams({ view });
+  if (threadId) q.set('threadId', threadId);
+  // 空列表**不带这个参数** —— 否则服务端会为一个空的展开清单白跑一遍三级查询。
+  if (expand.length > 0) q.set('expand', expand.join(','));
+  return `/api/gantt/window?${q}`;
+}
+
+/**
+ * 把一个订单加进"已展开"集合;**已经在里面就回 `null`**,让调用方直接跳过重拉。
+ *
+ * 为什么回 null 而不是回原数组:回原数组的话调用方要自己做引用比较才知道该不该
+ * 发请求,而"忘了比较"的后果是每次展开都重拉一次窗口 —— 30k 行的厂里,那是几百毫秒
+ * 白烧 + 树被数据刷新打断。让"没变化"变成一个显式的值,调用方就漏不掉。
+ */
+export function withExpanded(
+  current: readonly string[],
+  orderId: string | undefined,
+): string[] | null {
+  if (!orderId) return null;
+  if (current.includes(orderId)) return null;
+  return [...current, orderId];
+}

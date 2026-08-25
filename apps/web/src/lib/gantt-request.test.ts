@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveGanttThreadId, ganttErrorMessage } from './gantt-request.js';
+import { resolveGanttThreadId, ganttErrorMessage, ganttWindowUrl, withExpanded } from './gantt-request.js';
 
 describe('resolveGanttThreadId —— remoteId ?? externalId ?? localId', () => {
   it('remoteId 赢,即便 externalId 和 id 都在', () => {
@@ -50,5 +50,26 @@ describe('ganttErrorMessage —— 服务端的话原样透传,不许被换成"�
 
   it('message 不是字符串(比如后端手滑传了个对象)也不能直接渲染,落回 fallback', () => {
     assert.equal(ganttErrorMessage({ message: { oops: true } }, '加载失败'), '加载失败');
+  });
+});
+
+describe('展开三级', () => {
+  it('URL 带上要展开的订单号,逗号分隔', () => {
+    const url = ganttWindowUrl('t1', 'resource', ['MO-1', 'MO-2']);
+    assert.match(url, /expand=MO-1%2CMO-2|expand=MO-1,MO-2/);
+  });
+
+  it('没有要展开的就不带这个参数 —— 别让服务端为空列表白跑一趟', () => {
+    assert.doesNotMatch(ganttWindowUrl('t1', 'resource', []), /expand/);
+    assert.doesNotMatch(ganttWindowUrl('t1', 'resource'), /expand/);
+  });
+
+  it('同一个订单展开两次不重复请求 —— 集合去重且保持顺序', () => {
+    assert.deepEqual(withExpanded(['MO-1'], 'MO-2'), ['MO-1', 'MO-2']);
+    assert.equal(withExpanded(['MO-1', 'MO-2'], 'MO-1'), null, '已经在里面就回 null,让调用方跳过重拉');
+  });
+
+  it('订单号为空就不动 —— 展开的是泳道父行之类,没有订单可展', () => {
+    assert.equal(withExpanded(['MO-1'], undefined), null);
   });
 });

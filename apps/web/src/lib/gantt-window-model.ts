@@ -121,8 +121,13 @@ export function toGanttTasks(payload: GanttWindowPayload): {
         marks,
       });
       for (const c of b.children ?? []) {
+        // **id 要带上父行**。children 按订单号建键,同一订单的每条二级都会挂上同一批
+        // 三级 —— 只取三级自身的身份,两个父行下就是同一个 id,dhtmlx 的树会撞乱。
+        // 身份用 `_work_order_id`(joint_service 的 data-only 字段);它缺席时退到
+        // op_seq,**绝不让 `undefined` 进 id** —— 那会让所有子行撞成同一条。
+        const kidKey = String(c._work_order_id ?? c.op_seq ?? tasks.length);
         tasks.push({
-          id: `wo:${String(c.work_order_id)}`,
+          id: `wo:${b.job_id}:${kidKey}`,
           text: String(c.op_name ?? ''),
           parent: `job:${b.job_id}`,
           start_date: String(c.planned_start ?? c.start ?? b.start),
