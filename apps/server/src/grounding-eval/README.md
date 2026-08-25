@@ -115,7 +115,7 @@ central 角色）→ `show_shadow`（对该提案做影子对比），走的是�
 
 - `VEYLIN_BASE_URL=http://127.0.0.1:8088/v1` —— 这是一个私人 SSH 隧道别名，本次会话
   隧道没起来，端口拒连。`compass-v2/.env` 自己的 `COMPASS_LLM_BASE_URL` 用的是同一把
-  key/同一个模型的公网网关 `https://llm.youdamaster.cc/v1`（`curl .../v1/models` 200），
+  key/同一个模型的公网网关(地址见部署方的私有配置,不写进公开仓)（`curl .../v1/models` 200），
   所以把 `VEYLIN_BASE_URL` 改指到这个地址是修网络路径，不是换模型——同一个
   `VEYLIN_MODEL=kimi-k2.7-code`、同一把 `VEYLIN_API_KEY`。隧道恢复后应该改回
   `127.0.0.1:8088`。

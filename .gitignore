@@ -5,6 +5,9 @@ build/
 *.tsbuildinfo
 .env
 .env.local
+# 备份变体也要挡:曾有 7 个 .env.bak* 带着真凭据被提交进公开仓(2026-08-19 发现)
+.env.bak*
+.env.*.bak
 *.log
 .DS_Store
 

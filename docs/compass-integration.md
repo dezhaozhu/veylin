@@ -18,7 +18,7 @@ Veylin(每人自己的实例)
 ## 起环境
 
 ```bash
-git clone http://10.84.3.239:8081/gushirui/veylin.git
+git clone http://<内网 GitLab>/gushirui/veylin.git
 cd veylin && npm install
 ```
 
