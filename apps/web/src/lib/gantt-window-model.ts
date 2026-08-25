@@ -16,6 +16,11 @@ export type GanttTask = {
    * violations.cap_overloads 命中的泳道父行,cap_overloads 只聚合到
    * resource+month,定位不到具体哪根 bar)是 2026-08-19 最终评审 F3 补的。 */
   marks: string[];
+  /** dhtmlx 的"这条底下还有东西"标记 —— 有它才画展开箭头(见下面 has_children)。 */
+  $has_child?: boolean;
+  /** 这一行默认展不展开。**逐行给**,不用全局 open_tree_initially —— 后者会把二级
+   *  行也展开,而二级展开 = 去取三级,于是一进面板就把整屏订单的三级猛拉一遍。 */
+  open?: boolean;
   /**
    * 订单号 —— 只有二级那条 bar 才带(泳道父行、三级子行不需要)。下一刀
    * (表格↔甘特双向定位)要按订单号在两边对齐,没有这个字段就实现不了
@@ -37,6 +42,8 @@ export type GanttBar = {
   /** 三级子行(work_orders)。没有三级的租户(如锅炉)这个键干脆不存在——
    * 不要给它兜底成 `[]`,那等于假装能展开。 */
   children?: Array<Record<string, unknown>>;
+  /** 服务端说这条二级底下有三级(只为决定画不画箭头,不代表子行已经取回来)。 */
+  has_children?: boolean;
 };
 
 export type GanttLane = {
@@ -101,6 +108,9 @@ export function toGanttTasks(payload: GanttWindowPayload): {
       id: `lane:${lane.lane}`,
       text: lane.lane,
       type: 'project',
+      // 泳道默认展开 —— 看得见 bar 才是这个面板存在的理由。**逐行给**,不用全局
+      // open_tree_initially:那个会把二级行也展开,而二级展开=去取三级。
+      open: true,
       start_date: lane.bars[0]?.start ?? '',
       end_date: lane.bars[0]?.end ?? '',
       marks: laneMarks,
@@ -116,6 +126,9 @@ export function toGanttTasks(payload: GanttWindowPayload): {
         text: b.label,
         parent: `lane:${lane.lane}`,
         orderId: b.order_id,
+        // **展开是"点了才取"**,所以箭头不能等子行到齐才画 —— 靠服务端先说有没有。
+        // 没说有就不画:一个点开永远是空的箭头,比没有箭头更糟。
+        ...(b.has_children ? { $has_child: true } : {}),
         start_date: b.start,
         end_date: b.end,
         marks,

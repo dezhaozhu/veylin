@@ -147,3 +147,50 @@ describe('三级子行的 id', () => {
     assert.equal(new Set(ids).size, ids.length, `id 撞了: ${ids.join(',')}`);
   });
 });
+
+describe('展开箭头', () => {
+  const withFlag = (hasChildren?: boolean) => ({
+    meta: { view: 'resource', lane_total: 1 },
+    lanes: [{
+      lane: 'WC10', kind: 'resource', total_bars: 1,
+      bars: [{
+        job_id: 'L2-1', order_id: 'MO-1', label: 'MO-1·下料',
+        start: '2026-09-01', end: '2026-09-02', resource: 'WC10',
+        ...(hasChildren === undefined ? {} : { has_children: hasChildren }),
+      }],
+    }],
+    truncated: null,
+  });
+
+  it('服务端说底下有三级,就让它可以展开', () => {
+    const bar = toGanttTasks(withFlag(true) as never).tasks.find((t) => t.id === 'job:L2-1')!;
+    assert.equal(bar.$has_child, true);
+  });
+
+  it('服务端没说有,就不画箭头 —— 点开永远是空的箭头比没有箭头更糟', () => {
+    const bar = toGanttTasks(withFlag(undefined) as never).tasks.find((t) => t.id === 'job:L2-1')!;
+    assert.equal(bar.$has_child, undefined);
+  });
+});
+
+describe('哪一层默认展开', () => {
+  const payload = {
+    meta: { view: 'resource', lane_total: 1 },
+    lanes: [{
+      lane: 'WC10', kind: 'resource', total_bars: 1,
+      bars: [{ job_id: 'L2-1', order_id: 'MO-1', label: 'MO-1·下料',
+               start: '2026-09-01', end: '2026-09-02', has_children: true }],
+    }],
+    truncated: null,
+  };
+
+  it('泳道行默认展开 —— 看得见 bar 才是这个面板存在的理由', () => {
+    const lane = toGanttTasks(payload as never).tasks.find((t) => t.id === 'lane:WC10')!;
+    assert.equal(lane.open, true);
+  });
+
+  it('二级行默认**收起** —— 自动展开会把每条都当成用户展开,一上来就猛拉三级', () => {
+    const bar = toGanttTasks(payload as never).tasks.find((t) => t.id === 'job:L2-1')!;
+    assert.notEqual(bar.open, true);
+  });
+});

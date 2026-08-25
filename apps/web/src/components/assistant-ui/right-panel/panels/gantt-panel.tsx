@@ -117,7 +117,11 @@ const VIEWS: GanttView[] = ['resource', 'workshop', 'order'];
  */
 const GANTT_CONFIG = {
   readonly: true,
-  open_tree_initially: true,
+  // **逐行 `open` 取代全局自动展开**(见 gantt-window-model 的 lane 行):
+  // open_tree_initially 会把二级行也展开,而二级展开 = 去取三级,于是一进面板就把
+  // 整屏订单的三级猛拉一遍。现在泳道行自己带 open:true,二级行保持收起。
+  // `branch_loading` 让 `$has_child` 生效:子行是"点了才取",没有它,箭头永远不出现。
+  branch_loading: true,
   grid_width: 190,
   columns: [
     { name: 'text', tree: true, width: '*', label: 'Task name' },
