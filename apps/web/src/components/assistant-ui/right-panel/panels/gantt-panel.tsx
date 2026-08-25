@@ -22,7 +22,7 @@ import { Button } from '@/components/ui/button';
 import { loadDhtmlxGantt, loadDhtmlxGanttCss, type GanttModule } from '@/lib/dhtmlx-gantt-loader';
 import { toGanttTasks, type GanttTask, type GanttWindowPayload } from '@/lib/gantt-window-model';
 import { ganttErrorMessage, resolveGanttThreadId, ganttWindowUrl, withExpanded } from '@/lib/gantt-request';
-import { orderIdForTask, resolveFocusTarget } from '@/lib/gantt-focus';
+import { orderIdForTask, resolveFocusTarget, isTreeToggleTarget } from '@/lib/gantt-focus';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import type { PanelTabsApi } from '@/components/assistant-ui/right-panel/use-panel-tabs';
 import type { PanelContentProps } from '../panel-types';
@@ -225,7 +225,12 @@ function GanttChart({ mod, tasks, focusScheduleFilter, ganttFocus, clearGanttFoc
   // 泳道父行没有订单号可言(orderIdForTask 对它诚实回 undefined),点了不动作。
   // 官方 `useGanttEvent`:attach on mount / detach on unmount,和 `<Gantt>`
   // 同一个组件、同一次挂载生命周期——这正是修复 race 的关键(见文件头)。
-  useGanttEvent(ganttRef, 'onTaskClick', (id: unknown) => {
+  useGanttEvent(ganttRef, 'onTaskClick', (id: unknown, e?: unknown) => {
+    // **点展开图标时,跳转要让路。** dhtmlx 不会阻止展开图标的点击冒泡到行级
+    // handler,于是同一次点击既触发 onTaskOpened(去取三级)又触发这里(跳表格);
+    // 而跳转会把整个甘特面板卸载(右侧面板只挂载当前页签),展开根本来不及渲染。
+    // 真机实证 2026-08-25:点箭头 = 没展开 + 莫名跳去表格。
+    if (isTreeToggleTarget((e as Event | undefined)?.target)) return true;
     const orderId = orderIdForTask(tasksRef.current, String(id));
     if (orderId) void focusScheduleFilter({ order_id: orderId });
     return true; // 放行默认的选中态,不拦事件

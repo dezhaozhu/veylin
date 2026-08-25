@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { orderIdForTask, resolveFocusTarget } from './gantt-focus.js';
+import { orderIdForTask, resolveFocusTarget, isTreeToggleTarget } from './gantt-focus.js';
 
 const tasks = [
   { id: 'lane:WC10' }, { id: 'job:J1' }, { id: 'job:J2' }, { id: 'wo:T1' },
@@ -46,5 +46,33 @@ describe('从点到的条反查订单号(甘特 → 表格)', () => {
 
   it('点到一个不存在的 id,回 undefined', () => {
     assert.equal(orderIdForTask(t, 'wo:GHOST'), undefined);
+  });
+});
+
+describe('点在树的展开图标上', () => {
+  // 真机实证(2026-08-25):点展开箭头会**同时**触发 onTaskOpened 和 onTaskClick。
+  // 两个功能各自都对,但跳转会把整个甘特面板卸载 —— 展开永远渲染不出来。
+  const fakeEl = (cls: string, parentCls?: string) => ({
+    closest: (sel: string) =>
+      cls.includes(sel.replace('.', '')) || parentCls?.includes(sel.replace('.', ''))
+        ? { tag: 'div' }
+        : null,
+  });
+
+  it('点在展开图标上 → 认出来,好让跳转让路', () => {
+    assert.equal(isTreeToggleTarget(fakeEl('gantt_tree_icon gantt_close')), true);
+  });
+
+  it('点在图标的子元素上也算 —— 判定要沿 DOM 往上找', () => {
+    assert.equal(isTreeToggleTarget(fakeEl('inner', 'gantt_tree_icon')), true);
+  });
+
+  it('点在别处(条、文字)不算,跳转照常', () => {
+    assert.equal(isTreeToggleTarget(fakeEl('gantt_task_line')), false);
+  });
+
+  it('没有事件目标时不算 —— 宁可跳转,也不要静默吞掉点击', () => {
+    assert.equal(isTreeToggleTarget(undefined), false);
+    assert.equal(isTreeToggleTarget(null), false);
   });
 });

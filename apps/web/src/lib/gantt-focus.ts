@@ -37,3 +37,19 @@ export function orderIdForTask(
   }
   return undefined;
 }
+
+/**
+ * 这次点击是不是点在树的**展开/收起图标**上?
+ *
+ * 真机实证(2026-08-25):点展开箭头会同时触发 dhtmlx 的 `onTaskOpened`(展开取三级)
+ * 和 `onTaskClick`(点行跳表格)。两个功能各自都对,但跳转会把整个甘特面板卸载
+ * (右侧面板只挂载当前页签),于是展开永远渲染不出来 —— 用户看到的是"点箭头没反应,
+ * 还莫名其妙跳去了表格"。所以跳转要给展开让路。
+ *
+ * 判定沿 DOM 往上找(`closest`):图标里可能还有子元素,点在子元素上也该算。
+ * 拿不到事件目标时**回 false** —— 宁可照常跳转,也不要静默吞掉一次点击。
+ */
+export function isTreeToggleTarget(target: unknown): boolean {
+  const el = target as { closest?: (sel: string) => unknown } | null | undefined;
+  return Boolean(el?.closest?.('.gantt_tree_icon'));
+}
