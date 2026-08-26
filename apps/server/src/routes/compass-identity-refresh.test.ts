@@ -15,7 +15,7 @@ function buildDeps(overrides: Partial<ServerDeps> = {}): ServerDeps {
   return {
     runtime: {} as ServerDeps['runtime'],
     queue: {} as ServerDeps['queue'],
-    resolveContext: async () => ({ tenantId: 'dev', userId: 'dev-user' }) as never,
+    resolveContext: async () => ({ tenantId: 'dev', resourceOwnerId: 'dev-user' }) as never,
     isForbiddenError: () => false,
     rebuildMcp: async () => undefined,
     ensureMcpForTenant: async () => undefined,

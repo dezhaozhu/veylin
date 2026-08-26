@@ -21,7 +21,7 @@ function buildDeps(): ServerDeps {
   return {
     runtime: {} as ServerDeps['runtime'],
     queue: {} as ServerDeps['queue'],
-    resolveContext: async () => ({ tenantId: TENANT, userId: 'u1' }) as never,
+    resolveContext: async () => ({ tenantId: TENANT, resourceOwnerId: 'u1' }) as never,
     isForbiddenError: () => false,
     rebuildMcp: async () => undefined,
     ensureMcpForTenant: async () => undefined,
