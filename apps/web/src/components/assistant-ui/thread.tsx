@@ -343,9 +343,8 @@ const ThreadWelcome: FC = () => {
 };
 
 /**
- * 输入框。**导出**是因为项目页也要用同一个 —— 项目页原来自己搭了一个简化版,
- * 结果是"两个地方长得不一样、能力也不一样"(缺 + 号/附件/技能),而用户没道理
- * 理解这个区别。项目页那边的做法见 project-composer.tsx。
+ * 输入框。项目页也用同一个(见 project-composer.tsx),这样 + / 项目标签 /
+ * 模型选择两边一致;项目页用 `projectName` 把本页项目写进标签。
  */
 export const Composer: FC<{
   /**
