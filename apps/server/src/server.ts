@@ -369,7 +369,10 @@ async function main() {
     agentsDir: AGENTS_DIR,
   });
   if (isDesktopAuth) {
-    await pruneDesktopThreadClutter(DEV_TENANT_ID, 'dev-user', runtime.memory);
+    // 按**这台机器真实的归属**清理。写死旧值会出现"归属换了、清理还按老值"的错位:
+    // 清不到该清的,或者清到别人的。
+    const { getOrCreateInstallId } = await import('./desktop-auth/install-id.js');
+    await pruneDesktopThreadClutter(DEV_TENANT_ID, getOrCreateInstallId(), runtime.memory);
   }
   bindLangfuseRuntime(runtime.mastra);
   await seedLangfuseSettingsFromEnvIfEmpty(DEV_TENANT_ID);

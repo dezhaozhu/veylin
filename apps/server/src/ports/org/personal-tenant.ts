@@ -16,16 +16,17 @@ export function createPersonalOrgDirectoryPort(): OrgDirectoryPort {
 
   return {
     id: 'personal-tenant',
-    async resolveTenant(userId: string, displayName?: string): Promise<OrgMembership> {
-      // Desktop: installId is the resource owner; still one shared DEV tenant.
-      if (isDesktopAuth || userId === 'dev-user') {
+    async resolveTenant(accountId: string, displayName?: string): Promise<OrgMembership> {
+      // 桌面端就是桌面端 —— 靠部署模式判定,不靠"归属值恰好等于某个魔法字符串"。
+      // 后者在归属值改变的那天会静默失效(而且不会有任何报错)。
+      if (isDesktopAuth) {
         return { tenantId: DEV_TENANT_ID, role: 'owner' };
       }
-      const tenantId = await resolveTenantForUser(userId, displayName);
+      const tenantId = await resolveTenantForUser(accountId, displayName);
       // Prefer membership role when available
       try {
         const { findMembershipByUser } = await import('@veylin/db');
-        const m = await findMembershipByUser(userId);
+        const m = await findMembershipByUser(accountId);
         if (m && m.tenantId === tenantId) {
           return { tenantId, role: m.role };
         }

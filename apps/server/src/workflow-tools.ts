@@ -32,7 +32,9 @@ export function buildWorkflowTools(queue: QueuePort) {
     }),
     execute: async (_input, ctx?: WorkflowCtx) => {
       const tenantId = ctxValue(ctx, 'tenantId') ?? '00000000-0000-0000-0000-000000000000';
-      const resourceOwnerId = ctxValue(ctx, 'resourceOwnerId') ?? 'dev-user';
+      // 拿不到归属就**报错**,不要兜底成某个固定值 —— 那等于把这次操作记到别人名下。
+      const resourceOwnerId = ctxValue(ctx, 'resourceOwnerId');
+      if (!resourceOwnerId) throw new Error('缺少 resourceOwnerId:无法判定这份数据归谁');
       const threadId = ctxValue(ctx, 'threadId');
       if (!threadId) return { workflows: [] };
       const rows = await listWorkflows(tenantId, { userId: resourceOwnerId, threadId });
