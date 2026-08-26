@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { decideCompassLoad } from '@/lib/compass-schedule-load';
 import { shouldApplyPayload } from '@/lib/sheet-payload-guard';
+import {
+  TABLE_GRID_FILL_CHUNK,
+  TABLE_GRID_FIRST_PAGE,
+  shouldWaitForMoreRows,
+  tableFillOffset,
+} from '@/lib/table-progressive-load';
 import { consumeSheetSelection } from '@/lib/pending-sheet-selection';
 import { columnToReveal } from '@/lib/new-columns';
 import { isStaleSheetError } from '@/lib/stale-sheet-recovery';
@@ -24,13 +30,14 @@ import {
   type CellValueChangedEvent,
   type CellKeyDownEvent,
   type SelectionChangedEvent,
+  type CellClickedEvent,
   type IHeaderParams,
   type GridApi,
   type GridReadyEvent,
   type IRowNode,
   themeQuartz,
 } from 'ag-grid-community';
-import { anchorOfRow, rowMatchesAnchor } from '@/lib/grain-anchor';
+import { anchorOfRow, pickLocateRows, type LocateTarget } from '@/lib/grain-anchor';
 import { carryViewAcrossGrain } from '@/lib/grain-view-carry';
 import { revealPath } from '@/lib/project-folder';
 import { askBubbleAction, resolveSelectionScope, type SelectionScope } from '@/lib/grid-selection-scope';
@@ -55,7 +62,7 @@ import { buildGovernedEditBody, GOVERNED_EDIT_FIELDS } from '@/lib/schedule-edit
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import { isLateOnlyGridFilter, type OpenGridFilter } from '@/lib/correction-bridge';
 import { useRightSidebar } from '@/components/ui/sidebar';
-import { isDhtmlxAvailable } from '@/lib/dhtmlx-gantt-loader';
+import { hasGantt, locateGantt } from '@/lib/schedule-locate';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 
 type TableColumnType = 'text' | 'number' | 'status' | 'sparkline';
@@ -206,6 +213,8 @@ interface TableSheet {
 interface TableGridTotals {
   rowCount: number;
   selectedCount: number;
+  loadedCount?: number;
+  expectedCount?: number | null;
 }
 
 type FilterState = { query: string };
@@ -282,6 +291,7 @@ type SchedulePayload = {
   sheets?: TableSheet[];
   columns?: TableColumnDef[];
   rows?: TableRow[];
+  totalRows?: number;
 };
 
 const DEFAULT_EMPTY_COLUMNS: TableColumnDef[] = [];
@@ -319,10 +329,18 @@ async function readJsonResponse<T>(res: Response): Promise<T> {
  * 个人区)。不带就等于每次都问"个人区有什么",项目的表一张也看不到。
  * `sheetId` 省略 = 让服务端给这个作用域的默认表(切项目时用)。
  */
-async function fetchSchedule(sheetId: string | undefined, threadId?: string): Promise<SchedulePayload> {
+async function fetchSchedule(
+  sheetId: string | undefined,
+  threadId?: string,
+  page?: { offset: number; limit: number },
+): Promise<SchedulePayload> {
   const qs = new URLSearchParams();
   if (sheetId) qs.set('sheet', sheetId);
   if (threadId) qs.set('threadId', threadId);
+  if (page) {
+    qs.set('offset', String(page.offset));
+    qs.set('limit', String(page.limit));
+  }
   const res = await fetch(`/api/table?${qs.toString()}`);
   const data = await readJsonResponse<SchedulePayload>(res);
   if (!res.ok) {
@@ -431,7 +449,14 @@ function TableGridFooter({ totals }: { totals: TableGridTotals }) {
       aria-atomic="true"
     >
       <span className="text-foreground font-medium">
-        {t('table.footerTotal', { count: totals.rowCount })}
+        {totals.expectedCount != null &&
+        totals.loadedCount != null &&
+        totals.loadedCount < totals.expectedCount
+          ? t('table.footerLoading', {
+              loaded: totals.loadedCount,
+              total: totals.expectedCount,
+            })
+          : t('table.footerTotal', { count: totals.rowCount })}
       </span>
       {totals.selectedCount > 0 ? (
         <span>{t('table.footerSelected', { count: totals.selectedCount })}</span>
@@ -597,7 +622,7 @@ export function TableGrid() {
   const aui = useAui();
   // 排产即导航: a cockpit drill (focusScheduleFilter) stashes an OpenGridFilter
   // here; we position the already-loaded grid via an AG-Grid external filter.
-  const { scheduleFilter, clearScheduleFilter, focusGanttJob, tabs: panelTabs } = usePanelTabs();
+  const { scheduleFilter, clearScheduleFilter, tabs: panelTabs } = usePanelTabs();
   // 表格↔甘特双向定位, table→gantt half: pulling the right sidebar open is
   // the CALLER's job (same split as mcp-app-tool.tsx's openWidget call site —
   // usePanelTabsState can't reach useRightSidebar, see its focusGanttJob doc).
@@ -623,11 +648,21 @@ export function TableGrid() {
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
 
   const lastSerialized = useRef('');
+  const fillGenRef = useRef(0);
+  const sheetTotalRowsRef = useRef<number | null>(null);
+  const [sheetTotalRows, setSheetTotalRows] = useState<number | null>(null);
+  const loadRef = useRef<(sheetId: string | undefined, initial: boolean) => Promise<void>>(
+    async () => {},
+  );
   const editingUntil = useRef(0);
   const isApplyingHistory = useRef(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   // AG-Grid API ref — populated in onGridReady
   const gridApiRef = useRef<GridApi<TableRow> | null>(null);
+  /** 甘特点条定位选中行时,别再走表格→甘特把页签切回去。 */
+  const suppressGanttLocateRef = useRef(false);
+  /** 点击穿透 / API 勾选会晚一拍,单靠 microtask 挡不住。 */
+  const suppressGanttLocateUntilRef = useRef(0);
   /** 上一批列:用来认出这次多了哪一列(applyPayload 依赖为空,只能用 ref)。 */
   const columnDefsRef = useRef<TableColumnDef[]>([]);
   // Ref mirror of selectedColumnKey — read by AgColumnHeader on refreshHeader()
@@ -670,7 +705,7 @@ export function TableGrid() {
   const pendingScheduleFilterRef = useRef<OpenGridFilter | null>(null);
   const activeGridFilterRef = useRef<OpenGridFilter | null>(null);
   // 切焦段时带过去的锚点(见 switchSheet)。新焦段的行到齐后定位过去。
-  const pendingAnchorRef = useRef<string | null>(null);
+  const pendingAnchorRef = useRef<LocateTarget | null>(null);
   // 「怎么看的」也跟着走:分组 + 列筛选。新焦段没有那列就带不过去 —— 而带不过去
   // 要说出来(见 lib/grain-view-carry.ts)。
   const pendingViewRef = useRef<{ filterModel: Record<string, unknown>; groupBy: string[] } | null>(null);
@@ -777,27 +812,37 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
 
   // 到达新焦段后定位到锚点那一单。同样的 remount-safe 重试(切 sheet 会重建网格)。
   const locatePendingAnchor = useCallback((attempt = 0) => {
-    const anchor = pendingAnchorRef.current;
-    if (!anchor) return;
+    const target = pendingAnchorRef.current;
+    if (!target) return;
     const api = gridApiRef.current;
     const ready = api && !api.isDestroyed?.() && (api.getDisplayedRowCount?.() ?? 0) > 0;
     if (!ready) {
-      if (attempt < 20) setTimeout(() => locatePendingAnchor(attempt + 1), 150);
+      if (attempt < 40) setTimeout(() => locatePendingAnchor(attempt + 1), 150);
+      return;
+    }
+    const nodes: IRowNode<TableRow>[] = [];
+    api.forEachNodeAfterFilterAndSort((node) => {
+      if (node.data) nodes.push(node);
+    });
+    const picked = pickLocateRows(
+      nodes.map((n) => n.data as Record<string, unknown>),
+      target,
+      { hasMore: shouldWaitForMoreRows(rowsRef.current.length, sheetTotalRowsRef.current) },
+    );
+    if (picked.status === 'wait') {
+      if (attempt < 80) setTimeout(() => locatePendingAnchor(attempt + 1), 200);
+      return;
+    }
+    const hitSet = new Set(picked.rows);
+    const hits = nodes.filter((n) => n.data && hitSet.has(n.data as Record<string, unknown>));
+    if (picked.status === 'miss' || hits.length === 0) {
+      pendingAnchorRef.current = null;
+      // 这一单在这个焦段没有行 —— 说出来。三级只覆盖二级的一部分,静悄悄地
+      // 停在别处等于让人以为自己找错了。
+      showToast(t('table.anchorNotHere', { anchor: target.jobId ?? target.orderId ?? '' }), 'error');
       return;
     }
     pendingAnchorRef.current = null;
-    const hits: IRowNode<TableRow>[] = [];
-    api.forEachNodeAfterFilterAndSort((node) => {
-      if (rowMatchesAnchor(node.data as Record<string, unknown> | undefined, anchor)) {
-        hits.push(node);
-      }
-    });
-    if (hits.length === 0) {
-      // 这一单在这个焦段没有行 —— 说出来。三级只覆盖二级的一部分,静悄悄地
-      // 停在别处等于让人以为自己找错了。
-      showToast(t('table.anchorNotHere', { anchor }), 'error');
-      return;
-    }
     // **分页要先翻到那一页,不然 ensureNodeVisible 是白喊**(真机实测挖出来的,
     // 甘特→表格定位那条评审要求 F4 才第一次真正走到这条路径——之前唯一在用的
     // 调用方多半巧合地落在第一页,从没暴露过)。这张表恒定开着 AG-Grid 分页
@@ -812,6 +857,19 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     }
     api.ensureNodeVisible(hits[0]!, 'middle');
     api.flashCells({ rowNodes: hits });
+    // 点选单元格不会选中行(enableClickSelection: false),只闪一下看不出
+    // 是哪一行。用 API 勾上这一行;挡掉 onSelectionChanged / onCellClicked
+    // 里的 locateGantt,否则甘特页签还开着会 open('gantt') 把人踢回去。
+    suppressGanttLocateRef.current = true;
+    suppressGanttLocateUntilRef.current = Date.now() + 400;
+    hits[0]!.setSelected(true, true);
+    const data = hits[0]!.data;
+    if (data) setSelectedRows(new Set([rowKey(data)]));
+    window.setTimeout(() => {
+      if (Date.now() >= suppressGanttLocateUntilRef.current) {
+        suppressGanttLocateRef.current = false;
+      }
+    }, 400);
   }, [t]);
 
   useEffect(() => {
@@ -896,6 +954,9 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     setSelectedColumnKey(null);
     selectedColumnKeyRef.current = null;
     lastSerialized.current = '';
+    fillGenRef.current += 1;
+    sheetTotalRowsRef.current = null;
+    setSheetTotalRows(null);
     setDraftOps(0);
     setPreviewOpen(false);
     setPreviewData(null);
@@ -967,13 +1028,68 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     setRows(next);
   }, [revealNewColumn]);
 
+  const startFill = useCallback(async (sheetId: string, start: number, total: number, gen: number) => {
+    let offset = start;
+    while (offset < total) {
+      if (fillGenRef.current !== gen) return;
+      if (Date.now() < editingUntil.current) {
+        const wait = Math.max(50, editingUntil.current - Date.now() + 50);
+        window.setTimeout(() => {
+          if (fillGenRef.current === gen) {
+            void startFill(sheetId, rowsRef.current.length, total, gen);
+          }
+        }, wait);
+        return;
+      }
+      const page = await fetchSchedule(sheetId, threadIdRef.current, {
+        offset,
+        limit: TABLE_GRID_FILL_CHUNK,
+      });
+      if (fillGenRef.current !== gen) return;
+      if (!shouldApplyPayload(page.sheet, activeSheetIdRef.current)) return;
+      const incoming = page.rows ?? [];
+      if (incoming.length === 0) break;
+      setRows((prev) => prev.concat(incoming));
+      offset += incoming.length;
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 0);
+      });
+    }
+  }, []);
+
+  const acceptPage = useCallback(
+    (data: SchedulePayload, initial: boolean, gen: number) => {
+      if (fillGenRef.current !== gen) return;
+      const got = data.rows ?? [];
+      const total = data.totalRows ?? got.length;
+      const nextSig = JSON.stringify(got);
+      const keepExisting =
+        Date.now() < editingUntil.current || nextSig === lastSerialized.current;
+      applyPayload(data, initial);
+      sheetTotalRowsRef.current = total;
+      setSheetTotalRows(total);
+      const sheetKey = data.sheet ?? activeSheetIdRef.current;
+      const fillFrom = tableFillOffset(
+        keepExisting ? rowsRef.current.length : got.length,
+        total,
+      );
+      if (fillFrom != null && sheetKey) {
+        void startFill(sheetKey, fillFrom, total, gen);
+      }
+    },
+    [applyPayload, startFill],
+  );
+
   const load = useCallback(
-    async (sheetId: string, initial: boolean) => {
+    async (sheetId: string | undefined, initial: boolean) => {
+      const gen = ++fillGenRef.current;
+      const firstPage = { offset: 0, limit: TABLE_GRID_FIRST_PAGE };
       const attempts = initial ? 6 : 1;
       for (let i = 0; i < attempts; i++) {
         try {
-          const data = await fetchSchedule(sheetId, threadIdRef.current);
-          applyPayload(data, initial);
+          const data = await fetchSchedule(sheetId, threadIdRef.current, firstPage);
+          if (fillGenRef.current !== gen) return;
+          acceptPage(data, initial, gen);
           if (initial) setLoadError(null);
           return;
         } catch (err) {
@@ -984,9 +1100,10 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
           const message = err instanceof Error ? err.message : '';
           if (isStaleSheetError(message) && sheetId) {
             try {
-              const fallback = await fetchSchedule(undefined, threadIdRef.current);
+              const fallback = await fetchSchedule(undefined, threadIdRef.current, firstPage);
+              if (fillGenRef.current !== gen) return;
               if (fallback.sheet) selectSheet(fallback.sheet);
-              applyPayload(fallback, true);
+              acceptPage(fallback, true, gen);
               setLoadError(null);
               return;
             } catch {
@@ -1000,13 +1117,16 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
           if (initial) {
             setLoadError(message || t('table.loadFailedGeneric'));
             showToast(t('table.loadError', { error: message || t('table.loadFailedGeneric') }), 'error');
-            applyPayload(emptySchedulePayload(sheetId), true);
+            sheetTotalRowsRef.current = 0;
+            setSheetTotalRows(0);
+            applyPayload(emptySchedulePayload(sheetId ?? 'main'), true);
           }
         }
       }
     },
-    [applyPayload, showToast, t, selectSheet],
+    [acceptPage, applyPayload, showToast, t, selectSheet],
   );
+  loadRef.current = load;
 
   const switchSheet = useCallback(
     (sheetId: string) => {
@@ -1045,7 +1165,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       resetSheetUiState();
       pendingViewRef.current =
         groupBy.length || Object.keys(filterModel).length ? { filterModel, groupBy } : null;
-      pendingAnchorRef.current = anchor;
+      pendingAnchorRef.current = anchor ? { orderId: anchor } : null;
       userPickedSheetRef.current = true;
       selectSheet(sheetId);
       setLoading(true);
@@ -1149,6 +1269,8 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       setBootstrapped(true);
       return;
     }
+    // 本地已经有表就先画第一页,别让 Compass 整表重导堵住首屏。
+    setBootstrapped(true);
     let cancelled = false;
     void (async () => {
       setCompassLoading(true);
@@ -1169,8 +1291,15 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
           // **用户已经点过别的表就别抢。** Compass 是面板挂载后异步拉的,
           // 拉回来再切一次当前表 —— 人在这中间点了小表,会被硬拽回「工序」
           // (实测:大表小表来回切时,刚点完就被弹回去)。
-          if (userPickedSheetRef.current) return;
-          selectSheet(data.sheet);
+          if (!userPickedSheetRef.current) {
+            selectSheet(data.sheet);
+          }
+          const watching =
+            !userPickedSheetRef.current || data.sheet === activeSheetIdRef.current;
+          if (watching) {
+            lastSerialized.current = '';
+            void loadRef.current(data.sheet, false);
+          }
         } else if (!data.ok) {
           showToast(data.error ?? t('table.compassUnavailable'), 'error');
         }
@@ -1181,7 +1310,6 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       } finally {
         if (!cancelled) {
           setCompassLoading(false);
-          setBootstrapped(true);
         }
       }
     })();
@@ -1190,8 +1318,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     };
   }, [showToast, t, threadId, projects, threadProjects]);
 
-  // Live sync: SSE push + row-level deltas replaces the old 4s full-sheet poll, so
-  // update cost is independent of sheet size (loading the full 30k-row schedule is cheap).
+  // Live sync: SSE 推行级增量。整表只在首屏 / 导入替换时分页拉,不一次灌 3 万行。
   useEffect(() => {
     if (!bootstrapped) return;
     void load(activeSheetId, true);
@@ -1201,7 +1328,8 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       `/api/table/stream${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ''}`);
     es.onopen = () => {
       sseErrorNotified.current = false;
-      // (re)connected — one full resync catches anything missed while disconnected.
+      // 续灌还没完就再 load 会把第一页重画一遍。已经在灌的那次会把后面接上。
+      if (shouldWaitForMoreRows(rowsRef.current.length, sheetTotalRowsRef.current)) return;
       void load(activeSheetId, false);
     };
     es.onmessage = (ev) => {
@@ -1240,7 +1368,8 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         const drop = new Set(e.keys);
         setRows((prev) => prev.filter((r) => !drop.has(rowKey(r))));
       } else if (e.type === 'sheetReplace' || e.type === 'schemaChange') {
-        void load(activeSheetId, false); // bulk import / column change — full refetch
+        lastSerialized.current = '';
+        void load(activeSheetId, false);
       }
     };
     es.onerror = () => {
@@ -1267,9 +1396,13 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     let cancelled = false;
     void (async () => {
       try {
-        const data = await fetchSchedule(undefined, threadId);
+        const data = await fetchSchedule(undefined, threadId, {
+          offset: 0,
+          limit: TABLE_GRID_FIRST_PAGE,
+        });
         if (cancelled) return;
         resetSheetUiState();
+        const gen = fillGenRef.current;
         setSheets(data.sheets ?? []);
         // **用户选过表就别抢。** 作用域重取会落到"默认表",而项目钉定是异步落定的
         // —— 它一落定这个 effect 就跑,把人刚点的表换掉:表现就是"点了切不过去"
@@ -1279,7 +1412,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         userPickedSheetRef.current = false;
         if (data.sheet) selectSheet(data.sheet);
         lastSerialized.current = '';
-        applyPayload(data, true);
+        acceptPage(data, true, gen);
       } catch (err) {
         // **不能静默维持现状。** 这一屏已经属于新作用域了,取不到就意味着屏幕上
         // 摆着的是**上一个项目的表** —— 人在这儿的编辑会落到旧项目。实测这次取数
@@ -1287,13 +1420,17 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         // 没跟过来",查不出原因。重试一次,还不行就说出来。
         if (cancelled) return;
         try {
-          const retry = await fetchSchedule(undefined, threadId);
+          const retry = await fetchSchedule(undefined, threadId, {
+            offset: 0,
+            limit: TABLE_GRID_FIRST_PAGE,
+          });
           if (cancelled) return;
           resetSheetUiState();
+          const gen = fillGenRef.current;
           setSheets(retry.sheets ?? []);
           if (retry.sheet) selectSheet(retry.sheet);
           lastSerialized.current = '';
-          applyPayload(retry, true);
+          acceptPage(retry, true, gen);
         } catch {
           // 下一次 SSE / 手动切换还会再试,但这一刻必须让人知道屏幕不可信。
           lastScopeThread.current = '';
@@ -1303,8 +1440,9 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     })();
     return () => {
       cancelled = true;
+      fillGenRef.current += 1;
     };
-  }, [threadId, scopeKey, bootstrapped, applyPayload, resetSheetUiState, selectSheet, showToast, t]);
+  }, [threadId, scopeKey, bootstrapped, acceptPage, resetSheetUiState, selectSheet, showToast, t]);
 
   // 进到一个项目(或换了会话)时看一眼文件夹里有没有没见过的文件。**只看不吸收**:
   // 顺手放一份 ≠ 它就是项目数据(spec §6)。
@@ -1356,12 +1494,20 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         // 不存在的表(见 sheet-short-name.ts)。
         setActiveSheetId(findSheetIdByShortName(sheets, SCHEDULE_SHEET_ID) ?? SCHEDULE_SHEET_ID);
       }
-    } else if (scheduleFilter.filter.order_id) {
-      // 甘特点条→表格定位:复用现成的焦段锚点(rowMatchesAnchor 认 order_id
-      // 也认 wbs),不新写"找不到怎么办" —— locatePendingAnchor 已有诚实
-      // toast 与滚动/闪烁,已排产表就直接定位,不是排产表先切过去,行到齐后
-      // 的兜底 effect(下面那个 pendingAnchorRef 的 effect)会补跑。
-      pendingAnchorRef.current = scheduleFilter.filter.order_id;
+    } else if (scheduleFilter.filter.order_id || scheduleFilter.filter.job_id) {
+      // 甘特点条→表格定位:作业号优先,对不上再退回订单号。找不到怎么办
+      // 仍走 locatePendingAnchor(续灌等待 / 诚实 toast / 滚动闪烁)。
+      suppressGanttLocateRef.current = true;
+      suppressGanttLocateUntilRef.current = Date.now() + 400;
+      window.setTimeout(() => {
+        if (Date.now() >= suppressGanttLocateUntilRef.current) {
+          suppressGanttLocateRef.current = false;
+        }
+      }, 400);
+      pendingAnchorRef.current = {
+        jobId: scheduleFilter.filter.job_id,
+        orderId: scheduleFilter.filter.order_id,
+      };
       if (isSheet(activeSheetId, SCHEDULE_SHEET_ID)) {
         locatePendingAnchor();
       } else {
@@ -1400,8 +1546,10 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     () => ({
       rowCount: displayedCount ?? filteredRows.length,
       selectedCount: selectedRows.size,
+      loadedCount: rows.length,
+      expectedCount: sheetTotalRows,
     }),
-    [displayedCount, filteredRows.length, selectedRows.size],
+    [displayedCount, filteredRows.length, selectedRows.size, rows.length, sheetTotalRows],
   );
 
   const commitRows = useCallback(
@@ -1703,6 +1851,34 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     [columnDefs, commitRows, editableKeys, handleRedo, handleUndo, pushHistory],
   );
 
+  const tryLocateGanttFromRow = useCallback(
+    (row: TableRow | undefined) => {
+      if (!row) return;
+      if (suppressGanttLocateRef.current || Date.now() < suppressGanttLocateUntilRef.current) {
+        return;
+      }
+      // **甘特页签必须已经开着才联动。** 裸选中就切页签 = 把表格卸载
+      // (最终评审 F1)。没开甘特就什么都不做。
+      const ganttTabOpen = panelTabs.some((tab) => tab.kind === 'gantt');
+      if (
+        !ganttTabOpen ||
+        !isSheet(activeSheetIdRef.current, SCHEDULE_SHEET_ID) ||
+        !hasGantt()
+      ) {
+        return;
+      }
+      const jobId = row['job_id'];
+      const orderId = row['order_id'];
+      if (jobId == null || jobId === '') return;
+      setRightOpen(true);
+      locateGantt({
+        jobId: String(jobId),
+        ...(orderId != null && orderId !== '' ? { orderId: String(orderId) } : {}),
+      });
+    },
+    [panelTabs, setRightOpen],
+  );
+
   // AG-Grid selection changed → sync React selectedRows (used by toolbar + totals)
   const onSelectionChanged = useCallback(
     (event: SelectionChangedEvent<TableRow>) => {
@@ -1710,38 +1886,27 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       const selected = nodes.map((n) => rowKey(n.data!));
       setSelectedRows(new Set(selected));
       if (selected.length > 0) clearColumnSelection();
-
-      // 表格→甘特(双向定位):只在排产表且**只选中一行**时触发 —— 多选或
-      // 别的表选中的是什么行、该定位到哪一条根本没有唯一答案,不动作。
-      // isDhtmlxAvailable() 挡在最前面:没装商业包时甘特页签本就不出现
-      // (task 6),这里再从表格把它拽出来就前功尽弃(见 focusGanttJob 调用
-      // 处的说明)。
-      // **甘特页签必须已经开着才联动。** 表格与甘特是同一个面板的两个页签
-      // (right-panel.tsx 只渲染 activeTab),裸选中就切页签 = 把表格卸载重载
-      // —— 装了商业包的同事,表格从此没法正常点(最终评审 F1)。没开甘特就
-      // 什么都不做;不新造双击/右键这类手势,那是本刀范围外的新 UI 词汇。
-      const ganttTabOpen = panelTabs.some((tab) => tab.kind === 'gantt');
-      if (
-        nodes.length === 1 &&
-        ganttTabOpen &&
-        isSheet(activeSheetIdRef.current, SCHEDULE_SHEET_ID) &&
-        isDhtmlxAvailable()
-      ) {
-        const row = nodes[0]!.data as TableRow;
-        const jobId = row['job_id'];
-        const orderId = row['order_id'];
-        if (jobId != null && jobId !== '') {
-          // 拉开右栏与加页签必须一起做:只加页签的话,抽屉收着时人看到的
-          // 是"点了没反应"(mcp-app-tool.tsx 那条注释记的就是这个)。
-          setRightOpen(true);
-          void focusGanttJob({
-            jobId: String(jobId),
-            ...(orderId != null && orderId !== '' ? { orderId: String(orderId) } : {}),
-          });
-        }
+      // API 勾选(甘特→表格定位)和灌数时的 selection 不是人在找甘特。
+      const source = (event as { source?: string }).source;
+      if (source === 'api' || source === 'gridInitializing' || source === 'rowDataChanged') {
+        return;
       }
+      if (nodes.length === 1) tryLocateGanttFromRow(nodes[0]!.data);
     },
-    [clearColumnSelection, focusGanttJob, panelTabs, setRightOpen],
+    [clearColumnSelection, tryLocateGanttFromRow],
+  );
+
+  // 点单元格不会勾选行(enableClickSelection: false,免得点资源去改时把行勾上)。
+  // 人点的是只读格子(产品、作业号、排产状态)时,那就是在指定这一行,该定位。
+  // 可编辑格子不跳 —— 那是在改,不是在找。
+  const onCellClicked = useCallback(
+    (event: CellClickedEvent<TableRow>) => {
+      const colId = event.column?.getColId?.() ?? '';
+      if (colId.startsWith('__') || colId.startsWith('ag-Grid-')) return;
+      if (event.colDef?.editable === true) return;
+      tryLocateGanttFromRow(event.data);
+    },
+    [tryLocateGanttFromRow],
   );
 
   const onGridReady = useCallback((event: GridReadyEvent<TableRow>) => {
@@ -1856,6 +2021,8 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       sortable: false,
       resizable: false,
       editable: false,
+      cellClass: 'veylin-readonly',
+      suppressNavigable: true,
       suppressMovable: true,
       enableRowGroup: false,
       enableValue: false,
@@ -1908,8 +2075,15 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         sortable: true,
         pinned: def.frozen ? ('left' as const) : undefined,
         editable: isEditable,
+        suppressNavigable: !isEditable,
         // Hover cue on the schedule sheet's governed-edit cells (改资源/日期→propose).
-        cellClass: isSheet(activeSheetId, SCHEDULE_SHEET_ID) && isEditable ? 'veylin-editable' : undefined,
+        // 只读列不要焦点框:框在那儿人会以为能改(排产状态 solved 就是这样)。
+        cellClass: [
+          isSheet(activeSheetId, SCHEDULE_SHEET_ID) && isEditable ? 'veylin-editable' : '',
+          isEditable ? '' : 'veylin-readonly',
+        ]
+          .filter(Boolean)
+          .join(' ') || undefined,
         // Full value on hover — helps any truncated cell (IDs, long names).
         tooltipValueGetter: (p) => (p.value == null || p.value === '' ? null : String(p.value)),
         cellDataType: false,
@@ -1965,6 +2139,8 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         defs.push({
           ...baseColDef,
           editable: false,
+          cellClass: 'veylin-readonly',
+          suppressNavigable: true,
           sortable: false,
           filter: false,           // cell holds an array series → not filterable
           floatingFilter: false,
@@ -2413,6 +2589,12 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
           {t('table.loadError', { error: loadError })}
         </div>
       ) : null}
+      {compassLoading && rows.length > 0 ? (
+        <div className="border-border bg-muted/40 text-muted-foreground flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
+          <Loader2 className="size-3 shrink-0 animate-spin" />
+          <span className="min-w-0 flex-1 truncate">{t('table.loadingCompass')}</span>
+        </div>
+      ) : null}
       {inboxPending.length > 0 ? (
         <div className="border-border bg-muted/40 text-muted-foreground flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
           <FolderPlus className="size-3 shrink-0" />
@@ -2675,13 +2857,17 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
             <AgGridReact<TableRow>
               key={proMasterDetail ? 'grid-md' : 'grid-plain'}
               theme={veylinGridTheme}
-              // Size columns to fit header + visible content on load — no more
-              // truncated headers (订.../产.../期...). Virtualized, so it's cheap.
-              autoSizeStrategy={{ type: 'fitCellContents' }}
+              // 排产表一次灌进约 3 万行:fitCellContents 会按内容扫列宽,首屏比
+              // 翻页贵一个数量级。用列定义自己的 width。其它小表仍按内容撑开,
+              // 避免表头被裁成「订...」。
+              autoSizeStrategy={
+                isSheet(activeSheetId, SCHEDULE_SHEET_ID)
+                  ? undefined
+                  : { type: 'fitCellContents' }
+              }
               rowData={filteredRows}
               columnDefs={agColDefs}
-              // All rows load into the grid (no 500 cap); paginate so large sheets
-              // (e.g. shangzhong's ~30k schedule rows) stay navigable + fast.
+              // 第一页 500 先上屏,其余后台续灌;分页只决定一屏看多少。
               pagination
               paginationPageSize={500}
               paginationPageSizeSelector={[100, 500, 2000, 10000]}
@@ -2727,6 +2913,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
               onCellValueChanged={onCellValueChanged}
               onCellKeyDown={onGridCellKeyDown}
               onSelectionChanged={onSelectionChanged}
+              onCellClicked={onCellClicked}
               {...proGridProps}
             />
           </div>

@@ -14,6 +14,7 @@ import { isPanelTabsRemoteUpgrade } from '@/lib/panel-tabs-remote-upgrade';
 import type { OpenGridFilter } from '@/lib/correction-bridge';
 import { createNextThreadSheet, fetchThreadSheets } from '@/lib/table-sheets';
 import { decideTablePanelSheet } from '@/lib/open-table-panel';
+import { setLocateGanttImpl, setLocateTableImpl } from '@/lib/schedule-locate';
 import { getPanelKindDef } from './panel-registry';
 import type { PanelKind, PanelTab } from './panel-types';
 
@@ -417,6 +418,29 @@ export function usePanelTabsState(): PanelTabsApi {
 
   const clearScheduleFilter = useCallback(() => setScheduleFilter(null), []);
   const clearGanttFocus = useCallback(() => setGanttFocus(null), []);
+
+  useEffect(() => {
+    setLocateTableImpl((target) => {
+      if (!target.orderId && !target.jobId) return;
+      // 等这次点击走完再切页签。表格 keep-alive 盖在同一块区域,
+      // 甘特点条当下就切表的话,mouseup 会落到格子上,再 locateGantt
+      // 把人踢回甘特 —— 甘特不保活,重挂就滚到顶、没有选中。
+      const { orderId, jobId } = target;
+      window.setTimeout(() => {
+        void focusScheduleFilter({
+          ...(orderId ? { order_id: orderId } : {}),
+          ...(jobId ? { job_id: jobId } : {}),
+        });
+      }, 0);
+    });
+    setLocateGanttImpl((target) => {
+      void focusGanttJob(target);
+    });
+    return () => {
+      setLocateTableImpl(() => {});
+      setLocateGanttImpl(() => {});
+    };
+  }, [focusScheduleFilter, focusGanttJob]);
 
   return {
     openDocument,

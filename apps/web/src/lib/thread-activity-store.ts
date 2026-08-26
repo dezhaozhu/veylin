@@ -44,23 +44,46 @@ async function fetchActivity(): Promise<void> {
   }
 }
 
+function pageVisible(): boolean {
+  return typeof document === 'undefined' || document.visibilityState === 'visible';
+}
+
 function schedulePoll(delayMs: number): void {
   if (timer) clearTimeout(timer);
   if (subscriberCount <= 0) return;
   timer = setTimeout(() => {
+    if (!pageVisible()) return;
     void fetchActivity().finally(() => {
       schedulePoll(pollIntervalMs(activity));
     });
   }, delayMs);
 }
 
+function onVisibilityChange(): void {
+  if (subscriberCount <= 0) return;
+  if (pageVisible()) {
+    void fetchActivity().finally(() => {
+      schedulePoll(pollIntervalMs(activity));
+    });
+  } else if (timer) {
+    clearTimeout(timer);
+    timer = undefined;
+  }
+}
+
 function startPoller(): void {
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  }
   schedulePoll(0);
 }
 
 function stopPoller(): void {
   if (timer) clearTimeout(timer);
   timer = undefined;
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+  }
 }
 
 export function getThreadActivityMap(): Record<string, ThreadActivity> {

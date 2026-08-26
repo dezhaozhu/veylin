@@ -241,6 +241,16 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
   cursor: text;
 }
 
+/* Read-only cells: no focus ring. A box here reads as "I can type here". */
+.ag-cell.veylin-readonly,
+.ag-cell.veylin-readonly.ag-cell-focus,
+.ag-cell.veylin-readonly.ag-cell-range-selected {
+  cursor: default;
+  border-color: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 /* Schedule lateness: a quiet left accent stripe (not a full-row wash, so it
    doesn't clash with the number-cell magnitude tint). red = past due, amber = at-risk. */
 .ag-row.sched-late {

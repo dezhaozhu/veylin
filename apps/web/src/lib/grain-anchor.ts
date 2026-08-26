@@ -36,3 +36,57 @@ export function rowMatchesAnchor(
   const a = new Set(split(anchor));
   return split(rowKey).some((p) => a.has(p));
 }
+
+export type LocateTarget = {
+  jobId?: string;
+  orderId?: string;
+};
+
+/**
+ * 甘特→表格对哪一行。给了 jobId 就只认这一道作业,不准拿同单另一道凑数。
+ * 只给订单号时退回焦段锚点(订单 / WBS 相交)。
+ */
+export function rowMatchesLocateTarget(
+  row: Record<string, unknown> | undefined | null,
+  target: LocateTarget,
+): boolean {
+  if (target.jobId) {
+    if (!row) return false;
+    const jid = row['job_id'];
+    return jid != null && String(jid).trim() === target.jobId.trim();
+  }
+  return rowMatchesAnchor(row, target.orderId);
+}
+
+export type LocatePick<T> = {
+  status: 'hit' | 'wait' | 'miss';
+  rows: T[];
+};
+
+/**
+ * 在当前已加载的行里挑定位目标。
+ * 作业号优先;续灌没到就等;全部到齐仍没有这道作业,才退回该单第一行。
+ */
+export function pickLocateRows<T extends Record<string, unknown>>(
+  rows: T[],
+  target: LocateTarget,
+  opts: { hasMore: boolean },
+): LocatePick<T> {
+  if (target.jobId) {
+    const exact = rows.filter((r) => rowMatchesLocateTarget(r, { jobId: target.jobId }));
+    if (exact.length) return { status: 'hit', rows: exact };
+    if (opts.hasMore) return { status: 'wait', rows: [] };
+    if (target.orderId) {
+      const fallback = rows.filter((r) => rowMatchesAnchor(r, target.orderId));
+      if (fallback.length) return { status: 'hit', rows: fallback };
+    }
+    return { status: 'miss', rows: [] };
+  }
+  if (target.orderId) {
+    const hits = rows.filter((r) => rowMatchesAnchor(r, target.orderId));
+    if (hits.length) return { status: 'hit', rows: hits };
+    if (opts.hasMore) return { status: 'wait', rows: [] };
+    return { status: 'miss', rows: [] };
+  }
+  return { status: 'miss', rows: [] };
+}

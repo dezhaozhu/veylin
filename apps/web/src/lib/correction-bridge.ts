@@ -90,6 +90,8 @@ export type OpenGridFilter = {
   status?: string;
   workshop?: string;
   order_id?: string;
+  /** 宿主内部:甘特点条带作业号过来。不从对话消息解析。 */
+  job_id?: string;
 };
 
 /**

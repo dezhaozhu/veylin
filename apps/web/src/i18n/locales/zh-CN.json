@@ -934,6 +934,7 @@
     "noResponse": "后端无响应 ({{status}})",
     "invalidResponse": "响应无效 ({{status}})",
     "footerTotal": "合计 {{count}}",
+    "footerLoading": "已加载 {{loaded}} / {{total}}",
     "footerSelected": "已选 {{count}}",
     "sortBy": "按 {{name}} 排序",
     "selectAll": "全选",

@@ -13,6 +13,9 @@ import {
   listTableColumns,
   importTableSheet,
   listTableRowsPage,
+  createTableSheet,
+  MAX_TABLE_GET_LIMIT,
+  MAX_TABLE_HTTP_PAGE,
   buildTableContextBlock,
 } from './table-store.js';
 import { PERSONAL_SCOPE, projectScope, sheetIdFor } from './table-scope.js';
@@ -122,6 +125,22 @@ describe('table_get pagination', () => {
     const { totalRows, rows } = listTableRowsPage(MAIN_ID, 0, 9999);
     assert.equal(totalRows, 3);
     assert.equal(rows.length, 3);
+  });
+
+  it('HTTP page can exceed the agent table_get cap', () => {
+    const created = createTableSheet('http-page-cap', PERSONAL_SCOPE);
+    assert.ok(created);
+    const many = Array.from({ length: MAX_TABLE_GET_LIMIT + 50 }, (_, i) => ({
+      name: `r${i}`,
+      qty: i,
+    }));
+    importTableSheet(created.id, ['name', 'qty'], many);
+    const agent = listTableRowsPage(created.id, 0, 500);
+    assert.equal(agent.totalRows, many.length);
+    assert.equal(agent.rows.length, MAX_TABLE_GET_LIMIT);
+    const http = listTableRowsPage(created.id, 0, 500, MAX_TABLE_HTTP_PAGE);
+    assert.equal(http.rows.length, many.length);
+    assert.equal(http.totalRows, many.length);
   });
 });
 

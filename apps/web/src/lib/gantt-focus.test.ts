@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { orderIdForTask, resolveFocusTarget, isTreeToggleTarget } from './gantt-focus.js';
+import { jobIdForTask, orderIdForTask, resolveFocusTarget, isTreeToggleTarget } from './gantt-focus.js';
 
 const tasks = [
   { id: 'lane:WC10' }, { id: 'job:J1' }, { id: 'job:J2' }, { id: 'wo:T1' },
@@ -18,6 +18,19 @@ describe('定位目标', () => {
   it('只知道订单号时,命中该订单的第一条', () => {
     const t = [{ id: 'job:J1', orderId: 'O1' }, { id: 'job:J2', orderId: 'O2' }];
     assert.equal(resolveFocusTarget(t, { orderId: 'O2' }), 'job:J2');
+  });
+
+  it('点了具体作业但窗口里没有时,不准拿同订单另一道工序凑数', () => {
+    const t = [
+      { id: 'job:Z-221524A0770211-CJ1', orderId: 'Z-221524A0770211' },
+    ];
+    assert.equal(
+      resolveFocusTarget(t, {
+        jobId: 'Z-221524A0770211-QY',
+        orderId: 'Z-221524A0770211',
+      }),
+      null,
+    );
   });
 
   it('两个都没给,回 null', () => {
@@ -46,6 +59,30 @@ describe('从点到的条反查订单号(甘特 → 表格)', () => {
 
   it('点到一个不存在的 id,回 undefined', () => {
     assert.equal(orderIdForTask(t, 'wo:GHOST'), undefined);
+  });
+});
+
+describe('从点到的条反查作业号(甘特 → 表格按 job_id 对)', () => {
+  const t = [
+    { id: 'lane:WC10' },
+    { id: 'job:Z-221524A0780211-QY', parent: 'lane:WC10' },
+    { id: 'wo:Z-221524A0780211-QY:T1', parent: 'job:Z-221524A0780211-QY' },
+  ];
+
+  it('点的就是二级条,id 前缀 job: 后面就是作业号', () => {
+    assert.equal(jobIdForTask(t, 'job:Z-221524A0780211-QY'), 'Z-221524A0780211-QY');
+  });
+
+  it('点的是三级子条,顺着 parent 链找到二级条的作业号', () => {
+    assert.equal(jobIdForTask(t, 'wo:Z-221524A0780211-QY:T1'), 'Z-221524A0780211-QY');
+  });
+
+  it('点的是泳道父行,回 undefined —— 不假装知道', () => {
+    assert.equal(jobIdForTask(t, 'lane:WC10'), undefined);
+  });
+
+  it('点到一个不存在的 id,回 undefined', () => {
+    assert.equal(jobIdForTask(t, 'wo:GHOST'), undefined);
   });
 });
 

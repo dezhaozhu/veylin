@@ -22,7 +22,8 @@ import { Button } from '@/components/ui/button';
 import { loadDhtmlxGantt, loadDhtmlxGanttCss, type GanttModule } from '@/lib/dhtmlx-gantt-loader';
 import { toGanttTasks, type GanttTask, type GanttWindowPayload } from '@/lib/gantt-window-model';
 import { ganttErrorMessage, resolveGanttThreadId, ganttWindowUrl, withExpanded } from '@/lib/gantt-request';
-import { orderIdForTask, resolveFocusTarget, isTreeToggleTarget } from '@/lib/gantt-focus';
+import { jobIdForTask, orderIdForTask, resolveFocusTarget, isTreeToggleTarget } from '@/lib/gantt-focus';
+import { locateTable } from '@/lib/schedule-locate';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import type { PanelTabsApi } from '@/components/assistant-ui/right-panel/use-panel-tabs';
 import type { PanelContentProps } from '../panel-types';
@@ -186,12 +187,11 @@ type GanttChartProps = {
   onExpandOrder: (orderId: string | undefined) => void;
   mod: GanttModule;
   tasks: GanttTask[];
-  focusScheduleFilter: PanelTabsApi['focusScheduleFilter'];
   ganttFocus: PanelTabsApi['ganttFocus'];
   clearGanttFocus: PanelTabsApi['clearGanttFocus'];
 };
 
-function GanttChart({ mod, tasks, focusScheduleFilter, ganttFocus, clearGanttFocus,
+function GanttChart({ mod, tasks, ganttFocus, clearGanttFocus,
                      onExpandOrder }: GanttChartProps) {
   const ganttRef = useRef<GanttRefLike | null>(null);
   const modRecord = mod as Record<string, unknown>;
@@ -220,9 +220,8 @@ function GanttChart({ mod, tasks, focusScheduleFilter, ganttFocus, clearGanttFoc
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
 
-  // 甘特 → 表格:点一条 bar,顺 parent 链倒查它的订单号,复用已有的
-  // focusScheduleFilter 定位路径 —— 不另造一套(见该函数的调用处说明)。
-  // 泳道父行没有订单号可言(orderIdForTask 对它诚实回 undefined),点了不动作。
+  // 甘特 → 表格:点一条 bar,带上作业号(对哪一行)和订单号(作业还没灌到时退回)。
+  // 泳道父行两个都没有(jobIdForTask / orderIdForTask 诚实回 undefined),点了不动作。
   // 官方 `useGanttEvent`:attach on mount / detach on unmount,和 `<Gantt>`
   // 同一个组件、同一次挂载生命周期——这正是修复 race 的关键(见文件头)。
   useGanttEvent(ganttRef, 'onTaskClick', (id: unknown, e?: unknown) => {
@@ -231,8 +230,10 @@ function GanttChart({ mod, tasks, focusScheduleFilter, ganttFocus, clearGanttFoc
     // 而跳转会把整个甘特面板卸载(右侧面板只挂载当前页签),展开根本来不及渲染。
     // 真机实证 2026-08-25:点箭头 = 没展开 + 莫名跳去表格。
     if (isTreeToggleTarget((e as Event | undefined)?.target)) return true;
-    const orderId = orderIdForTask(tasksRef.current, String(id));
-    if (orderId) void focusScheduleFilter({ order_id: orderId });
+    const taskId = String(id);
+    const jobId = jobIdForTask(tasksRef.current, taskId);
+    const orderId = orderIdForTask(tasksRef.current, taskId);
+    if (jobId || orderId) locateTable({ jobId, orderId });
     return true; // 放行默认的选中态,不拦事件
   });
 
@@ -252,19 +253,25 @@ function GanttChart({ mod, tasks, focusScheduleFilter, ganttFocus, clearGanttFoc
   useEffect(() => {
     if (!ganttFocus) return;
     const targetId = resolveFocusTarget(tasks, ganttFocus.target);
-    clearGanttFocus();
-    if (!targetId) return;
+    if (!targetId) {
+      // 窗口还是空的:再等等,别把这次定位清掉。
+      if (tasks.length === 0) return;
+      clearGanttFocus();
+      return;
+    }
     const instance = ganttRef.current?.instance;
+    if (!instance) return;
     try {
-      instance?.showTask?.(targetId);
+      instance.showTask?.(targetId);
     } catch {
       /* best-effort scroll-into-view */
     }
     try {
-      instance?.selectTask?.(targetId);
+      instance.selectTask?.(targetId);
     } catch {
       /* best-effort highlight */
     }
+    clearGanttFocus();
   }, [ganttFocus, tasks, clearGanttFocus]);
 
   return (
@@ -401,7 +408,7 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
   // 消费 focusGanttJob)全部下沉进 GanttChart —— 理由见文件头那段
   // 2026-08-19 追记:必须让"渲染 `<Gantt>`"和"接事件线"总在同一次挂载/卸载
   // 里发生,不能分属两个组件。
-  const { focusScheduleFilter, ganttFocus, clearGanttFocus } = usePanelTabs();
+  const { ganttFocus, clearGanttFocus } = usePanelTabs();
 
   if (avail.state === 'checking') {
     return <p className="text-muted-foreground p-6 text-sm">{t('panels.gantt.loading')}</p>;
@@ -466,7 +473,6 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
           <GanttChart
             mod={avail.mod}
             tasks={tasks}
-            focusScheduleFilter={focusScheduleFilter}
             ganttFocus={ganttFocus}
             clearGanttFocus={clearGanttFocus}
             onExpandOrder={handleExpandOrder}

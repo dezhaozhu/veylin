@@ -24,7 +24,7 @@ import { Viewer3dPanel } from '@/components/assistant-ui/right-panel/panels/view
 import { DocPanel } from '@/components/assistant-ui/right-panel/panels/doc-panel';
 import { WidgetPanel } from '@/components/assistant-ui/right-panel/panels/widget-panel';
 import { GanttPanel } from '@/components/assistant-ui/right-panel/panels/gantt-panel';
-import { isDhtmlxAvailable } from '@/lib/dhtmlx-gantt-loader';
+import { hasGantt } from '@/lib/schedule-locate';
 import type { PanelContentProps, PanelKind, PanelKindDef } from './panel-types';
 
 // Fork seam: our AG-Grid TableGrid manages its own sheet tabs (workspace-wide,
@@ -72,11 +72,11 @@ export const PANEL_KINDS: PanelKindDef[] = [
     // 装了包的机器上创建、后来被同步/持久化到没装包的机器上的甘特页签会直接
     // 打不开(面板组件自己内部处理"没装包"的优雅降级,见 gantt-panel.tsx)。
     // 但"+"菜单/空状态启动器**不**用 PANEL_KINDS 本身——那两处改用下面的
-    // `getAvailablePanelKinds()`,按 isDhtmlxAvailable() 把这一项过滤掉,
+    // `getAvailablePanelKinds()`,按 hasGantt() 把这一项过滤掉,
     // 装不到包时新建入口就不出现(与 AG-Grid Enterprise 那条缝同形:
-    // main.tsx 在渲染 App 之前就把 dhtmlx 的可选加载探测完,所以这里读到的
-    // isDhtmlxAvailable() 永远是"已经解析好的"那个值,不会有"未知"态被
-    // 误当成"不可用"而把装了包的机器的页签也藏掉)。
+    // main.tsx 在渲染 App 之前就把探测结果写入 hasGantt(),所以这里读到的
+    // 永远是"已经解析好的"那个值,不会有"未知"态被误当成"不可用"而把
+    // 装了包的机器的页签也藏掉)。
     kind: 'gantt',
     label: 'panels.gantt.label',
     description: 'panels.gantt.desc',
@@ -164,13 +164,11 @@ export function getPanelKindDef(kind: PanelKind): PanelKindDef | undefined {
  * silently losing its definition.
  *
  * Evaluated fresh on every call (not memoized at module scope) because
- * `isDhtmlxAvailable()` starts undetermined and only becomes deterministic
- * once `loadDhtmlxGantt()` settles. That's safe here specifically because
- * main.tsx's `StartupGate` awaits the dhtmlx probe (alongside the AG-Grid
- * Enterprise one) before `<App/>` — and therefore this component tree —
- * ever mounts. Call this from render bodies (not module scope), same as
- * `isAgGridEnterpriseReady()` is only read from render bodies.
+ * `hasGantt()` is written in StartupGate after `loadDhtmlxGantt()` settles.
+ * main.tsx awaits that probe before `<App/>` mounts, so the first + menu
+ * read is already deterministic. Call this from render bodies (not module
+ * scope), same as `isAgGridEnterpriseReady()`.
  */
 export function getAvailablePanelKinds(): PanelKindDef[] {
-  return PANEL_KINDS.filter((def) => def.kind !== 'gantt' || isDhtmlxAvailable());
+  return PANEL_KINDS.filter((def) => def.kind !== 'gantt' || hasGantt());
 }

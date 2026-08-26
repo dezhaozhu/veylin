@@ -6,9 +6,11 @@ export function resolveFocusTarget(
   tasks: Array<{ id: string; orderId?: string }>,
   want: { jobId?: string; orderId?: string },
 ): string | null {
+  // 点了具体作业就只认这一条。当前窗口没有时回 null,让调用方换窗口;
+  // 不准拿同一订单的另一道工序凑数(同单下 QY / CJ1 是两道活)。
   if (want.jobId) {
     const hit = tasks.find((t) => t.id === `job:${want.jobId}`);
-    if (hit) return hit.id;
+    return hit ? hit.id : null;
   }
   if (want.orderId) {
     const hit = tasks.find((t) => t.orderId === want.orderId);
@@ -32,6 +34,26 @@ export function orderIdForTask(
   const seen = new Set<string>();
   while (current && !seen.has(current.id)) {
     if (current.orderId) return current.orderId;
+    seen.add(current.id);
+    current = current.parent ? byId.get(current.parent) : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * 反方向:甘特点了一条,倒查它是哪道作业。二级条 id 是 `job:${job_id}`;
+ * 三级 `wo:` 子行没有自己的作业号,顺着 parent 链找到二级条。泳道父行和
+ * 查无此 id 都诚实回 undefined —— 表格对行靠这个,猜错就会落到同单另一道。
+ */
+export function jobIdForTask(
+  tasks: Array<{ id: string; parent?: string }>,
+  taskId: string,
+): string | undefined {
+  const byId = new Map(tasks.map((t) => [t.id, t] as const));
+  let current = byId.get(taskId);
+  const seen = new Set<string>();
+  while (current && !seen.has(current.id)) {
+    if (current.id.startsWith('job:')) return current.id.slice('job:'.length);
     seen.add(current.id);
     current = current.parent ? byId.get(current.parent) : undefined;
   }

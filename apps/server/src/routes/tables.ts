@@ -13,7 +13,10 @@ import {
   isTableSheetNameTaken,
   listTableColumns,
   listTableRows,
+  listTableRowsPage,
   listTableSheets,
+  countTableRows,
+  MAX_TABLE_HTTP_PAGE,
   renameTableSheet,
   tryResolveTableSheetId,
   sheetBelongsToScope,
@@ -223,18 +226,35 @@ export function registerTablesRoutes(app: FastifyInstance, deps: ServerDeps): vo
   // Editable multi-sheet table dataset for the right-panel data grid.
   app.get('/api/table', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
-    const { sheet, threadId } = req.query as { sheet?: string; threadId?: string };
+    const { sheet, threadId, offset, limit } = req.query as {
+      sheet?: string;
+      threadId?: string;
+      offset?: string;
+      limit?: string;
+    };
     const scope = await scopeOfRequest(threadId, ctx);
     const access = requireScopedSheet(reply, sheet, scope);
     if (!isSheetAccess(access)) {
       return access.error;
     }
+    const parsedLimit = limit != null && limit !== '' ? Number(limit) : undefined;
+    const parsedOffset = offset != null && offset !== '' ? Number(offset) : 0;
+    const page =
+      parsedLimit != null && Number.isFinite(parsedLimit)
+        ? listTableRowsPage(
+            access.sheetId,
+            Number.isFinite(parsedOffset) ? parsedOffset : 0,
+            parsedLimit,
+            MAX_TABLE_HTTP_PAGE,
+          )
+        : null;
     return {
       sheet: access.sheetId,
       sheets: listTableSheets(scope),
       defaultSheet: DEFAULT_TABLE_SHEET,
       columns: listTableColumns(access.sheetId),
-      rows: listTableRows(access.sheetId),
+      rows: page ? page.rows : listTableRows(access.sheetId),
+      totalRows: page ? page.totalRows : countTableRows(access.sheetId),
     };
   });
 

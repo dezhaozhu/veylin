@@ -16,6 +16,7 @@ import {
   whenEnterpriseSettled,
 } from '@/lib/ag-grid-enterprise-state';
 import { loadDhtmlxGantt } from '@/lib/dhtmlx-gantt-loader';
+import { registerGanttCapability, unregisterGanttCapability } from '@/lib/schedule-locate';
 import i18n from '@/i18n';
 import { App } from './App';
 import './index.css';
@@ -231,14 +232,21 @@ function StartupGate() {
       // Ensure AG-Grid Enterprise (if entitled) has settled AND the dhtmlx gantt
       // probe has resolved before mounting anything, so:
       //  - master-detail props are only set once the Enterprise module is registered
-      //  - isDhtmlxAvailable() is deterministic by the time getAvailablePanelKinds()
+      //  - hasGantt() is deterministic by the time getAvailablePanelKinds()
       //    (panel-tab-bar.tsx / panel-empty-state.tsx) is first called — see the doc
       //    comment on getAvailablePanelKinds() in panel-registry.tsx. Run the two
       //    probes in parallel (they're independent) rather than chaining them, so
       //    dhtmlx doesn't add to startup latency on top of the Enterprise wait.
       .then(() => Promise.all([whenEnterpriseSettled(), dhtmlxProbe]))
-      .then(() => {
+      .then(([, ganttMod]) => {
         if (signal.cancelled) return;
+        // 能力在启动探测之后就定：+ 菜单第一帧就能读 hasGantt()。
+        // locateGantt 的真正 stash/open 由 PanelTabsProvider 稍后 setLocateGanttImpl。
+        if (ganttMod) {
+          registerGanttCapability({ locateGantt: () => {} });
+        } else {
+          unregisterGanttCapability();
+        }
         setReady(true);
       })
       .catch((err) => {

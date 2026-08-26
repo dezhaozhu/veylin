@@ -647,18 +647,21 @@ export function countTableRows(sheetId: string = DEFAULT_TABLE_SHEET): number {
 
 export const DEFAULT_TABLE_GET_LIMIT = 50;
 export const MAX_TABLE_GET_LIMIT = 200;
+/** Grid HTTP page — larger than the agent `table_get` cap; still bounded. */
+export const MAX_TABLE_HTTP_PAGE = 5000;
 
 /** Paginated row read for table_get — avoids multi‑MB tool payloads on large sheets. */
 export function listTableRowsPage(
   sheetId: string,
   offset = 0,
   limit = DEFAULT_TABLE_GET_LIMIT,
+  maxLimit = MAX_TABLE_GET_LIMIT,
 ): { totalRows: number; rows: TableRowData[] } {
   const sheet = getSheet(existingSheetId(sheetId) ?? sheetId);
   if (!sheet) return { totalRows: 0, rows: [] };
   const totalRows = sheet.rows.length;
   const safeOffset = Math.max(0, Math.min(offset, totalRows));
-  const safeLimit = Math.max(1, Math.min(limit, MAX_TABLE_GET_LIMIT));
+  const safeLimit = Math.max(1, Math.min(limit, maxLimit));
   return {
     totalRows,
     rows: sheet.rows.slice(safeOffset, safeOffset + safeLimit).map((r) => ({ ...r })),

@@ -38,6 +38,7 @@ import {
   stopThreadLoopApi,
 } from '@/lib/goal-loop-sync';
 import { requestSilentChatContinue } from '@/lib/silent-chat-continue';
+import { isPageVisible, isServerThreadId, nextGoalLoopDelay } from '@/lib/thread-heartbeat';
 import { requestChatStop } from '@/lib/chat-stop';
 import {
   fetchGroupedMcpServers,
@@ -328,7 +329,7 @@ export function useGoalLoopBridge(): void {
   const continuingRef = useRef(false);
 
   useEffect(() => {
-    if (!threadId) return;
+    if (!threadId || !isServerThreadId(threadId)) return;
     void fetchThreadGoal(threadId);
     void fetchThreadLoop(threadId).then((loop) => {
       if (loop?.status === 'active' && getChatSettings().pendingLoop) {
@@ -338,7 +339,7 @@ export function useGoalLoopBridge(): void {
   }, [threadId]);
 
   useEffect(() => {
-    if (!threadId) return;
+    if (!threadId || !isServerThreadId(threadId)) return;
     const wasRunning = wasRunningRef.current;
     wasRunningRef.current = isRunning;
     if (wasRunning && !isRunning) {
@@ -350,23 +351,70 @@ export function useGoalLoopBridge(): void {
       });
     }
     if (!isRunning) return;
-    const timer = window.setInterval(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = () => {
+      if (cancelled) return;
+      if (timer) window.clearTimeout(timer);
+      timer = undefined;
+      if (!isPageVisible()) return;
       void fetchThreadGoal(threadId);
       void fetchThreadLoop(threadId).then((loop) => {
         if (loop?.status === 'active' && getChatSettings().pendingLoop) {
           setChatSettings({ pendingLoop: false });
         }
       });
-    }, 1500);
-    return () => window.clearInterval(timer);
+      const delay = nextGoalLoopDelay({
+        visible: true,
+        chatRunning: true,
+        goalActive: false,
+        loopActive: false,
+      });
+      if (delay != null) timer = window.setTimeout(poll, delay);
+    };
+    poll();
+    const onVis = () => {
+      if (isPageVisible()) poll();
+      else if (timer) {
+        window.clearTimeout(timer);
+        timer = undefined;
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [threadId, isRunning]);
 
   useEffect(() => {
-    if (!threadId || isRunning || continuingRef.current) return;
+    if (!threadId || !isServerThreadId(threadId) || isRunning || continuingRef.current) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let goalActive = false;
+    let loopActive = false;
+
+    const schedule = () => {
+      if (cancelled) return;
+      const delay = nextGoalLoopDelay({
+        visible: isPageVisible(),
+        chatRunning: false,
+        goalActive,
+        loopActive,
+      });
+      if (delay == null) return;
+      timer = window.setTimeout(() => {
+        void tick();
+      }, delay);
+    };
 
     const tick = async () => {
-      if (continuingRef.current || isRunning) return;
+      if (cancelled || continuingRef.current || isRunning) return;
+      if (!isPageVisible()) return;
       const goal = await fetchThreadGoal(threadId);
+      goalActive = goal?.status === 'active';
       if (goal?.status === 'active' && goal.needsContinuation) {
         continuingRef.current = true;
         try {
@@ -377,10 +425,12 @@ export function useGoalLoopBridge(): void {
         } finally {
           continuingRef.current = false;
         }
+        if (!cancelled) schedule();
         return;
       }
 
       const loop = await fetchThreadLoop(threadId);
+      loopActive = loop?.status === 'active';
       if (loop?.status === 'active' && loop.nextWakeAt) {
         const due = Date.parse(loop.nextWakeAt) <= Date.now() + 500;
         if (due) {
@@ -394,13 +444,22 @@ export function useGoalLoopBridge(): void {
           }
         }
       }
+      if (!cancelled) schedule();
     };
 
     void tick();
-    const timer = window.setInterval(() => {
+    const onVis = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = undefined;
+      if (!isPageVisible()) return;
       void tick();
-    }, 2000);
-    return () => window.clearInterval(timer);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [threadId, isRunning, aui]);
 }
 

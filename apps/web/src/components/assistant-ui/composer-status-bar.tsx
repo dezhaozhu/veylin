@@ -20,6 +20,7 @@ import {
   type ThreadTodoItem,
 } from '@/lib/thread-todos-store';
 import { cn } from '@/lib/utils';
+import { isPageVisible, isServerThreadId, TODOS_IDLE_MS, TODOS_RUNNING_MS } from '@/lib/thread-heartbeat';
 
 /** Default subagent worker concurrency (see server SUBAGENT_CONCURRENCY). */
 export const SUBAGENT_PARALLEL_LIMIT = 4;
@@ -72,11 +73,12 @@ function usePolling<T>(
   const extraQueryKey = extraQuery ? JSON.stringify(extraQuery) : '';
 
   useEffect(() => {
-    if (!threadId || !enabled) {
+    if (!threadId || !enabled || !isServerThreadId(threadId)) {
       setState({ threadId, value: fallback });
       return;
     }
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const load = () => {
       const query = new URLSearchParams({ threadId, ...(extraQuery ?? {}) });
       fetch(`${path}?${query.toString()}`, { credentials: 'include' })
@@ -86,11 +88,27 @@ function usePolling<T>(
         })
         .catch(() => undefined);
     };
-    load();
-    const t = window.setInterval(load, intervalMs);
+    const schedule = () => {
+      if (cancelled || !isPageVisible()) return;
+      timer = window.setTimeout(() => {
+        load();
+        schedule();
+      }, intervalMs);
+    };
+    if (isPageVisible()) load();
+    schedule();
+    const onVis = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = undefined;
+      if (!isPageVisible()) return;
+      load();
+      schedule();
+    };
+    document.addEventListener('visibilitychange', onVis);
     return () => {
       cancelled = true;
-      window.clearInterval(t);
+      if (timer) window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVis);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId, path, intervalMs, enabled, extraQueryKey]);
@@ -224,7 +242,7 @@ export function ComposerStatusBar() {
       if (threadId) setThreadTodosSnapshot(threadId, next);
       return next;
     },
-    isRunning ? 1500 : 6000,
+    isRunning ? TODOS_RUNNING_MS : TODOS_IDLE_MS,
     [],
   );
 
