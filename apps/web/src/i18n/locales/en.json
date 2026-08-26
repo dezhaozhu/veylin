@@ -429,6 +429,13 @@
   "userMenu": {
     "settings": "Settings",
     "logOut": "Log out",
+    "signIn": "Sign in",
+    "signInHint": "Sign in with your Veylin Platform account. You can keep chatting locally while signed out.",
+    "signingIn": "Signing in…",
+    "username": "Username",
+    "password": "Password",
+    "signedOut": "Signed out",
+    "signedIn": "Signed in",
     "language": "Language",
     "update": "Update",
     "updateFailed": "Update failed",

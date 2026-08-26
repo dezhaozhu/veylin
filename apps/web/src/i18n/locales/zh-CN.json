@@ -429,6 +429,13 @@
   "userMenu": {
     "settings": "设置",
     "logOut": "退出登录",
+    "signIn": "登录",
+    "signInHint": "使用 Veylin Platform 账号登录。未登录也可继续使用本机对话。",
+    "signingIn": "登录中…",
+    "username": "用户名",
+    "password": "密码",
+    "signedOut": "未登录",
+    "signedIn": "已登录",
     "language": "语言",
     "update": "更新",
     "updateFailed": "更新失败",
