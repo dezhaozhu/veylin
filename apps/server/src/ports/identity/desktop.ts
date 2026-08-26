@@ -17,17 +17,17 @@ export function createDesktopIdentityPort(): IdentityPort {
       const file = readSessionFile();
       if (file.user) {
         return {
-          userId: installId,
+          resourceOwnerId: installId,
           displayName: file.user.display_name || file.user.username,
           email: file.user.email || undefined,
-          platformUserId: String(file.user.id),
+          accountId: String(file.user.id),
         };
       }
       return {
-        userId: installId,
+        resourceOwnerId: installId,
         displayName: '未登录',
         email: undefined,
-        platformUserId: undefined,
+        accountId: undefined,
       };
     },
   };

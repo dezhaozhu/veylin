@@ -10,7 +10,7 @@ import {
 const owner = {
   threadId: 'thread-1',
   tenantId: 'tenant-1',
-  userId: 'user-1',
+  resourceOwnerId: 'user-1',
   agentId: 'agent-1',
 };
 
@@ -61,7 +61,7 @@ describe('chat suspension registry', () => {
       createdAt: Date.now(),
     });
     assert.equal(
-      consumeSuspendedRun({ ...owner, userId: 'other-user' }, 'run-1', 'call-1'),
+      consumeSuspendedRun({ ...owner, resourceOwnerId: 'other-user' }, 'run-1', 'call-1'),
       null,
     );
     assert.equal(consumeSuspendedRun(owner, 'run-1', 'other-call'), null);

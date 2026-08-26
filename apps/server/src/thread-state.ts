@@ -207,7 +207,7 @@ export function isSidebarChatThreadId(threadId: string): boolean {
 /** Read-only thread resolve: returns null instead of throwing when missing or not owned. */
 export async function resolveThreadForRead(
   threadId: string,
-  ctx: { tenantId: string; userId: string },
+  ctx: { tenantId: string; resourceOwnerId: string },
 ): Promise<ThreadStateRow | null> {
   const row = await getThreadState(threadId);
   if (!row) return null;
@@ -218,7 +218,7 @@ export async function resolveThreadForRead(
     }
     return row;
   }
-  if (row.tenantId !== ctx.tenantId || row.resourceId !== ctx.userId) {
+  if (row.tenantId !== ctx.tenantId || row.resourceId !== ctx.resourceOwnerId) {
     return null;
   }
   return row;
@@ -239,7 +239,7 @@ export async function resolveThreadForRead(
  */
 export async function resolveThreadPin(
   threadId: string | undefined | null,
-  ctx: { tenantId: string; userId: string },
+  ctx: { tenantId: string; resourceOwnerId: string },
 ): Promise<string | null> {
   if (!threadId) return null;
   const row = await resolveThreadForRead(threadId, ctx);
@@ -249,7 +249,7 @@ export async function resolveThreadPin(
 /** Returns 403 when an existing thread belongs to another tenant/resource. */
 export async function requireThreadOwnership(
   threadId: string,
-  ctx: { tenantId: string; userId: string },
+  ctx: { tenantId: string; resourceOwnerId: string },
 ): Promise<ThreadStateRow> {
   const row = await resolveThreadForRead(threadId, ctx);
   if (!row) {

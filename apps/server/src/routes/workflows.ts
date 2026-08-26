@@ -52,7 +52,7 @@ export function registerWorkflowsRoutes(app: FastifyInstance, deps: ServerDeps):
     const ctx = await deps.resolveContext(req.headers);
     const threadId = requireThreadId(req.query as { threadId?: string }, reply);
     if (!threadId) return { ok: false, message: 'threadId is required' };
-    const workflows = await listWorkflows(ctx.tenantId, { userId: ctx.userId, threadId });
+    const workflows = await listWorkflows(ctx.tenantId, { userId: ctx.resourceOwnerId, threadId });
     return { workflows };
   });
 
@@ -77,7 +77,7 @@ export function registerWorkflowsRoutes(app: FastifyInstance, deps: ServerDeps):
       return { ok: false, message: parsed.error.message };
     }
     try {
-      const workflow = await createWorkflow(ctx.tenantId, ctx.userId, parsed.data);
+      const workflow = await createWorkflow(ctx.tenantId, ctx.resourceOwnerId, parsed.data);
       if (workflow.enabled && workflow.kind === 'cron' && workflow.cron) {
         await registerWorkflowSchedule(deps.queue, workflow.id, workflow.cron, workflow.timezone ?? 'UTC', {
           tenantId: ctx.tenantId,
@@ -262,7 +262,7 @@ export function registerWorkflowsRoutes(app: FastifyInstance, deps: ServerDeps):
     const draft = parsed.data;
     const created = await createWorkflow(
       ctx.tenantId,
-      ctx.userId,
+      ctx.resourceOwnerId,
       draftToCreateInput(draft, threadId, body.cron) as never,
     );
     if (created.enabled && created.kind === 'cron' && created.cron) {

@@ -20,7 +20,7 @@ export function registerAutomationsRoutes(app: FastifyInstance, deps: ServerDeps
   // --- Automate: Automations ---
   app.get('/api/automations', async (req) => {
     const ctx = await deps.resolveContext(req.headers);
-    const automations = await listAutomations(ctx.tenantId, ctx.userId);
+    const automations = await listAutomations(ctx.tenantId, ctx.resourceOwnerId);
     return { automations };
   });
 
@@ -42,7 +42,7 @@ export function registerAutomationsRoutes(app: FastifyInstance, deps: ServerDeps
       reply.code(400);
       return { ok: false, message: parsed.error.message };
     }
-    const automation = await createAutomation(ctx.tenantId, ctx.userId, parsed.data);
+    const automation = await createAutomation(ctx.tenantId, ctx.resourceOwnerId, parsed.data);
     if (automation.enabled && automation.kind === 'cron' && automation.cron) {
       await registerAutomationSchedule(deps.queue, automation.id, automation.cron, automation.timezone ?? 'UTC', {
         tenantId: ctx.tenantId,

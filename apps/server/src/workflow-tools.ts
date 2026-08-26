@@ -32,10 +32,10 @@ export function buildWorkflowTools(queue: QueuePort) {
     }),
     execute: async (_input, ctx?: WorkflowCtx) => {
       const tenantId = ctxValue(ctx, 'tenantId') ?? '00000000-0000-0000-0000-000000000000';
-      const userId = ctxValue(ctx, 'userId') ?? 'dev-user';
+      const resourceOwnerId = ctxValue(ctx, 'resourceOwnerId') ?? 'dev-user';
       const threadId = ctxValue(ctx, 'threadId');
       if (!threadId) return { workflows: [] };
-      const rows = await listWorkflows(tenantId, { userId, threadId });
+      const rows = await listWorkflows(tenantId, { userId: resourceOwnerId, threadId });
       return {
         workflows: rows.map((w) => ({
           id: w.id,

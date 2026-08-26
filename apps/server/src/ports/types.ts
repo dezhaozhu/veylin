@@ -2,13 +2,24 @@
 
 export type MembershipRole = 'owner' | 'admin' | 'member';
 
+/**
+ * 身份有**两个角色**,分开命名不复用同一个字段 —— 复用是这里所有事故的根源:
+ * 一个字段既表示"这份本地数据归谁",又表示"拿谁的身份去授权",于是任何一侧
+ * 的改动都会牵动另一侧(2026-08-25 差点因此让存量会话全部失去归属)。
+ */
 export type IdentitySession = {
-  /** Local resource owner id (desktop: installId). */
-  userId: string;
+  /**
+   * **本地数据归谁**。桌面端 = installId(与数据目录同生共死)。
+   * 登录、登出、换账号都**不变** —— 否则登出就等于丢数据。
+   */
+  resourceOwnerId: string;
+  /**
+   * **平台账号**,登录才有。用于授权访问远端(Compass 场景等)。
+   * **绝不用作本地数据归属** —— 那会让登出把数据带走。
+   */
+  accountId?: string;
   email?: string;
   displayName?: string;
-  /** Platform account id when logged in; never used as local resourceId. */
-  platformUserId?: string;
 };
 
 export type IdentityPort = {

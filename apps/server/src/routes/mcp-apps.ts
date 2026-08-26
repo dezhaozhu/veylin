@@ -122,7 +122,7 @@ export async function freshClient(
  */
 export async function resolveScopedServerNames(
   tenantId: string,
-  userId: string,
+  resourceOwnerId: string,
   threadId: string | undefined,
   projectId?: string,
 ): Promise<ScopedServerAccess> {
@@ -155,7 +155,7 @@ export async function resolveScopedServerNames(
     // opens its group member (deny-by-default; the chat path —
     // routes/chat.ts — agrees: it no longer auto-pins an unpinned thread
     // either, see that file's 全项目制 + 个人区 comment).
-    const row = threadId ? await resolveThreadForRead(threadId, { tenantId, userId }) : null;
+    const row = threadId ? await resolveThreadForRead(threadId, { tenantId, resourceOwnerId }) : null;
     if (!row) return denyGrouped();
     scope = await resolvePinnedProjectScope(tenantId, row.project ?? null);
   }
@@ -240,7 +240,7 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
       threadId?: string;
       projectId?: string;
     };
-    const scoped = await resolveScopedServerNames(ctx.tenantId, ctx.userId, threadId, projectId);
+    const scoped = await resolveScopedServerNames(ctx.tenantId, ctx.resourceOwnerId, threadId, projectId);
     const client = await freshClient(ctx.tenantId, scoped);
     try {
       const toolsets = (await client.listToolsets()) as Record<
@@ -272,7 +272,7 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
       threadId?: string;
       projectId?: string;
     };
-    const scoped = await resolveScopedServerNames(ctx.tenantId, ctx.userId, threadId, projectId);
+    const scoped = await resolveScopedServerNames(ctx.tenantId, ctx.resourceOwnerId, threadId, projectId);
     const client = await freshClient(ctx.tenantId, scoped);
     try {
       switch (method) {

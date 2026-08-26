@@ -8,7 +8,7 @@
 export type SuspendedRunOwner = {
   threadId: string;
   tenantId: string;
-  userId: string;
+  resourceOwnerId: string;
   agentId: string;
 };
 
@@ -99,7 +99,7 @@ export function consumeSuspendedRun(
   if (
     !record ||
     record.tenantId !== owner.tenantId ||
-    record.userId !== owner.userId ||
+    record.resourceOwnerId !== owner.resourceOwnerId ||
     record.agentId !== owner.agentId ||
     (toolCallId != null && record.toolCallId !== toolCallId)
   ) {

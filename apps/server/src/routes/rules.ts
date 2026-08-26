@@ -13,7 +13,7 @@ export function registerRulesRoutes(app: FastifyInstance, deps: ServerDeps): voi
   app.get('/api/rules', async (req) => {
     const ctx = await deps.resolveContext(req.headers);
     const { agentId } = req.query as { agentId?: string };
-    const rules = await listRules(ctx.tenantId, ctx.userId, agentId);
+    const rules = await listRules(ctx.tenantId, ctx.resourceOwnerId, agentId);
     return { rules };
   });
 

@@ -132,7 +132,7 @@ export function buildWorkspaceConfigTool(opts: BuildWorkspaceConfigToolOptions) 
     }),
     execute: async (input: ConfigInput, ctx?: ConfigCtx) => {
       const tenantId = ctxValue(ctx, 'tenantId') ?? '00000000-0000-0000-0000-000000000000';
-      const userId = ctxValue(ctx, 'userId') ?? 'dev-user';
+      const resourceOwnerId = ctxValue(ctx, 'resourceOwnerId') ?? 'dev-user';
       const baseUrl = ctxValue(ctx, 'publicBaseUrl') ?? defaultBaseUrl;
 
       try {
@@ -149,7 +149,7 @@ export function buildWorkspaceConfigTool(opts: BuildWorkspaceConfigToolOptions) 
           case 'automation':
             return {
               ok: true,
-              data: await runAutomationAction(input, { tenantId, userId, queue }),
+              data: await runAutomationAction(input, { tenantId, resourceOwnerId, queue }),
             };
           default:
             return { ok: false, error: 'Unknown resource' };
@@ -353,10 +353,10 @@ async function runWebhookAction(
 
 async function runAutomationAction(
   input: ConfigInput,
-  opts: { tenantId: string; userId: string; queue: QueuePort },
+  opts: { tenantId: string; resourceOwnerId: string; queue: QueuePort },
 ) {
   if (input.action === 'list') {
-    const rows = await listAutomations(opts.tenantId, opts.userId);
+    const rows = await listAutomations(opts.tenantId, opts.resourceOwnerId);
     return rows.map((a) => ({
       id: a.id,
       name: a.name,
@@ -368,7 +368,7 @@ async function runAutomationAction(
 
   if (input.action === 'create') {
     if (!input.name || !input.prompt) throw new Error('create requires name and prompt');
-    const row = await createAutomation(opts.tenantId, opts.userId, {
+    const row = await createAutomation(opts.tenantId, opts.resourceOwnerId, {
       name: input.name,
       kind: input.kind ?? 'cron',
       agentId: input.agentId ?? DEFAULT_AGENT_ID,

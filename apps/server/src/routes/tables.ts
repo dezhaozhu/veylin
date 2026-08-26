@@ -75,7 +75,7 @@ function requireThreadId(
  */
 async function scopeOfRequest(
   threadId: string | undefined | null,
-  ctx: { tenantId: string; userId: string },
+  ctx: { tenantId: string; resourceOwnerId: string },
 ): Promise<SheetScope> {
   const pin = await resolveThreadPin(threadId ?? undefined, ctx);
   return resolveSheetScope(threadId, pin);
@@ -145,7 +145,7 @@ export type CompassRequestScope = {
 
 export async function resolveCompassRequestScope(
   threadId: string | undefined,
-  ctx: { tenantId: string; userId: string },
+  ctx: { tenantId: string; resourceOwnerId: string },
   deps: { getMcpToolsets: () => Record<string, unknown> },
   seams: {
     resolveScope?: typeof resolvePinnedProjectScope;

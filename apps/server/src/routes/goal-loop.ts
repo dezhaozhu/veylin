@@ -53,7 +53,7 @@ export function registerGoalLoopRoutes(app: FastifyInstance, deps: ServerDeps): 
     await ensureThreadState({
       threadId: body.threadId,
       tenantId: ctx.tenantId,
-      resourceId: ctx.userId,
+      resourceId: ctx.resourceOwnerId,
     });
     const state = await getThreadState(body.threadId);
     const action = body.action ?? 'get';
@@ -120,7 +120,7 @@ export function registerGoalLoopRoutes(app: FastifyInstance, deps: ServerDeps): 
     await ensureThreadState({
       threadId: body.threadId,
       tenantId: ctx.tenantId,
-      resourceId: ctx.userId,
+      resourceId: ctx.resourceOwnerId,
     });
     const state = await getThreadState(body.threadId);
     const action = body.action ?? 'get';

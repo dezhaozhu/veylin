@@ -437,12 +437,12 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     await deps.ensureMcpForTenant(ctx.tenantId);
     await reloadHooksForTenant(ctx.tenantId);
     const hookBus = getHookBus(ctx.tenantId);
-    const threadId = requestedThreadId ?? `thread-${ctx.userId}`;
+    const threadId = requestedThreadId ?? `thread-${ctx.resourceOwnerId}`;
     const agentId = body.agentId ?? DEFAULT_AGENT_ID;
     const identity = {
       threadId,
       tenantId: ctx.tenantId,
-      resourceId: ctx.userId,
+      resourceId: ctx.resourceOwnerId,
     };
 
     let threadRow: ThreadStateRow;
@@ -529,7 +529,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     if (!isResume && threadStoreOk && !threadRow.title?.trim()) {
       void ensureThreadTitleIfMissing(threadId, messages, {
         memory: deps.runtime.memory,
-        resourceId: ctx.userId,
+        resourceId: ctx.resourceOwnerId,
         modelKey,
       }).catch((err) => {
         app.log.warn({ err, threadId }, 'thread title generation failed');
@@ -598,7 +598,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
 
     await recordAudit({
       tenantId: ctx.tenantId,
-      userId: ctx.userId,
+      // 审计记的是**谁干的**:有账号记账号,没有(桌面未登录)记这台机器的归属。
+      // 显式写出来,不让"归属"和"账号"在这里再糊成一个。
+      userId: ctx.accountId ?? ctx.resourceOwnerId,
       threadId,
       action: 'chat.request',
       detail: { agentId, model: body.model, planMode },
@@ -609,7 +611,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     requestContext.set('toolQuery', toolQuery);
     requestContext.set('planMode', planMode);
     requestContext.set('tenantId', ctx.tenantId);
-    requestContext.set('userId', ctx.userId);
+    requestContext.set('resourceOwnerId', ctx.resourceOwnerId);
     requestContext.set('threadId', threadId);
     requestContext.set('parentAgentId', agentId);
     requestContext.set('publicBaseUrl', `${req.protocol}://${req.headers.host ?? '127.0.0.1:8787'}`);
@@ -854,7 +856,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         try {
           const recalled = await recallOrEmpty(deps.runtime.memory, {
             threadId,
-            resourceId: ctx.userId,
+            resourceId: ctx.resourceOwnerId,
             perPage: false,
           });
           const recalledForAgent = mastraMessagesToAgentContext(recalled.messages ?? []);
@@ -882,7 +884,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     }
 
     const rules = await withDatastoreFallback(
-      () => listRules(ctx.tenantId, ctx.userId, agentId),
+      () => listRules(ctx.tenantId, ctx.resourceOwnerId, agentId),
       [],
     );
     const rulesBlock = buildRulesMemoryBlock(rules, lastUserText(messages));
@@ -1032,7 +1034,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
             };
     const filteredForBusiness = await getEnterprisePorts().businessSource.filterToolsets(
       ctx.tenantId,
-      ctx.userId,
+      ctx.resourceOwnerId,
       activeToolsetsRaw,
     );
     const activeToolsets = wrapToolsetsWithAudit(
@@ -1040,7 +1042,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         threadId,
         tenantId: ctx.tenantId,
       }),
-      { threadId, tenantId: ctx.tenantId, userId: ctx.userId },
+      { threadId, tenantId: ctx.tenantId, userId: ctx.resourceOwnerId },
     );
 
     if (!isResume) {
@@ -1083,7 +1085,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     const suspensionOwner = {
       threadId,
       tenantId: ctx.tenantId,
-      userId: ctx.userId,
+      resourceOwnerId: ctx.resourceOwnerId,
       agentId,
     };
     let consumedSuspended: SuspendedRunRecord | null = null;
@@ -1104,7 +1106,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
           tags: ['chat', agentId],
           metadata: {
             sessionId: threadId,
-            userId: ctx.userId,
+            resourceOwnerId: ctx.resourceOwnerId,
             threadId,
             agentId,
             model: body.model ?? effectiveModel ?? 'default',
@@ -1146,7 +1148,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
         if (answeredToolCallId) {
           await persistAskAnswer(
             deps.runtime.memory as never,
-            { threadId, resourceId: ctx.userId },
+            { threadId, resourceId: ctx.resourceOwnerId },
             answeredToolCallId,
             resume.resumeData,
           );
@@ -1202,7 +1204,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
       try {
         const recalled = await deps.runtime.memory.recall({
           threadId,
-          resourceId: ctx.userId,
+          resourceId: ctx.resourceOwnerId,
           perPage: false,
         });
         originalUiMessages = mastraMessagesToUi(recalled.messages ?? []);
@@ -1595,7 +1597,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
     };
     await recordAudit({
       tenantId: ctx.tenantId,
-      userId: ctx.userId,
+      // 审计=谁干的:有账号记账号,没有就记这台机器的归属(见 chat.request 处的同款说明)
+      userId: ctx.accountId ?? ctx.resourceOwnerId,
       action: 'approval.decision',
       detail: { runId: body.runId, approved: body.approved },
     });

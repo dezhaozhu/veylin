@@ -19,27 +19,28 @@ export async function resolveContext(headers: Record<string, string | string[] |
 
   if (isDesktopAuth || ports.identity.id === 'desktop') {
     const session = await ports.identity.getSession(headers);
-    // Local threads key off installId (resourceId === userId). Keep desktop on DEV_TENANT.
-    const installId = session?.userId || getOrCreateInstallId();
+    // 本地数据归 installId,与数据目录同生共死;账号只是附加物,登出不动数据。
+    const resourceOwnerId = session?.resourceOwnerId || getOrCreateInstallId();
     return {
-      userId: installId,
-      installId,
-      platformUserId: session?.platformUserId ?? null,
+      resourceOwnerId,
+      accountId: session?.accountId ?? null,
       tenantId: DEV_TENANT_ID,
       role: 'owner' as const,
-      authed: Boolean(session?.platformUserId),
+      authed: Boolean(session?.accountId),
     };
   }
 
   const session = await ports.identity.getSession(headers);
-  if (!session?.userId) {
+  if (!session?.resourceOwnerId) {
     throw new UnauthorizedError();
   }
-  const membership = await ports.org.resolveTenant(session.userId, session.displayName);
+  // 多用户部署:租户按**账号**解析(组织归属是人的属性,不是这台机器的属性);
+  // 没有账号时退回资源归属,保证单机模式也能解析。
+  const membership = await ports.org.resolveTenant(
+    session.accountId ?? session.resourceOwnerId, session.displayName);
   return {
-    userId: session.userId,
-    installId: null as string | null,
-    platformUserId: session.platformUserId ?? null,
+    resourceOwnerId: session.resourceOwnerId,
+    accountId: session.accountId ?? null,
     tenantId: membership.tenantId,
     role: membership.role,
     authed: true as boolean,

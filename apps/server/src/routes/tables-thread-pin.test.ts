@@ -38,7 +38,7 @@ const TENANT_STAMP = Date.now();
 const TENANT_ID = `tables-pin-tenant-${TENANT_STAMP}`;
 const OTHER_TENANT_ID = `tables-pin-other-tenant-${TENANT_STAMP}`;
 const DEV_USER = 'dev-user';
-const CTX = { tenantId: TENANT_ID, userId: DEV_USER };
+const CTX = { tenantId: TENANT_ID, resourceOwnerId: DEV_USER };
 
 /** Tenant toolsets fixture: post-Task-4 truth — compass never in the cache. */
 const TENANT_TOOLSETS: Record<string, unknown> = { github: { search_issues: {} } };

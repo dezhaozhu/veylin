@@ -39,7 +39,9 @@ export function createWebhookIdentityPort(): IdentityPort {
       const userId = String(user.id ?? user.userId ?? '').trim();
       if (!userId) return null;
       return {
-        userId,
+        // 多用户部署:账号就是资源归属(数据跟人走,不跟机器走)
+        resourceOwnerId: userId,
+        accountId: userId,
         email: user.email != null ? String(user.email) : undefined,
         displayName:
           user.name != null

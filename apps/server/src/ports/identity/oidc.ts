@@ -34,7 +34,9 @@ export function createOidcIdentityPort(): IdentityPort {
         const userId = String(data.sub ?? data.id ?? '').trim();
         if (!userId) return null;
         return {
-          userId,
+          // 多用户部署:账号就是资源归属(数据跟人走,不跟机器走)
+          resourceOwnerId: userId,
+          accountId: userId,
           email: data.email != null ? String(data.email) : undefined,
           displayName: data.name != null ? String(data.name) : undefined,
         };
@@ -58,7 +60,9 @@ export function createOidcIdentityPort(): IdentityPort {
         const userId = String(data.sub ?? data.username ?? '').trim();
         if (!userId) return null;
         return {
-          userId,
+          // 多用户部署:账号就是资源归属(数据跟人走,不跟机器走)
+          resourceOwnerId: userId,
+          accountId: userId,
           email: data.email != null ? String(data.email) : undefined,
           displayName: data.name != null ? String(data.name) : undefined,
         };
@@ -68,7 +72,8 @@ export function createOidcIdentityPort(): IdentityPort {
       console.warn(
         '[identity] OIDC provider missing USERINFO/INTROSPECTION URL; using bearer token as userId (dev only)',
       );
-      return { userId: token.slice(0, 64), displayName: 'OIDC User' };
+      const devId = token.slice(0, 64);
+      return { resourceOwnerId: devId, accountId: devId, displayName: 'OIDC User' };
     },
   };
 }

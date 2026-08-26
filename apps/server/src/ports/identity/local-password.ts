@@ -30,7 +30,8 @@ export function createLocalPasswordIdentityPort(getAuthHandle: () => AuthHandle 
         const session = await auth.api.getSession({ headers: toFetchHeaders(headers) as never });
         if (!session?.user) return null;
         return {
-          userId: session.user.id,
+          resourceOwnerId: session.user.id,
+          accountId: session.user.id,
           email: (session.user as { email?: string }).email,
           displayName: session.user.name ?? undefined,
         };

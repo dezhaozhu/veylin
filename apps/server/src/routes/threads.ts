@@ -68,7 +68,7 @@ export function createReadTaskSnapshot(runtime: Runtime) {
     if (batchRows.length > 0) {
       const recalled = await recallOrEmpty(runtime.memory, {
         threadId,
-        resourceId: ctx.userId,
+        resourceId: ctx.resourceOwnerId,
         perPage: false,
       });
       const agentContext = mastraMessagesToAgentContext(recalled.messages ?? []);
@@ -261,7 +261,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
     try {
       const threads = await listThreadsForResource(
         ctx.tenantId,
-        ctx.userId,
+        ctx.resourceOwnerId,
         deps.runtime.memory,
       );
       return { threads };
@@ -277,7 +277,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
   app.get('/api/threads/activity', async (req, reply) => {
     const ctx = await deps.resolveContext(req.headers);
     try {
-      const activity = await listThreadActivity(ctx.tenantId, ctx.userId, deps.runtime.memory);
+      const activity = await listThreadActivity(ctx.tenantId, ctx.resourceOwnerId, deps.runtime.memory);
       return { activity };
     } catch (err) {
       req.log.warn({ err }, 'thread activity read failed');
@@ -323,7 +323,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
     const { threadId } = req.params as { threadId: string };
     const body = req.body as { title?: string };
     const ctx = await deps.resolveContext(req.headers);
-    await ensureThreadState({ threadId, tenantId: ctx.tenantId, resourceId: ctx.userId });
+    await ensureThreadState({ threadId, tenantId: ctx.tenantId, resourceId: ctx.resourceOwnerId });
     if (typeof body.title === 'string') {
       await setThreadTitle(threadId, body.title);
     }
@@ -334,7 +334,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
     const { threadId } = req.params as { threadId: string };
     const body = (req.body ?? {}) as { messages?: unknown[] };
     const ctx = await deps.resolveContext(req.headers);
-    await ensureThreadState({ threadId, tenantId: ctx.tenantId, resourceId: ctx.userId });
+    await ensureThreadState({ threadId, tenantId: ctx.tenantId, resourceId: ctx.resourceOwnerId });
     const existing = await getThreadState(threadId);
     if (existing?.title?.trim() && !isUnusableTitle(existing.title)) {
       return { title: existing.title };
@@ -439,7 +439,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
       await ensureThreadState({
         threadId: body.threadId,
         tenantId: ctx.tenantId,
-        resourceId: ctx.userId,
+        resourceId: ctx.resourceOwnerId,
       });
       await setThreadPlanModeDb(body.threadId, body.planMode);
       setThreadPlanMode(body.threadId, body.planMode);
@@ -474,7 +474,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
       const existing = await ensureThreadState({
         threadId: body.threadId,
         tenantId: ctx.tenantId,
-        resourceId: ctx.userId,
+        resourceId: ctx.resourceOwnerId,
       });
       // Move-boundary bookkeeping (audit fix #3): stamps movedFrom/movedAt
       // when this user-directed change leaves a previously non-null pin —
@@ -497,7 +497,7 @@ export function registerThreadsRoutes(app: FastifyInstance, deps: ServerDeps): v
       const threadRow = await ensureThreadState({
         threadId,
         tenantId: ctx.tenantId,
-        resourceId: ctx.userId,
+        resourceId: ctx.resourceOwnerId,
       });
       const identity = {
         threadId,

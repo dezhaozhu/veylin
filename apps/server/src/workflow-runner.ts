@@ -85,7 +85,7 @@ async function executeNode(
   ctx: NodeContext,
   eventContext: Record<string, unknown>,
   tenantId: string,
-  userId: string,
+  resourceOwnerId: string,
   workflowName: string,
   workflowId: string,
   workflowThreadId: string,
@@ -181,12 +181,12 @@ async function executeNode(
       if (!prompt.trim()) throw new Error('run_agent requires prompt');
       const agentId = String(data.agentId ?? DEFAULT_AGENT_ID);
       const threadId = `wf-${crypto.randomUUID()}`;
-      await ensureThreadState({ threadId, tenantId, resourceId: userId });
+      await ensureThreadState({ threadId, tenantId, resourceId: resourceOwnerId });
       await setThreadTitle(threadId, `[Workflow] ${workflowName}`);
       const result = await runAgentPrompt({
         runtime,
         tenantId,
-        userId,
+        userId: resourceOwnerId,
         threadId,
         agentId,
         prompt,
@@ -262,7 +262,7 @@ async function runNode(
   ctx: NodeContext,
   eventContext: Record<string, unknown>,
   tenantId: string,
-  userId: string,
+  resourceOwnerId: string,
   workflowName: string,
   workflowId: string,
   workflowThreadId: string,
@@ -275,7 +275,7 @@ async function runNode(
       ctx,
       eventContext,
       tenantId,
-      userId,
+      resourceOwnerId,
       workflowName,
       workflowId,
       workflowThreadId,
@@ -351,7 +351,7 @@ export async function runWorkflowJob(runtime: Runtime, job: WorkflowJob): Promis
           ctx,
           job.eventContext ?? {},
           job.tenantId,
-          workflow.userId,
+          workflow.userId,   // 库行的列名
           workflow.name,
           workflow.id,
           workflow.threadId,

@@ -21,7 +21,7 @@ function rowToAutomation(row: NonNullable<Awaited<ReturnType<typeof getAutomatio
   return {
     id: row.id,
     tenantId: row.tenantId,
-    userId: row.userId,
+    userId: row.userId,   // 库行的直接投影;应用层要表达归属时用 ctx.resourceOwnerId
     name: row.name,
     kind: row.kind,
     agentId: row.agentId,
@@ -51,8 +51,8 @@ function rowToRun(row: Awaited<ReturnType<typeof insertAutomationRun>>): Automat
   };
 }
 
-export async function listAutomations(tenantId: string, userId?: string): Promise<Automation[]> {
-  const rows = await listAutomationRows(tenantId, userId);
+export async function listAutomations(tenantId: string, resourceOwnerId?: string): Promise<Automation[]> {
+  const rows = await listAutomationRows(tenantId, resourceOwnerId);
   return rows.map(rowToAutomation);
 }
 
@@ -68,14 +68,14 @@ export async function getAutomation(tenantId: string, id: string): Promise<Autom
 
 export async function createAutomation(
   tenantId: string,
-  userId: string,
+  resourceOwnerId: string,
   input: AutomationInput,
 ): Promise<Automation> {
   if (input.eventFilter?.trim()) {
     const filterResult = validateWebhookFilter(input.eventFilter);
     if (!filterResult.ok) throw new Error(filterResult.error);
   }
-  const row = await insertAutomation(tenantId, userId, {
+  const row = await insertAutomation(tenantId, resourceOwnerId, {
     name: input.name.trim(),
     kind: input.kind,
     agentId: input.agentId,
