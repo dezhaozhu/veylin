@@ -64,6 +64,18 @@ describe('展开三级', () => {
     assert.doesNotMatch(ganttWindowUrl('t1', 'resource'), /expand/);
   });
 
+  it('表格定位时带上开工日和更大的泳道窗,否则默认窗对不上那一行', () => {
+    const url = ganttWindowUrl('t1', 'resource', [], { fromDate: '2026-03-01', laneLimit: 200 });
+    assert.match(url, /from_date=2026-03-01/);
+    assert.match(url, /lane_limit=200/);
+  });
+
+  it('没有定位窗就不带 from_date / lane_limit', () => {
+    const url = ganttWindowUrl('t1', 'resource');
+    assert.doesNotMatch(url, /from_date=/);
+    assert.doesNotMatch(url, /lane_limit=/);
+  });
+
   it('同一个订单展开两次不重复请求 —— 集合去重且保持顺序', () => {
     assert.deepEqual(withExpanded(['MO-1'], 'MO-2'), ['MO-1', 'MO-2']);
     assert.equal(withExpanded(['MO-1', 'MO-2'], 'MO-1'), null, '已经在里面就回 null,让调用方跳过重拉');

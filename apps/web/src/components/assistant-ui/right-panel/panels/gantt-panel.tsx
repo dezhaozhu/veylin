@@ -22,7 +22,14 @@ import { Button } from '@/components/ui/button';
 import { loadDhtmlxGantt, loadDhtmlxGanttCss, type GanttModule } from '@/lib/dhtmlx-gantt-loader';
 import { toGanttTasks, type GanttTask, type GanttWindowPayload } from '@/lib/gantt-window-model';
 import { ganttErrorMessage, resolveGanttThreadId, ganttWindowUrl, withExpanded } from '@/lib/gantt-request';
-import { jobIdForTask, orderIdForTask, resolveFocusTarget, isTreeToggleTarget } from '@/lib/gantt-focus';
+import {
+  applyGanttTaskFocus,
+  ganttFocusRetryDelay,
+  jobIdForTask,
+  orderIdForTask,
+  resolveFocusTarget,
+  isTreeToggleTarget,
+} from '@/lib/gantt-focus';
 import { locateTable } from '@/lib/schedule-locate';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import type { PanelTabsApi } from '@/components/assistant-ui/right-panel/use-panel-tabs';
@@ -68,6 +75,8 @@ import type { PanelContentProps } from '../panel-types';
 type GanttStaticLike = {
   attachEvent?: (name: string, handler: (id: unknown) => unknown) => string;
   detachEvent?: (id: string) => void;
+  isTaskExists?: (id: string) => boolean;
+  open?: (id: string) => void;
   showTask?: (id: string) => void;
   selectTask?: (id: string) => void;
 };
@@ -118,6 +127,8 @@ const VIEWS: GanttView[] = ['resource', 'workshop', 'order'];
  */
 const GANTT_CONFIG = {
   readonly: true,
+  // 默认会先 showTask 第一条。表格定位刚选中的那条会被它盖掉。
+  initial_scroll: false,
   // **逐行 `open` 取代全局自动展开**(见 gantt-window-model 的 lane 行):
   // open_tree_initially 会把二级行也展开,而二级展开 = 去取三级,于是一进面板就把
   // 整屏订单的三级猛拉一遍。现在泳道行自己带 open:true,二级行保持收起。
@@ -248,30 +259,39 @@ function GanttChart({ mod, tasks, ganttFocus, clearGanttFocus,
   // 表格 → 甘特:消费 focusGanttJob 暂存的 target。`GanttChart` 只在
   // load.state === 'ready' 时才存在,不需要再判一次 load 状态。
   // resolveFocusTarget 找不到就回 null——这里的处理就是"不动",不瞎滚一个
-  // (gantt-focus.ts 的核心约束)。只尝试一次:同一窗口内不会因为再等等就
-  // 突然命中,真找不到留给"换窗口"的后续工作(task 7 之外)。
+  // (gantt-focus.ts 的核心约束)。实例要等 `<Gantt>` 自己建完;第一次挂载
+  // 就 clear 会选在 StrictMode 扔掉的那个 instance 上,人看到的是没选中。
   useEffect(() => {
     if (!ganttFocus) return;
     const targetId = resolveFocusTarget(tasks, ganttFocus.target);
     if (!targetId) {
-      // 窗口还是空的:再等等,别把这次定位清掉。
       if (tasks.length === 0) return;
       clearGanttFocus();
       return;
     }
-    const instance = ganttRef.current?.instance;
-    if (!instance) return;
-    try {
-      instance.showTask?.(targetId);
-    } catch {
-      /* best-effort scroll-into-view */
-    }
-    try {
-      instance.selectTask?.(targetId);
-    } catch {
-      /* best-effort highlight */
-    }
-    clearGanttFocus();
+    const parentId = tasks.find((t) => t.id === targetId)?.parent;
+    let cancelled = false;
+    let attempt = 0;
+    let timer: number | undefined;
+    const kick = () => {
+      if (cancelled) return;
+      const delay = ganttFocusRetryDelay(attempt);
+      if (delay == null) return;
+      attempt += 1;
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        if (applyGanttTaskFocus(ganttRef.current?.instance, targetId, parentId)) {
+          clearGanttFocus();
+          return;
+        }
+        kick();
+      }, delay);
+    };
+    kick();
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
   }, [ganttFocus, tasks, clearGanttFocus]);
 
   return (
@@ -299,6 +319,9 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
 
   const panelState = (tab.state ?? {}) as GanttPanelState;
   const view = panelState.view ?? 'resource';
+  const { ganttFocus, clearGanttFocus } = usePanelTabs();
+  const ganttFocusRef = useRef(ganttFocus);
+  ganttFocusRef.current = ganttFocus;
 
   const [avail, setAvail] = useState<Availability>({ state: 'checking' });
   useEffect(() => {
@@ -327,7 +350,13 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
     setLoad({ state: 'loading' });
     void (async () => {
       try {
-        const res = await fetch(ganttWindowUrl(threadId, view, expandedRef.current));
+        const focus = ganttFocusRef.current;
+        const res = await fetch(
+          ganttWindowUrl(threadId, view, expandedRef.current, {
+            fromDate: focus?.target.fromDate,
+            laneLimit: focus ? 200 : undefined,
+          }),
+        );
         const body = (await res.json()) as GanttWindowPayload & { ok: boolean; message?: string };
         if (!alive) return;
         if (!body.ok) {
@@ -408,8 +437,6 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
   // 消费 focusGanttJob)全部下沉进 GanttChart —— 理由见文件头那段
   // 2026-08-19 追记:必须让"渲染 `<Gantt>`"和"接事件线"总在同一次挂载/卸载
   // 里发生,不能分属两个组件。
-  const { ganttFocus, clearGanttFocus } = usePanelTabs();
-
   if (avail.state === 'checking') {
     return <p className="text-muted-foreground p-6 text-sm">{t('panels.gantt.loading')}</p>;
   }

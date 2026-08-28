@@ -75,3 +75,40 @@ export function isTreeToggleTarget(target: unknown): boolean {
   const el = target as { closest?: (sel: string) => unknown } | null | undefined;
   return Boolean(el?.closest?.('.gantt_tree_icon'));
 }
+
+export type GanttFocusInstance = {
+  isTaskExists?: (id: string) => boolean;
+  open?: (id: string) => void;
+  showTask?: (id: string) => void;
+  selectTask?: (id: string) => void;
+};
+
+/** 切页签会把甘特整棵卸掉重挂。80ms 内试几次不够,跟 Compass 一样给 1.5s。 */
+export const GANTT_FOCUS_RETRY_INTERVAL_MS = 50;
+export const GANTT_FOCUS_RETRY_MAX = 30;
+
+export function ganttFocusRetryDelay(attempt: number): number | null {
+  if (!Number.isInteger(attempt) || attempt < 0 || attempt >= GANTT_FOCUS_RETRY_MAX) return null;
+  return GANTT_FOCUS_RETRY_INTERVAL_MS;
+}
+
+/**
+ * 把一条画到眼前并选中。实例还没就绪、或这条还没进树,回 false,
+ * 调用方再试下一帧 —— 第一次挂载就 clear 会选在被 StrictMode 扔掉的实例上。
+ */
+export function applyGanttTaskFocus(
+  instance: GanttFocusInstance | null | undefined,
+  targetId: string,
+  parentId?: string,
+): boolean {
+  if (!instance?.selectTask) return false;
+  if (instance.isTaskExists && !instance.isTaskExists(targetId)) return false;
+  try {
+    if (parentId) instance.open?.(parentId);
+    instance.showTask?.(targetId);
+    instance.selectTask(targetId);
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -14,7 +14,11 @@ import { isPanelTabsRemoteUpgrade } from '@/lib/panel-tabs-remote-upgrade';
 import type { OpenGridFilter } from '@/lib/correction-bridge';
 import { createNextThreadSheet, fetchThreadSheets } from '@/lib/table-sheets';
 import { decideTablePanelSheet } from '@/lib/open-table-panel';
-import { setLocateGanttImpl, setLocateTableImpl } from '@/lib/schedule-locate';
+import {
+  setLocateGanttImpl,
+  setLocateTableImpl,
+  type ScheduleLocateTarget,
+} from '@/lib/schedule-locate';
 import { getPanelKindDef } from './panel-registry';
 import type { PanelKind, PanelTab } from './panel-types';
 
@@ -66,7 +70,7 @@ export interface PendingScheduleFilter {
  * tasks are on screen; `resolveFocusTarget` decides whether it actually
  * resolves inside the currently-loaded window — this store doesn't guess. */
 export interface PendingGanttFocus {
-  target: { jobId?: string; orderId?: string };
+  target: ScheduleLocateTarget;
   at: number;
 }
 
@@ -91,7 +95,7 @@ export interface PanelTabsApi {
    * opens the 'gantt' tab, then stashes `target` for GanttPanel to resolve
    * client-side (via resolveFocusTarget) once its tasks are loaded — this
    * store never resolves/scrolls itself. */
-  focusGanttJob: (target: { jobId?: string; orderId?: string }) => void | Promise<void>;
+  focusGanttJob: (target: ScheduleLocateTarget) => void | Promise<void>;
   /**
    * 在右侧打开一份项目文件(只读)。同名文件**复用已开的那个 tab** —— 连点三次
    * 开出三个一模一样的 tab,是把"我已经打开它了"这件事讲成了三份。
@@ -352,7 +356,7 @@ export function usePanelTabsState(): PanelTabsApi {
   );
 
   const focusGanttJob = useCallback(
-    (target: { jobId?: string; orderId?: string }) => {
+    (target: ScheduleLocateTarget) => {
       // Same shape as focusScheduleFilter: open/activate the gantt tab through
       // the singleton path (SINGLETON_PANEL_KINDS now includes 'gantt'), then
       // stash the target for GanttPanel to resolve once its tasks are live.

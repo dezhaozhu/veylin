@@ -54,11 +54,14 @@ export function ganttWindowUrl(
   threadId: string | undefined,
   view: GanttView,
   expand: readonly string[] = [],
+  opts?: { fromDate?: string; laneLimit?: number },
 ): string {
   const q = new URLSearchParams({ view });
   if (threadId) q.set('threadId', threadId);
   // 空列表**不带这个参数** —— 否则服务端会为一个空的展开清单白跑一遍三级查询。
   if (expand.length > 0) q.set('expand', expand.join(','));
+  if (opts?.fromDate) q.set('from_date', opts.fromDate);
+  if (opts?.laneLimit != null && opts.laneLimit > 0) q.set('lane_limit', String(opts.laneLimit));
   return `/api/gantt/window?${q}`;
 }
 

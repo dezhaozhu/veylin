@@ -1,6 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { jobIdForTask, orderIdForTask, resolveFocusTarget, isTreeToggleTarget } from './gantt-focus.js';
+import {
+  jobIdForTask,
+  orderIdForTask,
+  resolveFocusTarget,
+  isTreeToggleTarget,
+  applyGanttTaskFocus,
+  ganttFocusRetryDelay,
+  GANTT_FOCUS_RETRY_MAX,
+} from './gantt-focus.js';
 
 const tasks = [
   { id: 'lane:WC10' }, { id: 'job:J1' }, { id: 'job:J2' }, { id: 'wo:T1' },
@@ -111,5 +119,57 @@ describe('点在树的展开图标上', () => {
   it('没有事件目标时不算 —— 宁可跳转,也不要静默吞掉点击', () => {
     assert.equal(isTreeToggleTarget(undefined), false);
     assert.equal(isTreeToggleTarget(null), false);
+  });
+});
+
+describe('applyGanttTaskFocus', () => {
+  it('实例还没就绪就回 false,别假装选中了', () => {
+    assert.equal(applyGanttTaskFocus(null, 'job:J1'), false);
+    assert.equal(applyGanttTaskFocus({}, 'job:J1'), false);
+  });
+
+  it('实例上还没有这条就回 false,好留给下一帧再试', () => {
+    const seen: string[] = [];
+    const ok = applyGanttTaskFocus(
+      {
+        isTaskExists: () => false,
+        selectTask: (id) => {
+          seen.push(id);
+        },
+      },
+      'job:J1',
+    );
+    assert.equal(ok, false);
+    assert.deepEqual(seen, []);
+  });
+
+  it('展开父泳道、滚到这条、选中它', () => {
+    const log: string[] = [];
+    const ok = applyGanttTaskFocus(
+      {
+        isTaskExists: () => true,
+        open: (id) => {
+          log.push(`open:${id}`);
+        },
+        showTask: (id) => {
+          log.push(`show:${id}`);
+        },
+        selectTask: (id) => {
+          log.push(`select:${id}`);
+        },
+      },
+      'job:J1',
+      'lane:WC10',
+    );
+    assert.equal(ok, true);
+    assert.deepEqual(log, ['open:lane:WC10', 'show:job:J1', 'select:job:J1']);
+  });
+});
+
+describe('ganttFocusRetryDelay', () => {
+  it('前 30 次都隔 50ms,够甘特重挂后把条认进树', () => {
+    assert.equal(ganttFocusRetryDelay(0), 50);
+    assert.equal(ganttFocusRetryDelay(29), 50);
+    assert.equal(ganttFocusRetryDelay(GANTT_FOCUS_RETRY_MAX), null);
   });
 });

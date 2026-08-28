@@ -62,7 +62,13 @@ import { buildGovernedEditBody, GOVERNED_EDIT_FIELDS } from '@/lib/schedule-edit
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import { isLateOnlyGridFilter, type OpenGridFilter } from '@/lib/correction-bridge';
 import { useRightSidebar } from '@/components/ui/sidebar';
-import { hasGantt, locateGantt } from '@/lib/schedule-locate';
+import {
+  hasGantt,
+  locateGantt,
+  placeJobIdAfterOrderId,
+  scheduleLocateFromDate,
+  shouldLocateGanttFromTableClick,
+} from '@/lib/schedule-locate';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 
 type TableColumnType = 'text' | 'number' | 'status' | 'sparkline';
@@ -858,8 +864,8 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     api.ensureNodeVisible(hits[0]!, 'middle');
     api.flashCells({ rowNodes: hits });
     // 点选单元格不会选中行(enableClickSelection: false),只闪一下看不出
-    // 是哪一行。用 API 勾上这一行;挡掉 onSelectionChanged / onCellClicked
-    // 里的 locateGantt,否则甘特页签还开着会 open('gantt') 把人踢回去。
+    // 是哪一行。用 API 勾上这一行;挡掉随后落到作业号上的 locateGantt,
+    // 否则甘特页签还开着会 open('gantt') 把人踢回去。
     suppressGanttLocateRef.current = true;
     suppressGanttLocateUntilRef.current = Date.now() + 400;
     hits[0]!.setSelected(true, true);
@@ -1857,8 +1863,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       if (suppressGanttLocateRef.current || Date.now() < suppressGanttLocateUntilRef.current) {
         return;
       }
-      // **甘特页签必须已经开着才联动。** 裸选中就切页签 = 把表格卸载
-      // (最终评审 F1)。没开甘特就什么都不做。
+      // **甘特页签必须已经开着才联动。** 没开就什么都不做,不抢面板。
       const ganttTabOpen = panelTabs.some((tab) => tab.kind === 'gantt');
       if (
         !ganttTabOpen ||
@@ -1871,9 +1876,11 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       const orderId = row['order_id'];
       if (jobId == null || jobId === '') return;
       setRightOpen(true);
+      const fromDate = scheduleLocateFromDate(row);
       locateGantt({
         jobId: String(jobId),
         ...(orderId != null && orderId !== '' ? { orderId: String(orderId) } : {}),
+        ...(fromDate ? { fromDate } : {}),
       });
     },
     [panelTabs, setRightOpen],
@@ -1886,24 +1893,15 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       const selected = nodes.map((n) => rowKey(n.data!));
       setSelectedRows(new Set(selected));
       if (selected.length > 0) clearColumnSelection();
-      // API 勾选(甘特→表格定位)和灌数时的 selection 不是人在找甘特。
-      const source = (event as { source?: string }).source;
-      if (source === 'api' || source === 'gridInitializing' || source === 'rowDataChanged') {
-        return;
-      }
-      if (nodes.length === 1) tryLocateGanttFromRow(nodes[0]!.data);
     },
-    [clearColumnSelection, tryLocateGanttFromRow],
+    [clearColumnSelection],
   );
 
-  // 点单元格不会勾选行(enableClickSelection: false,免得点资源去改时把行勾上)。
-  // 人点的是只读格子(产品、作业号、排产状态)时,那就是在指定这一行,该定位。
-  // 可编辑格子不跳 —— 那是在改,不是在找。
+  // 只有作业号是「去甘特看这一道」。勾选、点其它列都留在表里。
   const onCellClicked = useCallback(
     (event: CellClickedEvent<TableRow>) => {
       const colId = event.column?.getColId?.() ?? '';
-      if (colId.startsWith('__') || colId.startsWith('ag-Grid-')) return;
-      if (event.colDef?.editable === true) return;
+      if (!shouldLocateGanttFromTableClick(colId)) return;
       tryLocateGanttFromRow(event.data);
     },
     [tryLocateGanttFromRow],
@@ -2062,8 +2060,13 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       });
     }
 
+    // 排产表:作业号是跳甘特的手势,紧跟订单号,不要垫在最后一列。
+    const dataCols = isSheet(activeSheetId, SCHEDULE_SHEET_ID)
+      ? placeJobIdAfterOrderId(columnDefs)
+      : columnDefs;
+
     // Data columns
-    for (const def of columnDefs) {
+    for (const def of dataCols) {
       const isEditable =
         isSheet(activeSheetId, SCHEDULE_SHEET_ID) ? GOVERNED_EDIT_FIELDS.has(def.key) : true;
       const baseColDef: ColDef<TableRow> = {
@@ -2073,7 +2076,10 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         width: def.width,
         resizable: true,
         sortable: true,
-        pinned: def.frozen ? ('left' as const) : undefined,
+        pinned:
+          def.frozen || (isSheet(activeSheetId, SCHEDULE_SHEET_ID) && def.key === 'job_id')
+            ? ('left' as const)
+            : undefined,
         editable: isEditable,
         suppressNavigable: !isEditable,
         // Hover cue on the schedule sheet's governed-edit cells (改资源/日期→propose).
