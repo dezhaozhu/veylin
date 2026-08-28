@@ -352,7 +352,7 @@ export function useGoalLoopBridge(): void {
     }
     if (!isRunning) return;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;   // window.setTimeout 返回 number,不是 Node 的 Timeout
     const poll = () => {
       if (cancelled) return;
       if (timer) window.clearTimeout(timer);
@@ -392,7 +392,7 @@ export function useGoalLoopBridge(): void {
     if (!threadId || !isServerThreadId(threadId) || isRunning || continuingRef.current) return;
 
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;   // window.setTimeout 返回 number,不是 Node 的 Timeout
     let goalActive = false;
     let loopActive = false;
 

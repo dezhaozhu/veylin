@@ -78,7 +78,7 @@ function usePolling<T>(
       return;
     }
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;   // window.setTimeout 返回 number,不是 Node 的 Timeout
     const load = () => {
       const query = new URLSearchParams({ threadId, ...(extraQuery ?? {}) });
       fetch(`${path}?${query.toString()}`, { credentials: 'include' })
