@@ -110,7 +110,12 @@ export function RightPanel() {
       if (!root) return;
       event.preventDefault();
       const handle = event.currentTarget;
-      handle.setPointerCapture(event.pointerId);
+      try {
+        handle.setPointerCapture(event.pointerId);
+      } catch {
+        // 拿不到 capture(指针已释放/合成事件)也能拖 —— move/up 监听都在 window 上,
+        // capture 只是防止指针滑进原生 webview 时丢事件的加固。
+      }
       const rect = root.getBoundingClientRect();
       document.body.style.cursor = 'row-resize';
       document.body.style.userSelect = 'none';
