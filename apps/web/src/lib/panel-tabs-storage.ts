@@ -9,8 +9,11 @@ const KNOWN_KINDS = new Set<PanelKind>([
   'table', 'web', 'rag', 'workflow', 'doc', '3d', 'widget', 'gantt',
 ]);
 
-/** Non-web panel kinds may only keep one tab per thread. */
-const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow']);
+/** Non-web panel kinds may only keep one tab per thread.
+ * 必须和 use-panel-tabs.ts 的同名集合一致 —— gantt 曾只加在运行时那份里,
+ * 落盘去重这份漏了(dormant:运行时 open() 不会造出第二个,但旧数据/手改
+ * localStorage 能),评审第 7 轮对齐。 */
+const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow', 'gantt']);
 
 export type PanelTabsStoredState = {
   tabs: PanelTab[];

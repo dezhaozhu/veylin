@@ -274,6 +274,20 @@ describe('分屏(split)持久化', () => {
     assert.equal(loaded.split, undefined);
   });
 
+  it('gantt 也是 singleton:落盘去重和运行时那份集合一致(曾漏)', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } = await import('./panel-tabs-storage.ts');
+    saveThreadPanelTabs('t-gantt-dup', {
+      tabs: [
+        { id: 'tab_g1', kind: 'gantt', title: 'panels.gantt.label' },
+        { id: 'tab_g2', kind: 'gantt', title: 'panels.gantt.label' },
+        { id: 'tab_w', kind: 'web', title: 'panels.web.label' },
+      ],
+      activeId: 'tab_g2',
+    });
+    const loaded = loadThreadPanelTabs('t-gantt-dup');
+    assert.deepEqual(loaded.tabs.map((t) => t.id), ['tab_g2', 'tab_w']);
+  });
+
   it('无 split 的旧数据加载后仍然没有 split 键', async () => {
     const { loadThreadPanelTabs, saveThreadPanelTabs } = await import('./panel-tabs-storage.ts');
     saveThreadPanelTabs('t-old', { tabs: twoTabs, activeId: 'tab_t' });
