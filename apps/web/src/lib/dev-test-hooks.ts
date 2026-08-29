@@ -21,6 +21,25 @@ let openTablePanel: (() => void) | null = null;
 export function registerDevPanelOpener(open: () => void): void {
   openTablePanel = open;
 }
+
+/** 分屏 e2e 的入口(只在 DEV 装),同 openTablePanel 的理由:几何不进判据。 */
+export type DevPanelSplitApi = {
+  openPanel: (kind: string) => void;
+  moveTabToPane: (kind: string, pane: 'top' | 'bottom') => void;
+  panelState: () => {
+    tabs: Array<{ id: string; kind: string }>;
+    activeId: string | null;
+    split:
+      | { bottomIds: string[]; topVisibleId: string; bottomVisibleId: string; ratio: number }
+      | undefined;
+  };
+};
+
+let panelSplitApi: DevPanelSplitApi | null = null;
+
+export function registerDevPanelSplitApi(api: DevPanelSplitApi): void {
+  panelSplitApi = api;
+}
 let lastAskResult: AskUserResult | null = null;
 
 export function registerDevThreadId(threadId: string): void {
@@ -35,6 +54,9 @@ export function installDevTestHooks(): void {
       hasThread: () => boolean;
       openAskPanel: (questions: AskQuestion[]) => void;
       openTablePanel: () => void;
+      openPanel: (kind: string) => void;
+      moveTabToPane: (kind: string, pane: 'top' | 'bottom') => void;
+      panelState: () => ReturnType<DevPanelSplitApi['panelState']>;
       peekAskResult: () => AskUserResult | null;
       clearAskResult: () => void;
     };
@@ -48,6 +70,18 @@ export function installDevTestHooks(): void {
     openTablePanel() {
       if (!openTablePanel) throw new Error('dev: table panel opener not ready');
       openTablePanel();
+    },
+    openPanel(kind: string) {
+      if (!panelSplitApi) throw new Error('dev: panel split api not ready');
+      panelSplitApi.openPanel(kind);
+    },
+    moveTabToPane(kind: string, pane: 'top' | 'bottom') {
+      if (!panelSplitApi) throw new Error('dev: panel split api not ready');
+      panelSplitApi.moveTabToPane(kind, pane);
+    },
+    panelState() {
+      if (!panelSplitApi) throw new Error('dev: panel split api not ready');
+      return panelSplitApi.panelState();
     },
     openAskPanel(questions) {
       if (!currentThreadId) {
