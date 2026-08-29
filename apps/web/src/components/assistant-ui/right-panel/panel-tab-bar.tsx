@@ -1,4 +1,4 @@
-import { Plus, X } from 'lucide-react';
+import { PanelBottom, PanelTop, Plus, X } from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -41,6 +41,15 @@ interface PanelTabBarProps {
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
   onOpen: (kind: PanelKind) => void | Promise<void>;
+  /**
+   * primary = 右栏顶部那条,兼着窗口标题栏职责(window-drag、右栏开关、「+」)。
+   * secondary = 分屏下 pane 的那条,不在标题栏区域 —— 没有这些 chrome,新建
+   * 页签只发生在上 pane,免掉「新页签去哪」的歧义。
+   */
+  variant?: 'primary' | 'secondary';
+  /** 页签能不能移去另一个 pane(上 pane 只剩一个页签时移走会掏空它 → 不能)。 */
+  canMoveTabs?: boolean;
+  onMoveTab?: (id: string, pane: 'top' | 'bottom') => void;
 }
 
 /** Browser-style tab strip + "+" menu (reference: pill active tab, icon + label). */
@@ -50,6 +59,9 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   onActivate,
   onClose,
   onOpen,
+  variant = 'primary',
+  canMoveTabs = false,
+  onMoveTab,
 }) => {
   const { t } = useTranslation();
   const { open: sidebarOpen } = useSidebar();
@@ -200,7 +212,11 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
     <>
       <div
         className="border-border bg-background flex h-8 shrink-0 items-center border-b"
-        style={{ paddingLeft: tabBarPaddingLeft, paddingRight: tabBarPaddingRight }}
+        style={
+          variant === 'primary'
+            ? { paddingLeft: tabBarPaddingLeft, paddingRight: tabBarPaddingRight }
+            : { paddingLeft: 8, paddingRight: 8 }
+        }
       >
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
           {tabs.map((tab) => {
@@ -226,6 +242,30 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
                   </span>
                   <span className="truncate">{t(tab.title)}</span>
                 </button>
+                {canMoveTabs && onMoveTab ? (
+                  <button
+                    type="button"
+                    aria-label={t(variant === 'primary' ? 'panelTab.moveDown' : 'panelTab.moveUp', {
+                      title: t(tab.title),
+                    })}
+                    title={t(variant === 'primary' ? 'panelTab.moveDown' : 'panelTab.moveUp')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMoveTab(tab.id, variant === 'primary' ? 'bottom' : 'top');
+                    }}
+                    className={cn(
+                      'panel-tab-move flex size-5 shrink-0 items-center justify-center rounded-md transition-opacity duration-150',
+                      'opacity-0 group-hover/tab:opacity-70',
+                      'hover:bg-foreground/10 hover:opacity-100',
+                    )}
+                  >
+                    {variant === 'primary' ? (
+                      <PanelBottom className="size-3" />
+                    ) : (
+                      <PanelTop className="size-3" />
+                    )}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   aria-label={t('panelTab.close', { title: t(tab.title) })}
@@ -247,10 +287,15 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
           {/*
             JS-only drag (no data-tauri-drag-region): CSS app-region is geometric
             and can steal clicks from neighboring "+" / caption controls.
+            secondary 那条不在标题栏区域,拖它不该拖动窗口。
           */}
-          <div className="min-w-8 flex-1 self-stretch" onMouseDown={startWindowDrag} />
+          <div
+            className="min-w-8 flex-1 self-stretch"
+            {...(variant === 'primary' ? { onMouseDown: startWindowDrag } : {})}
+          />
         </div>
 
+        {variant === 'secondary' ? null : (
         <button
           ref={addBtnRef}
           type="button"
@@ -273,7 +318,10 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
         >
           <Plus className="size-3.5" />
         </button>
-        <RightSidebarTrigger data-no-window-drag className="ml-1 size-7" style={NO_DRAG_STYLE} />
+        )}
+        {variant === 'primary' ? (
+          <RightSidebarTrigger data-no-window-drag className="ml-1 size-7" style={NO_DRAG_STYLE} />
+        ) : null}
       </div>
       {htmlMenu}
     </>
