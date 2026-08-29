@@ -19,6 +19,13 @@ import {
   setLocateTableImpl,
   type ScheduleLocateTarget,
 } from '@/lib/schedule-locate';
+import {
+  activateTab,
+  clampSplitRatio,
+  closeTab,
+  moveTabToPane as moveTabToPaneOp,
+  type PanelSplitState,
+} from '@/lib/panel-split';
 import { getPanelKindDef } from './panel-registry';
 import type { PanelKind, PanelTab } from './panel-types';
 
@@ -78,9 +85,15 @@ export interface PanelTabsApi {
   tabs: PanelTab[];
   activeId: string | null;
   activeTab: PanelTab | null;
+  /** 上下分屏(无分屏时 undefined)。模型与不变式见 panel-split.ts。 */
+  split: PanelSplitState | undefined;
   open: (kind: PanelKind) => void | Promise<void>;
   close: (id: string) => void;
   activate: (id: string) => void;
+  /** 把页签移到上/下 pane。移不动(唯一页签、上 pane 会被掏空)就原样不动。 */
+  moveTabToPane: (id: string, pane: 'top' | 'bottom') => void;
+  /** 拖分隔线落定后的比例(clamp 后持久化)。没有分屏时是空操作。 */
+  setSplitRatio: (ratio: number) => void;
   updateState: (id: string, patch: Record<string, unknown>) => void;
   /** Focus a web tab and show it in the docked browser (for @ context). */
   focusWebTab: (id: string) => Promise<void>;
@@ -220,7 +233,9 @@ export function usePanelTabsState(): PanelTabsApi {
       if (SINGLETON_PANEL_KINDS.has(kind)) {
         const existing = stateRef.current.tabs.find((t) => t.kind === kind);
         if (existing) {
-          commit({ tabs: stateRef.current.tabs, activeId: existing.id });
+          // activateTab 而不是手写 {tabs, activeId} —— 分屏时激活要同时换所在
+          // pane 的可见页,而且字面量会把 split 字段静默丢掉。下同。
+          commit(activateTab(stateRef.current, existing.id));
           return;
         }
       }
@@ -241,14 +256,17 @@ export function usePanelTabsState(): PanelTabsApi {
           const sheetId =
             decided.kind === 'open' ? decided.sheetId : (await createNextThreadSheet(tid)).id;
           const tab = createTab(kind, { sheetId });
-          commit({ tabs: [...stateRef.current.tabs, tab], activeId: tab.id });
+          const cur = stateRef.current;
+          // 新页签天然落上 pane(不进 bottomIds),activateTab 维护可见页不变式。
+          commit(activateTab({ ...cur, tabs: [...cur.tabs, tab] }, tab.id));
         } catch {
           // Leave workspace unchanged when create fails.
         }
         return;
       }
       const tab = createTab(kind);
-      commit({ tabs: [...stateRef.current.tabs, tab], activeId: tab.id });
+      const cur = stateRef.current;
+      commit(activateTab({ ...cur, tabs: [...cur.tabs, tab] }, tab.id));
     },
     [commit],
   );
@@ -260,25 +278,34 @@ export function usePanelTabsState(): PanelTabsApi {
       if (closing?.kind === 'web' && isTauri()) {
         void closeWebView(id);
       }
-      const idx = current.tabs.findIndex((t) => t.id === id);
-      if (idx === -1) return;
-      const tabs = current.tabs.filter((t) => t.id !== id);
-      let activeId = current.activeId;
-      if (activeId === id) {
-        const fallback = tabs[idx] ?? tabs[idx - 1] ?? tabs[0] ?? null;
-        activeId = fallback?.id ?? null;
-      }
-      commit({ tabs, activeId });
+      // 回退逻辑在 closeTab 里:分屏时在**同 pane 内**找邻居,pane 空了解除分屏。
+      const next = closeTab(current, id);
+      if (next !== current) commit(next);
     },
     [commit],
   );
 
   const activate = useCallback(
     (id: string) => {
+      const next = activateTab(stateRef.current, id);
+      if (next !== stateRef.current) commit(next);
+    },
+    [commit],
+  );
+
+  const moveTabToPane = useCallback(
+    (id: string, pane: 'top' | 'bottom') => {
+      const next = moveTabToPaneOp(stateRef.current, id, pane);
+      if (next !== stateRef.current) commit(next);
+    },
+    [commit],
+  );
+
+  const setSplitRatio = useCallback(
+    (ratio: number) => {
       const current = stateRef.current;
-      if (id === current.activeId) return;
-      if (!current.tabs.some((t) => t.id === id)) return;
-      commit({ tabs: current.tabs, activeId: id });
+      if (!current.split) return;
+      commit({ ...current, split: { ...current.split, ratio: clampSplitRatio(ratio) } });
     },
     [commit],
   );
@@ -303,7 +330,7 @@ export function usePanelTabsState(): PanelTabsApi {
         }
         return next;
       });
-      commit({ tabs, activeId: current.activeId });
+      commit({ ...current, tabs });
     },
     [commit],
   );
@@ -315,9 +342,8 @@ export function usePanelTabsState(): PanelTabsApi {
       const current = stateRef.current;
       const tab = current.tabs.find((t) => t.id === id);
       if (!tab || tab.kind !== 'web') return;
-      if (id !== current.activeId) {
-        commit({ tabs: current.tabs, activeId: id });
-      }
+      const next = activateTab(current, id);
+      if (next !== current) commit(next);
     },
     [commit],
   );
@@ -333,12 +359,12 @@ export function usePanelTabsState(): PanelTabsApi {
             ? { ...t, state: { ...t.state, ragFocus, ragSubTab: 'citations' } }
             : t,
         );
-        commit({ tabs, activeId: existing.id });
+        commit(activateTab({ ...current, tabs }, existing.id));
         return;
       }
       const tab = createTab('rag');
       tab.state = { ragFocus, ragSubTab: 'citations' };
-      commit({ tabs: [...current.tabs, tab], activeId: tab.id });
+      commit(activateTab({ ...current, tabs: [...current.tabs, tab] }, tab.id));
     },
     [commit],
   );
@@ -376,14 +402,14 @@ export function usePanelTabsState(): PanelTabsApi {
       const current = stateRef.current;
       const existing = findDocTab(current.tabs, doc);
       if (existing) {
-        commit({ ...current, activeId: existing.id });
+        commit(activateTab(current, existing.id));
         return;
       }
       const tab = createTab('doc');
       tab.state = { ...doc };
       // tab 上显示文件名而不是"文档" —— 开着两份文件时,两个都叫"文档"等于没标。
       tab.title = doc.name;
-      commit({ tabs: [...current.tabs, tab], activeId: tab.id });
+      commit(activateTab({ ...current, tabs: [...current.tabs, tab] }, tab.id));
     },
     [commit],
   );
@@ -409,13 +435,13 @@ export function usePanelTabsState(): PanelTabsApi {
       if (existing) {
         // 同一张图重开:换成最新那次的数据,不再堆一格。
         const tabs = current.tabs.map((t) => (t.id === existing.id ? { ...t, state } : t));
-        commit({ tabs, activeId: existing.id });
+        commit(activateTab({ ...current, tabs }, existing.id));
         return;
       }
       const tab = createTab('widget');
       tab.state = state;
       if (w.title) tab.title = w.title;
-      commit({ tabs: [...current.tabs, tab], activeId: tab.id });
+      commit(activateTab({ ...current, tabs: [...current.tabs, tab] }, tab.id));
     },
     [commit],
   );
@@ -452,9 +478,12 @@ export function usePanelTabsState(): PanelTabsApi {
     tabs: state.tabs,
     activeId: state.activeId,
     activeTab,
+    split: state.split,
     open,
     close,
     activate,
+    moveTabToPane,
+    setSplitRatio,
     updateState,
     focusWebTab,
     focusRagCitation,

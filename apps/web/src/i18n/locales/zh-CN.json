@@ -81,7 +81,9 @@
   "panelTab": {
     "closeMenu": "关闭菜单",
     "close": "关闭 {{title}}",
-    "new": "新建面板"
+    "new": "新建面板",
+    "moveDown": "移到下方",
+    "moveUp": "移到上方"
   },
   "threadList": {
     "running": "进行中",

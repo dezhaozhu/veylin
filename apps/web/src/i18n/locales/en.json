@@ -81,7 +81,9 @@
   "panelTab": {
     "closeMenu": "Close menu",
     "close": "Close {{title}}",
-    "new": "New panel"
+    "new": "New panel",
+    "moveDown": "Move to bottom pane",
+    "moveUp": "Move to top pane"
   },
   "threadList": {
     "running": "Running",
