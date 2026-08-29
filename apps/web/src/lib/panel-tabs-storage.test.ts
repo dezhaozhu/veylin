@@ -219,6 +219,68 @@ describe('panel-tabs-storage per-thread', () => {
   });
 });
 
+describe('分屏(split)持久化', () => {
+  beforeEach(() => {
+    installMemoryStorage();
+  });
+
+  const twoTabs = [
+    { id: 'tab_t', kind: 'table' as const, title: 'panels.table.label', state: { sheetId: 's1' } },
+    { id: 'tab_g', kind: 'gantt' as const, title: 'panels.gantt.label' },
+  ];
+
+  it('split 随页签一起落盘、一起回来', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } = await import('./panel-tabs-storage.ts');
+    saveThreadPanelTabs('t-split', {
+      tabs: twoTabs,
+      activeId: 'tab_g',
+      split: { bottomIds: ['tab_g'], topVisibleId: 'tab_t', bottomVisibleId: 'tab_g', ratio: 0.4 },
+    });
+    const loaded = loadThreadPanelTabs('t-split');
+    assert.deepEqual(loaded.split, {
+      bottomIds: ['tab_g'],
+      topVisibleId: 'tab_t',
+      bottomVisibleId: 'tab_g',
+      ratio: 0.4,
+    });
+  });
+
+  it('坏 split(指向不存在的页签)整个丢掉,页签本身不受影响', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } = await import('./panel-tabs-storage.ts');
+    saveThreadPanelTabs('t-bad', {
+      tabs: twoTabs,
+      activeId: 'tab_t',
+      split: { bottomIds: ['tab_zzz'], topVisibleId: 'tab_t', bottomVisibleId: 'tab_zzz', ratio: 0.4 },
+    });
+    const loaded = loadThreadPanelTabs('t-bad');
+    assert.equal(loaded.split, undefined);
+    assert.equal(loaded.tabs.length, 2);
+  });
+
+  it('singleton 去重删掉的页签在 split 里也一起消失', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } = await import('./panel-tabs-storage.ts');
+    // 两个 table(singleton)—— 去重只留 tab_t1;split 指向被删的 tab_t2 → 解除。
+    saveThreadPanelTabs('t-dedupe', {
+      tabs: [
+        { id: 'tab_t1', kind: 'table', title: 'panels.table.label' },
+        { id: 'tab_t2', kind: 'table', title: 'panels.table.label' },
+        { id: 'tab_w', kind: 'web', title: 'panels.web.label' },
+      ],
+      activeId: 'tab_t1',
+      split: { bottomIds: ['tab_t2'], topVisibleId: 'tab_t1', bottomVisibleId: 'tab_t2', ratio: 0.5 },
+    });
+    const loaded = loadThreadPanelTabs('t-dedupe');
+    assert.equal(loaded.tabs.length, 2);
+    assert.equal(loaded.split, undefined);
+  });
+
+  it('无 split 的旧数据加载后仍然没有 split 键', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } = await import('./panel-tabs-storage.ts');
+    saveThreadPanelTabs('t-old', { tabs: twoTabs, activeId: 'tab_t' });
+    assert.equal('split' in loadThreadPanelTabs('t-old'), false);
+  });
+});
+
 describe('在右侧打开一份文档', () => {
   const tabs = [
     { id: 't1', kind: 'table' as const, title: '表格' },

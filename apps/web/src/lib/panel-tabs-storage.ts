@@ -1,4 +1,5 @@
 import type { PanelKind, PanelTab } from '@/components/assistant-ui/right-panel/panel-types';
+import { normalizePanelSplit, type PanelSplitState } from '@/lib/panel-split';
 
 const BY_THREAD_STORAGE_KEY = 'right_panel_tabs_by_thread';
 
@@ -14,6 +15,8 @@ const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow']);
 export type PanelTabsStoredState = {
   tabs: PanelTab[];
   activeId: string | null;
+  /** 上下分屏(可选)。tabs 保持平铺,这里只记「哪些页签在下 pane」——见 panel-split.ts。 */
+  split?: PanelSplitState;
 };
 
 export type OpenWebTabHint = {
@@ -110,7 +113,10 @@ function normalizeState(parsed: Partial<PanelTabsStoredState> | null | undefined
     typeof parsed?.activeId === 'string' && tabs.some((t) => t.id === parsed.activeId)
       ? parsed.activeId
       : tabs[0]!.id;
-  return { tabs, activeId };
+  // split 在去重后的 tabs 上归一化 —— 被去重删掉的页签在 split 里也一起消失,
+  // 修完任一 pane 空就整个不要(normalizePanelSplit 的约定)。
+  const split = normalizePanelSplit(tabs, activeId, parsed?.split);
+  return { tabs, activeId, ...(split ? { split } : {}) };
 }
 
 function readByThreadMap(): Record<string, PanelTabsStoredState> {
