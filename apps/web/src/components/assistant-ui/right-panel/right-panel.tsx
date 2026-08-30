@@ -1,14 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { hideWebView, isTauri } from '@/lib/tauri-web-view';
 import { splitPanelRender } from '@/lib/panel-keep-alive';
-import { clampSplitRatio, splitLayout, visibleTabIds } from '@/lib/panel-split';
+import {
+  SPLIT_RATIO_DEFAULT,
+  clampSplitRatio,
+  splitLayout,
+  visibleTabIds,
+} from '@/lib/panel-split';
 import { useSettingsPanel } from '@/hooks/settings/use-settings-panel';
 import { useRightSidebar } from '@/components/ui/sidebar';
 import { PanelEmptyState } from './panel-empty-state';
 import { PanelTabBar } from './panel-tab-bar';
 import { getPanelKindDef } from './panel-registry';
 import { usePanelTabs } from './panel-tabs-context';
+import { useTabDrag } from './use-tab-drag';
 import type { PanelTab } from './panel-types';
 
 /**
@@ -21,6 +28,7 @@ import type { PanelTab } from './panel-types';
  * —— 换 pane 只是一次 DOM 移动。
  */
 export function RightPanel() {
+  const { t } = useTranslation();
   const { view } = useSettingsPanel();
   const { open: rightOpen } = useRightSidebar();
   const {
@@ -150,8 +158,18 @@ export function RightPanel() {
     [setSplitRatio],
   );
 
+  const bottomIds = useMemo(() => new Set(split?.bottomIds ?? []), [split?.bottomIds]);
+  const { drag, onTabPointerDown } = useTabDrag({
+    rootRef,
+    splitRatio: split ? ratio : null,
+    topTabCount: layout.top.length,
+    isBottomTab: useCallback((id: string) => bottomIds.has(id), [bottomIds]),
+    onDrop: moveTabToPane,
+  });
+  const dragTab = drag ? tabs.find((tb) => tb.id === drag.tabId) : undefined;
+
   return (
-    <div ref={rootRef} className="flex h-full min-h-0 flex-col">
+    <div ref={rootRef} className="relative flex h-full min-h-0 flex-col">
       <Pane
         variant="primary"
         tabs={layout.top}
@@ -162,6 +180,8 @@ export function RightPanel() {
         onClose={close}
         onOpen={open}
         onMoveTab={moveTabToPane}
+        onTabPointerDown={onTabPointerDown}
+        draggingTabId={drag?.tabId ?? null}
         updateState={handleUpdateState}
         hostRef={setTopHost}
         style={hasSplit ? { flexBasis: `${ratio * 100}%`, flexGrow: 0 } : undefined}
@@ -174,8 +194,11 @@ export function RightPanel() {
           <div
             role="separator"
             aria-orientation="horizontal"
+            aria-label={t('panelTab.resizeSplit')}
             className="bg-border hover:bg-primary/40 relative z-10 h-px shrink-0 cursor-row-resize transition-colors after:absolute after:-inset-y-1 after:inset-x-0 after:content-['']"
             onPointerDown={onSplitterPointerDown}
+            // 双击回正:拖歪了想复位,不该逼人用手瞄准 50%。
+            onDoubleClick={() => setSplitRatio(SPLIT_RATIO_DEFAULT)}
           />
           <Pane
             variant="secondary"
@@ -187,11 +210,25 @@ export function RightPanel() {
             onClose={close}
             onOpen={open}
             onMoveTab={moveTabToPane}
+            onTabPointerDown={onTabPointerDown}
+            draggingTabId={drag?.tabId ?? null}
             updateState={handleUpdateState}
             hostRef={setBottomHost}
             className="min-h-0 flex-1"
           />
         </>
+      ) : null}
+      {/* 落点预览:松手会落在这块。盖在两个 pane 之上但不吃指针事件
+          (pointer-events-none),否则 pointermove 会被它挡掉、预览自己抖。 */}
+      {drag?.target ? (
+        <div
+          data-testid="panel-drop-preview"
+          className="border-primary bg-primary/10 pointer-events-none absolute inset-x-0 z-20 rounded-sm border-2"
+          style={{
+            top: `${drag.target.band.start * 100}%`,
+            height: `${(drag.target.band.end - drag.target.band.start) * 100}%`,
+          }}
+        />
       ) : null}
       {keepAliveTabs.map((tab) =>
         createPortal(
@@ -205,6 +242,22 @@ export function RightPanel() {
           tab.id,
         ),
       )}
+      {/* 跟手的浮影。portal 到 body:右栏有 overflow-hidden,留在里面会被裁掉。 */}
+      {drag && dragTab
+        ? createPortal(
+            <div
+              data-testid="panel-drag-ghost"
+              className="border-border bg-background text-foreground pointer-events-none fixed z-[400] flex max-w-[11rem] items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs shadow-lg"
+              style={{ left: drag.x + 10, top: drag.y + 10 }}
+            >
+              <span className="flex size-3.5 shrink-0 items-center justify-center opacity-70">
+                {getPanelKindDef(dragTab.kind)?.icon}
+              </span>
+              <span className="truncate">{t(dragTab.title)}</span>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
@@ -219,6 +272,8 @@ function Pane({
   onClose,
   onOpen,
   onMoveTab,
+  onTabPointerDown,
+  draggingTabId,
   updateState,
   hostRef,
   style,
@@ -234,6 +289,8 @@ function Pane({
   onClose: (id: string) => void;
   onOpen: (kind: PanelTab['kind']) => void | Promise<void>;
   onMoveTab: (id: string, pane: 'top' | 'bottom') => void;
+  onTabPointerDown: (id: string, event: React.PointerEvent<HTMLElement>) => void;
+  draggingTabId: string | null;
   updateState: (tabId: string, patch: Record<string, unknown>) => void;
   hostRef: (el: HTMLDivElement | null) => void;
   style?: React.CSSProperties;
@@ -254,6 +311,8 @@ function Pane({
         onClose={onClose}
         onOpen={onOpen}
         onMoveTab={onMoveTab}
+        onTabPointerDown={onTabPointerDown}
+        draggingTabId={draggingTabId}
       />
       {/* data-panel-kind:这个 pane 此刻开着哪种面板。e2e 靠它确认"面板开了",
           而不是靠面板内部某个只在有数据时才渲染的元素。 */}

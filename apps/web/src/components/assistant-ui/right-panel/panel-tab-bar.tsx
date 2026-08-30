@@ -50,6 +50,10 @@ interface PanelTabBarProps {
   /** 页签能不能移去另一个 pane(上 pane 只剩一个页签时移走会掏空它 → 不能)。 */
   canMoveTabs?: boolean;
   onMoveTab?: (id: string, pane: 'top' | 'bottom') => void;
+  /** 按住页签:由 RightPanel 决定这是点击还是拖拽(它才知道内容区几何)。 */
+  onTabPointerDown?: (id: string, event: React.PointerEvent<HTMLElement>) => void;
+  /** 正在被拖走的页签(原位淡出,像 VS Code 那样留个"它已经离手了"的暗示)。 */
+  draggingTabId?: string | null;
 }
 
 /** Browser-style tab strip + "+" menu (reference: pill active tab, icon + label). */
@@ -62,6 +66,8 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
   variant = 'primary',
   canMoveTabs = false,
   onMoveTab,
+  onTabPointerDown,
+  draggingTabId = null,
 }) => {
   const { t } = useTranslation();
   const { open: sidebarOpen } = useSidebar();
@@ -225,16 +231,19 @@ export const PanelTabBar: FC<PanelTabBarProps> = ({
             return (
               <div
                 key={tab.id}
+                data-panel-tab-id={tab.id}
                 className={cn(
                   'group/tab flex max-w-[11rem] shrink-0 items-center rounded-lg text-xs transition-colors',
                   active
                     ? 'bg-muted text-foreground shadow-sm'
                     : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                  draggingTabId === tab.id && 'opacity-40',
                 )}
               >
                 <button
                   type="button"
                   onClick={() => onActivate(tab.id)}
+                  onPointerDown={(e) => onTabPointerDown?.(tab.id, e)}
                   className="panel-tab-label flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-2.5 pr-1"
                 >
                   <span className="flex size-3.5 shrink-0 items-center justify-center opacity-70">

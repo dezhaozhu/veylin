@@ -83,7 +83,8 @@
     "close": "关闭 {{title}}",
     "new": "新建面板",
     "moveDown": "移到下方",
-    "moveUp": "移到上方"
+    "moveUp": "移到上方",
+    "resizeSplit": "调整分屏比例(双击回正)"
   },
   "threadList": {
     "running": "进行中",

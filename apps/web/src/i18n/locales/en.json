@@ -83,7 +83,8 @@
     "close": "Close {{title}}",
     "new": "New panel",
     "moveDown": "Move to bottom pane",
-    "moveUp": "Move to top pane"
+    "moveUp": "Move to top pane",
+    "resizeSplit": "Resize split (double-click to reset)"
   },
   "threadList": {
     "running": "Running",
