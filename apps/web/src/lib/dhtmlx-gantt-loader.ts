@@ -103,8 +103,11 @@ export async function loadDhtmlxGanttCss(
   opts: { importer?: () => Promise<unknown> } = {},
 ): Promise<boolean> {
   if (cssLoaded && !opts.importer) return true;
+  // 和 JS 那条同样不能带 vite-ignore(2026-08-31):带着它 `vite build` 就不分析
+  // 这条 import,样式表不进产物、裸说明符留在原地 —— 甘特能出来但**没有样式**。
+  // 包缺席时仍安全:vite.config.ts 的 external 里显式列了这个 css id。
   const importer =
-    opts.importer ?? (() => import(/* @vite-ignore */ '@dhx/react-gantt/dist/react-gantt.css'));
+    opts.importer ?? (() => import('@dhx/react-gantt/dist/react-gantt.css'));
   try {
     await importer();
     if (!opts.importer) cssLoaded = true;
