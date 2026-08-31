@@ -24,6 +24,7 @@ import { toGanttTasks, type GanttTask, type GanttWindowPayload } from '@/lib/gan
 import { ganttErrorMessage, resolveGanttThreadId, ganttWindowUrl, withExpanded } from '@/lib/gantt-request';
 import {
   applyGanttTaskFocus,
+  decideGanttFocusFollowUp,
   ganttFocusRetryDelay,
   jobIdForTask,
   orderIdForTask,
@@ -264,11 +265,8 @@ function GanttChart({ mod, tasks, ganttFocus, clearGanttFocus,
   useEffect(() => {
     if (!ganttFocus) return;
     const targetId = resolveFocusTarget(tasks, ganttFocus.target);
-    if (!targetId) {
-      if (tasks.length === 0) return;
-      clearGanttFocus();
-      return;
-    }
+    // 找不到就等父组件换窗口。这里清掉的话,分屏下图不重挂,定位永远丢了。
+    if (!targetId) return;
     const parentId = tasks.find((t) => t.id === targetId)?.parent;
     let cancelled = false;
     let attempt = 0;
@@ -432,6 +430,43 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
     [load],
   );
   const droppedCount = ready ? (load.payload.truncated?.bars_dropped ?? 0) : 0;
+
+  // 分屏后图一直挂着。表格点作业号只 stash 了 target,当前窗口没有这一道时
+  // 必须重拉(带 fromDate / 更大泳道窗),不能靠「切页签卸载重挂」那条巧路。
+  const reloadedFocusAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!ganttFocus || load.state !== 'ready') return;
+    const follow = decideGanttFocusFollowUp(tasks, ganttFocus.target, reloadedFocusAtRef.current === ganttFocus.at);
+    if (follow === 'apply' || follow === 'wait') return;
+    if (follow === 'give-up') {
+      clearGanttFocus();
+      return;
+    }
+    reloadedFocusAtRef.current = ganttFocus.at;
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch(
+          ganttWindowUrl(threadId, view, expandedRef.current, {
+            fromDate: ganttFocus.target.fromDate,
+            laneLimit: 200,
+          }),
+        );
+        const body = (await res.json()) as GanttWindowPayload & { ok: boolean };
+        if (!alive) return;
+        if (!body.ok) {
+          clearGanttFocus();
+          return;
+        }
+        setLoad((prev) => (prev.state === 'ready' ? { state: 'ready', payload: body } : prev));
+      } catch {
+        if (alive) clearGanttFocus();
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [ganttFocus, load, tasks, threadId, view, clearGanttFocus]);
 
   // 表格↔甘特双向定位(gantt-focus.ts)。接线(ganttRef + useGanttEvent +
   // 消费 focusGanttJob)全部下沉进 GanttChart —— 理由见文件头那段

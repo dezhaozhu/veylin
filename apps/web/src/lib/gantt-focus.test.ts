@@ -4,6 +4,7 @@ import {
   jobIdForTask,
   orderIdForTask,
   resolveFocusTarget,
+  decideGanttFocusFollowUp,
   isTreeToggleTarget,
   applyGanttTaskFocus,
   ganttFocusRetryDelay,
@@ -163,6 +164,24 @@ describe('applyGanttTaskFocus', () => {
     );
     assert.equal(ok, true);
     assert.deepEqual(log, ['open:lane:WC10', 'show:job:J1', 'select:job:J1']);
+  });
+});
+
+describe('decideGanttFocusFollowUp —— 分屏后图还挂着,找不到必须换窗口而不是清掉', () => {
+  it('窗口里有这一条就当场对准', () => {
+    assert.equal(decideGanttFocusFollowUp(tasks, { jobId: 'J2' }, false), 'apply');
+  });
+
+  it('图还是空的就等 —— 第一次取数还没回来,清掉等于定位被吃掉', () => {
+    assert.equal(decideGanttFocusFollowUp([], { jobId: 'J9' }, false), 'wait');
+  });
+
+  it('图上有条但没有这一道:还没换过窗口 → 换窗口,不许清掉', () => {
+    assert.equal(decideGanttFocusFollowUp(tasks, { jobId: 'J9' }, false), 'reload');
+  });
+
+  it('换过窗口还是没有 → 放弃,别死循环重拉', () => {
+    assert.equal(decideGanttFocusFollowUp(tasks, { jobId: 'J9' }, true), 'give-up');
   });
 });
 

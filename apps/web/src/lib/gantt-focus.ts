@@ -2,6 +2,25 @@
  * "定位到哪一条"。抽成纯函数是因为这条判定最容易出**沉默的错**:找不到时随便滚
  * 一个,看的人以为那就是他选的行。找不到就回 null,由调用方决定换窗口还是提示。
  */
+export type GanttFocusFollowUp = 'apply' | 'wait' | 'reload' | 'give-up';
+
+/**
+ * 表格点作业号之后,图已经挂着(分屏)时该怎么办。
+ *
+ * 没分屏时切到甘特会整棵重挂,首屏取数带着 fromDate,这条用不上。
+ * 分屏后图不卸,当前窗口没有这一道就不能清掉定位 —— 清掉等于换窗口的机会没了,
+ * 表现就是「甘特还能跳表格,表格跳不回甘特」。
+ */
+export function decideGanttFocusFollowUp(
+  tasks: Array<{ id: string; orderId?: string }>,
+  want: { jobId?: string; orderId?: string },
+  alreadyReloaded: boolean,
+): GanttFocusFollowUp {
+  if (resolveFocusTarget(tasks, want)) return 'apply';
+  if (tasks.length === 0) return 'wait';
+  return alreadyReloaded ? 'give-up' : 'reload';
+}
+
 export function resolveFocusTarget(
   tasks: Array<{ id: string; orderId?: string }>,
   want: { jobId?: string; orderId?: string },
