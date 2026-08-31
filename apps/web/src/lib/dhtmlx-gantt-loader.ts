@@ -37,11 +37,19 @@ function isModuleNotFoundError(err: unknown): boolean {
 // dev server 里让这次 resolve 本身成功(解析到一个虚拟桩模块),桩模块求值
 // 时抛出一个 `code: 'ERR_MODULE_NOT_FOUND'` 的错误——下面这段 try/catch 原样
 // 接住它,和包真的不存在时走同一条分类分支,这个文件不需要知道任何 dev-only 细节。
+//
+// **下面那行曾经带着 vite-ignore 注解,必须去掉(2026-08-31,在 45 上实测挖出)**:
+// 它对上面那个 dev 问题本来就不生效(见上一段),却在 `vite build` 里**关掉了这条
+// 动态 import 的分析**——包明明装好了,rollup 也不会去打它,产物里留下裸说明符
+// `import("@dhx/react-gantt")`,浏览器当 URL 解析必然失败,loader 归类成"未安装",
+// **甘特在任何生产构建里都出不来,只有 vite dev 能用**。判据:去掉后入口指纹变化
+// 且产物里出现 `dhtmlxgantt.react.es-*.js` 这个 chunk。包缺席时的构建仍然安全 ——
+// 走 vite.config.ts 的 `external`(rollup 不解析它),运行时照旧优雅降级。
 export async function loadDhtmlxGantt(
   opts: { importer?: () => Promise<unknown> } = {},
 ): Promise<GanttModule | null> {
   if (cached !== undefined && !opts.importer) return cached;
-  const importer = opts.importer ?? (() => import(/* @vite-ignore */ '@dhx/react-gantt'));
+  const importer = opts.importer ?? (() => import('@dhx/react-gantt'));
   try {
     const mod = (await importer()) as GanttModule;
     if (!opts.importer) cached = mod;
