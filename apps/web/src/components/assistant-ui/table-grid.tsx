@@ -629,6 +629,11 @@ export function TableGrid() {
   // 排产即导航: a cockpit drill (focusScheduleFilter) stashes an OpenGridFilter
   // here; we position the already-loaded grid via an AG-Grid external filter.
   const { scheduleFilter, clearScheduleFilter, tabs: panelTabs } = usePanelTabs();
+  // keep-alive 的表格实例活得比「甘特页签刚开」更久。AG-Grid 可能还握着
+  // 第一次 gridReady 时的 onCellClicked;从 ref 读当下页签,否则分屏后点作业号
+  // 仍以为甘特没开,定位被静默丢掉。
+  const panelTabsRef = useRef(panelTabs);
+  panelTabsRef.current = panelTabs;
   // 表格↔甘特双向定位, table→gantt half: pulling the right sidebar open is
   // the CALLER's job (same split as mcp-app-tool.tsx's openWidget call site —
   // usePanelTabsState can't reach useRightSidebar, see its focusGanttJob doc).
@@ -1864,7 +1869,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         return;
       }
       // **甘特页签必须已经开着才联动。** 没开就什么都不做,不抢面板。
-      const ganttTabOpen = panelTabs.some((tab) => tab.kind === 'gantt');
+      const ganttTabOpen = panelTabsRef.current.some((tab) => tab.kind === 'gantt');
       if (
         !ganttTabOpen ||
         !isSheet(activeSheetIdRef.current, SCHEDULE_SHEET_ID) ||
@@ -1883,7 +1888,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         ...(fromDate ? { fromDate } : {}),
       });
     },
-    [panelTabs, setRightOpen],
+    [setRightOpen],
   );
 
   // AG-Grid selection changed → sync React selectedRows (used by toolbar + totals)
