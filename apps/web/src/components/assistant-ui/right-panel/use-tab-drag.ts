@@ -41,6 +41,14 @@ export function useTabDrag(args: {
   const argsRef = useRef(args);
   argsRef.current = args;
   const cleanupRef = useRef<(() => void) | null>(null);
+  // 落点也留一份 ref:提交**不能**写在 setState 的 updater 里 —— StrictMode 会把
+  // updater 双调用来暴露副作用,那就等于 onDrop 交两次(眼下 moveTabToPane 幂等,
+  // 侥幸看不出来,但这是个等着被踩的形状)。updater 保持纯的,提交在外面做。
+  const dragRef = useRef<TabDragState | null>(null);
+  const setDragState = useCallback((next: TabDragState | null) => {
+    dragRef.current = next;
+    setDrag(next);
+  }, []);
 
   useEffect(() => () => cleanupRef.current?.(), []);
 
@@ -48,6 +56,9 @@ export function useTabDrag(args: {
     (tabId: string, event: React.PointerEvent<HTMLElement>) => {
       // 只认主键;右键/中键有各自的语义,别劫持。
       if (event.button !== 0) return;
+      // 上一次拖拽还挂着(丢了 pointerup 之类)就先中止它 —— 否则两套 window
+      // 监听并存,cleanupRef 只指向新的那套,旧的永远摘不掉。
+      cleanupRef.current?.();
       const startX = event.clientX;
       const startY = event.clientY;
       let started = false;
@@ -79,21 +90,19 @@ export function useTabDrag(args: {
           // 桌面端:原生 webview 是独立图层,会盖住浮影和落点预览。
           if (isTauri()) void hideWebView(undefined, { force: true });
         }
-        setDrag(compute(e.clientX, e.clientY));
+        setDragState(compute(e.clientX, e.clientY));
       };
 
       const finish = (commit: boolean) => {
-        cleanupRef.current?.();
+        // cleanup 自身幂等(第一件事就是把 cleanupRef 清空),所以 pointerup 和
+        // Escape 抢着到也只会走一次。
+        if (!cleanupRef.current) return;
+        cleanupRef.current();
         if (!started) return;
-        setDrag((cur) => {
-          if (commit && cur?.target) {
-            argsRef.current.onDrop(cur.tabId, cur.target.pane);
-          }
-          return null;
-        });
-        // 落幕后把 webview 放回来(和「+」菜单关闭同一条路)。
-        if (isTauri()) {
-          window.dispatchEvent(new CustomEvent(PANEL_WEB_VIEW_RESTORE_EVENT));
+        const current = dragRef.current;
+        setDragState(null);
+        if (commit && current?.target) {
+          argsRef.current.onDrop(current.tabId, current.target.pane);
         }
       };
 
@@ -103,6 +112,8 @@ export function useTabDrag(args: {
         if (e.key === 'Escape') finish(false);
       };
 
+      // 收摊放在 cleanup 里而不是 finish 里:这样**每条**退出路径都会走到 ——
+      // 松手、Esc、指针取消、以及拖到一半组件被卸载(否则 webview 永远藏着)。
       cleanupRef.current = () => {
         cleanupRef.current = null;
         document.body.style.cursor = '';
@@ -111,6 +122,10 @@ export function useTabDrag(args: {
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('pointercancel', onCancel);
         window.removeEventListener('keydown', onKeyDown);
+        // 只有真藏过才需要恢复 —— 没过阈值的那次点击不该白白惊动原生层。
+        if (started && isTauri()) {
+          window.dispatchEvent(new CustomEvent(PANEL_WEB_VIEW_RESTORE_EVENT));
+        }
       };
 
       window.addEventListener('pointermove', onMove);
