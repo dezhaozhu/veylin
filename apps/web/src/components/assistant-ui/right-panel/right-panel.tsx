@@ -223,7 +223,7 @@ export function RightPanel() {
       {drag?.target ? (
         <div
           data-testid="panel-drop-preview"
-          className="border-primary bg-primary/10 pointer-events-none absolute inset-x-0 z-20 rounded-sm border-2"
+          className="border-primary bg-primary/10 pointer-events-none absolute inset-x-0 z-20 rounded-sm border-2 transition-[top,height] duration-100 ease-out"
           style={{
             top: `${drag.target.band.start * 100}%`,
             height: `${(drag.target.band.end - drag.target.band.start) * 100}%`,

@@ -30,9 +30,18 @@ async function openTwo(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__veylinTest!.panelState().tabs.length === 2);
 }
 
-/** 按住某个页签开始拖,把指针停在 (x, y);不松手。 */
+/**
+ * 按住某个页签开始拖,把指针停在 (x, y);不松手。
+ *
+ * **先 hover 再按**:右栏打开是带动画的,openPanel 之后页签还在滑。直接
+ * boundingBox 会量到动画中途的位置,等按下去时它已经挪走了 —— 指针落在页签栏
+ * 空白处,拖拽根本不启动(实测整组假红)。hover 自带 Playwright 的稳定性检查
+ * (连续两帧盒子不变),等它过了再量才是页签的最终位置。
+ */
 async function grabTab(page: Page, label: string, x: number, y: number): Promise<void> {
-  const box = await page.locator(`.panel-tab-label:has-text("${label}")`).boundingBox();
+  const tab = page.locator(`.panel-tab-label:has-text("${label}")`);
+  await tab.hover();
+  const box = await tab.boundingBox();
   if (!box) throw new Error(`tab not found: ${label}`);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
