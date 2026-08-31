@@ -131,6 +131,31 @@ test.describe('Right-panel tab drag', () => {
     await expect(page.locator('[role="separator"]')).toHaveCount(0);
   });
 
+  test('上一次拖拽丢了 pointerup:下一次按下要把浮影预览一起收掉', async ({ page }) => {
+    await openTwo(page);
+    const size = page.viewportSize()!;
+    await grabTab(page, 'Knowledge', size.width - 200, size.height - 150);
+    await expect(page.locator(GHOST)).toBeVisible();
+
+    // 真实触发是"松手落在原生 webview 上、pointerup 没回到 window";这里直接
+    // 注入下一次 pointerdown(不给 pointerup)来走同一条兜底路径 —— Playwright
+    // 的真指针永远会补上 pointerup,测不到这个口子。
+    await page.evaluate(() => {
+      const label = [...document.querySelectorAll('.panel-tab-label')].find((el) =>
+        (el.textContent ?? '').includes('Web'),
+      );
+      label?.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 0, clientY: 0 }),
+      );
+    });
+
+    // 中止 = 收干净,不是把上一次的浮影/预览永久留在屏幕上。
+    await expect(page.locator(GHOST)).toHaveCount(0);
+    await expect(page.locator(PREVIEW)).toHaveCount(0);
+    await page.mouse.up();
+    await expect(page.locator('[role="separator"]')).toHaveCount(0);
+  });
+
   test('分隔线双击回正', async ({ page }) => {
     await openTwo(page);
     const size = page.viewportSize()!;

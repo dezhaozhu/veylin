@@ -97,11 +97,11 @@ export function useTabDrag(args: {
         // cleanup 自身幂等(第一件事就是把 cleanupRef 清空),所以 pointerup 和
         // Escape 抢着到也只会走一次。
         if (!cleanupRef.current) return;
-        cleanupRef.current();
-        if (!started) return;
+        // 落点要在 cleanup **之前**读 —— cleanup 会把拖拽状态收掉。
         const current = dragRef.current;
-        setDragState(null);
-        if (commit && current?.target) {
+        const didStart = started;
+        cleanupRef.current();
+        if (didStart && commit && current?.target) {
           argsRef.current.onDrop(current.tabId, current.target.pane);
         }
       };
@@ -112,10 +112,13 @@ export function useTabDrag(args: {
         if (e.key === 'Escape') finish(false);
       };
 
-      // 收摊放在 cleanup 里而不是 finish 里:这样**每条**退出路径都会走到 ——
-      // 松手、Esc、指针取消、以及拖到一半组件被卸载(否则 webview 永远藏着)。
+      // **一切收摊都在 cleanup 里**,不在 finish 里 —— 这样每条退出路径都会走到:
+      // 松手、Esc、指针取消、组件卸载,以及"上一次拖拽丢了 pointerup、由下一次
+      // 按下来兜底中止"。浮影/预览的收起曾经只写在 finish 里,那条兜底路径就把
+      // 它们永久留在了屏幕上(评审抓到)。
       cleanupRef.current = () => {
         cleanupRef.current = null;
+        setDragState(null);
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
         window.removeEventListener('pointermove', onMove);
@@ -124,7 +127,11 @@ export function useTabDrag(args: {
         window.removeEventListener('keydown', onKeyDown);
         // 只有真藏过才需要恢复 —— 没过阈值的那次点击不该白白惊动原生层。
         if (started && isTauri()) {
-          window.dispatchEvent(new CustomEvent(PANEL_WEB_VIEW_RESTORE_EVENT));
+          // 排到下一帧:紧接着的 onDrop 会把面板挪位置,现在就恢复等于按**旧**坐标
+          // 显示原生层,会闪一下(拖的正好是 web 页签时最明显)。
+          requestAnimationFrame(() => {
+            window.dispatchEvent(new CustomEvent(PANEL_WEB_VIEW_RESTORE_EVENT));
+          });
         }
       };
 
