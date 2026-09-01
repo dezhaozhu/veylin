@@ -69,6 +69,7 @@ import {
   scheduleLocateFromDate,
   shouldLocateGanttFromTableClick,
 } from '@/lib/schedule-locate';
+import { formatTableDateDisplay } from '@/lib/table-date-display';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 
 type TableColumnType = 'text' | 'number' | 'status' | 'sparkline';
@@ -518,7 +519,7 @@ function ScheduleDetailPanel(params: { data?: Record<string, unknown> }) {
       alive = false;
     };
   }, [params.data, threadId]);
-  const day = (v: unknown) => (typeof v === 'string' && v.length >= 10 ? v.slice(0, 10) : '');
+  const day = formatTableDateDisplay;
 
   return (
     <div className="border-l-2 border-primary/25 bg-muted/25 py-1.5 pl-9 pr-3">
@@ -2096,7 +2097,10 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
           .filter(Boolean)
           .join(' ') || undefined,
         // Full value on hover — helps any truncated cell (IDs, long names).
-        tooltipValueGetter: (p) => (p.value == null || p.value === '' ? null : String(p.value)),
+        tooltipValueGetter: (p) => {
+          const shown = formatTableDateDisplay(p.value);
+          return shown === '' ? null : shown;
+        },
         cellDataType: false,
         suppressHeaderFilterButton: true,
         // Per-column filtering. Text filter by default; number/status branches
@@ -2105,10 +2109,8 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         // and the Filters side panel auto-populates from these.
         filter: 'agTextColumnFilter',
         floatingFilter: true,
-        valueFormatter: (params: ValueFormatterParams<TableRow>) => {
-          const v = params.value;
-          return v === undefined || v === null ? '' : String(v);
-        },
+        valueFormatter: (params: ValueFormatterParams<TableRow>) =>
+          formatTableDateDisplay(params.value),
         // zh-CN numeric comparator — reuses compareScheduleValues
         comparator: (valueA, valueB) =>
           compareScheduleValues(
@@ -3111,7 +3113,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
                   {previewData.rows.slice(0, 50).map((r, i) => (
                     <tr key={i} className="border-border/50 border-b">
                       {PREVIEW_COLUMNS.filter((c) => c.key in (previewData.rows[0] ?? {})).map((c) => (
-                        <td key={c.key} className="px-2 py-1">{String(r[c.key] ?? '')}</td>
+                        <td key={c.key} className="px-2 py-1">{formatTableDateDisplay(r[c.key])}</td>
                       ))}
                     </tr>
                   ))}
