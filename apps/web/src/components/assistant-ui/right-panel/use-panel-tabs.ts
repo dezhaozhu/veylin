@@ -51,7 +51,10 @@ function createTab(
  * on `open`'s table branch): without it, every table-row selection that
  * drills into the gantt would `createTab('gantt')` again instead of
  * activating the one already open — a duplicate tab per click. */
-const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow', 'gantt']);
+// '3d' 也在里面:viewer3d-selection-session.ts 用**单一全局槽**接选面请求,理由
+// 明文写着"只会有一个 3D 面板"。分屏让这个假设第一次可被打破 —— 两个面板会各自
+// 渲染确认/取消,对同一个 toolCallId 提交两次互相矛盾的结果。把断言变成真的。
+const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow', 'gantt', '3d']);
 
 function closeWebTabs(tabs: PanelTab[]): void {
   if (!isTauri()) return;

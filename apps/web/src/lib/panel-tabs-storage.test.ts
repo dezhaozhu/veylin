@@ -288,6 +288,18 @@ describe('分屏(split)持久化', () => {
     assert.deepEqual(loaded.tabs.map((t) => t.id), ['tab_g2', 'tab_w']);
   });
 
+  it('3d 也是 singleton —— viewer3d 的单一全局槽假设「只会有一个 3D 面板」', async () => {
+    const { loadThreadPanelTabs, saveThreadPanelTabs } = await import('./panel-tabs-storage.ts');
+    saveThreadPanelTabs('t-3d', {
+      tabs: [
+        { id: 'tab_d1', kind: '3d', title: 'panels.viewer3d.label' },
+        { id: 'tab_d2', kind: '3d', title: 'panels.viewer3d.label' },
+      ],
+      activeId: 'tab_d2',
+    });
+    assert.deepEqual(loadThreadPanelTabs('t-3d').tabs.map((t) => t.id), ['tab_d2']);
+  });
+
   it('无 split 的旧数据加载后仍然没有 split 键', async () => {
     const { loadThreadPanelTabs, saveThreadPanelTabs } = await import('./panel-tabs-storage.ts');
     saveThreadPanelTabs('t-old', { tabs: twoTabs, activeId: 'tab_t' });

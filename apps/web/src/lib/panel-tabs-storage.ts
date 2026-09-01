@@ -13,7 +13,7 @@ const KNOWN_KINDS = new Set<PanelKind>([
  * 必须和 use-panel-tabs.ts 的同名集合一致 —— gantt 曾只加在运行时那份里,
  * 落盘去重这份漏了(dormant:运行时 open() 不会造出第二个,但旧数据/手改
  * localStorage 能),评审第 7 轮对齐。 */
-const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow', 'gantt']);
+const SINGLETON_PANEL_KINDS = new Set<PanelKind>(['table', 'rag', 'workflow', 'gantt', '3d']);
 
 export type PanelTabsStoredState = {
   tabs: PanelTab[];

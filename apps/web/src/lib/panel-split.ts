@@ -57,6 +57,20 @@ export function visibleTabIds(state: SplitTabsState): string[] {
   return state.activeId ? [state.activeId] : [];
 }
 
+/**
+ * 此刻有没有某种面板**可见**。
+ *
+ * **分屏之后「active 是不是这种」不再等价于「这种可不可见」** —— 它可以在
+ * 非 active 的那个 pane 里好好开着。这条判定必须只有这一处:它曾经在
+ * right-panel(藏 webview)和 AssistantChat(DesktopInteractionGuard)各写一份,
+ * 分屏那刀只改了前一处,于是 web 开在下 pane、点一下上 pane 的表格就会把整个
+ * 原生页面藏掉,而且没有任何东西会把它恢复(2026-09-01 评审挖出)。
+ */
+export function hasVisibleTabOfKind(state: SplitTabsState, kind: PanelTab['kind']): boolean {
+  const visible = new Set(visibleTabIds(state));
+  return state.tabs.some((t) => visible.has(t.id) && t.kind === kind);
+}
+
 /** 历史的关页签回退:优先右邻,再左邻,再第一个。在「某个 pane 的页签序列」里做。 */
 function fallbackId(ids: readonly string[], closedIdx: number): string | null {
   return ids[closedIdx] ?? ids[closedIdx - 1] ?? ids[0] ?? null;

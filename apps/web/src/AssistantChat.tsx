@@ -54,15 +54,18 @@ import {
   useRightSidebar,
 } from '@/components/ui/sidebar';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
+import { hasVisibleTabOfKind } from '@/lib/panel-split';
 import { useDesktopInteractionGuard } from '@/lib/use-desktop-interaction-guard';
 import { consumeNativeResumeRequest } from '@/lib/native-suspend-resume';
 
 function DesktopInteractionGuard() {
   const { view } = useSettingsPanel();
   const { open: rightSidebarOpen } = useRightSidebar();
-  const { activeTab } = usePanelTabs();
+  const { tabs, activeId, split } = usePanelTabs();
+  // 判定走 hasVisibleTabOfKind(和 right-panel 同一处实现):分屏后 web 可以
+  // 开在**非 active** 的那个 pane 里,再按 activeTab 判就会把它的原生页面藏掉。
   const hasVisibleWebTab =
-    view === 'chat' && rightSidebarOpen && activeTab?.kind === 'web';
+    view === 'chat' && rightSidebarOpen && hasVisibleTabOfKind({ tabs, activeId, split }, 'web');
 
   useDesktopInteractionGuard({
     rightSidebarOpen,

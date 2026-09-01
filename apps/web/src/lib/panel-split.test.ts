@@ -6,6 +6,7 @@ import {
   activateTab,
   clampSplitRatio,
   closeTab,
+  hasVisibleTabOfKind,
   moveTabToPane,
   normalizePanelSplit,
   splitLayout,
@@ -219,6 +220,38 @@ describe('splitLayout / visibleTabIds', () => {
     s = moveTabToPane(s, 'b', 'bottom');
     assert.deepEqual(visibleTabIds(s).sort(), ['a', 'b']);
     assert.deepEqual(visibleTabIds({ tabs: [], activeId: null }), []);
+  });
+});
+
+describe('hasVisibleTabOfKind', () => {
+  // 这条判定**必须只有一处**。它曾经在两个地方各写一份(right-panel 的
+  // webview 隐藏、AssistantChat 的 DesktopInteractionGuard),分屏那刀只改了
+  // 前一处 —— 于是 web 开在下 pane、点一下上 pane 的表格,整个原生页面被
+  // 藏掉且无人恢复(2026-09-01 评审挖出)。
+  it('未分屏:等价于「active 是不是这种」', () => {
+    const s = state({ tabs: [tab('a', 'web'), tab('b', 'table')], activeId: 'a' });
+    assert.equal(hasVisibleTabOfKind(s, 'web'), true);
+    assert.equal(hasVisibleTabOfKind(activateTab(s, 'b'), 'web'), false);
+  });
+
+  it('**分屏:非 active 的那个 pane 里可见也算**', () => {
+    let s = state({ tabs: [tab('a', 'table'), tab('b', 'web')], activeId: 'a' });
+    s = moveTabToPane(s, 'b', 'bottom');
+    s = activateTab(s, 'a'); // active 在上 pane 的表格
+    assert.equal(s.activeId, 'a');
+    assert.equal(hasVisibleTabOfKind(s, 'web'), true);
+  });
+
+  it('分屏但那种页签被同 pane 的另一个盖住 → 不算可见', () => {
+    let s = state({ tabs: [tab('a', 'table'), tab('b', 'web'), tab('c', 'rag')], activeId: 'a' });
+    s = moveTabToPane(s, 'b', 'bottom');
+    s = moveTabToPane(s, 'c', 'bottom'); // c 盖住 b
+    assert.equal(s.split?.bottomVisibleId, 'c');
+    assert.equal(hasVisibleTabOfKind(s, 'web'), false);
+  });
+
+  it('空工作区不炸', () => {
+    assert.equal(hasVisibleTabOfKind({ tabs: [], activeId: null }, 'web'), false);
   });
 });
 

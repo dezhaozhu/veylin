@@ -6,6 +6,7 @@ import { splitPanelRender } from '@/lib/panel-keep-alive';
 import {
   SPLIT_RATIO_DEFAULT,
   clampSplitRatio,
+  hasVisibleTabOfKind,
   splitLayout,
   visibleTabIds,
 } from '@/lib/panel-split';
@@ -102,9 +103,7 @@ export function RightPanel() {
   // 分屏后「active 页签是不是 web」不再等于「有没有 web 可见」—— web 可以在
   // 非 active 的那个 pane 里可见。判定改看可见集。
   const visibleIds = visibleTabIds({ tabs, activeId, split });
-  const webVisible = visibleIds.some(
-    (id) => tabs.find((t) => t.id === id)?.kind === 'web',
-  );
+  const webVisible = hasVisibleTabOfKind({ tabs, activeId, split }, 'web');
   useEffect(() => {
     if (!isTauri()) return;
     if (!rightOpen || view !== 'chat' || !webVisible) {
