@@ -59,6 +59,11 @@
         "workshop": "Workshop",
         "order": "Order"
       },
+      "scale": {
+        "day": "Day",
+        "week": "Week",
+        "month": "Month"
+      },
       "markLate": "Late",
       "markFrozen": "Locked/manual",
       "markBatch": "Batched",

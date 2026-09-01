@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { loadDhtmlxGantt, loadDhtmlxGanttCss, type GanttModule } from '@/lib/dhtmlx-gantt-loader';
 import { toGanttTasks, type GanttTask, type GanttWindowPayload } from '@/lib/gantt-window-model';
 import { ganttErrorMessage, resolveGanttThreadId, ganttWindowUrl, withExpanded } from '@/lib/gantt-request';
+import { GANTT_SCALE_LEVELS, ganttChartConfig, resolveGanttScale } from '@/lib/gantt-scale';
 import {
   applyGanttTaskFocus,
   decideGanttFocusFollowUp,
@@ -94,7 +95,7 @@ type UseGanttEventFn = (
 ) => void;
 
 export type GanttView = 'resource' | 'workshop' | 'order';
-export type GanttPanelState = { view?: GanttView };
+export type GanttPanelState = { view?: GanttView; scale?: string };
 
 const VIEWS: GanttView[] = ['resource', 'workshop', 'order'];
 
@@ -126,21 +127,8 @@ const VIEWS: GanttView[] = ['resource', 'workshop', 'order'];
  * (`RIGHT_SIDEBAR_WIDTH_MIN` = 280px)时也能留出 90px 时间轴,默认 472px
  * 时留出约 280px,是之前的四倍多。
  */
-const GANTT_CONFIG = {
-  readonly: true,
-  // 默认会先 showTask 第一条。表格定位刚选中的那条会被它盖掉。
-  initial_scroll: false,
-  // **逐行 `open` 取代全局自动展开**(见 gantt-window-model 的 lane 行):
-  // open_tree_initially 会把二级行也展开,而二级展开 = 去取三级,于是一进面板就把
-  // 整屏订单的三级猛拉一遍。现在泳道行自己带 open:true,二级行保持收起。
-  // `branch_loading` 让 `$has_child` 生效:子行是"点了才取",没有它,箭头永远不出现。
-  branch_loading: true,
-  grid_width: 190,
-  columns: [
-    { name: 'text', tree: true, width: '*', label: 'Task name' },
-    { name: 'duration', width: 56, align: 'center', label: 'Duration' },
-  ],
-};
+// 只读/列宽/刻度见 gantt-scale.ts。不在这里写死一份 config:
+// 日/周/月切换要换 min_column_width 和 scales,否则整段排产被挤进右栏。
 
 /** 三种诚实标记对应的视觉表达——工业静音色,不用红绿灯语义(晚了是"要核对
  * 的事实",不是"警报")。Tailwind 类名以字面量出现在这个文件里,构建时能被
@@ -199,12 +187,13 @@ type GanttChartProps = {
   onExpandOrder: (orderId: string | undefined) => void;
   mod: GanttModule;
   tasks: GanttTask[];
+  config: Record<string, unknown>;
   ganttFocus: PanelTabsApi['ganttFocus'];
   clearGanttFocus: PanelTabsApi['clearGanttFocus'];
 };
 
 function GanttChart({ mod, tasks, ganttFocus, clearGanttFocus,
-                     onExpandOrder }: GanttChartProps) {
+                     onExpandOrder, config }: GanttChartProps) {
   const ganttRef = useRef<GanttRefLike | null>(null);
   const modRecord = mod as Record<string, unknown>;
   const Gantt = modRecord.default as FC<{
@@ -296,7 +285,7 @@ function GanttChart({ mod, tasks, ganttFocus, clearGanttFocus,
     <Gantt
       ref={ganttRef}
       tasks={tasks}
-      config={GANTT_CONFIG}
+      config={config}
       templates={{ task_class: taskClass }}
       className="h-full w-full"
     />
@@ -317,6 +306,8 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
 
   const panelState = (tab.state ?? {}) as GanttPanelState;
   const view = panelState.view ?? 'resource';
+  const scale = resolveGanttScale(panelState.scale);
+  const chartConfig = useMemo(() => ganttChartConfig(scale), [scale]);
   const { ganttFocus, clearGanttFocus } = usePanelTabs();
   const ganttFocusRef = useRef(ganttFocus);
   ganttFocusRef.current = ganttFocus;
@@ -483,19 +474,32 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
     <div className="flex h-full flex-col">
       <div className="border-border flex flex-wrap items-center justify-between gap-2 border-b p-2">
         <div className="flex items-center gap-1">
-          {VIEWS.map((v) => (
-            <Button
-              key={v}
-              type="button"
-              size="sm"
-              variant={v === view ? 'secondary' : 'ghost'}
-              aria-pressed={v === view}
-              onClick={() => updateState({ view: v })}
-            >
-              {t(`panels.gantt.view.${v}`)}
-            </Button>
-          ))}
-        </div>
+            {VIEWS.map((v) => (
+              <Button
+                key={v}
+                type="button"
+                size="sm"
+                variant={v === view ? 'secondary' : 'ghost'}
+                aria-pressed={v === view}
+                onClick={() => updateState({ view: v })}
+              >
+                {t(`panels.gantt.view.${v}`)}
+              </Button>
+            ))}
+            <span className="bg-border mx-1 h-4 w-px shrink-0" aria-hidden />
+            {GANTT_SCALE_LEVELS.map((level) => (
+              <Button
+                key={level}
+                type="button"
+                size="sm"
+                variant={level === scale ? 'secondary' : 'ghost'}
+                aria-pressed={level === scale}
+                onClick={() => updateState({ scale: level })}
+              >
+                {t(`panels.gantt.scale.${level}`)}
+              </Button>
+            ))}
+          </div>
         {/* flex-wrap(2026-08-19 F6 顺带):五种标记在窄面板宽度下放不下一行,
             折成一行 justify-between 会挤爆滚出屏幕 —— 允许换行,别裁掉。 */}
         <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -533,8 +537,10 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
         )}
         {load.state === 'ready' && (
           <GanttChart
+            key={scale}
             mod={avail.mod}
             tasks={tasks}
+            config={chartConfig}
             ganttFocus={ganttFocus}
             clearGanttFocus={clearGanttFocus}
             onExpandOrder={handleExpandOrder}

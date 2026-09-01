@@ -59,6 +59,11 @@
         "workshop": "车间",
         "order": "订单"
       },
+      "scale": {
+        "day": "日",
+        "week": "周",
+        "month": "月"
+      },
       "markLate": "晚了",
       "markFrozen": "锁定/人工",
       "markBatch": "拼炉",
