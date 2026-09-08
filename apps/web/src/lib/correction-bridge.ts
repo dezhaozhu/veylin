@@ -127,7 +127,8 @@ export function parseOpenGridMessage(data: unknown): OpenGridFilter | null {
  * 其余一律静默丢弃;线程/租户永远来自宿主上下文,消息选不了目标。
  */
 export type NavigateTarget = {
-  kind: 'job' | 'order';
+  /** job/order = 定位到一道作业/一个订单;view = 只把甘特切到某个视角(id = resource|workshop|order)。 */
+  kind: 'job' | 'order' | 'view';
   id: string;
   orderId?: string;
   /** 开工日 YYYY-MM-DD —— 甘特默认窗对不上这一行时用它挪窗。 */
@@ -135,7 +136,8 @@ export type NavigateTarget = {
   surface: 'gantt' | 'grid';
 };
 
-const NAVIGATE_KINDS = new Set(['job', 'order']);
+const NAVIGATE_KINDS = new Set(['job', 'order', 'view']);
+const NAVIGATE_VIEWS = new Set(['resource', 'workshop', 'order']);
 const NAVIGATE_SURFACES = new Set(['gantt', 'grid']);
 
 export function parseNavigateMessage(data: unknown): NavigateTarget | null {
@@ -154,6 +156,7 @@ export function parseNavigateMessage(data: unknown): NavigateTarget | null {
   const orderId = sanitizeField(a.order_id, CORRECTION_FIELD_MAX);
   const at = sanitizeField(a.at, CORRECTION_FIELD_MAX);
   if (id === null || orderId === null || at === null || !id) return null;
+  if (kind === 'view' && !NAVIGATE_VIEWS.has(id)) return null;
   // 开工日只认 YYYY-MM-DD 前缀 —— 甘特按日挪窗,别的形状一律不带。
   const atDay = at ? /^(\d{4}-\d{2}-\d{2})/.exec(at)?.[1] : undefined;
   const out: NavigateTarget = { kind: kind as NavigateTarget['kind'], id, surface: surface as NavigateTarget['surface'] };

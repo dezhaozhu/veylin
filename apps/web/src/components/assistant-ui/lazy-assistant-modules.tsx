@@ -17,6 +17,9 @@ const Request3dSelectionToolUI = lazy(() =>
     default: m.Request3dSelectionToolUI,
   })),
 );
+const NavigateToolUI = lazy(() =>
+  import('@/components/assistant-ui/navigate-tool').then((m) => ({ default: m.NavigateToolUI })),
+);
 const TodoWriteToolUI = lazy(() =>
   import('@/components/assistant-ui/todo-write').then((m) => ({ default: m.TodoWriteToolUI })),
 );
@@ -84,6 +87,7 @@ export function LazyAssistantToolUIs() {
         <KnowledgeSearchToolUI />
         <ReadOpenPageToolUI />
         <Request3dSelectionToolUI />
+        <NavigateToolUI />
       </Suspense>
     </>
   );

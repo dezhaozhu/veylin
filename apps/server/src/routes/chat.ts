@@ -1031,6 +1031,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ServerDeps): void
               ...(deps.getTaskToolset().table ? { table: deps.getTaskToolset().table } : {}),
               ...(deps.getTaskToolset().viewer3d ? { viewer3d: deps.getTaskToolset().viewer3d } : {}),
               ...(deps.getTaskToolset().knowledge ? { knowledge: deps.getTaskToolset().knowledge } : {}),
+              // 排产即导航:导航工具和表格/3D 一样常驻,不必先 tool_search 发现。
+              ...(deps.getTaskToolset().navigate ? { navigate: deps.getTaskToolset().navigate } : {}),
             };
     const filteredForBusiness = await getEnterprisePorts().businessSource.filterToolsets(
       ctx.tenantId,

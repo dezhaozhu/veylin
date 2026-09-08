@@ -18,8 +18,8 @@ import { useAppTools } from '@/lib/use-app-tools';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
 import { DocumentEditResult } from '@/components/assistant-ui/document-edit-result';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
-import { correctionDraftSpec, type CorrectionPayload, type NavigateTarget, type OpenGridFilter } from '@/lib/correction-bridge';
-import { hasGantt } from '@/lib/schedule-locate';
+import { correctionDraftSpec, type CorrectionPayload, type OpenGridFilter } from '@/lib/correction-bridge';
+import { useNavigateAnchor } from '@/components/assistant-ui/use-navigate-anchor';
 
 // Data plane for MCP Apps: the sandboxed widget's loadResource/callTool/
 // readResource requests are POSTed to the Veylin host route, which proxies to
@@ -93,7 +93,7 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
   // Same host-context rule as the correction bridge: the grid is THIS thread's
   // schedule (from panel context), never selected by the message. focusScheduleFilter
   // opens the panel and stashes the OpenGridFilter for the grid to apply client-side.
-  const { focusScheduleFilter, focusGanttJob, openWidget } = usePanelTabs();
+  const { focusScheduleFilter, openWidget } = usePanelTabs();
   const { setOpen: setRightOpen } = useRightSidebar();
   const handleOpenGrid = useCallback(
     (filter: OpenGridFilter) => {
@@ -102,31 +102,9 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
     [focusScheduleFilter],
   );
 
-  // 排产即导航 · 卡片点条: the inline gantt card's bar says "go look at this
-  // job". The card only carries Compass identity (job/order/start); WHICH
-  // surface shows it is decided here: the gantt panel when the capability is
-  // installed, else the schedule grid positioned on the same job — never a
-  // silent no-op. Pull the right sidebar open first (same rule as openWidget:
-  // a tab added behind a closed drawer reads as "clicked, nothing happened").
-  const handleNavigate = useCallback(
-    (target: NavigateTarget) => {
-      const locate =
-        target.kind === 'job'
-          ? { jobId: target.id, ...(target.orderId ? { orderId: target.orderId } : {}) }
-          : { orderId: target.id };
-      setRightOpen(true);
-      if (target.surface === 'gantt' && hasGantt()) {
-        void focusGanttJob({ ...locate, ...(target.at ? { fromDate: target.at } : {}) });
-        return;
-      }
-      void focusScheduleFilter(
-        target.kind === 'job'
-          ? { job_id: target.id, ...(target.orderId ? { order_id: target.orderId } : {}) }
-          : { order_id: target.id },
-      );
-    },
-    [focusGanttJob, focusScheduleFilter, setRightOpen],
-  );
+  // 排产即导航 · 卡片点条 / 驾驶舱「在甘特里看」:锚点只带 Compass 身份,去哪个面板
+  // 由 useNavigateAnchor 决定 —— 和 agent 的 navigate 工具是同一个 handler。
+  const handleNavigate = useNavigateAnchor();
 
   // 文档修改自己有一块界面:红绿对照 + 一键撤销。**改已经发生了**,这里不是问
   // "要不要改",是让人看见改了什么、并且退得回去(版本+回退当安全网)。

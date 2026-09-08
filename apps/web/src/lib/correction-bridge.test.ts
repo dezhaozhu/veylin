@@ -282,6 +282,11 @@ describe('parseNavigateMessage — 卡片点条 → 宿主导航', () => {
     assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'rule', id: 'R1' } })), null);
   });
 
+  it('view anchor: id must be one of the three gantt views', () => {
+    assert.deepEqual(parseNavigateMessage(nav({ anchor: { kind: 'view', id: 'workshop' } })), { kind: 'view', id: 'workshop', surface: 'gantt' });
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'view', id: 'gantt' } })), null);
+  });
+
   it('drops missing/empty id, oversized fields, and non-navigate shapes', () => {
     assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'job' } })), null);
     assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'job', id: '' } })), null);

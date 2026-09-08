@@ -25,6 +25,7 @@ import { buildAgentTaskTools } from './agent-task-tool';
 import { executeSubagentJob, CancelledTaskError } from './agent-task-runner';
 import { buildTableTools } from './table-tools';
 import { buildViewer3dTools } from './viewer3d-tools';
+import { buildNavigateTools } from './navigate-tool';
 import { flushTablePersist, initTableStore, listTableSheets, stampTableSheetSource } from './table-store';
 import { pruneDesktopThreadClutter } from './thread-state';
 import {
@@ -494,6 +495,7 @@ async function main() {
 
   const tableTools = buildTableTools(() => mcpToolsets, () => mcpGroups);
   const viewer3dTools = buildViewer3dTools();
+  const navigateTools = buildNavigateTools();
   const workspaceConfig = buildWorkspaceConfigTool({
     runtime,
     queue,
@@ -505,6 +507,8 @@ async function main() {
     agent: agentTaskTools,
     table: tableTools,
     viewer3d: viewer3dTools,
+    // 排产即导航:agent 的 navigate 入口(动作在客户端,见 navigate-tool.ts)。
+    navigate: navigateTools,
     knowledge: { knowledge_search: buildKnowledgeSearchTool() },
     config: { workspace_config: workspaceConfig },
     workflow: workflowTools,

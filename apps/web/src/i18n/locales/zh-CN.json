@@ -1248,6 +1248,12 @@
     "startingServiceProgress": "正在启动本地服务… ({{count}})",
     "loadingApp": "加载中…"
   },
+  "navigateTool": {
+    "job": "已在右侧定位到作业 {{id}}",
+    "order": "已在右侧定位到订单 {{id}}",
+    "view": "已把右侧甘特切到 {{id}} 视角",
+    "failed": "没能定位"
+  },
   "viewer3d": {
     "awaitingSelection": "等待你在 3D 面板选面：{{prompt}}",
     "selectionConfirmed": "已确认选择",

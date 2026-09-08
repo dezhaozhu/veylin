@@ -459,6 +459,20 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
     };
   }, [ganttFocus, load, tasks, threadId, view, clearGanttFocus]);
 
+  // 视角锚点(驾驶舱「在甘特里看」/ agent navigate kind=view):先切视角,切到了
+  // 再把只带视角、不带作业/订单的定位清掉 —— 分两次渲染做,是因为首屏取数的
+  // effect 要在 view 变化的那次提交里读到 ganttFocusRef(fromDate 就在里面),
+  // 同一提交里清掉它,取数就丢了开工日。带作业/订单的定位照旧由下面的路走。
+  useEffect(() => {
+    if (!ganttFocus) return;
+    const want = ganttFocus.target;
+    if (want.view && want.view !== view) {
+      updateState({ view: want.view });
+      return;
+    }
+    if (!want.jobId && !want.orderId) clearGanttFocus();
+  }, [ganttFocus, view, updateState, clearGanttFocus]);
+
   // 表格↔甘特双向定位(gantt-focus.ts)。接线(ganttRef + useGanttEvent +
   // 消费 focusGanttJob)全部下沉进 GanttChart —— 理由见文件头那段
   // 2026-08-19 追记:必须让"渲染 `<Gantt>`"和"接事件线"总在同一次挂载/卸载

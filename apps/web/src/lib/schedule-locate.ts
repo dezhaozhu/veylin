@@ -11,6 +11,8 @@ export type ScheduleLocateTarget = {
   orderId?: string;
   /** 开工日(YYYY-MM-DD)。甘特默认窗口对不上这一行时,用它把时间窗挪过来。 */
   fromDate?: string;
+  /** 只切视角(驾驶舱「在甘特里看」/ agent navigate kind=view);可不带作业/订单。 */
+  view?: 'resource' | 'workshop' | 'order';
 };
 
 type LocateGanttImpl = (target: ScheduleLocateTarget) => void;

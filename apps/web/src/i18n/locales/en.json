@@ -1248,6 +1248,12 @@
     "startingServiceProgress": "Starting local service… ({{count}})",
     "loadingApp": "Loading…"
   },
+  "navigateTool": {
+    "job": "Took you to job {{id}} in the right panel",
+    "order": "Took you to order {{id}} in the right panel",
+    "view": "Switched the right-panel Gantt to the {{id}} view",
+    "failed": "Could not navigate"
+  },
   "viewer3d": {
     "awaitingSelection": "Waiting for you to pick faces on the 3D panel: {{prompt}}",
     "selectionConfirmed": "Selection confirmed",

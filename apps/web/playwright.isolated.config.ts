@@ -28,7 +28,7 @@ const dataDir = process.env.E2E_DATA_DIR ?? mkdtempSync(resolve(tmpdir(), 'veyli
 
 export default defineConfig({
   testDir: './e2e',
-  testMatch: /project-journey\.spec\.ts/,
+  testMatch: /(project-journey|gantt-navigate)\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
   // **一次重试**:这套跑的是真模型 + 真异步(项目钉定、Compass 拉表、SSE),
