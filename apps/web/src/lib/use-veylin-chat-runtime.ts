@@ -17,6 +17,7 @@ import { createServerThreadListAdapter } from './server-thread-list-adapter';
 import { isPersistableThreadId, syncThreadMessagesToServer } from './sync-thread-messages';
 import { useAISDKRuntimeWithQueue } from './use-aisdk-runtime-with-queue';
 import { resumableStorage } from './resumable-storage';
+import { shouldAttemptResume } from '@/lib/resume-guard';
 import { isBenignChatError } from './format-chat-error';
 import { useNetworkReconnectStore } from './network-reconnect-store';
 import { conversationAwaitsResume } from './frontend-suspend-tools';
@@ -197,6 +198,16 @@ function useChatThreadRuntime<UI_MESSAGE extends UIMessage = UIMessage>(
             }
             return;
           }
+        }
+        // **请求还在飞就不 resume。** resume 是给「连接断了、服务端还在跑」的场景
+        // 重新接上流;首条消息刚发出去(submitted/streaming)时 sessionStorage 里可能
+        // 还留着上一条线程的 stream id,这时再 resumeStream 会和在飞的请求撞车 ——
+        // 每条新线程第一轮都报一次 "Cannot read properties of undefined (reading
+        // 'state')"(隔离 e2e 每轮必现)。发现 e2e 日志时它已经存在,不是新引入的。
+        if (!shouldAttemptResume(chat.status)) {
+          resumableStorage.clear();
+          useNetworkReconnectStore.getState().clearBanner();
+          return;
         }
         await chat.resumeStream();
       } catch (err: unknown) {
