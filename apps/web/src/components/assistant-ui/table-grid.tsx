@@ -1270,6 +1270,18 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
   // 跨面版本不一致(甘特/卡片定位落到表格时,发起面的 run_id ≠ 这张表导入时的 runId):
   // 在表格顶部说一句,给一个「重新导入」。一致或任一侧不知道就不出现 —— 一个事实一处表达。
   const [runMismatch, setRunMismatch] = useState<{ origin: string; landing: string } | null>(null);
+  const pendingOriginRunRef = useRef<string | null>(null);
+  // 表清单一到(或变了)就比一次:发起面的 run_id vs 排产表导入时盖的 runId。
+  useEffect(() => {
+    const origin = pendingOriginRunRef.current;
+    if (!origin) return;
+    const scheduleSheetId = findSheetIdByShortName(sheets, SCHEDULE_SHEET_ID) ?? SCHEDULE_SHEET_ID;
+    const landing = sheets.find((s) => s.id === scheduleSheetId)?.source?.runId;
+    const verdict = compareRuns(origin, landing);
+    if (verdict === 'unknown') return;          // 表还没到 / 老表没盖:先不下结论
+    setRunMismatch(verdict === 'differs' ? { origin, landing: landing! } : null);
+    pendingOriginRunRef.current = null;
+  }, [sheets, scheduleFilter]);
   const reloadCompassSchedule = useCallback(async () => {
     setCompassLoading(true);
     try {
@@ -1551,13 +1563,10 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         jobId: scheduleFilter.filter.job_id,
         orderId: scheduleFilter.filter.order_id,
       };
-      // 版本比对:发起面(甘特/卡片)看到的 run_id vs 这张排产表导入时的 runId。
-      {
-        const scheduleSheetId = findSheetIdByShortName(sheets, SCHEDULE_SHEET_ID) ?? SCHEDULE_SHEET_ID;
-        const landing = sheets.find((s) => s.id === scheduleSheetId)?.source?.runId;
-        const origin = scheduleFilter.filter.run_id;
-        setRunMismatch(compareRuns(origin, landing) === 'differs' ? { origin: origin!, landing: landing! } : null);
-      }
+      // 版本比对:发起面(甘特/卡片)看到的 run_id 先记下,等表清单到了再比(见下面那个
+      // effect)。这里直接比会踩空:定位落过来时表格面板常常刚挂载,`sheets` 还是 []
+      // —— 真跑里横幅就是这么没出来的。
+      pendingOriginRunRef.current = scheduleFilter.filter.run_id ?? null;
       if (isSheet(activeSheetId, SCHEDULE_SHEET_ID)) {
         locatePendingAnchor();
       } else {

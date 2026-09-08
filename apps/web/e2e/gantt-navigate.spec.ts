@@ -332,3 +332,93 @@ test('agent navigate kind=resource → 甘特翻到那条泳道并高亮泳道�
   // 找到了就不该出「不在模型里」那句
   expect(await page.locator('[data-testid="gantt-lane-not-in-model"]').count()).toBe(0);
 });
+
+/**
+ * **跨面版本不一致要说出来(#6)**:表格是导入那一刻的排产,中间 Compass 又排了一次,
+ * 甘特是新的。从甘特点一根条落到表格时,表格顶部必须出「表格还是 X 那版排产」横幅。
+ * 制造不一致的办法是真的让 Compass 重排一次(上重贪心 ~40s),没有 mock。
+ */
+test('表格导入后 Compass 重排 → 甘特点条落到表格 → 版本不一致横幅', async ({ page, request }) => {
+  const project = await compassProject(request);
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(project.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: project.name })).toBeVisible({ timeout: 15_000 });
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+
+  // 拿到这条线程并等它钉到项目(点输入框会异步建线程+钉项目)。
+  let threadId = '';
+  await expect
+    .poll(
+      async () => {
+        const body = await (await request.get(`${API}/api/threads`)).json();
+        const first = (body.threads as Array<{ remoteId?: string; id?: string }>)[0];
+        threadId = first?.remoteId ?? first?.id ?? '';
+        if (!threadId) return false;
+        const map = await (await request.get(`${API}/api/projects/threads`)).json();
+        return (map.threads?.[threadId] ?? map[threadId]) === project.id;
+      },
+      { timeout: 30_000, intervals: [1000] },
+    )
+    .toBe(true);
+
+  // 1) **先把表格面板打开**,让它自己把排产表导进来并盖上当前的 run_id(版本 A)。
+  //    表格面板一挂载就会重导 Compass(bootstrap),所以「先导入、后开面板」造不出
+  //    不一致 —— 上一版用例就是这么白跑了两轮(trace 里看到面板挂载后又 POST 了两次
+  //    load-compass-schedule,把版本盖回了最新)。真实场景正是面板一直开着、中间重排。
+  await page.evaluate(() => (window as unknown as { __veylinTest: { openTablePanel: () => void } }).__veylinTest.openTablePanel());
+  let stamped = '';
+  await expect
+    .poll(
+      async () => {
+        const sheets = (await (await request.get(`${API}/api/table/sheets?threadId=${threadId}`)).json()).sheets as Array<{ source?: { runId?: string } }>;
+        stamped = sheets.find((s) => s.source?.runId)?.source?.runId ?? '';
+        return Boolean(stamped);
+      },
+      { timeout: 120_000, intervals: [2000] },
+    )
+    .toBe(true);
+  // 等表格把行拉完,别让后面的重排和它的分页拉取撞在一起。
+  await page.waitForTimeout(8000);
+
+  // 2) 让 Compass 真的再排一次(版本 B)。身份与隔离栈同一份(.env 里的 identity)。
+  const { readFileSync } = await import('node:fs');
+  const { resolve } = await import('node:path');
+  const env = readFileSync(resolve(process.cwd(), '../../.env'), 'utf8');
+  const identity = JSON.parse(/VEYLIN_COMPASS_IDENTITY='(.+)'/.exec(env)![1]!) as { url: string; token: string };
+  const res = await request.post(`${identity.url}/mcp/`, {
+    headers: { Authorization: `Bearer ${identity.token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'x-compass-source': 'shangzhong' },
+    data: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'reschedule', arguments: {} } },
+    timeout: 300_000,
+  });
+  const line = (await res.text()).split('\n').find((l) => l.startsWith('data: '))!;
+  const newRun = JSON.parse(JSON.parse(line.slice(6)).result.content[0].text).run_id as string;
+  expect(newRun, '重排没产生新 run').toBeTruthy();
+  expect(newRun).not.toBe(stamped);
+
+  // 3) 打开甘特(新版本)。
+  await composer.fill('直接调用 navigate 工具,参数 kind=view、id=resource、surface=gantt,打开右侧甘特。不要调别的工具,不用解释。');
+  await composer.press('Enter');
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const s = (window as unknown as { __veylinTest: { panelState: () => { tabs: Array<{ id: string; kind: string }>; activeId: string | null } } }).__veylinTest.panelState();
+          const g = s.tabs.find((t) => t.kind === 'gantt');
+          return g ? (s.activeId === g.id ? 'active' : 'open-not-active') : 'none';
+        }),
+      { timeout: 4 * 60_000, intervals: [1000] },
+    )
+    .toBe('active');
+
+  // 4) 甘特点一根条 → 落到表格,表格顶部要有版本横幅,且提到新版本的时间。
+  const bar = page.locator('.gantt_task_line[data-task-id^="job:"]').first();
+  await expect(bar).toBeVisible({ timeout: 60_000 });
+  await bar.click();
+  await expect(page.getByTestId('table-run-mismatch')).toBeVisible({ timeout: 60_000 });
+  const m = /(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(newRun)!;
+  await expect(page.getByTestId('table-run-mismatch')).toContainText(`${m[1]}-${m[2]} ${m[3]}:${m[4]}`);
+});

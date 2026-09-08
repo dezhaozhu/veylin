@@ -193,10 +193,14 @@ type GanttChartProps = {
   clearGanttFocus: PanelTabsApi['clearGanttFocus'];
   /** 资源锚点在这一页里落到的泳道名(服务端 meta.focus_lane,found 时才给)。 */
   focusLane?: string | undefined;
+  /** 这次窗口是哪一版排产(meta.run_id)。点条跳表格时随定位带过去,表格拿它比版本。 */
+  runId?: string | undefined;
 };
 
 function GanttChart({ mod, tasks, ganttFocus, clearGanttFocus,
-                     onExpandOrder, config, focusLane }: GanttChartProps) {
+                     onExpandOrder, config, focusLane, runId }: GanttChartProps) {
+  const runIdRef = useRef(runId);
+  runIdRef.current = runId;
   const ganttRef = useRef<GanttRefLike | null>(null);
   const modRecord = mod as Record<string, unknown>;
   const Gantt = modRecord.default as FC<{
@@ -237,7 +241,9 @@ function GanttChart({ mod, tasks, ganttFocus, clearGanttFocus,
     const taskId = String(id);
     const jobId = jobIdForTask(tasksRef.current, taskId);
     const orderId = orderIdForTask(tasksRef.current, taskId);
-    if (jobId || orderId) locateTable({ jobId, orderId });
+    // 带上这版排产的 run_id:表格那边拿它和自己导入时的比,不一致会说「表格还是上一版」。
+    // 真跑抓的:第一版漏了这一行,横幅永远不出 —— 单测全绿看不见。
+    if (jobId || orderId) locateTable({ jobId, orderId, ...(runIdRef.current ? { runId: runIdRef.current } : {}) });
     return true; // 放行默认的选中态,不拦事件
   });
 
@@ -646,6 +652,7 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
             clearGanttFocus={clearGanttFocus}
             onExpandOrder={handleExpandOrder}
             focusLane={focusLaneMeta?.focus_lane_found ? focusLaneMeta.focus_lane : undefined}
+            runId={focusLaneMeta?.run_id}
           />
         )}
       </div>
