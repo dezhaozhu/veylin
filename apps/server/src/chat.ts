@@ -1,5 +1,6 @@
 /** AI SDK v6 UIMessage (minimal shape we receive from assistant-ui). */
 import { convertToModelMessages, type UIMessage } from 'ai';
+import { compactForModel, MODEL_VIEW_LIMIT_CHARS } from './model-view';
 import { getCatalogModel } from '@veylin/runtime';
 import { projectSourceLabel } from '@veylin/shared';
 import {
@@ -350,7 +351,7 @@ export async function toAgentMessages(
     });
     return modelMessages.map((m) => ({
       role: m.role,
-      content: m.content,
+      content: compactHistoricalToolResults(m.content),
     }));
   }
 
@@ -580,4 +581,36 @@ export function buildWorkspacePanelHintBlock(
     default:
       return '';
   }
+}
+
+/**
+ * 历史轮次里的工具结果也走模型视图(model-view.ts)。
+ *
+ * `toModelOutput` 只在**当轮**由 AI SDK 调用;历史是从存储回放的 UI 消息,
+ * `convertToModelMessages` 不带 tools 就原样把 output 塞进 tool-result ——
+ * 于是上一轮那张 366KB 的甘特,每往下聊一轮都整份再进一次上下文。这里对回放出的
+ * tool-result 再压一次:JSON 走 compactForModel(同一把尺、同一段诚实注记),超长
+ * 文本截断并写明原长。当轮的结果不经过这里,不会被压两次。
+ */
+export function compactHistoricalToolResults<T>(content: T): T {
+  if (!Array.isArray(content)) return content;
+  return content.map((part) => {
+    const p = part as { type?: string; output?: { type?: string; value?: unknown } };
+    if (p?.type !== 'tool-result' || !p.output || typeof p.output !== 'object') return part;
+    const out = p.output;
+    if (out.type === 'json') {
+      const value = compactForModel(out.value);
+      return value === out.value ? part : { ...p, output: { ...out, value } };
+    }
+    if (out.type === 'text' && typeof out.value === 'string' && out.value.length > MODEL_VIEW_LIMIT_CHARS) {
+      return {
+        ...p,
+        output: {
+          ...out,
+          value: `${out.value.slice(0, MODEL_VIEW_LIMIT_CHARS)}\n…(历史工具结果截断,原长 ${out.value.length} 字符;完整结果已交给用户界面)`,
+        },
+      };
+    }
+    return part;
+  }) as T;
 }

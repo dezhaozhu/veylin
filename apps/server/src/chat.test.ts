@@ -279,3 +279,49 @@ describe('零数据源的项目', () => {
     assert.doesNotMatch(block, /还没有接任何数据源/);
   });
 });
+
+describe('历史工具结果的模型视图(#7:旧轮次的大结果不再整份回放)', () => {
+  it('上一轮 1,500 根条的甘特回放时被压到阈值内,并带诚实注记', async () => {
+    const bar = (i: number) => ({
+      job_id: `T-2215220${i}.00301-GP`, order_id: `T-2215220${i}.00301`, label: `T-2215220${i}.00301·GP`,
+      start: '2026-09-01', end: '2026-09-20', resource: '冶铸分厂', late_days: 14, frozen: false, batch_id: null,
+    });
+    const gantt = {
+      meta: { view: 'resource', window: { start: '2026-09-01', end: '2026-10-31' } },
+      lanes: Array.from({ length: 11 }, (_, l) => ({ lane: `泳道${l}`, kind: 'resource', bars: Array.from({ length: 136 }, (_, i) => bar(l * 1000 + i)) })),
+      batches: [], violations: { max_lag: [], cap_overloads: [] },
+    };
+    const rawSize = JSON.stringify(gantt).length;
+    const converted = await toAgentMessages([
+      { role: 'user', parts: [{ type: 'text', text: '画甘特' }] },
+      {
+        role: 'assistant',
+        parts: [{ type: 'tool-get_gantt', toolCallId: 'c1', state: 'output-available', input: { view: 'resource' }, output: gantt }],
+      },
+      { role: 'user', parts: [{ type: 'text', text: '第一根条是哪道?' }] },
+    ] as never);
+    const toolMsg = converted.find((m) => m.role === 'tool');
+    assert.ok(toolMsg, '没有回放出 tool 消息');
+    const part = (toolMsg!.content as Array<{ type: string; output: { type: string; value: unknown } }>)[0]!;
+    assert.equal(part.type, 'tool-result');
+    const replayed = JSON.stringify(part.output.value).length;
+    // 量具:回放进模型的体积。原始 ≈ 366KB 量级(≈13 万 token),压后必须在阈值内。
+    console.log(`  [measure] gantt tool output: raw ${rawSize} chars → replayed ${replayed} chars`);
+    assert.ok(rawSize > 300_000, '样本不够大');
+    assert.ok(replayed <= 24_000, `回放仍然过大:${replayed}`);
+    const v = part.output.value as { _model_view?: { truncated: boolean }; lanes: unknown[]; meta: unknown };
+    assert.equal(v._model_view?.truncated, true);
+    assert.deepEqual(v.meta, gantt.meta);
+    assert.equal(v.lanes.length, 11, '泳道要保住,砍的是每条泳道里的条');
+  });
+
+  it('小结果原样回放(同一引用语义:不加注记)', async () => {
+    const small = { ok: true, rows: [{ a: 1 }] };
+    const converted = await toAgentMessages([
+      { role: 'user', parts: [{ type: 'text', text: 'x' }] },
+      { role: 'assistant', parts: [{ type: 'tool-table_get', toolCallId: 'c2', state: 'output-available', input: {}, output: small }] },
+    ] as never);
+    const part = (converted.find((m) => m.role === 'tool')!.content as Array<{ output: { value: unknown } }>)[0]!;
+    assert.deepEqual(part.output.value, small);
+  });
+});
