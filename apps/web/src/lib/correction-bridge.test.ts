@@ -7,6 +7,7 @@ import {
   isLateOnlyGridFilter,
   parseCorrectionMessage,
   parseOpenGridMessage,
+  parseNavigateMessage,
   type CorrectionPayload,
 } from './correction-bridge';
 
@@ -261,5 +262,39 @@ describe('isLateOnlyGridFilter — the late-only decision', () => {
 
   it('ignores non-status fields on a late filter (still late-only)', () => {
     assert.equal(isLateOnlyGridFilter({ status: 'late', workshop: '金工分厂' }), true);
+  });
+});
+
+describe('parseNavigateMessage — 卡片点条 → 宿主导航', () => {
+  const nav = (payload: unknown) => ({ type: 'veylin:action', action: 'navigate', payload });
+
+  it('accepts a job anchor with order/at and keeps only the YYYY-MM-DD of at', () => {
+    assert.deepEqual(
+      parseNavigateMessage(nav({ anchor: { kind: 'job', id: 'J1', order_id: 'SO1', at: '2026-09-08T00:00:00' }, surface: 'gantt' })),
+      { kind: 'job', id: 'J1', orderId: 'SO1', at: '2026-09-08', surface: 'gantt' },
+    );
+  });
+
+  it('defaults surface to gantt; accepts grid; rejects unknown surface/kind', () => {
+    assert.deepEqual(parseNavigateMessage(nav({ anchor: { kind: 'order', id: 'SO1' } })), { kind: 'order', id: 'SO1', surface: 'gantt' });
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'job', id: 'J1' }, surface: 'grid' }))?.surface, 'grid');
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'job', id: 'J1' }, surface: 'doc' })), null);
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'rule', id: 'R1' } })), null);
+  });
+
+  it('drops missing/empty id, oversized fields, and non-navigate shapes', () => {
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'job' } })), null);
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'job', id: '' } })), null);
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'job', id: 'x'.repeat(CORRECTION_FIELD_MAX + 1) } })), null);
+    assert.equal(parseNavigateMessage(nav({})), null);
+    assert.equal(parseNavigateMessage({ type: 'veylin:action', action: 'open-schedule-grid', payload: {} }), null);
+    assert.equal(parseNavigateMessage(null), null);
+  });
+
+  it('never selects a target — thread/tenant keys in the anchor are ignored', () => {
+    assert.deepEqual(
+      parseNavigateMessage(nav({ anchor: { kind: 'job', id: 'J1', threadId: 'evil', tenant: 'evil' } })),
+      { kind: 'job', id: 'J1', surface: 'gantt' },
+    );
   });
 });

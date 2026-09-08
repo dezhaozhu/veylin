@@ -1,8 +1,10 @@
 import { useEffect, useRef, type FC, type ReactNode } from 'react';
 import {
   parseCorrectionMessage,
+  parseNavigateMessage,
   parseOpenGridMessage,
   type CorrectionPayload,
+  type NavigateTarget,
   type OpenGridFilter,
 } from '@/lib/correction-bridge';
 
@@ -47,8 +49,12 @@ export const McpAppActionBridge: FC<{
    * + user-gesture gate as onCorrection; the filter only narrows the current
    * thread's grid. Omit (e.g. contexts with no schedule grid) → drill no-ops. */
   onOpenGrid?: (filter: OpenGridFilter) => void;
+  /** Optional: widget anchor navigation (navigate) — a bar in the inline gantt
+   * card says "go look at this job"; the host picks the surface. Same
+   * containment + user-gesture gate. Omit → no-op. */
+  onNavigate?: (target: NavigateTarget) => void;
   children: ReactNode;
-}> = ({ onCorrection, onOpenGrid, children }) => {
+}> = ({ onCorrection, onOpenGrid, onNavigate, children }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // Live ref so the single listener never needs re-binding when the parent
   // re-creates its callback (same idiom as SandboxHost's liveRef).
@@ -56,6 +62,8 @@ export const McpAppActionBridge: FC<{
   onCorrectionRef.current = onCorrection;
   const onOpenGridRef = useRef(onOpenGrid);
   onOpenGridRef.current = onOpenGrid;
+  const onNavigateRef = useRef(onNavigate);
+  onNavigateRef.current = onNavigate;
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -78,6 +86,11 @@ export const McpAppActionBridge: FC<{
       const gridFilter = parseOpenGridMessage(event.data);
       if (gridFilter && onOpenGridRef.current) {
         onOpenGridRef.current(gridFilter);
+        return;
+      }
+      const nav = parseNavigateMessage(event.data);
+      if (nav && onNavigateRef.current) {
+        onNavigateRef.current(nav);
       }
     };
     window.addEventListener('message', onMessage);

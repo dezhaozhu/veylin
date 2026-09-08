@@ -18,7 +18,8 @@ import { useAppTools } from '@/lib/use-app-tools';
 import { useThreadProjects } from '@/lib/thread-projects-sync';
 import { DocumentEditResult } from '@/components/assistant-ui/document-edit-result';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
-import { correctionDraftSpec, type CorrectionPayload, type OpenGridFilter } from '@/lib/correction-bridge';
+import { correctionDraftSpec, type CorrectionPayload, type NavigateTarget, type OpenGridFilter } from '@/lib/correction-bridge';
+import { hasGantt } from '@/lib/schedule-locate';
 
 // Data plane for MCP Apps: the sandboxed widget's loadResource/callTool/
 // readResource requests are POSTed to the Veylin host route, which proxies to
@@ -92,13 +93,39 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
   // Same host-context rule as the correction bridge: the grid is THIS thread's
   // schedule (from panel context), never selected by the message. focusScheduleFilter
   // opens the panel and stashes the OpenGridFilter for the grid to apply client-side.
-  const { focusScheduleFilter, openWidget } = usePanelTabs();
+  const { focusScheduleFilter, focusGanttJob, openWidget } = usePanelTabs();
   const { setOpen: setRightOpen } = useRightSidebar();
   const handleOpenGrid = useCallback(
     (filter: OpenGridFilter) => {
       void focusScheduleFilter(filter);
     },
     [focusScheduleFilter],
+  );
+
+  // 排产即导航 · 卡片点条: the inline gantt card's bar says "go look at this
+  // job". The card only carries Compass identity (job/order/start); WHICH
+  // surface shows it is decided here: the gantt panel when the capability is
+  // installed, else the schedule grid positioned on the same job — never a
+  // silent no-op. Pull the right sidebar open first (same rule as openWidget:
+  // a tab added behind a closed drawer reads as "clicked, nothing happened").
+  const handleNavigate = useCallback(
+    (target: NavigateTarget) => {
+      const locate =
+        target.kind === 'job'
+          ? { jobId: target.id, ...(target.orderId ? { orderId: target.orderId } : {}) }
+          : { orderId: target.id };
+      setRightOpen(true);
+      if (target.surface === 'gantt' && hasGantt()) {
+        void focusGanttJob({ ...locate, ...(target.at ? { fromDate: target.at } : {}) });
+        return;
+      }
+      void focusScheduleFilter(
+        target.kind === 'job'
+          ? { job_id: target.id, ...(target.orderId ? { order_id: target.orderId } : {}) }
+          : { order_id: target.id },
+      );
+    },
+    [focusGanttJob, focusScheduleFilter, setRightOpen],
   );
 
   // 文档修改自己有一块界面:红绿对照 + 一键撤销。**改已经发生了**,这里不是问
@@ -118,7 +145,7 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
   }
 
   return (
-    <McpAppActionBridge onCorrection={handleCorrection} onOpenGrid={handleOpenGrid}>
+    <McpAppActionBridge onCorrection={handleCorrection} onOpenGrid={handleOpenGrid} onNavigate={handleNavigate}>
       {uri ? (
         <div className="flex flex-col gap-1">
           {/* **排产这类图在对话流里天生挤**(消息栏就那么宽,一张跨三个月、几十条

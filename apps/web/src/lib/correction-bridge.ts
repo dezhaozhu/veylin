@@ -120,6 +120,49 @@ export function parseOpenGridMessage(data: unknown): OpenGridFilter | null {
 }
 
 /**
+ * 排产即导航 · 通用锚点。Compass 的卡片(甘特 SVG 等)点一下,告诉宿主「去看这道
+ * 作业」;锚点只带 Compass 自己的身份(作业号/订单号/开工日),**去哪个面板由
+ * 宿主决定**。`surface` 是卡片的建议,不是命令 —— 宿主没装甘特就退到表格。
+ * 安全模型与 open-schedule-grid 完全一致:固定 type+action、字段消毒封顶、
+ * 其余一律静默丢弃;线程/租户永远来自宿主上下文,消息选不了目标。
+ */
+export type NavigateTarget = {
+  kind: 'job' | 'order';
+  id: string;
+  orderId?: string;
+  /** 开工日 YYYY-MM-DD —— 甘特默认窗对不上这一行时用它挪窗。 */
+  at?: string;
+  surface: 'gantt' | 'grid';
+};
+
+const NAVIGATE_KINDS = new Set(['job', 'order']);
+const NAVIGATE_SURFACES = new Set(['gantt', 'grid']);
+
+export function parseNavigateMessage(data: unknown): NavigateTarget | null {
+  if (typeof data !== 'object' || data === null) return null;
+  const d = data as Record<string, unknown>;
+  if (d.type !== 'veylin:action' || d.action !== 'navigate') return null;
+  const p =
+    typeof d.payload === 'object' && d.payload !== null ? (d.payload as Record<string, unknown>) : {};
+  const a =
+    typeof p.anchor === 'object' && p.anchor !== null ? (p.anchor as Record<string, unknown>) : null;
+  if (!a) return null;
+  const kind = typeof a.kind === 'string' ? a.kind : '';
+  const surface = typeof p.surface === 'string' ? p.surface : 'gantt';
+  if (!NAVIGATE_KINDS.has(kind) || !NAVIGATE_SURFACES.has(surface)) return null;
+  const id = sanitizeField(a.id, CORRECTION_FIELD_MAX);
+  const orderId = sanitizeField(a.order_id, CORRECTION_FIELD_MAX);
+  const at = sanitizeField(a.at, CORRECTION_FIELD_MAX);
+  if (id === null || orderId === null || at === null || !id) return null;
+  // 开工日只认 YYYY-MM-DD 前缀 —— 甘特按日挪窗,别的形状一律不带。
+  const atDay = at ? /^(\d{4}-\d{2}-\d{2})/.exec(at)?.[1] : undefined;
+  const out: NavigateTarget = { kind: kind as NavigateTarget['kind'], id, surface: surface as NavigateTarget['surface'] };
+  if (orderId) out.orderId = orderId;
+  if (atDay) out.at = atDay;
+  return out;
+}
+
+/**
  * Does this drill mean "show late orders only"? `status:"late"` is the sole
  * positioning compass emits today (workshop/order_id live on OpenGridFilter for
  * forward-compat but are never sent). Lateness is a COMPUTED predicate (a row's
