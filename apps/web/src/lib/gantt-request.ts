@@ -54,7 +54,7 @@ export function ganttWindowUrl(
   threadId: string | undefined,
   view: GanttView,
   expand: readonly string[] = [],
-  opts?: { fromDate?: string; laneLimit?: number },
+  opts?: { fromDate?: string; laneLimit?: number; laneFocus?: string },
 ): string {
   const q = new URLSearchParams({ view });
   if (threadId) q.set('threadId', threadId);
@@ -62,6 +62,8 @@ export function ganttWindowUrl(
   if (expand.length > 0) q.set('expand', expand.join(','));
   if (opts?.fromDate) q.set('from_date', opts.fromDate);
   if (opts?.laneLimit != null && opts.laneLimit > 0) q.set('lane_limit', String(opts.laneLimit));
+  // 资源锚点:服务端把页翻到含这条泳道的那一页(gantt_service.resolve_lane_index)。
+  if (opts?.laneFocus) q.set('lane_focus', opts.laneFocus);
   return `/api/gantt/window?${q}`;
 }
 

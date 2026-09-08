@@ -6,7 +6,7 @@ import { useNavigateAnchor } from '@/components/assistant-ui/use-navigate-anchor
 import { shouldFireNavigate } from '@/lib/navigate-fire';
 
 interface Args {
-  kind: 'job' | 'order' | 'view';
+  kind: 'job' | 'order' | 'view' | 'resource';
   id: string;
   order_id?: string;
   at?: string;
@@ -43,7 +43,7 @@ export const NavigateToolUI = makeAssistantToolUI<Args, Result>({
     if (!result) return null;
     const anchor = result.anchor ?? { kind: args?.kind ?? 'job', id: args?.id ?? '' };
     const where = result.ok
-      ? t(`navigateTool.${anchor.kind === 'view' ? 'view' : anchor.kind === 'order' ? 'order' : 'job'}`, {
+      ? t(`navigateTool.${anchor.kind === 'view' ? 'view' : anchor.kind === 'order' ? 'order' : anchor.kind === 'resource' ? 'resource' : 'job'}`, {
           id: anchor.id,
         })
       : (result.error ?? t('navigateTool.failed'));

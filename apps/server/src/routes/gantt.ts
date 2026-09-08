@@ -22,7 +22,7 @@ export function buildGanttQuery(q: Record<string, unknown>): Record<string, stri
   const out: Record<string, string> = {};
   const view = String(q.view ?? 'resource');
   out.view = VIEWS.has(view) ? view : 'resource';
-  for (const k of ['days', 'from_date', 'lane_offset', 'lane_limit', 'bars_per_lane', 'expand']) {
+  for (const k of ['days', 'from_date', 'lane_offset', 'lane_limit', 'bars_per_lane', 'expand', 'lane_focus']) {
     const v = q[k];
     if (v !== undefined && v !== '') out[k] = String(v);
   }

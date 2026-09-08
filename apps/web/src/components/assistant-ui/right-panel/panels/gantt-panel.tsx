@@ -190,10 +190,12 @@ type GanttChartProps = {
   config: Record<string, unknown>;
   ganttFocus: PanelTabsApi['ganttFocus'];
   clearGanttFocus: PanelTabsApi['clearGanttFocus'];
+  /** 资源锚点在这一页里落到的泳道名(服务端 meta.focus_lane,found 时才给)。 */
+  focusLane?: string | undefined;
 };
 
 function GanttChart({ mod, tasks, ganttFocus, clearGanttFocus,
-                     onExpandOrder, config }: GanttChartProps) {
+                     onExpandOrder, config, focusLane }: GanttChartProps) {
   const ganttRef = useRef<GanttRefLike | null>(null);
   const modRecord = mod as Record<string, unknown>;
   const Gantt = modRecord.default as FC<{
@@ -245,6 +247,37 @@ function GanttChart({ mod, tasks, ganttFocus, clearGanttFocus,
     onExpandOrder(orderIdForTask(tasksRef.current, String(id)));
     return true;
   });
+
+  // 资源锚点 → 高亮泳道父行(`lane:<名>`)。服务端已把页翻到含它的那一页,这里只
+  // 负责 show+select;和作业定位一样等实例建好、带退避重试。选中的是泳道不是作业
+  // —— 资源锚点不是作业锚点,不替用户挑一道。
+  useEffect(() => {
+    if (!ganttFocus?.target.lane || !focusLane) return;
+    const laneId = `lane:${focusLane}`;
+    if (!tasks.some((t) => t.id === laneId)) return;
+    let cancelled = false;
+    let attempt = 0;
+    let timer: number | undefined;
+    const kick = () => {
+      if (cancelled) return;
+      const delay = ganttFocusRetryDelay(attempt);
+      if (delay == null) return;
+      attempt += 1;
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        if (applyGanttTaskFocus(ganttRef.current?.instance, laneId)) {
+          clearGanttFocus();
+          return;
+        }
+        kick();
+      }, delay);
+    };
+    kick();
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [ganttFocus, focusLane, tasks, clearGanttFocus]);
 
   // 表格 → 甘特:消费 focusGanttJob 暂存的 target。`GanttChart` 只在
   // load.state === 'ready' 时才存在,不需要再判一次 load 状态。
@@ -344,6 +377,7 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
           ganttWindowUrl(threadId, view, expandedRef.current, {
             fromDate: focus?.target.fromDate,
             laneLimit: focus ? 200 : undefined,
+            laneFocus: focus?.target.lane,
           }),
         );
         const body = (await res.json()) as GanttWindowPayload & { ok: boolean; message?: string };
@@ -470,8 +504,19 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
       updateState({ view: want.view });
       return;
     }
+    if (want.lane) return;   // 资源锚点由取数结果决定怎么收(found → 高亮后清;没找到 → 下面那条清)
     if (!want.jobId && !want.orderId) clearGanttFocus();
   }, [ganttFocus, view, updateState, clearGanttFocus]);
+
+  // 资源锚点没落到任何泳道(三级工作中心在二级模型里常常没有泳道):面板上如实
+  // 说一句,定位收掉;页不动、不乱滚。找到了的由 GanttChart 高亮后再清。
+  const focusLaneMeta = load.state === 'ready'
+    ? (load.payload.meta as { focus_lane?: string; focus_lane_found?: boolean } | undefined)
+    : undefined;
+  useEffect(() => {
+    if (!ganttFocus?.target.lane || load.state !== 'ready') return;
+    if (focusLaneMeta?.focus_lane_found === false) clearGanttFocus();
+  }, [ganttFocus, load.state, focusLaneMeta?.focus_lane_found, clearGanttFocus]);
 
   // 表格↔甘特双向定位(gantt-focus.ts)。接线(ganttRef + useGanttEvent +
   // 消费 focusGanttJob)全部下沉进 GanttChart —— 理由见文件头那段
@@ -542,6 +587,11 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
           {t('panels.gantt.lanesHidden', { count: lanesHidden, unit: t(`panels.gantt.lanesHiddenUnit.${view}`) })}
         </p>
       )}
+      {focusLaneMeta?.focus_lane_found === false && focusLaneMeta.focus_lane && (
+        <p data-testid="gantt-lane-not-in-model" className="text-muted-foreground bg-muted/40 border-border border-b px-3 py-1.5 text-xs">
+          {t('panels.gantt.laneNotInModel', { lane: focusLaneMeta.focus_lane })}
+        </p>
+      )}
 
       {/* 出错就不挂甘特区——之前的版本在错误横幅下面还挂着一个 tasks=[] 的空
           <Gantt>,看起来像是"数据是空的"而不是"这次请求失败了"。 */}
@@ -558,6 +608,7 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
             ganttFocus={ganttFocus}
             clearGanttFocus={clearGanttFocus}
             onExpandOrder={handleExpandOrder}
+            focusLane={focusLaneMeta?.focus_lane_found ? focusLaneMeta.focus_lane : undefined}
           />
         )}
       </div>

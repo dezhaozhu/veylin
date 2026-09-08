@@ -46,6 +46,7 @@
       "desc": "只读的资源甘特——表格旁边的另一种排产读法",
       "truncated": "这个窗口还有 {{count}} 条没画出来",
       "lanesHidden": "另有 {{count}} 个{{unit}}没画出来",
+      "laneNotInModel": "「{{lane}}」不在排产模型的泳道里(它是现场工作中心,二级排产没有这一条),这里按资源视角打开,没有替你选任何一道。",
       "lanesHiddenUnit": {
         "resource": "资源",
         "workshop": "车间",
@@ -1252,6 +1253,7 @@
     "job": "已在右侧定位到作业 {{id}}",
     "order": "已在右侧定位到订单 {{id}}",
     "view": "已把右侧甘特切到 {{id}} 视角",
+    "resource": "已在右侧甘特找资源 {{id}} 那条泳道",
     "failed": "没能定位"
   },
   "viewer3d": {

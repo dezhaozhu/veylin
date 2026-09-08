@@ -23,6 +23,13 @@ export function useNavigateAnchor(): (target: NavigateTarget) => void {
     (target: NavigateTarget) => {
       setRightOpen(true);
       const ganttOk = target.surface === 'gantt' && hasGantt();
+      if (target.kind === 'resource') {
+        // 资源锚点:甘特按资源视角翻到含这条泳道的那一页并高亮;没装甘特就用
+        // 排产表按资源过滤 —— 同一个资源,两种地图。
+        if (ganttOk) void focusGanttJob({ view: 'resource', lane: target.id, ...(target.at ? { fromDate: target.at } : {}) });
+        else void focusScheduleFilter({ workshop: target.id });
+        return;
+      }
       if (target.kind === 'view') {
         // 视角锚点只对甘特有意义;没装甘特就打开排产表,不装模作样。
         if (ganttOk) void focusGanttJob({ view: target.id as 'resource' | 'workshop' | 'order', ...(target.at ? { fromDate: target.at } : {}) });

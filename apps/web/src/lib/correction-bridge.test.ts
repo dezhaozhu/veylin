@@ -282,6 +282,10 @@ describe('parseNavigateMessage — 卡片点条 → 宿主导航', () => {
     assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'rule', id: 'R1' } })), null);
   });
 
+  it('resource anchor: a resource code, surface defaults to gantt', () => {
+    assert.deepEqual(parseNavigateMessage(nav({ anchor: { kind: 'resource', id: 'JG0505-1', view: 'resource' } })), { kind: 'resource', id: 'JG0505-1', surface: 'gantt' });
+  });
+
   it('view anchor: id must be one of the three gantt views', () => {
     assert.deepEqual(parseNavigateMessage(nav({ anchor: { kind: 'view', id: 'workshop' } })), { kind: 'view', id: 'workshop', surface: 'gantt' });
     assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'view', id: 'gantt' } })), null);

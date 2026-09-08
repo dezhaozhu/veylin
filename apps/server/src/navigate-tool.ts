@@ -13,7 +13,7 @@ import { z } from 'zod';
  * 不能每次都把右栏拉开 —— 只有刚发出的结果才触发导航。
  */
 const VIEWS = ['resource', 'workshop', 'order'] as const;
-const KINDS = ['job', 'order', 'view'] as const;
+const KINDS = ['job', 'order', 'view', 'resource'] as const;
 const SURFACES = ['gantt', 'grid'] as const;
 
 export const navigateAnchorSchema = z.object({
@@ -35,7 +35,9 @@ export function buildNavigateTools() {
     description:
       '把右侧面板带到排产里的某个位置(排产即导航),不改任何数据。' +
       'anchor 只带 Compass 自己的身份:kind=job 时 id 是作业号(job_id,可附 order_id 与开工日 at);' +
-      'kind=order 时 id 是订单号;kind=view 时 id 是甘特视角(resource|workshop|order)。' +
+      'kind=order 时 id 是订单号;kind=view 时 id 是甘特视角(resource|workshop|order);' +
+      'kind=resource 时 id 是资源**编码**(如 JG0505-1,驾驶舱/产能证据里的 resource 字段),甘特翻到含它那条泳道并高亮,' +
+      '它不在排产模型的泳道里时面板会如实说明(三级工作中心在二级模型里常常没有泳道)。' +
       'surface 是建议去哪个面板(gantt|grid),默认 gantt;用户没装甘特时宿主会退到排产表定位同一道作业。' +
       '定位是否成功由面板自己如实显示:当前窗口里找不到时它不会乱滚到别的行。' +
       '适合在回答里说完「瓶颈在 X / 这道作业迟了」之后,带用户去看那一处。',

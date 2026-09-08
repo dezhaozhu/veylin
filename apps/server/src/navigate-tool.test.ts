@@ -29,6 +29,8 @@ test('surface=grid 透传;kind=view 只认三个视角', async () => {
 
   const view = await run({ kind: 'view', id: 'workshop' });
   assert.equal(view.ok, true);
+  const res = await run({ kind: 'resource', id: 'JG0505-1' });
+  assert.deepEqual(res.anchor, { kind: 'resource', id: 'JG0505-1' });
 
   const bad = await run({ kind: 'view', id: 'gantt' });
   assert.equal(bad.ok, false);

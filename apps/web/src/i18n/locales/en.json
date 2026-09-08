@@ -46,6 +46,7 @@
       "desc": "Read-only resource Gantt — another way to read the same schedule as the table",
       "truncated": "{{count}} more bars in this window are not drawn",
       "lanesHidden": "{{count}} more {{unit}} are not shown",
+      "laneNotInModel": "\"{{lane}}\" is not a lane in the scheduling model (it is a shop-floor work center the 二级 plan has no lane for). Opened the resource view without selecting anything.",
       "lanesHiddenUnit": {
         "resource": "resources",
         "workshop": "workshops",
@@ -1252,6 +1253,7 @@
     "job": "Took you to job {{id}} in the right panel",
     "order": "Took you to order {{id}} in the right panel",
     "view": "Switched the right-panel Gantt to the {{id}} view",
+    "resource": "Looking for resource {{id}} in the right-panel Gantt",
     "failed": "Could not navigate"
   },
   "viewer3d": {

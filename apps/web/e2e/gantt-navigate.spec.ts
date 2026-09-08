@@ -263,4 +263,69 @@ test('驾驶舱点「在甘特里看」→ 右栏甘特打开', async ({ page, r
       { timeout: 30_000, intervals: [500] },
     )
     .toBe('active');
+
+  // 判据 2:资源锚点要么落到一条泳道(高亮的是泳道父行 `lane:…`,不是某道作业),
+  // 要么面板如实说「不在排产模型的泳道里」。两者必居其一;静默什么都不做 = 红。
+  const anchorId = await drill.getAttribute('data-anchor');
+  expect(anchorId, '钻取按钮没带锚点').toBeTruthy();
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const note = document.querySelector('[data-testid="gantt-lane-not-in-model"]');
+          if (note) return `note:${note.textContent?.slice(0, 20)}`;
+          const sel = document.querySelector('.gantt_task_line.gantt_selected, .gantt_row.gantt_selected');
+          const id = sel?.getAttribute('data-task-id') ?? sel?.getAttribute('task_id') ?? '';
+          return id.startsWith('lane:') ? `lane:${id.slice(5)}` : null;
+        }),
+      { timeout: 60_000, intervals: [1000] },
+    )
+    .toMatch(/^(note:|lane:)/);
+});
+
+/**
+ * **资源锚点·找得到的那条路**:驾驶舱的鼓多半是三级工作中心(二级模型里没泳道),
+ * 上一条走的是「如实说没有」;这条让 agent 直接 navigate 到一个**真在模型里**的资源
+ * (J0炉),判据=甘特按资源视角打开、高亮的是 `lane:J0炉` 这条泳道父行(不是某道作业)。
+ */
+test('agent navigate kind=resource → 甘特翻到那条泳道并高亮泳道本身', async ({ page, request }) => {
+  const project = await compassProject(request);
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(project.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: project.name })).toBeVisible({ timeout: 15_000 });
+
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+  await composer.fill('直接调用 navigate 工具,参数 kind=resource、id=J0炉、surface=gantt,把右侧甘特定位到 J0炉 这条泳道。不要调别的工具,不用解释。');
+  await composer.press('Enter');
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const s = (window as unknown as {
+            __veylinTest: { panelState: () => { tabs: Array<{ id: string; kind: string }>; activeId: string | null } };
+          }).__veylinTest.panelState();
+          const g = s.tabs.find((t) => t.kind === 'gantt');
+          return g ? (s.activeId === g.id ? 'active' : 'open-not-active') : 'none';
+        }),
+      { timeout: 4 * 60_000, intervals: [1000] },
+    )
+    .toBe('active');
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const sel = document.querySelector('.gantt_task_line.gantt_selected, .gantt_row.gantt_selected');
+          return sel?.getAttribute('data-task-id') ?? sel?.getAttribute('task_id') ?? null;
+        }),
+      { timeout: 60_000, intervals: [1000] },
+    )
+    .toBe('lane:J0炉');
+  // 找到了就不该出「不在模型里」那句
+  expect(await page.locator('[data-testid="gantt-lane-not-in-model"]').count()).toBe(0);
 });

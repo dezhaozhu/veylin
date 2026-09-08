@@ -13,6 +13,8 @@ export type ScheduleLocateTarget = {
   fromDate?: string;
   /** 只切视角(驾驶舱「在甘特里看」/ agent navigate kind=view);可不带作业/订单。 */
   view?: 'resource' | 'workshop' | 'order';
+  /** 资源锚点:资源**编码**。甘特翻到含它那条泳道并高亮;不在模型泳道里时面板如实说。 */
+  lane?: string;
 };
 
 type LocateGanttImpl = (target: ScheduleLocateTarget) => void;

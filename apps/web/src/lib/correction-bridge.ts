@@ -127,8 +127,9 @@ export function parseOpenGridMessage(data: unknown): OpenGridFilter | null {
  * 其余一律静默丢弃;线程/租户永远来自宿主上下文,消息选不了目标。
  */
 export type NavigateTarget = {
-  /** job/order = 定位到一道作业/一个订单;view = 只把甘特切到某个视角(id = resource|workshop|order)。 */
-  kind: 'job' | 'order' | 'view';
+  /** job/order = 定位到一道作业/一个订单;view = 只把甘特切到某个视角(id = resource|workshop|order);
+   * resource = 一个资源**编码**(如 JG0505-1),甘特翻到含它那条泳道并高亮,不在模型泳道里时如实说。 */
+  kind: 'job' | 'order' | 'view' | 'resource';
   id: string;
   orderId?: string;
   /** 开工日 YYYY-MM-DD —— 甘特默认窗对不上这一行时用它挪窗。 */
@@ -136,7 +137,7 @@ export type NavigateTarget = {
   surface: 'gantt' | 'grid';
 };
 
-const NAVIGATE_KINDS = new Set(['job', 'order', 'view']);
+const NAVIGATE_KINDS = new Set(['job', 'order', 'view', 'resource']);
 const NAVIGATE_VIEWS = new Set(['resource', 'workshop', 'order']);
 const NAVIGATE_SURFACES = new Set(['gantt', 'grid']);
 
