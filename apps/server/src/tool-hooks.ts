@@ -1,4 +1,5 @@
 import type { HookBus } from '@veylin/hooks';
+import { toModelOutputCompact } from './model-view';
 
 type AnyTool = {
   id?: string;
@@ -40,6 +41,9 @@ function wrapOneTool(
 
   return {
     ...tool,
+    // 模型视图(model-view.ts):工具输出照旧存历史、照旧给客户端 part,只有递给
+    // 模型的那一份走压缩 —— 工具自己声明了 toModelOutput 就尊重它。
+    ...('toModelOutput' in tool && typeof tool.toModelOutput === 'function' ? {} : { toModelOutput: toModelOutputCompact }),
     execute: async (input: unknown, execCtx?: unknown) => {
       const toolName = String(tool.id ?? name);
       const pre = await bus.emit(
