@@ -16,16 +16,19 @@ const API = `http://127.0.0.1:${process.env.E2E_API_PORT ?? '8799'}`;
 
 type Project = { id: string; name: string; sources: string[] };
 
-/** 等 Compass 场景物化成项目(身份同步是异步的;新数据目录里第一次要等一会)。 */
+/**
+ * 等 Compass 场景物化成项目(身份同步是异步的;新数据目录里第一次要等一会)。
+ * **固定选上重**:判据依赖它的数据形状(驾驶舱是积压脸、有「在甘特里看」;资源视角
+ * 里有 J0炉 这条泳道)。此前写成「锅炉厂或上重谁先来」,一轮选到锅炉厂就两条红
+ * (锅炉厂是 data_trust 脸、没有 J0炉)——那是夹具在抖,不是产品。
+ */
 async function compassProject(request: APIRequestContext): Promise<Project> {
   let found: Project | undefined;
   await expect
     .poll(
       async () => {
         const listed = await (await request.get(`${API}/api/projects`)).json();
-        found = (listed.projects as Project[]).find((p) =>
-          p.sources.some((s) => s === 'guolu' || s === 'shangzhong'),
-        );
+        found = (listed.projects as Project[]).find((p) => p.sources.includes('shangzhong'));
         return Boolean(found);
       },
       { timeout: 90_000, intervals: [2000] },
