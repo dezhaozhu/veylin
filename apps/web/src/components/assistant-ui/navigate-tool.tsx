@@ -10,13 +10,14 @@ interface Args {
   id: string;
   order_id?: string;
   at?: string;
+  run_id?: string;
   surface?: 'gantt' | 'grid';
 }
 
 interface Result {
   ok: boolean;
   error?: string;
-  anchor?: { kind: string; id: string; order_id?: string; at?: string };
+  anchor?: { kind: string; id: string; order_id?: string; at?: string; run_id?: string };
   surface?: 'gantt' | 'grid';
   issued_at?: number;
 }

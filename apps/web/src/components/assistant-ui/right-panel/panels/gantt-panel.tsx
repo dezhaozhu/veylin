@@ -33,6 +33,7 @@ import {
   isTreeToggleTarget,
 } from '@/lib/gantt-focus';
 import { locateTable } from '@/lib/schedule-locate';
+import { compareRuns, shortRunId } from '@/lib/run-mismatch';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
 import type { PanelTabsApi } from '@/components/assistant-ui/right-panel/use-panel-tabs';
 import type { PanelContentProps } from '../panel-types';
@@ -511,8 +512,34 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
   // 资源锚点没落到任何泳道(三级工作中心在二级模型里常常没有泳道):面板上如实
   // 说一句,定位收掉;页不动、不乱滚。找到了的由 GanttChart 高亮后再清。
   const focusLaneMeta = load.state === 'ready'
-    ? (load.payload.meta as { focus_lane?: string; focus_lane_found?: boolean } | undefined)
+    ? (load.payload.meta as { focus_lane?: string; focus_lane_found?: boolean; run_id?: string } | undefined)
     : undefined;
+  // 跨面版本:发起面(表格/卡片)看到的 run_id vs 这次窗口的 meta.run_id。不一致就在
+  // 面板上说一句「表格还是上一版」,给「重新导入表格」;一致或不知道就不出现。
+  const [runMismatch, setRunMismatch] = useState<{ origin: string; landing: string } | null>(null);
+  useEffect(() => {
+    if (!ganttFocus?.target.runId || load.state !== 'ready') return;
+    const landing = focusLaneMeta?.run_id;
+    const origin = ganttFocus.target.runId;
+    setRunMismatch(compareRuns(origin, landing) === 'differs' ? { origin, landing: landing! } : null);
+  }, [ganttFocus, load.state, focusLaneMeta?.run_id]);
+  const [reloadingTable, setReloadingTable] = useState(false);
+  const reloadTable = useCallback(async () => {
+    setReloadingTable(true);
+    try {
+      const res = await fetch('/api/table/load-compass-schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId }),
+      });
+      const body = (await res.json()) as { ok?: boolean };
+      if (body.ok) setRunMismatch(null);   // 表格自己会收到 sheetReplace 重拉
+    } catch {
+      /* 失败就让横幅留着 —— 事实没变 */
+    } finally {
+      setReloadingTable(false);
+    }
+  }, [threadId]);
   useEffect(() => {
     if (!ganttFocus?.target.lane || load.state !== 'ready') return;
     if (focusLaneMeta?.focus_lane_found === false) clearGanttFocus();
@@ -586,6 +613,16 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
         <p className="text-muted-foreground bg-muted/40 border-border border-b px-3 py-1.5 text-xs">
           {t('panels.gantt.lanesHidden', { count: lanesHidden, unit: t(`panels.gantt.lanesHiddenUnit.${view}`) })}
         </p>
+      )}
+      {runMismatch && (
+        <div data-testid="gantt-run-mismatch" className="text-muted-foreground bg-muted/40 border-border flex items-center gap-2 border-b px-3 py-1.5 text-xs">
+          <span className="min-w-0 flex-1 truncate">
+            {t('panels.gantt.runMismatch', { origin: shortRunId(runMismatch.origin), landing: shortRunId(runMismatch.landing) })}
+          </span>
+          <button type="button" disabled={reloadingTable} className="text-foreground shrink-0 underline underline-offset-2 disabled:opacity-50" onClick={() => void reloadTable()}>
+            {t('panels.gantt.reloadTable')}
+          </button>
+        </div>
       )}
       {focusLaneMeta?.focus_lane_found === false && focusLaneMeta.focus_lane && (
         <p data-testid="gantt-lane-not-in-model" className="text-muted-foreground bg-muted/40 border-border border-b px-3 py-1.5 text-xs">

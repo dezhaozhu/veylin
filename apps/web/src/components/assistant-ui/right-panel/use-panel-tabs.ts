@@ -458,11 +458,12 @@ export function usePanelTabsState(): PanelTabsApi {
       // 等这次点击走完再切页签。表格 keep-alive 盖在同一块区域,
       // 甘特点条当下就切表的话,mouseup 会落到格子上,再 locateGantt
       // 把人踢回甘特 —— 甘特不保活,重挂就滚到顶、没有选中。
-      const { orderId, jobId } = target;
+      const { orderId, jobId, runId } = target;
       window.setTimeout(() => {
         void focusScheduleFilter({
           ...(orderId ? { order_id: orderId } : {}),
           ...(jobId ? { job_id: jobId } : {}),
+          ...(runId ? { run_id: runId } : {}),
         });
       }, 0);
     });

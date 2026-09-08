@@ -12,6 +12,7 @@ import { columnToReveal } from '@/lib/new-columns';
 import { isStaleSheetError } from '@/lib/stale-sheet-recovery';
 import { panelScopeKey } from '@/lib/panel-scope-key';
 import { findSheetIdByShortName, isSheet } from '@/lib/sheet-short-name';
+import { compareRuns, shortRunId } from '@/lib/run-mismatch';
 import { useProjectsOrNull } from '@/lib/projects-sync';
 import { useThreadProjectsOrNull } from '@/lib/thread-projects-sync';
 import { createPortal } from 'react-dom';
@@ -215,6 +216,8 @@ interface TableSheet {
   id: string;
   name: string;
   builtin: boolean;
+  /** 来源戳(服务端 sheets 列表原样带来);connector 表有 loadedAt/runId。 */
+  source?: { kind?: string; loadedAt?: string; runId?: string; [k: string]: unknown };
 }
 
 interface TableGridTotals {
@@ -640,6 +643,8 @@ export function TableGrid() {
   // usePanelTabsState can't reach useRightSidebar, see its focusGanttJob doc).
   const { setOpen: setRightOpen } = useRightSidebar();
   const [sheets, setSheets] = useState<TableSheet[]>([]);
+  const sheetsRef = useRef(sheets);
+  sheetsRef.current = sheets;
   const [activeSheetId, setActiveSheetId] = useState('main');
   const [columnDefs, setColumnDefs] = useState<TableColumnDef[]>([]);
   const [rows, setRows] = useState<TableRow[]>([]);
@@ -1262,6 +1267,32 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
     }
   };
 
+  // 跨面版本不一致(甘特/卡片定位落到表格时,发起面的 run_id ≠ 这张表导入时的 runId):
+  // 在表格顶部说一句,给一个「重新导入」。一致或任一侧不知道就不出现 —— 一个事实一处表达。
+  const [runMismatch, setRunMismatch] = useState<{ origin: string; landing: string } | null>(null);
+  const reloadCompassSchedule = useCallback(async () => {
+    setCompassLoading(true);
+    try {
+      const res = await fetch('/api/table/load-compass-schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId }),
+      });
+      const data = await readJsonResponse<{ ok?: boolean; sheet?: string; error?: string }>(res);
+      if (data.ok && data.sheet) {
+        setRunMismatch(null);
+        lastSerialized.current = '';
+        void loadRef.current(data.sheet, false);
+      } else {
+        showToast(data.error ?? t('table.compassUnavailable'), 'error');
+      }
+    } catch {
+      showToast(t('table.compassUnavailable'), 'error');
+    } finally {
+      setCompassLoading(false);
+    }
+  }, [showToast, t, threadId]);
+
   // Bootstrap-on-mount only (deps below deliberately omit threadId): the grid
   // panel is workspace-wide, not remounted per thread (see the "Fork seam"
   // comment in routes/tables.ts), so this fires once. `threadId` is still read
@@ -1520,6 +1551,13 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         jobId: scheduleFilter.filter.job_id,
         orderId: scheduleFilter.filter.order_id,
       };
+      // 版本比对:发起面(甘特/卡片)看到的 run_id vs 这张排产表导入时的 runId。
+      {
+        const scheduleSheetId = findSheetIdByShortName(sheets, SCHEDULE_SHEET_ID) ?? SCHEDULE_SHEET_ID;
+        const landing = sheets.find((s) => s.id === scheduleSheetId)?.source?.runId;
+        const origin = scheduleFilter.filter.run_id;
+        setRunMismatch(compareRuns(origin, landing) === 'differs' ? { origin: origin!, landing: landing! } : null);
+      }
       if (isSheet(activeSheetId, SCHEDULE_SHEET_ID)) {
         locatePendingAnchor();
       } else {
@@ -1883,10 +1921,12 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
       if (jobId == null || jobId === '') return;
       setRightOpen(true);
       const fromDate = scheduleLocateFromDate(row);
+      const sheetRunId = sheetsRef.current.find((s) => s.id === activeSheetIdRef.current)?.source?.runId;
       locateGantt({
         jobId: String(jobId),
         ...(orderId != null && orderId !== '' ? { orderId: String(orderId) } : {}),
         ...(fromDate ? { fromDate } : {}),
+        ...(sheetRunId ? { runId: sheetRunId } : {}),
       });
     },
     [setRightOpen],
@@ -2606,6 +2646,19 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         <div className="border-border bg-muted/40 text-muted-foreground flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
           <Loader2 className="size-3 shrink-0 animate-spin" />
           <span className="min-w-0 flex-1 truncate">{t('table.loadingCompass')}</span>
+        </div>
+      ) : null}
+      {runMismatch && !compassLoading ? (
+        <div data-testid="table-run-mismatch" className="border-border bg-muted/40 text-muted-foreground flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
+          <span className="min-w-0 flex-1 truncate">
+            {t('table.runMismatch', { landing: shortRunId(runMismatch.landing), origin: shortRunId(runMismatch.origin) })}
+          </span>
+          <button type="button" className="text-foreground shrink-0 underline underline-offset-2" onClick={() => void reloadCompassSchedule()}>
+            {t('table.reloadCompass')}
+          </button>
+          <button type="button" className="shrink-0" aria-label={t('common.dismiss', { defaultValue: 'Dismiss' })} onClick={() => setRunMismatch(null)}>
+            <X className="size-3" />
+          </button>
         </div>
       ) : null}
       {inboxPending.length > 0 ? (

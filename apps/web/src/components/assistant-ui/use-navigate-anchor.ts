@@ -23,11 +23,13 @@ export function useNavigateAnchor(): (target: NavigateTarget) => void {
     (target: NavigateTarget) => {
       setRightOpen(true);
       const ganttOk = target.surface === 'gantt' && hasGantt();
+      const ver = target.runId ? { runId: target.runId } : {};
+      const verGrid = target.runId ? { run_id: target.runId } : {};
       if (target.kind === 'resource') {
         // 资源锚点:甘特按资源视角翻到含这条泳道的那一页并高亮;没装甘特就用
         // 排产表按资源过滤 —— 同一个资源,两种地图。
-        if (ganttOk) void focusGanttJob({ view: 'resource', lane: target.id, ...(target.at ? { fromDate: target.at } : {}) });
-        else void focusScheduleFilter({ workshop: target.id });
+        if (ganttOk) void focusGanttJob({ view: 'resource', lane: target.id, ...ver, ...(target.at ? { fromDate: target.at } : {}) });
+        else void focusScheduleFilter({ workshop: target.id, ...verGrid });
         return;
       }
       if (target.kind === 'view') {
@@ -41,13 +43,13 @@ export function useNavigateAnchor(): (target: NavigateTarget) => void {
           ? { jobId: target.id, ...(target.orderId ? { orderId: target.orderId } : {}) }
           : { orderId: target.id };
       if (ganttOk) {
-        void focusGanttJob({ ...locate, ...(target.at ? { fromDate: target.at } : {}) });
+        void focusGanttJob({ ...locate, ...ver, ...(target.at ? { fromDate: target.at } : {}) });
         return;
       }
       void focusScheduleFilter(
         target.kind === 'job'
-          ? { job_id: target.id, ...(target.orderId ? { order_id: target.orderId } : {}) }
-          : { order_id: target.id },
+          ? { job_id: target.id, ...(target.orderId ? { order_id: target.orderId } : {}), ...verGrid }
+          : { order_id: target.id, ...verGrid },
       );
     },
     [focusGanttJob, focusScheduleFilter, setRightOpen],

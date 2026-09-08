@@ -250,6 +250,9 @@ export type TableSheetSource =
       server: string;
       tenant?: string;
       loadedAt: string;
+      /** 导入那一刻的排产运行 id(Compass run_id)。跨面定位时与甘特的 meta.run_id 比,
+       * 对不上要说出来「表格还是上一版」。老表没有这个字段 = 不知道,不当一致。 */
+      runId?: string;
       /**
        * Project id (v3) the sheet's data belongs to — the durable provenance key
        * once pins are project ids. `server` is kept for display. Absent on stamps

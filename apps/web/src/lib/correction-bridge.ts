@@ -92,6 +92,8 @@ export type OpenGridFilter = {
   order_id?: string;
   /** 宿主内部:甘特点条带作业号过来。不从对话消息解析。 */
   job_id?: string;
+  /** 宿主内部:发起定位那一面的排产运行 id(跨面版本比对)。不从对话消息解析。 */
+  run_id?: string;
 };
 
 /**
@@ -134,6 +136,8 @@ export type NavigateTarget = {
   orderId?: string;
   /** 开工日 YYYY-MM-DD —— 甘特默认窗对不上这一行时用它挪窗。 */
   at?: string;
+  /** 卡片所看到的排产运行 id(甘特卡片 meta.run_id);落地面拿它比版本。 */
+  runId?: string;
   surface: 'gantt' | 'grid';
 };
 
@@ -156,13 +160,15 @@ export function parseNavigateMessage(data: unknown): NavigateTarget | null {
   const id = sanitizeField(a.id, CORRECTION_FIELD_MAX);
   const orderId = sanitizeField(a.order_id, CORRECTION_FIELD_MAX);
   const at = sanitizeField(a.at, CORRECTION_FIELD_MAX);
-  if (id === null || orderId === null || at === null || !id) return null;
+  const runId = sanitizeField(a.run_id, CORRECTION_FIELD_MAX);
+  if (id === null || orderId === null || at === null || runId === null || !id) return null;
   if (kind === 'view' && !NAVIGATE_VIEWS.has(id)) return null;
   // 开工日只认 YYYY-MM-DD 前缀 —— 甘特按日挪窗,别的形状一律不带。
   const atDay = at ? /^(\d{4}-\d{2}-\d{2})/.exec(at)?.[1] : undefined;
   const out: NavigateTarget = { kind: kind as NavigateTarget['kind'], id, surface: surface as NavigateTarget['surface'] };
   if (orderId) out.orderId = orderId;
   if (atDay) out.at = atDay;
+  if (runId) out.runId = runId;
   return out;
 }
 

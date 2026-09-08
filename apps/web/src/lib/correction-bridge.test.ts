@@ -282,6 +282,10 @@ describe('parseNavigateMessage — 卡片点条 → 宿主导航', () => {
     assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'rule', id: 'R1' } })), null);
   });
 
+  it('carries the card\'s run_id through as runId (version check on landing)', () => {
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'job', id: 'J1', run_id: 'tenantrun-2026-08-18T17:56:01' } }))?.runId, 'tenantrun-2026-08-18T17:56:01');
+  });
+
   it('resource anchor: a resource code, surface defaults to gantt', () => {
     assert.deepEqual(parseNavigateMessage(nav({ anchor: { kind: 'resource', id: 'JG0505-1', view: 'resource' } })), { kind: 'resource', id: 'JG0505-1', surface: 'gantt' });
   });

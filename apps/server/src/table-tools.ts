@@ -161,6 +161,7 @@ async function stampCompassLoadSource(
     ...(projectId ? { project: projectId } : {}),
     tenant: tenantFromPayload(payload),
     loadedAt: new Date().toISOString(),
+    ...(typeof payload.run_id === 'string' && payload.run_id ? { runId: payload.run_id } : {}),
   };
   try {
     await stampTableSheetSource(sheetId, source);
@@ -758,6 +759,7 @@ export function buildTableTools(getMcpToolsets?: ToolsetsGetter, getMcpGroups?: 
             .describe('Pinned project id at load time (v3 durable provenance identity).'),
           tenant: z.string().optional(),
           loadedAt: z.string().optional(),
+          runId: z.string().optional().describe('导入那一刻的 Compass 排产运行 id'),
           fileHash: z.string().optional().describe('原件 sha256(内容寻址)'),
           fileName: z.string().optional(),
           importedAt: z.string().optional(),

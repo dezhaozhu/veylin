@@ -46,6 +46,8 @@
       "desc": "只读的资源甘特——表格旁边的另一种排产读法",
       "truncated": "这个窗口还有 {{count}} 条没画出来",
       "lanesHidden": "另有 {{count}} 个{{unit}}没画出来",
+      "runMismatch": "表格还是 {{origin}} 那版排产,甘特是 {{landing}} 这版——作业位置可能已经变了。",
+      "reloadTable": "重新导入表格",
       "laneNotInModel": "「{{lane}}」不在排产模型的泳道里(它是现场工作中心,二级排产没有这一条),这里按资源视角打开,没有替你选任何一道。",
       "lanesHiddenUnit": {
         "resource": "资源",
@@ -1018,6 +1020,8 @@
     "commitConflict": "排产数据已被他人更改，请重新预览后再提交",
     "discardDone": "已放弃全部草稿修改",
     "loadingCompass": "正在从 Compass 加载排产数据…",
+    "runMismatch": "这张表是 {{landing}} 那版排产导入的,刚才定位来自 {{origin}} 那版——作业位置可能已经变了。",
+    "reloadCompass": "重新导入",
     "compassUnavailable": "Compass 排产未加载（MCP 未连接或不可用），显示默认空表",
     "referenceSelection": "引用到对话",
     "anchorNotHere": "这一单在当前视图里没有记录：{{anchor}}",

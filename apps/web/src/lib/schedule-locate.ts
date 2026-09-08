@@ -15,6 +15,8 @@ export type ScheduleLocateTarget = {
   view?: 'resource' | 'workshop' | 'order';
   /** 资源锚点:资源**编码**。甘特翻到含它那条泳道并高亮;不在模型泳道里时面板如实说。 */
   lane?: string;
+  /** 发起这次定位的那一面所看到的排产运行 id。落地面拿它和自己的比,不一致要说出来。 */
+  runId?: string;
 };
 
 type LocateGanttImpl = (target: ScheduleLocateTarget) => void;

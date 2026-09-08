@@ -46,6 +46,8 @@
       "desc": "Read-only resource Gantt — another way to read the same schedule as the table",
       "truncated": "{{count}} more bars in this window are not drawn",
       "lanesHidden": "{{count}} more {{unit}} are not shown",
+      "runMismatch": "The table is still on the {{origin}} schedule run; this Gantt is {{landing}} — positions may have changed.",
+      "reloadTable": "Re-import table",
       "laneNotInModel": "\"{{lane}}\" is not a lane in the scheduling model (it is a shop-floor work center the 二级 plan has no lane for). Opened the resource view without selecting anything.",
       "lanesHiddenUnit": {
         "resource": "resources",
@@ -1018,6 +1020,8 @@
     "commitConflict": "The schedule changed under you — re-preview and commit again",
     "discardDone": "All draft edits discarded",
     "loadingCompass": "Loading schedule data from Compass…",
+    "runMismatch": "This sheet was imported from the {{landing}} schedule run; the location you came from is on the {{origin}} run — positions may have changed.",
+    "reloadCompass": "Re-import",
     "compassUnavailable": "Compass schedule not loaded (MCP disconnected or unavailable); showing default empty sheet",
     "referenceSelection": "Reference in chat",
     "anchorNotHere": "No rows here for {{anchor}}",

@@ -25,6 +25,7 @@ export const navigateAnchorSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}/)
     .optional()
     .describe('开工日 YYYY-MM-DD。甘特默认窗口对不上这一行时,用它把时间窗挪过去。'),
+  run_id: z.string().min(1).max(200).optional().describe('你看到这个位置时的排产运行 id(工具结果里的 run_id/meta.run_id);落地面拿它比版本'),
 });
 
 export type NavigateAnchor = z.infer<typeof navigateAnchorSchema>;
@@ -46,6 +47,7 @@ export function buildNavigateTools() {
       id: z.string().min(1).max(200),
       order_id: z.string().min(1).max(200).optional(),
       at: z.string().regex(/^\d{4}-\d{2}-\d{2}/).optional(),
+      run_id: z.string().min(1).max(200).optional(),
       surface: z.enum(SURFACES).optional(),
     }),
     outputSchema: z.object({
@@ -63,6 +65,7 @@ export function buildNavigateTools() {
       const anchor: NavigateAnchor = { kind: input.kind, id: input.id };
       if (input.order_id) anchor.order_id = input.order_id;
       if (input.at) anchor.at = input.at.slice(0, 10);
+      if (input.run_id) anchor.run_id = input.run_id;
       return { ok: true, anchor, surface: input.surface ?? 'gantt', issued_at: Date.now() };
     },
   });
