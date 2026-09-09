@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { NAVIGATE_FRESH_MS, shouldFireNavigate } from './navigate-fire';
+import { NAVIGATE_FRESH_MS, NAVIGATE_MIN_GAP_MS, shouldFireNavigate } from './navigate-fire';
 
 const NOW = 1_800_000_000_000;
 const fresh = (over: Record<string, unknown> = {}) => ({
@@ -35,5 +35,16 @@ describe('shouldFireNavigate — agent navigate 结果什么时候真的动右�
     assert.equal(shouldFireNavigate(fresh({ issued_at: undefined }), 'c1', { now: NOW, seen }), null);
     assert.equal(shouldFireNavigate(fresh({ anchor: { kind: 'rule', id: 'R' } }), 'c1', { now: NOW, seen }), null);
     assert.equal(shouldFireNavigate('nope', 'c1', { now: NOW, seen }), null);
+  });
+});
+
+describe('shouldFireNavigate — 一轮最多一次(最小间隔兜底)', () => {
+  it('间隔内的第二次不动右栏,但记成已见;间隔外照常', () => {
+    const seen = new Set<string>(); const last = { value: 0 };
+    assert.ok(shouldFireNavigate(fresh(), 'c1', { now: NOW, seen, lastFiredAt: last }));
+    assert.equal(last.value, NOW);
+    assert.equal(shouldFireNavigate(fresh({ issued_at: NOW + 1000 }), 'c2', { now: NOW + 2000, seen, lastFiredAt: last }), null);
+    assert.ok(seen.has('c2'));
+    assert.ok(shouldFireNavigate(fresh({ issued_at: NOW + NAVIGATE_MIN_GAP_MS + 500 }), 'c3', { now: NOW + NAVIGATE_MIN_GAP_MS + 1000, seen, lastFiredAt: last }));
   });
 });

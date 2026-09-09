@@ -10,11 +10,13 @@ import { parseNavigateMessage, type NavigateTarget } from '@/lib/correction-brid
  * 形状校验复用卡片那条路的 parseNavigateMessage —— 两个入口一套判据。
  */
 export const NAVIGATE_FRESH_MS = 30_000;
+/** 两次自动导航之间的最小间隔:提示词说「一轮最多一次」,这里是兜底 —— 模型连调两次也只动一次右栏。 */
+export const NAVIGATE_MIN_GAP_MS = 8_000;
 
 export function shouldFireNavigate(
   result: unknown,
   toolCallId: string,
-  opts: { now: number; seen: Set<string> },
+  opts: { now: number; seen: Set<string>; lastFiredAt?: { value: number } },
 ): NavigateTarget | null {
   if (!result || typeof result !== 'object') return null;
   const r = result as { ok?: unknown; anchor?: unknown; surface?: unknown; issued_at?: unknown };
@@ -29,6 +31,11 @@ export function shouldFireNavigate(
     payload: { anchor: r.anchor, surface: r.surface },
   });
   if (!target) return null;
+  if (opts.lastFiredAt && opts.now - opts.lastFiredAt.value < NAVIGATE_MIN_GAP_MS) {
+    opts.seen.add(toolCallId);   // 记成已见:这条就算过了,不会等一会又冒出来
+    return null;
+  }
   opts.seen.add(toolCallId);
+  if (opts.lastFiredAt) opts.lastFiredAt.value = opts.now;
   return target;
 }

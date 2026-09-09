@@ -24,6 +24,7 @@ interface Result {
 
 /** 本会话已经动作过的工具调用 —— 同一条结果重挂/StrictMode 会渲染多次。 */
 const fired = new Set<string>();
+const lastFiredAt = { value: 0 };
 
 /**
  * agent 的 `navigate` 工具在对话里的样子:一行「已带你去看 …」。真正的动作
@@ -37,7 +38,7 @@ export const NavigateToolUI = makeAssistantToolUI<Args, Result>({
     const navigateTo = useNavigateAnchor();
 
     useEffect(() => {
-      const target = shouldFireNavigate(result, toolCallId, { now: Date.now(), seen: fired });
+      const target = shouldFireNavigate(result, toolCallId, { now: Date.now(), seen: fired, lastFiredAt });
       if (target) navigateTo(target);
     }, [result, toolCallId, navigateTo]);
 
