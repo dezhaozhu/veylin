@@ -40,6 +40,26 @@ let panelSplitApi: DevPanelSplitApi | null = null;
 export function registerDevPanelSplitApi(api: DevPanelSplitApi): void {
   panelSplitApi = api;
 }
+
+/** 排产即导航的宿主机制 e2e 入口(只在 DEV 装):直接喂一个 NavigateTarget 给和
+ * 卡片点条 / agent navigate 同一个 handler。模型走一遍另有测试;这里钉的是宿主
+ * 「展开二级选三级 / 规则过滤表格 / 订单双落地」的机械,不让模型的抖动混进判据。 */
+let devNavigate: ((target: unknown) => void) | null = null;
+let devGanttTaskIds: (() => string[]) | null = null;
+let devGanttInstance: ((id: string) => { exists: boolean; open: unknown; parent: unknown } | null) | null = null;
+
+export function registerDevGanttInstance(fn: typeof devGanttInstance): void {
+  devGanttInstance = fn;
+}
+
+/** 甘特当前喂给 dhtmlx 的 task id 清单(只在 DEV):e2e 判「子行进没进树」不靠 DOM(虚拟化/折叠都会骗人)。 */
+export function registerDevGanttTasks(fn: (() => string[]) | null): void {
+  devGanttTaskIds = fn;
+}
+
+export function registerDevNavigate(fn: (target: unknown) => void): void {
+  devNavigate = fn;
+}
 let lastAskResult: AskUserResult | null = null;
 
 export function registerDevThreadId(threadId: string): void {
@@ -57,6 +77,10 @@ export function installDevTestHooks(): void {
       openPanel: (kind: string) => void;
       moveTabToPane: (kind: string, pane: 'top' | 'bottom') => void;
       panelState: () => ReturnType<DevPanelSplitApi['panelState']>;
+      navigate: (target: unknown) => void;
+      threadId: () => string | undefined;
+      ganttTaskIds: () => string[];
+      ganttInstanceTask: (id: string) => { exists: boolean; open: unknown; parent: unknown } | null;
       peekAskResult: () => AskUserResult | null;
       clearAskResult: () => void;
     };
@@ -83,6 +107,13 @@ export function installDevTestHooks(): void {
       if (!panelSplitApi) throw new Error('dev: panel split api not ready');
       return panelSplitApi.panelState();
     },
+    navigate(target: unknown) {
+      if (!devNavigate) throw new Error('dev: navigate not ready');
+      devNavigate(target);
+    },
+    threadId: () => currentThreadId,
+    ganttTaskIds: () => (devGanttTaskIds ? devGanttTaskIds() : []),
+    ganttInstanceTask: (id: string) => (devGanttInstance ? devGanttInstance(id) : null),
     openAskPanel(questions) {
       if (!currentThreadId) {
         throw new Error('dev ask panel: thread id not ready');

@@ -1258,6 +1258,9 @@
     "order": "Took you to order {{id}} in the right panel",
     "view": "Switched the right-panel Gantt to the {{id}} view",
     "resource": "Looking for resource {{id}} in the right-panel Gantt",
+    "rule": "Filtered the right-panel grid to the jobs governed by rule {{id}}",
+    "op": "Expanded job {{id}} in the right-panel Gantt and selected operation {{op}}",
+    "orderBoth": "Positioned order {{id}} in both the grid and the Gantt side by side",
     "failed": "Could not navigate"
   },
   "viewer3d": {

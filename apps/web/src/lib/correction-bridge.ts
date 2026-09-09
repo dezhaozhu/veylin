@@ -94,6 +94,9 @@ export type OpenGridFilter = {
   job_id?: string;
   /** 宿主内部:发起定位那一面的排产运行 id(跨面版本比对)。不从对话消息解析。 */
   run_id?: string;
+  /** 规则锚点的作用域(排产即导航:规则 → 它管到的作业)。列值等值过滤。 */
+  stage_code?: string;
+  product_class?: string;
 };
 
 /**
@@ -131,19 +134,26 @@ export function parseOpenGridMessage(data: unknown): OpenGridFilter | null {
 export type NavigateTarget = {
   /** job/order = 定位到一道作业/一个订单;view = 只把甘特切到某个视角(id = resource|workshop|order);
    * resource = 一个资源**编码**(如 JG0505-1),甘特翻到含它那条泳道并高亮,不在模型泳道里时如实说。 */
-  kind: 'job' | 'order' | 'view' | 'resource';
+  kind: 'job' | 'order' | 'view' | 'resource' | 'rule';
   id: string;
   orderId?: string;
+  /** job 锚点可指到一道**三级**工序(工单号):甘特展开那条二级并选中这道子行。 */
+  op?: string;
+  /** rule 锚点的作用域 —— 排产表过滤到「这条规则管到的作业」;三项至少一项。 */
+  stageCode?: string;
+  productClass?: string;
+  workshop?: string;
   /** 开工日 YYYY-MM-DD —— 甘特默认窗对不上这一行时用它挪窗。 */
   at?: string;
   /** 卡片所看到的排产运行 id(甘特卡片 meta.run_id);落地面拿它比版本。 */
   runId?: string;
-  surface: 'gantt' | 'grid';
+  /** both = 表格与甘特同屏各落一次(订单锚点:一张单在两张地图上) */
+  surface: 'gantt' | 'grid' | 'both';
 };
 
-const NAVIGATE_KINDS = new Set(['job', 'order', 'view', 'resource']);
+const NAVIGATE_KINDS = new Set(['job', 'order', 'view', 'resource', 'rule']);
 const NAVIGATE_VIEWS = new Set(['resource', 'workshop', 'order']);
-const NAVIGATE_SURFACES = new Set(['gantt', 'grid']);
+const NAVIGATE_SURFACES = new Set(['gantt', 'grid', 'both']);
 
 export function parseNavigateMessage(data: unknown): NavigateTarget | null {
   if (typeof data !== 'object' || data === null) return null;
@@ -161,14 +171,27 @@ export function parseNavigateMessage(data: unknown): NavigateTarget | null {
   const orderId = sanitizeField(a.order_id, CORRECTION_FIELD_MAX);
   const at = sanitizeField(a.at, CORRECTION_FIELD_MAX);
   const runId = sanitizeField(a.run_id, CORRECTION_FIELD_MAX);
+  const op = sanitizeField(a.op, CORRECTION_FIELD_MAX);
+  const stageCode = sanitizeField(a.stage_code, CORRECTION_FIELD_MAX);
+  const productClass = sanitizeField(a.product_class, CORRECTION_FIELD_MAX);
+  const workshop = sanitizeField(a.workshop, CORRECTION_FIELD_MAX);
   if (id === null || orderId === null || at === null || runId === null || !id) return null;
+  if (op === null || stageCode === null || productClass === null || workshop === null) return null;
   if (kind === 'view' && !NAVIGATE_VIEWS.has(id)) return null;
+  // 规则锚点没有作用域 = 管全部 = 没有子集可看,Compass 那边根本不发;这里也不收。
+  if (kind === 'rule' && !(stageCode || productClass || workshop)) return null;
   // 开工日只认 YYYY-MM-DD 前缀 —— 甘特按日挪窗,别的形状一律不带。
   const atDay = at ? /^(\d{4}-\d{2}-\d{2})/.exec(at)?.[1] : undefined;
   const out: NavigateTarget = { kind: kind as NavigateTarget['kind'], id, surface: surface as NavigateTarget['surface'] };
   if (orderId) out.orderId = orderId;
   if (atDay) out.at = atDay;
   if (runId) out.runId = runId;
+  if (op && kind === 'job') out.op = op;
+  if (kind === 'rule') {
+    if (stageCode) out.stageCode = stageCode;
+    if (productClass) out.productClass = productClass;
+    if (workshop) out.workshop = workshop;
+  }
   return out;
 }
 
@@ -182,6 +205,32 @@ export function parseNavigateMessage(data: unknown): NavigateTarget | null {
  */
 export function isLateOnlyGridFilter(filter: OpenGridFilter | null | undefined): boolean {
   return filter?.status === 'late';
+}
+
+/** 列值谓词(规则作用域 / 分厂):这三列里有值就要过滤。等值,不模糊 —— 规则本身就是等值匹配。 */
+const GRID_VALUE_KEYS = ['stage_code', 'product_class', 'workshop'] as const;
+
+export function gridValuePredicates(filter: OpenGridFilter | null | undefined): Array<[string, string]> {
+  if (!filter) return [];
+  return GRID_VALUE_KEYS.flatMap((k) => (filter[k] ? [[k, filter[k]!] as [string, string]] : []));
+}
+
+/** 这个过滤需不需要挂外部过滤器:只看逾期,或带列值谓词。 */
+export function hasGridPredicate(filter: OpenGridFilter | null | undefined): boolean {
+  return isLateOnlyGridFilter(filter) || gridValuePredicates(filter).length > 0;
+}
+
+/** 一行过不过:逾期谓词由调用方算(是计算量不是列值),列值谓词逐个等值。 */
+export function gridPredicatePasses(
+  filter: OpenGridFilter | null | undefined,
+  row: Record<string, unknown> | null | undefined,
+  isLate: () => boolean,
+): boolean {
+  if (isLateOnlyGridFilter(filter) && !isLate()) return false;
+  for (const [k, v] of gridValuePredicates(filter)) {
+    if (String(row?.[k] ?? '') !== v) return false;
+  }
+  return true;
 }
 
 export type CorrectionDraftSpec = {

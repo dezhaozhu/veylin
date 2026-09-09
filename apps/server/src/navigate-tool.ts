@@ -13,8 +13,8 @@ import { z } from 'zod';
  * 不能每次都把右栏拉开 —— 只有刚发出的结果才触发导航。
  */
 const VIEWS = ['resource', 'workshop', 'order'] as const;
-const KINDS = ['job', 'order', 'view', 'resource'] as const;
-const SURFACES = ['gantt', 'grid'] as const;
+const KINDS = ['job', 'order', 'view', 'resource', 'rule'] as const;
+const SURFACES = ['gantt', 'grid', 'both'] as const;
 
 export const navigateAnchorSchema = z.object({
   kind: z.enum(KINDS),
@@ -26,6 +26,10 @@ export const navigateAnchorSchema = z.object({
     .optional()
     .describe('开工日 YYYY-MM-DD。甘特默认窗口对不上这一行时,用它把时间窗挪过去。'),
   run_id: z.string().min(1).max(200).optional().describe('你看到这个位置时的排产运行 id(工具结果里的 run_id/meta.run_id);落地面拿它比版本'),
+  op: z.string().min(1).max(200).optional().describe('kind=job 时可带:三级工序工单号(get_workorder_rows 行的 _anchor.op / _work_order_id);甘特展开那条二级并选中这道三级'),
+  stage_code: z.string().min(1).max(200).optional(),
+  product_class: z.string().min(1).max(200).optional(),
+  workshop: z.string().min(1).max(200).optional(),
 });
 
 export type NavigateAnchor = z.infer<typeof navigateAnchorSchema>;
@@ -39,7 +43,9 @@ export function buildNavigateTools() {
       'kind=order 时 id 是订单号;kind=view 时 id 是甘特视角(resource|workshop|order);' +
       'kind=resource 时 id 是资源**编码**(如 JG0505-1,驾驶舱/产能证据里的 resource 字段),甘特翻到含它那条泳道并高亮,' +
       '它不在排产模型的泳道里时面板会如实说明(三级工作中心在二级模型里常常没有泳道)。' +
-      'surface 是建议去哪个面板(gantt|grid),默认 gantt;用户没装甘特时宿主会退到排产表定位同一道作业。' +
+      'kind=rule 时 id 是规则 id(get_rules 行的 rule_id),带上那行 anchor 里的 stage_code/product_class/workshop,排产表过滤到这条规则管到的作业。' +
+      'kind=job 可带 op=三级工序工单号(get_workorder_rows 行的 _anchor 里有整个锚点),甘特展开那条二级并选中这道三级。' +
+      'surface 是建议去哪个面板(gantt|grid|both),默认 gantt;both 只对订单/作业有意义:表格与甘特同屏各定位一次。用户没装甘特时宿主会退到排产表定位同一道作业。' +
       '定位是否成功由面板自己如实显示:当前窗口里找不到时它不会乱滚到别的行。' +
       '适合在回答里说完「瓶颈在 X / 这道作业迟了」之后,带用户去看那一处。',
     inputSchema: z.object({
@@ -48,6 +54,10 @@ export function buildNavigateTools() {
       order_id: z.string().min(1).max(200).optional(),
       at: z.string().regex(/^\d{4}-\d{2}-\d{2}/).optional(),
       run_id: z.string().min(1).max(200).optional(),
+      op: z.string().min(1).max(200).optional(),
+      stage_code: z.string().min(1).max(200).optional(),
+      product_class: z.string().min(1).max(200).optional(),
+      workshop: z.string().min(1).max(200).optional(),
       surface: z.enum(SURFACES).optional(),
     }),
     outputSchema: z.object({
@@ -62,11 +72,22 @@ export function buildNavigateTools() {
       if (input.kind === 'view' && !(VIEWS as readonly string[]).includes(input.id)) {
         return { ok: false, error: `kind=view 时 id 只能是 ${VIEWS.join('|')},收到 ${input.id}` };
       }
+      if (input.kind === 'rule' && !(input.stage_code || input.product_class || input.workshop)) {
+        return { ok: false, error: 'kind=rule 要带作用域(stage_code / product_class / workshop 至少一项),管全部的规则没有子集可看' };
+      }
       const anchor: NavigateAnchor = { kind: input.kind, id: input.id };
       if (input.order_id) anchor.order_id = input.order_id;
       if (input.at) anchor.at = input.at.slice(0, 10);
       if (input.run_id) anchor.run_id = input.run_id;
-      return { ok: true, anchor, surface: input.surface ?? 'gantt', issued_at: Date.now() };
+      if (input.op && input.kind === 'job') anchor.op = input.op;
+      if (input.kind === 'rule') {
+        if (input.stage_code) anchor.stage_code = input.stage_code;
+        if (input.product_class) anchor.product_class = input.product_class;
+        if (input.workshop) anchor.workshop = input.workshop;
+      }
+      // both 只对能同时落在两张地图上的东西有意义;规则/视角/资源各只有一张地图。
+      const surface = input.surface === 'both' && input.kind !== 'job' && input.kind !== 'order' ? 'gantt' : (input.surface ?? 'gantt');
+      return { ok: true, anchor, surface, issued_at: Date.now() };
     },
   });
 

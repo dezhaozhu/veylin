@@ -12,6 +12,8 @@
 import { useEffect, useRef, type FC } from 'react';
 
 import { useRightSidebar } from '@/components/ui/sidebar';
+import { useNavigateAnchor } from '@/components/assistant-ui/use-navigate-anchor';
+import type { NavigateTarget } from '@/lib/correction-bridge';
 import { usePanelTabs } from './panel-tabs-context';
 
 export const DevPanelOpener: FC = () => {
@@ -22,6 +24,9 @@ export const DevPanelOpener: FC = () => {
   // 陈闭包看不到刚开的页签(实测 "no open tab of kind rag")。
   const apiRef = useRef(api);
   apiRef.current = api;
+  const navigateTo = useNavigateAnchor();
+  const navigateRef = useRef(navigateTo);
+  navigateRef.current = navigateTo;
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -47,6 +52,8 @@ export const DevPanelOpener: FC = () => {
           split: apiRef.current.split,
         }),
       });
+      // 排产即导航的宿主机制:和卡片点条 / agent navigate 同一个 handler。
+      m.registerDevNavigate((target) => navigateRef.current(target as NavigateTarget));
     });
   }, [setOpen]);
 

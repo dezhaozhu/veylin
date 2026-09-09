@@ -24,6 +24,7 @@ import {
   clampSplitRatio,
   closeTab,
   moveTabToPane as moveTabToPaneOp,
+  splitLayout,
   type PanelSplitState,
 } from '@/lib/panel-split';
 import { getPanelKindDef } from './panel-registry';
@@ -112,6 +113,8 @@ export interface PanelTabsApi {
    * client-side (via resolveFocusTarget) once its tasks are loaded — this
    * store never resolves/scrolls itself. */
   focusGanttJob: (target: ScheduleLocateTarget) => void | Promise<void>;
+  /** 订单锚点双落地:表格与甘特**同屏**(不在同一 pane 就分屏),各自定位到同一张单。 */
+  focusScheduleAndGantt: (target: ScheduleLocateTarget) => void | Promise<void>;
   /**
    * 在右侧打开一份项目文件(只读)。同名文件**复用已开的那个 tab** —— 连点三次
    * 开出三个一模一样的 tab,是把"我已经打开它了"这件事讲成了三份。
@@ -400,6 +403,39 @@ export function usePanelTabsState(): PanelTabsApi {
     [open],
   );
 
+  const focusScheduleAndGantt = useCallback(
+    async (target: ScheduleLocateTarget) => {
+      // 两个面板都走各自的 singleton open 路径(表格那条要先决定 sheet)。
+      await open('gantt');
+      await open('table');
+      const cur = stateRef.current;
+      const gantt = cur.tabs.find((t) => t.kind === 'gantt');
+      const table = cur.tabs.find((t) => t.kind === 'table');
+      if (gantt && table) {
+        // 同一 pane 里两张只能露一张 —— 把表格挪到另一半;已经分开就不动人家的布局。
+        const layout = splitLayout(cur.tabs, cur.split);
+        const ganttTop = layout.top.some((t) => t.id === gantt.id);
+        const tableTop = layout.top.some((t) => t.id === table.id);
+        let next = cur;
+        if (ganttTop === tableTop) next = moveTabToPaneOp(cur, table.id, ganttTop ? 'bottom' : 'top');
+        // 各自 pane 内露出来(activateTab 分屏时只换所在 pane 的可见页)。
+        next = activateTab(activateTab(next, gantt.id), table.id);
+        if (next !== cur) commit(next);
+      }
+      const at = Date.now();
+      setGanttFocus({ target, at });
+      setScheduleFilter({
+        filter: {
+          ...(target.orderId ? { order_id: target.orderId } : {}),
+          ...(target.jobId ? { job_id: target.jobId } : {}),
+          ...(target.runId ? { run_id: target.runId } : {}),
+        },
+        at,
+      });
+    },
+    [open, commit],
+  );
+
   const openDocument = useCallback(
     (doc: { projectId: string; name: string }) => {
       const current = stateRef.current;
@@ -493,6 +529,7 @@ export function usePanelTabsState(): PanelTabsApi {
     focusRagCitation,
     focusScheduleFilter,
     focusGanttJob,
+    focusScheduleAndGantt,
     scheduleFilter,
     clearScheduleFilter,
     ganttFocus,

@@ -61,7 +61,7 @@ import { cn } from '@/lib/utils';
 import { exportTableToExcel, parseTableExcelFile } from '@/lib/table-excel';
 import { buildGovernedEditBody, GOVERNED_EDIT_FIELDS } from '@/lib/schedule-edit';
 import { usePanelTabs } from '@/components/assistant-ui/right-panel/panel-tabs-context';
-import { isLateOnlyGridFilter, type OpenGridFilter } from '@/lib/correction-bridge';
+import { hasGridPredicate, gridPredicatePasses, type OpenGridFilter } from '@/lib/correction-bridge';
 import { useRightSidebar } from '@/components/ui/sidebar';
 import {
   hasGantt,
@@ -1533,7 +1533,7 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
   // `scheduleFilter.at` makes repeat drills of the same filter re-fire.
   useEffect(() => {
     if (!scheduleFilter) return;
-    if (isLateOnlyGridFilter(scheduleFilter.filter)) {
+    if (hasGridPredicate(scheduleFilter.filter)) {
       pendingScheduleFilterRef.current = scheduleFilter.filter;
       // Position on the schedule sheet: other sheets (e.g. orders) lack the
       // end/due_at fields scheduleLateness reads, so a late filter there would
@@ -2955,8 +2955,10 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
               // External filter for the cockpit drill: "late" is a computed
               // predicate (scheduleLateness), not a column value, so it can't be a
               // setFilterModel entry. Present only while positioned to a late drill.
-              isExternalFilterPresent={() => isLateOnlyGridFilter(activeGridFilterRef.current)}
-              doesExternalFilterPass={(node) => scheduleLateness(node.data) === 'late'}
+              isExternalFilterPresent={() => hasGridPredicate(activeGridFilterRef.current)}
+              doesExternalFilterPass={(node) =>
+                gridPredicatePasses(activeGridFilterRef.current, node.data as Record<string, unknown>, () => scheduleLateness(node.data) === 'late')
+              }
               getRowId={(params: GetRowIdParams<TableRow>) => rowKey(params.data)}
               rowSelection={rowSelection}
               selectionColumnDef={{

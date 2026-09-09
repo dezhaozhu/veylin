@@ -5,6 +5,8 @@ import {
   CORRECTION_FIELD_MAX,
   correctionDraftSpec,
   isLateOnlyGridFilter,
+  hasGridPredicate,
+  gridPredicatePasses,
   parseCorrectionMessage,
   parseOpenGridMessage,
   parseNavigateMessage,
@@ -279,7 +281,7 @@ describe('parseNavigateMessage — 卡片点条 → 宿主导航', () => {
     assert.deepEqual(parseNavigateMessage(nav({ anchor: { kind: 'order', id: 'SO1' } })), { kind: 'order', id: 'SO1', surface: 'gantt' });
     assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'job', id: 'J1' }, surface: 'grid' }))?.surface, 'grid');
     assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'job', id: 'J1' }, surface: 'doc' })), null);
-    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'rule', id: 'R1' } })), null);
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'stage', id: 'R1' } })), null);
   });
 
   it('carries the card\'s run_id through as runId (version check on landing)', () => {
@@ -309,5 +311,43 @@ describe('parseNavigateMessage — 卡片点条 → 宿主导航', () => {
       parseNavigateMessage(nav({ anchor: { kind: 'job', id: 'J1', threadId: 'evil', tenant: 'evil' } })),
       { kind: 'job', id: 'J1', surface: 'gantt' },
     );
+  });
+});
+
+
+describe('parseNavigateMessage — 规则 / 三级 / 双落地', () => {
+  const nav = (payload: unknown) => ({ type: 'veylin:action', action: 'navigate', payload });
+
+  it('rule anchor carries its scope; a scope-less rule is dropped (管全部=没有子集)', () => {
+    assert.deepEqual(
+      parseNavigateMessage(nav({ anchor: { kind: 'rule', id: 'r1', stage_code: 'CJ1', workshop: '金工' } })),
+      { kind: 'rule', id: 'r1', surface: 'gantt', stageCode: 'CJ1', workshop: '金工' },
+    );
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'rule', id: 'r1' } })), null);
+  });
+
+  it('job anchor may point at a 三级 op; op is ignored on other kinds', () => {
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'job', id: 'W1-LG', order_id: 'W1', op: 'W1-WO1' } }))?.op, 'W1-WO1');
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'order', id: 'W1', op: 'W1-WO1' } }))?.op, undefined);
+  });
+
+  it('surface=both is accepted (订单同屏双落地)', () => {
+    assert.equal(parseNavigateMessage(nav({ anchor: { kind: 'order', id: 'SO1' }, surface: 'both' }))?.surface, 'both');
+  });
+});
+
+describe('grid predicates — 逾期是算出来的,列值是等值', () => {
+  it('hasGridPredicate: late-only or any scope column', () => {
+    assert.equal(hasGridPredicate({ status: 'late' }), true);
+    assert.equal(hasGridPredicate({ stage_code: 'CJ1' }), true);
+    assert.equal(hasGridPredicate({ order_id: 'SO1' }), false);
+    assert.equal(hasGridPredicate(null), false);
+  });
+  it('gridPredicatePasses combines late (callback) with equality on scope columns', () => {
+    const row = { stage_code: 'CJ1', product_class: '转子锻件', workshop: '金工' };
+    assert.equal(gridPredicatePasses({ stage_code: 'CJ1', workshop: '金工' }, row, () => false), true);
+    assert.equal(gridPredicatePasses({ stage_code: 'QY' }, row, () => true), false);
+    assert.equal(gridPredicatePasses({ status: 'late', stage_code: 'CJ1' }, row, () => false), false);
+    assert.equal(gridPredicatePasses({ status: 'late', stage_code: 'CJ1' }, row, () => true), true);
   });
 });

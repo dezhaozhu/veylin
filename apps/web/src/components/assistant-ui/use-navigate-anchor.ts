@@ -17,14 +17,24 @@ import type { NavigateTarget } from '@/lib/correction-bridge';
  * 必须在 PanelTabsProvider 与 RightSidebarProvider 之内使用。
  */
 export function useNavigateAnchor(): (target: NavigateTarget) => void {
-  const { focusScheduleFilter, focusGanttJob } = usePanelTabs();
+  const { focusScheduleFilter, focusGanttJob, focusScheduleAndGantt } = usePanelTabs();
   const { setOpen: setRightOpen } = useRightSidebar();
   return useCallback(
     (target: NavigateTarget) => {
       setRightOpen(true);
-      const ganttOk = target.surface === 'gantt' && hasGantt();
+      const ganttOk = target.surface !== 'grid' && hasGantt();
       const ver = target.runId ? { runId: target.runId } : {};
       const verGrid = target.runId ? { run_id: target.runId } : {};
+      if (target.kind === 'rule') {
+        // 规则锚点:排产表过滤到它管到的作业(段/产品类/分厂等值)。甘特没有「规则」这一层。
+        void focusScheduleFilter({
+          ...(target.stageCode ? { stage_code: target.stageCode } : {}),
+          ...(target.productClass ? { product_class: target.productClass } : {}),
+          ...(target.workshop ? { workshop: target.workshop } : {}),
+          ...verGrid,
+        });
+        return;
+      }
       if (target.kind === 'resource') {
         // 资源锚点:甘特按资源视角翻到含这条泳道的那一页并高亮;没装甘特就用
         // 排产表按资源过滤 —— 同一个资源,两种地图。
@@ -40,8 +50,13 @@ export function useNavigateAnchor(): (target: NavigateTarget) => void {
       }
       const locate =
         target.kind === 'job'
-          ? { jobId: target.id, ...(target.orderId ? { orderId: target.orderId } : {}) }
+          ? { jobId: target.id, ...(target.orderId ? { orderId: target.orderId } : {}), ...(target.op ? { op: target.op } : {}) }
           : { orderId: target.id };
+      if (target.surface === 'both' && hasGantt()) {
+        // 双落地:一张单同时落在表格与甘特上(同屏)。没装甘特就只剩表格,下面的退路。
+        void focusScheduleAndGantt({ ...locate, ...ver, ...(target.at ? { fromDate: target.at } : {}) });
+        return;
+      }
       if (ganttOk) {
         void focusGanttJob({ ...locate, ...ver, ...(target.at ? { fromDate: target.at } : {}) });
         return;
@@ -52,6 +67,6 @@ export function useNavigateAnchor(): (target: NavigateTarget) => void {
           : { order_id: target.id, ...verGrid },
       );
     },
-    [focusGanttJob, focusScheduleFilter, setRightOpen],
+    [focusGanttJob, focusScheduleFilter, focusScheduleAndGantt, setRightOpen],
   );
 }

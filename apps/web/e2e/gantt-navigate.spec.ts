@@ -422,3 +422,198 @@ test('表格导入后 Compass 重排 → 甘特点条落到表格 → 版本不�
   const m = /(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(newRun)!;
   await expect(page.getByTestId('table-run-mismatch')).toContainText(`${m[1]}-${m[2]} ${m[3]}:${m[4]}`);
 });
+
+/**
+ * **订单双落地(surface=both)**:一张单同时落在表格与甘特上,而且两张地图**同屏**
+ * (不在同一 pane 就分屏)。判据只看结构:panelState 里 gantt 与 table 分属上下两个
+ * pane 且都是各自 pane 的可见页;几何不进判据。
+ */
+test('agent navigate kind=order surface=both → 表格与甘特分屏同屏', async ({ page, request }) => {
+  const project = await compassProject(request);
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(project.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: project.name })).toBeVisible({ timeout: 15_000 });
+
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+  await composer.fill(
+    '先用 get_schedule_rows(limit=5)拿几行,然后直接调用 navigate 工具,参数 kind=order、id=第一行的 order_id、surface=both,把那张订单同时定位到右侧表格与甘特。两个工具都要真的调用,不用解释。',
+  );
+  await composer.press('Enter');
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const s = (window as unknown as {
+            __veylinTest: {
+              panelState: () => {
+                tabs: Array<{ id: string; kind: string }>;
+                split: { bottomIds: string[]; topVisibleId: string; bottomVisibleId: string } | undefined;
+              };
+            };
+          }).__veylinTest.panelState();
+          const g = s.tabs.find((t) => t.kind === 'gantt');
+          const tb = s.tabs.find((t) => t.kind === 'table');
+          if (!g || !tb) return `missing:${g ? '' : 'gantt '}${tb ? '' : 'table'}`;
+          if (!s.split) return 'no-split';
+          const visible = new Set([s.split.topVisibleId, s.split.bottomVisibleId]);
+          const gBottom = s.split.bottomIds.includes(g.id);
+          const tBottom = s.split.bottomIds.includes(tb.id);
+          if (gBottom === tBottom) return 'same-pane';
+          return visible.has(g.id) && visible.has(tb.id) ? 'both-visible' : 'split-but-hidden';
+        }),
+      { timeout: 4 * 60_000, intervals: [1000] },
+    )
+    .toBe('both-visible');
+});
+
+
+/** 进项目后先让首个线程建出来并钉到项目上(甘特/表格都按线程钉的项目取数;没钉是 409)。 */
+async function pinnedThread(page: Page, request: APIRequestContext, projectId: string): Promise<string> {
+  const composer = page.locator('textarea:visible').first();
+  await composer.click();
+  await page.waitForTimeout(2500);
+  let threadId = '';
+  await expect
+    .poll(
+      async () => {
+        const body = await (await request.get(`${API}/api/threads`)).json();
+        const first = (body.threads as Array<{ remoteId?: string; id?: string }>)[0];
+        threadId = first?.remoteId ?? first?.id ?? '';
+        if (!threadId) return false;
+        const map = await (await request.get(`${API}/api/projects/threads`)).json();
+        return (map.threads?.[threadId] ?? map[threadId]) === projectId;
+      },
+      { timeout: 30_000, intervals: [1000] },
+    )
+    .toBe(true);
+  return threadId;
+}
+
+/**
+ * **规则 → 它管到的作业**(宿主机制,不经模型):打开表格拿到一个真实段码,然后喂
+ * 一个 rule 锚点给和 agent navigate 同一个 handler。判据:网格里露出来的期量工序列
+ * 全等于那个段码,且行数比过滤前少(过滤是等值,不是装样子)。
+ */
+test('rule 锚点 → 排产表按作用域等值过滤', async ({ page, request }) => {
+  const project = await compassProject(request);
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(project.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: project.name })).toBeVisible({ timeout: 15_000 });
+
+  const threadId = await pinnedThread(page, request, project.id);
+  await page.evaluate(() => (window as unknown as { __veylinTest: { openTablePanel: () => void } }).__veylinTest.openTablePanel());
+  // 表格自举会把 Compass 排产灌进来并盖 runId;等它落地再读格子
+  await expect
+    .poll(
+      async () => {
+        const sheets = (await (await request.get(`${API}/api/table/sheets?threadId=${threadId}`)).json()).sheets as Array<{ source?: { runId?: string } }>;
+        return Boolean(sheets.find((sh) => sh.source?.runId));
+      },
+      { timeout: 120_000, intervals: [2000] },
+    )
+    .toBe(true);
+  const stageCells = () =>
+    page.evaluate(() =>
+      Array.from(document.querySelectorAll('.ag-cell[col-id="stage_code"]')).map((c) => c.textContent?.trim() ?? ''),
+    );
+  await expect.poll(async () => (await stageCells()).filter(Boolean).length, { timeout: 90_000, intervals: [1000] }).toBeGreaterThan(1);
+  const before = (await stageCells()).filter(Boolean);
+  const distinct = Array.from(new Set(before));
+  expect(distinct.length).toBeGreaterThan(1);   // 有得过滤才算数
+  const stage = distinct[0];
+
+  await page.evaluate(
+    (st) => (window as unknown as { __veylinTest: { navigate: (t: unknown) => void } }).__veylinTest.navigate({ kind: 'rule', id: 'r-e2e', stageCode: st, surface: 'grid' }),
+    stage,
+  );
+
+  await expect
+    .poll(async () => {
+      const cells = (await stageCells()).filter(Boolean);
+      return cells.length === 0 ? 'no-rows' : Array.from(new Set(cells)).join('|');
+    }, { timeout: 60_000, intervals: [1000] })
+    .toBe(stage);
+  // 行数不当判据:AG-Grid 只渲染视口内的行,过滤前后 DOM 里都只有十来行。
+  // 「过滤前多种段码、过滤后只剩这一种」已经证明过滤真的作用在了行上。
+});
+
+/**
+ * **三级 → 展开它那条二级**(宿主机制,不经模型):从 /api/gantt/window 拿一根
+ * 有三级的二级条,展开取它第一道三级的工单号,然后喂 job+op 锚点。判据:甘特里
+ * 选中的 task id 正是 `wo:<job>:<op>` —— 二级被展开、三级子行被选中。
+ */
+test('job+op 锚点 → 甘特展开二级并选中三级子行', async ({ page, request }) => {
+  const project = await compassProject(request);
+
+  await page.goto('/');
+  await openSidebar(page);
+  await page.getByText(project.name, { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: project.name })).toBeVisible({ timeout: 15_000 });
+
+  const threadId = await pinnedThread(page, request, project.id);
+  // 甘特面板按**客户端**线程 id 取数,而它要到首轮对话回来后才知道自己的远端 id
+  // (钉项目是按远端 id 记的;没它服务端落到个人区,窗是空的 —— 真跑抓的)。
+  const composer = page.locator('textarea:visible').first();
+  await composer.fill('你好');
+  await composer.press('Enter');
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __veylinTest: { threadId: () => string | undefined } }).__veylinTest.threadId() ?? ''), { timeout: 120_000, intervals: [1000] })
+    .toBe(threadId);
+
+  const picked = await page.evaluate(async (tid) => {
+    const win = await (await fetch(`/api/gantt/window?view=resource&threadId=${encodeURIComponent(tid)}&lane_limit=200`)).json();
+    type Bar = { job_id: string; order_id: string; has_children?: boolean };
+    const bars: Bar[] = (win.lanes ?? []).flatMap((l: { bars?: Bar[] }) => l.bars ?? []);
+    const bar = bars.find((b) => b.has_children);
+    if (!bar) return null;
+    const ex = await (await fetch(`/api/gantt/window?view=resource&threadId=${encodeURIComponent(tid)}&lane_limit=200&expand=${encodeURIComponent(bar.order_id)}`)).json();
+    const bars2: Array<Bar & { children?: Array<{ _work_order_id?: string }> }> = (ex.lanes ?? []).flatMap((l: { bars?: Bar[] }) => l.bars ?? []);
+    const same = bars2.find((b) => b.job_id === bar.job_id);
+    const op = same?.children?.find((c) => c._work_order_id)?._work_order_id ?? null;
+    return op ? { jobId: bar.job_id, orderId: bar.order_id, op } : { debug: { ok: win.ok, message: win.message, lanes: (win.lanes ?? []).length, bars: bars.length, withKids: bars.filter((b) => b.has_children).length } };
+  }, threadId);
+  expect(picked, `资源视角第一页里要有一根带三级的二级条: ${JSON.stringify(picked)}`).toHaveProperty('op');
+
+  await page.evaluate(
+    (t) => (window as unknown as { __veylinTest: { navigate: (x: unknown) => void } }).__veylinTest.navigate({ kind: 'job', id: t.jobId, orderId: t.orderId, op: t.op, surface: 'gantt' }),
+    picked as { jobId: string; orderId: string; op: string },
+  );
+
+  // 判据带状态:失败时能看出卡在哪一步(甘特没开 / 二级条不在窗里 / 没展开 / 展开了没选中)。
+  const want = `wo:${(picked as { jobId: string }).jobId}:${(picked as { op: string }).op}`;
+  await expect
+    .poll(
+      async () =>
+        page.evaluate((w) => {
+          const s = (window as unknown as {
+            __veylinTest: { panelState: () => { tabs: Array<{ id: string; kind: string }>; activeId: string | null } };
+          }).__veylinTest.panelState();
+          const g = s.tabs.find((t) => t.kind === 'gantt');
+          if (!g) return 'no-gantt-tab';
+          const jobId = w.slice(3, w.lastIndexOf(':'));
+          const rows = Array.from(document.querySelectorAll('.gantt_row, .gantt_task_line')).map((r) => r.getAttribute('data-task-id') ?? r.getAttribute('task_id') ?? '');
+          const containers = document.querySelectorAll('.gantt_container').length;
+          const text = (document.querySelector('[data-panel-kind="gantt"], .gantt_container')?.parentElement?.textContent ?? document.body.innerText).slice(0, 160).replace(/\s+/g, ' ');
+          const hasJob = rows.includes(`job:${jobId}`);
+          const kids = rows.filter((r) => r.startsWith(`wo:${jobId}:`));
+          const sel = document.querySelector('.gantt_task_line.gantt_selected, .gantt_row.gantt_selected');
+          const selected = sel?.getAttribute('data-task-id') ?? sel?.getAttribute('task_id') ?? null;
+          if (selected === w) return 'ok';
+          const ids = (window as unknown as { __veylinTest: { ganttTaskIds: () => string[] } }).__veylinTest.ganttTaskIds();
+          const expandReqs = performance.getEntriesByType('resource').filter((e) => e.name.includes('/api/gantt/window') && e.name.includes('expand=')).length;
+          const hook = (window as unknown as { __veylinTest: { ganttInstanceTask: (id: string) => unknown } }).__veylinTest;
+          const instKid = JSON.stringify(hook.ganttInstanceTask(w));
+          const instJob = JSON.stringify(hook.ganttInstanceTask(`job:${jobId}`));
+          return `rows=${rows.length} job=${hasJob} kids=${kids.length} selected=${selected} tasks=${ids.length} wo=${ids.filter((i) => i.startsWith('wo:')).length} want=${ids.includes(w)} expandReqs=${expandReqs} instKid=${instKid} instJob=${instJob} containers=${containers} ${text.slice(0, 10)}`;
+        }, want),
+      { timeout: 2 * 60_000, intervals: [1000] },
+    )
+    .toBe('ok');
+});

@@ -13,21 +13,31 @@ export type GanttFocusFollowUp = 'apply' | 'wait' | 'reload' | 'give-up';
  */
 export function decideGanttFocusFollowUp(
   tasks: Array<{ id: string; orderId?: string }>,
-  want: { jobId?: string; orderId?: string },
+  want: { jobId?: string; orderId?: string; op?: string },
   alreadyReloaded: boolean,
 ): GanttFocusFollowUp {
   if (resolveFocusTarget(tasks, want)) return 'apply';
   if (tasks.length === 0) return 'wait';
+  // 三级锚点:它爹(二级条)已经在窗里,子行只是还没随展开取回来 —— 等展开,
+  // 别重拉(重拉不带 expand,回来还是没子行,再判 give-up 就把定位清掉了;真跑抓的:
+  // 子行到了、焦点已经没了)。爹也不在窗里才是真的要换窗。
+  if (want.op && want.jobId && tasks.some((t) => t.id === `job:${want.jobId}`)) return 'wait';
   return alreadyReloaded ? 'give-up' : 'reload';
 }
 
 export function resolveFocusTarget(
   tasks: Array<{ id: string; orderId?: string }>,
-  want: { jobId?: string; orderId?: string },
+  want: { jobId?: string; orderId?: string; op?: string },
 ): string | null {
   // 点了具体作业就只认这一条。当前窗口没有时回 null,让调用方换窗口;
   // 不准拿同一订单的另一道工序凑数(同单下 QY / CJ1 是两道活)。
   if (want.jobId) {
+    // 指到三级:子行在就选子行;子行还没取回来(二级没展开)回 null,面板先去展开
+    // —— 不能先选二级顶着,那会把「定位到这道三级」讲成「定位到它爹」。
+    if (want.op) {
+      const kid = tasks.find((t) => t.id === `wo:${want.jobId}:${want.op}`);
+      return kid ? kid.id : null;
+    }
     const hit = tasks.find((t) => t.id === `job:${want.jobId}`);
     return hit ? hit.id : null;
   }

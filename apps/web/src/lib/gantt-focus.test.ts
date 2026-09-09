@@ -192,3 +192,28 @@ describe('ganttFocusRetryDelay', () => {
     assert.equal(ganttFocusRetryDelay(GANTT_FOCUS_RETRY_MAX), null);
   });
 });
+
+
+describe('三级锚点(job + op)', () => {
+  const withKid = [{ id: 'job:J1' }, { id: 'wo:J1:WO7', parent: 'job:J1' }];
+  it('子行在树里就选子行', () => {
+    assert.equal(resolveFocusTarget(withKid, { jobId: 'J1', op: 'WO7' }), 'wo:J1:WO7');
+  });
+  it('子行还没取回来就回 null(面板先展开),不能拿它爹顶着', () => {
+    assert.equal(resolveFocusTarget([{ id: 'job:J1' }], { jobId: 'J1', op: 'WO7' }), null);
+  });
+});
+
+describe('三级锚点的后续动作', () => {
+  it('二级条在窗里、子行未到 → wait(等展开),不是 reload/give-up', () => {
+    assert.equal(decideGanttFocusFollowUp([{ id: 'job:J1' }], { jobId: 'J1', op: 'WO7' }, false), 'wait');
+    assert.equal(decideGanttFocusFollowUp([{ id: 'job:J1' }], { jobId: 'J1', op: 'WO7' }, true), 'wait');
+  });
+  it('二级条也不在窗里 → 照旧 reload / give-up', () => {
+    assert.equal(decideGanttFocusFollowUp([{ id: 'job:J2' }], { jobId: 'J1', op: 'WO7' }, false), 'reload');
+    assert.equal(decideGanttFocusFollowUp([{ id: 'job:J2' }], { jobId: 'J1', op: 'WO7' }, true), 'give-up');
+  });
+  it('子行到了 → apply', () => {
+    assert.equal(decideGanttFocusFollowUp([{ id: 'job:J1' }, { id: 'wo:J1:WO7' }], { jobId: 'J1', op: 'WO7' }, true), 'apply');
+  });
+});

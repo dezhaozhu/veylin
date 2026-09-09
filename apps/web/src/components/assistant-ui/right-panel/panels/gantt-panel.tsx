@@ -286,6 +286,45 @@ function GanttChart({ mod, tasks, ganttFocus, clearGanttFocus,
     };
   }, [ganttFocus, focusLane, tasks, clearGanttFocus]);
 
+  // 三级锚点(job + op):子行不在树里 = 那条二级还没展开。先展开它的订单(children
+  // 按订单号建键),子行随展开取数合进来后,下面的定位 effect 自然命中 `wo:` 那条。
+  // 同一 (订单, 工单) 只请求一次,免得展开取数失败时无限重试。
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    void import('@/lib/dev-test-hooks').then((m) => {
+      m.registerDevGanttTasks(() => tasksRef.current.map((t) => t.id));
+      m.registerDevGanttInstance((id) => {
+        const inst = ganttRef.current?.instance as
+          | { isTaskExists?: (i: string) => boolean; getTask?: (i: string) => { $open?: unknown; parent?: unknown } }
+          | undefined;
+        if (!inst?.isTaskExists) return null;
+        const exists = inst.isTaskExists(id);
+        const t = exists && inst.getTask ? inst.getTask(id) : undefined;
+        return { exists, open: t?.$open, parent: t?.parent };
+      });
+    });
+    return () => {
+      void import('@/lib/dev-test-hooks').then((m) => {
+        m.registerDevGanttTasks(null);
+        m.registerDevGanttInstance(null);
+      });
+    };
+  }, []);
+  const opExpandRequestedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const want = ganttFocus?.target;
+    if (!want?.op || !want.jobId) return;
+    const job = tasks.find((t) => t.id === `job:${want.jobId}`);
+    if (!job) return;
+    if (tasks.some((t) => t.id === `wo:${want.jobId}:${want.op}`)) return;
+    const orderId = want.orderId ?? job.orderId;
+    if (!orderId) return;
+    const key = `${orderId}|${want.op}`;
+    if (opExpandRequestedRef.current === key) return;
+    opExpandRequestedRef.current = key;
+    onExpandOrder(orderId);
+  }, [ganttFocus, tasks, onExpandOrder]);
+
   // 表格 → 甘特:消费 focusGanttJob 暂存的 target。`GanttChart` 只在
   // load.state === 'ready' 时才存在,不需要再判一次 load 状态。
   // resolveFocusTarget 找不到就回 null——这里的处理就是"不动",不瞎滚一个
@@ -380,13 +419,14 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
     void (async () => {
       try {
         const focus = ganttFocusRef.current;
-        const res = await fetch(
-          ganttWindowUrl(threadId, view, expandedRef.current, {
-            fromDate: focus?.target.fromDate,
-            laneLimit: focus ? 200 : undefined,
-            laneFocus: focus?.target.lane,
-          }),
-        );
+        // 展开取数必须沿用这一窗的口径(挪窗日期 / 泳道上限 / 泳道锚点):否则展开
+        // 一条二级会把窗缩回默认 20 条泳道,刚定位到的那根条随之消失(真跑抓的)。
+        windowOptsRef.current = {
+          fromDate: focus?.target.fromDate,
+          laneLimit: focus ? 200 : undefined,
+          laneFocus: focus?.target.lane,
+        };
+        const res = await fetch(ganttWindowUrl(threadId, view, expandedRef.current, windowOptsRef.current));
         const body = (await res.json()) as GanttWindowPayload & { ok: boolean; message?: string };
         if (!alive) return;
         if (!body.ok) {
@@ -428,12 +468,13 @@ export const GanttPanel: FC<PanelContentProps> = ({ tab, updateState }) => {
   // latest-ref,换数据不会拿到过期的那一批)。
   const expandedRef = useRef<string[]>(expanded);
   expandedRef.current = expanded;
+  const windowOptsRef = useRef<{ fromDate?: string; laneLimit?: number; laneFocus?: string }>({});
   useEffect(() => {
     if (expanded.length === 0 || load.state !== 'ready') return;
     let alive = true;
     void (async () => {
       try {
-        const res = await fetch(ganttWindowUrl(threadId, view, expanded));
+        const res = await fetch(ganttWindowUrl(threadId, view, expanded, windowOptsRef.current));
         const body = (await res.json()) as GanttWindowPayload & { ok: boolean };
         if (!alive || !body.ok) return; // 展开失败就维持现状:树还在,只是没有子行
         setLoad((prev) => (prev.state === 'ready' ? { state: 'ready', payload: body } : prev));

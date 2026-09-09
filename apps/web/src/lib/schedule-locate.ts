@@ -9,6 +9,8 @@
 export type ScheduleLocateTarget = {
   jobId?: string;
   orderId?: string;
+  /** 三级工序工单号:甘特展开 jobId 那条二级并选中这道子行(子行 id = wo:<jobId>:<op>)。 */
+  op?: string;
   /** 开工日(YYYY-MM-DD)。甘特默认窗口对不上这一行时,用它把时间窗挪过来。 */
   fromDate?: string;
   /** 只切视角(驾驶舱「在甘特里看」/ agent navigate kind=view);可不带作业/订单。 */

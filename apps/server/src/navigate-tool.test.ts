@@ -37,3 +37,21 @@ test('surface=grid 透传;kind=view 只认三个视角', async () => {
   assert.match(bad.error ?? '', /resource\|workshop\|order/);
   assert.equal(bad.anchor, undefined);
 });
+
+
+test('rule 锚点要带作用域;job 锚点可带 op;both 只给订单/作业', async () => {
+  const rule = await run({ kind: 'rule', id: 'r1', stage_code: 'CJ1', workshop: '金工', surface: 'both' });
+  assert.equal(rule.ok, true);
+  assert.deepEqual(rule.anchor, { kind: 'rule', id: 'r1', stage_code: 'CJ1', workshop: '金工' });
+  assert.equal(rule.surface, 'gantt');   // both 对规则没意义,退回默认
+
+  const bare = await run({ kind: 'rule', id: 'r1' });
+  assert.equal(bare.ok, false);
+  assert.match(bare.error ?? '', /作用域/);
+
+  const op = await run({ kind: 'job', id: 'W1-LG', order_id: 'W1', op: 'W1-WO1' });
+  assert.deepEqual(op.anchor, { kind: 'job', id: 'W1-LG', order_id: 'W1', op: 'W1-WO1' });
+
+  const both = await run({ kind: 'order', id: 'SO1', surface: 'both' });
+  assert.equal(both.surface, 'both');
+});

@@ -6,19 +6,23 @@ import { useNavigateAnchor } from '@/components/assistant-ui/use-navigate-anchor
 import { shouldFireNavigate } from '@/lib/navigate-fire';
 
 interface Args {
-  kind: 'job' | 'order' | 'view' | 'resource';
+  kind: 'job' | 'order' | 'view' | 'resource' | 'rule';
   id: string;
   order_id?: string;
   at?: string;
   run_id?: string;
-  surface?: 'gantt' | 'grid';
+  op?: string;
+  stage_code?: string;
+  product_class?: string;
+  workshop?: string;
+  surface?: 'gantt' | 'grid' | 'both';
 }
 
 interface Result {
   ok: boolean;
   error?: string;
-  anchor?: { kind: string; id: string; order_id?: string; at?: string; run_id?: string };
-  surface?: 'gantt' | 'grid';
+  anchor?: { kind: string; id: string; order_id?: string; at?: string; run_id?: string; op?: string };
+  surface?: 'gantt' | 'grid' | 'both';
   issued_at?: number;
 }
 
@@ -44,10 +48,15 @@ export const NavigateToolUI = makeAssistantToolUI<Args, Result>({
 
     if (!result) return null;
     const anchor = result.anchor ?? { kind: args?.kind ?? 'job', id: args?.id ?? '' };
+    const key =
+      anchor.kind === 'view' ? 'view'
+      : anchor.kind === 'order' ? (result.surface === 'both' ? 'orderBoth' : 'order')
+      : anchor.kind === 'resource' ? 'resource'
+      : anchor.kind === 'rule' ? 'rule'
+      : anchor.op ? 'op'
+      : 'job';
     const where = result.ok
-      ? t(`navigateTool.${anchor.kind === 'view' ? 'view' : anchor.kind === 'order' ? 'order' : anchor.kind === 'resource' ? 'resource' : 'job'}`, {
-          id: anchor.id,
-        })
+      ? t(`navigateTool.${key}`, { id: anchor.id, op: anchor.op ?? '' })
       : (result.error ?? t('navigateTool.failed'));
     return (
       <div className="text-muted-foreground my-1 flex items-center gap-1.5 text-xs">
