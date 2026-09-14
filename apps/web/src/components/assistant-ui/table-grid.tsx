@@ -71,6 +71,7 @@ import {
   shouldLocateGanttFromTableClick,
 } from '@/lib/schedule-locate';
 import { formatTableDateDisplay } from '@/lib/table-date-display';
+import { tableFooterHint } from '@/lib/table-footer-hint';
 import { DEFAULT_TABLE_STATUS_OPTIONS } from '@veylin/shared';
 
 type TableColumnType = 'text' | 'number' | 'status' | 'sparkline';
@@ -452,25 +453,19 @@ function cellTextValue(row: TableRow, columnKey: string): string {
 
 function TableGridFooter({ totals }: { totals: TableGridTotals }) {
   const { t } = useTranslation();
+  const hint = tableFooterHint(totals);
+  if (hint.kind === 'none') return null;
+  const text =
+    hint.kind === 'loading'
+      ? t('table.footerLoading', { loaded: hint.loaded, total: hint.total })
+      : t('table.footerSelected', { count: hint.count });
   return (
     <div
-      className="border-border bg-muted/40 text-muted-foreground flex shrink-0 items-center gap-x-4 gap-y-1 border-t px-3 py-1.5 text-xs"
+      className="border-border bg-muted/40 text-muted-foreground flex shrink-0 items-center border-t px-3 py-1.5 text-xs"
       aria-live="polite"
       aria-atomic="true"
     >
-      <span className="text-foreground font-medium">
-        {totals.expectedCount != null &&
-        totals.loadedCount != null &&
-        totals.loadedCount < totals.expectedCount
-          ? t('table.footerLoading', {
-              loaded: totals.loadedCount,
-              total: totals.expectedCount,
-            })
-          : t('table.footerTotal', { count: totals.rowCount })}
-      </span>
-      {totals.selectedCount > 0 ? (
-        <span>{t('table.footerSelected', { count: totals.selectedCount })}</span>
-      ) : null}
+      <span className="text-foreground font-medium">{text}</span>
     </div>
   );
 }
@@ -2049,11 +2044,9 @@ const showToast = useCallback((message: string, variant: 'success' | 'error' | '
         hiddenByDefault: false,
         defaultToolPanel: '',
       },
+      // 已选条数只留页脚「已选 N」，不在状态栏再画一遍英文 Selected。
       statusBar: {
-        statusPanels: [
-          { statusPanel: 'agSelectedRowCountComponent', align: 'left' },
-          { statusPanel: 'agAggregationComponent', align: 'right' },
-        ],
+        statusPanels: [{ statusPanel: 'agAggregationComponent', align: 'right' }],
       },
     };
   }, [proEnterprise]);

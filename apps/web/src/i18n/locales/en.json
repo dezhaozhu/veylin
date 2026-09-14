@@ -944,7 +944,6 @@
   "table": {
     "noResponse": "No response from server ({{status}})",
     "invalidResponse": "Invalid response ({{status}})",
-    "footerTotal": "Total {{count}}",
     "footerLoading": "Loaded {{loaded}} / {{total}}",
     "footerSelected": "{{count}} selected",
     "sortBy": "Sort by {{name}}",
