@@ -258,7 +258,24 @@ export async function requireThreadOwnership(
   return row;
 }
 
-/** Desktop startup: drop internal worker threads and empty dev leftovers. */
+/**
+ * 桌面启动时这条对话怎么办。抽出来是因为"归属换了"最容易删错:
+ * 旧行写的是 `dev-user`,现在列表按 installId 滤,删 thread_state 等于
+ * 侧栏空了、消息还在库里 —— 人以为对话丢了。
+ */
+export function desktopThreadPruneAction(input: {
+  threadId: string;
+  resourceId: string;
+  installId: string;
+  hasMessages: boolean;
+}): 'drop' | 'adopt' | 'keep' {
+  if (!isSidebarChatThreadId(input.threadId)) return 'drop';
+  if (!input.hasMessages) return 'drop';
+  if (input.resourceId !== input.installId) return 'adopt';
+  return 'keep';
+}
+
+/** Desktop startup: drop internal worker threads and empty leftovers. */
 export async function pruneDesktopThreadClutter(
   tenantId: string,
   resourceId: string,
@@ -269,25 +286,23 @@ export async function pruneDesktopThreadClutter(
   const rows = await listThreadStatesForTenant(tenantId);
   for (const r of rows) {
     const { threadId } = r;
-    if (!isSidebarChatThreadId(threadId)) {
-      await deleteThreadState(threadId).catch(() => undefined);
-      continue;
-    }
-
-    const recalled = await recallOrEmpty(memory, {
+    // worker 线程有没有消息都要清,不必为它查一次库。
+    const recalled = isSidebarChatThreadId(threadId)
+      ? await recallOrEmpty(memory, { threadId, resourceId: r.resourceId, perPage: 1 })
+      : null;
+    const hasMessages = (recalled?.messages?.length ?? 0) > 0;
+    const action = desktopThreadPruneAction({
       threadId,
       resourceId: r.resourceId,
-      perPage: 1,
+      installId: resourceId,
+      hasMessages,
     });
-    const hasMessages = (recalled.messages?.length ?? 0) > 0;
-
-    if (!hasMessages) {
+    if (action === 'drop') {
       await deleteThreadState(threadId).catch(() => undefined);
       continue;
     }
-
-    if (r.resourceId !== resourceId) {
-      await deleteThreadState(threadId).catch(() => undefined);
+    if (action === 'adopt') {
+      await updateThreadState(threadId, { resourceId }).catch(() => undefined);
     }
   }
 }
