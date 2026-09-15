@@ -287,10 +287,23 @@ export async function pruneDesktopThreadClutter(
   for (const r of rows) {
     const { threadId } = r;
     // worker 线程有没有消息都要清,不必为它查一次库。
-    const recalled = isSidebarChatThreadId(threadId)
-      ? await recallOrEmpty(memory, { threadId, resourceId: r.resourceId, perPage: 1 })
-      : null;
-    const hasMessages = (recalled?.messages?.length ?? 0) > 0;
+    //
+    // 查不动就当它有消息。清理是开机路径上的收尾工作,**不该有权力让服务起不来**:
+    // 一行归属写歪的 thread_state 会让 Mastra 的归属校验抛错,以前这一下就把整个
+    // 启动带崩了,人看到的是"项目打不开"。判不准的时候保守留着,比删错或崩掉都好。
+    let hasMessages = true;
+    if (isSidebarChatThreadId(threadId)) {
+      try {
+        const recalled = await recallOrEmpty(memory, {
+          threadId,
+          resourceId: r.resourceId,
+          perPage: 1,
+        });
+        hasMessages = (recalled.messages?.length ?? 0) > 0;
+      } catch {
+        continue;
+      }
+    }
     const action = desktopThreadPruneAction({
       threadId,
       resourceId: r.resourceId,
