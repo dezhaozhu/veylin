@@ -3,6 +3,7 @@
 import { spawnSync, spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveDevDataDir } from '../../../scripts/dev-utils.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(scriptDir, '..');
@@ -12,7 +13,8 @@ const devEnv = {
   ...process.env,
   VEYLIN_SKIP_SIDECAR: '1',
   VEYLIN_REPO_ROOT: process.env.VEYLIN_REPO_ROOT ?? repoRoot,
-  VEYLIN_DATA_DIR: process.env.VEYLIN_DATA_DIR ?? resolve(repoRoot, 'data'),
+  // 和仓库 `npm run dev` / 网页版认同一个目录,桌面端和浏览器才看到同一份数据。
+  VEYLIN_DATA_DIR: resolveDevDataDir(repoRoot),
   // Match web `npm run dev`: don't block listen on remote MCP connect.
   VEYLIN_LAZY_MCP_BOOT: process.env.VEYLIN_LAZY_MCP_BOOT ?? '1',
 };

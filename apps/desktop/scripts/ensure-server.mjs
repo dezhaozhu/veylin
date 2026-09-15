@@ -6,8 +6,9 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveDevDataDir } from '../../../scripts/dev-utils.mjs';
 import { probeVeylinHealth } from './health-probe.mjs';
 import {
   isLiveRepoWatchdog,
@@ -23,14 +24,10 @@ const repoRoot = resolve(scriptDir, '../../..');
 const port = process.env.PORT ?? '8787';
 const healthUrl = `http://127.0.0.1:${port}/health`;
 
-function resolveDevDataDir() {
-  const raw = process.env.VEYLIN_DATA_DIR?.trim();
-  if (!raw) return resolve(repoRoot, 'data');
-  return isAbsolute(raw) ? raw : resolve(repoRoot, raw);
-}
-
-const dataDir = resolveDevDataDir();
-const catalogPath = resolve(repoRoot, 'data/models.local.json');
+const dataDir = resolveDevDataDir(repoRoot);
+// 跟着数据目录走。写死 `<repo>/data` 会在数据已经搬到 apps/server/data 的机器上
+// 读到另一份模型配置 —— 界面里改了模型,桌面端却还用旧的。
+const catalogPath = resolve(dataDir, 'models.local.json');
 const distRoot = resolve(repoRoot, 'apps/server/dist/sidecar');
 
 async function probe() {

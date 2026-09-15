@@ -8,7 +8,7 @@
 import { spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cleanDevPorts, waitForServerHealth } from './dev-utils.mjs';
+import { cleanDevPorts, resolveDevDataDir, waitForServerHealth } from './dev-utils.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -16,8 +16,8 @@ const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const env = {
   ...process.env,
   VEYLIN_REPO_ROOT: repoRoot,
-  // Absolute path: workspace `npm -w` cwd is apps/server; keep data under that package.
-  VEYLIN_DATA_DIR: process.env.VEYLIN_DATA_DIR ?? resolve(repoRoot, 'apps/server/data'),
+  // 绝对路径:`npm -w` 的工作目录是 apps/server,相对值会被解析到别处。
+  VEYLIN_DATA_DIR: resolveDevDataDir(repoRoot),
   // Dev-only: faster cold start; chat still calls ensureMcpForTenant on demand.
   VEYLIN_LAZY_MCP_BOOT: process.env.VEYLIN_LAZY_MCP_BOOT ?? '1',
   // Dev-only: reload agent.yaml from disk on each chat; customize APIs always force-sync.

@@ -3,8 +3,9 @@
  * Dev-only: free Vite :5174; reclaim :8787 only when the owned server is not healthy.
  * Set VEYLIN_DEV_KILL_PORTS=0 to skip entirely.
  */
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveDevDataDir } from '../../../scripts/dev-utils.mjs';
 import { probeVeylinHealth } from './health-probe.mjs';
 import {
   isLiveRepoWatchdog,
@@ -20,12 +21,6 @@ const repoRoot = resolve(scriptDir, '../../..');
 const port = process.env.PORT ?? '8787';
 const healthUrl = `http://127.0.0.1:${port}/health`;
 
-function resolveDevDataDir() {
-  const raw = process.env.VEYLIN_DATA_DIR?.trim();
-  if (!raw) return resolve(repoRoot, 'data');
-  return isAbsolute(raw) ? raw : resolve(repoRoot, raw);
-}
-
 if (process.env.VEYLIN_DEV_KILL_PORTS === '0') {
   process.exit(0);
 }
@@ -35,7 +30,7 @@ const ports = (process.env.VEYLIN_DEV_KILL_PORTS ?? '5174,8787')
   .map((p) => p.trim())
   .filter(Boolean);
 
-const dataDir = resolveDevDataDir();
+const dataDir = resolveDevDataDir(repoRoot);
 console.log(`[prep-dev] VEYLIN_DATA_DIR=${dataDir}`);
 
 const pid = readPidFile(watchdogPidPath(dataDir));

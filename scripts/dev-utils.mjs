@@ -1,9 +1,24 @@
 #!/usr/bin/env node
 /** Shared helpers for local dev scripts (cross-platform). */
 import { execSync } from 'node:child_process';
+import { isAbsolute, resolve } from 'node:path';
 
 export const DEV_PORTS = [8787, 5174];
 export const DEFAULT_HEALTH_URL = 'http://127.0.0.1:8787/health';
+
+const DEV_DATA_DIR = 'data';
+
+/**
+ * 开发时的数据目录,所有入口共用这一份(之前四个脚本各抄了一遍,默认值还不一致)。
+ *
+ * **默认值不要动**:换目录等于换库,启动时打不开就是一屏 panic,打开了也是一个
+ * 陌生的空侧栏 —— 两种都会被当成"数据丢了"。要挪得先把库迁过去,不能靠脚本猜。
+ */
+export function resolveDevDataDir(repoRoot) {
+  const raw = process.env.VEYLIN_DATA_DIR?.trim();
+  if (raw) return isAbsolute(raw) ? raw : resolve(repoRoot, raw);
+  return resolve(repoRoot, DEV_DATA_DIR);
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

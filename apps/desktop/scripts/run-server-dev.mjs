@@ -5,8 +5,9 @@
  */
 import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveDevDataDir } from '../../../scripts/dev-utils.mjs';
 import {
   removePidFile,
   watchdogPidPath,
@@ -19,14 +20,8 @@ const serverRoot = resolve(repoRoot, 'apps/server');
 const port = process.env.PORT ?? '8787';
 const healthUrl = `http://127.0.0.1:${port}/health`;
 
-function resolveDevDataDir() {
-  const raw = process.env.VEYLIN_DATA_DIR?.trim();
-  if (!raw) return resolve(repoRoot, 'data');
-  return isAbsolute(raw) ? raw : resolve(repoRoot, raw);
-}
-
-const dataDir = resolveDevDataDir();
-const catalogPath = resolve(repoRoot, 'data/models.local.json');
+const dataDir = resolveDevDataDir(repoRoot);
+const catalogPath = resolve(dataDir, 'models.local.json');
 const logDir = resolve(dataDir, 'logs');
 const logPath = resolve(logDir, 'server-dev.log');
 const pidFile = watchdogPidPath(dataDir);
