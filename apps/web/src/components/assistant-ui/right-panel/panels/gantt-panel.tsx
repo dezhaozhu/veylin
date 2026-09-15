@@ -23,6 +23,7 @@ import { loadDhtmlxGantt, loadDhtmlxGanttCss, type GanttModule } from '@/lib/dht
 import { toGanttTasks, type GanttTask, type GanttWindowPayload } from '@/lib/gantt-window-model';
 import { ganttErrorMessage, resolveGanttThreadId, ganttWindowUrl, withExpanded } from '@/lib/gantt-request';
 import { GANTT_SCALE_LEVELS, ganttChartConfig, resolveGanttScale } from '@/lib/gantt-scale';
+import { ganttTaskClass } from '@/lib/gantt-marks';
 import {
   applyGanttTaskFocus,
   decideGanttFocusFollowUp,
@@ -131,26 +132,14 @@ const VIEWS: GanttView[] = ['resource', 'workshop', 'order'];
 // 只读/列宽/刻度见 gantt-scale.ts。不在这里写死一份 config:
 // 日/周/月切换要换 min_column_width 和 scales,否则整段排产被挤进右栏。
 
-/** 三种诚实标记对应的视觉表达——工业静音色,不用红绿灯语义(晚了是"要核对
- * 的事实",不是"警报")。Tailwind 类名以字面量出现在这个文件里,构建时能被
- * 扫描到,即便实际拼接发生在运行时。 */
-const MARK_CLASSES: Record<string, string> = {
-  late: 'border-l-4 border-amber-500',
-  frozen: 'bg-slate-200/70 dark:bg-slate-700/50',
-  batch: 'ring-1 ring-inset ring-blue-400',
-  // 'maxlag'(会凉)与 'overload'(超载)—— spec §5 点名的四种诚实标记里,
-  // 之前只画了两种(2026-08-19 最终评审 F3)。overload 落在泳道父行上,用
-  // 边框而不是背景/环,免得和它自己下面 late/frozen 的 bar 视觉打架。
-  maxlag: 'ring-1 ring-inset ring-rose-400',
-  overload: 'border-2 border-dashed border-rose-500',
-};
-
-const MARK_LEGEND: Array<{ mark: keyof typeof MARK_CLASSES; dot: string; labelKey: string }> = [
-  { mark: 'late', dot: 'bg-amber-500', labelKey: 'panels.gantt.markLate' },
-  { mark: 'frozen', dot: 'bg-slate-500', labelKey: 'panels.gantt.markFrozen' },
-  { mark: 'batch', dot: 'bg-blue-500', labelKey: 'panels.gantt.markBatch' },
-  { mark: 'maxlag', dot: 'bg-rose-400', labelKey: 'panels.gantt.markMaxLag' },
-  { mark: 'overload', dot: 'bg-rose-500', labelKey: 'panels.gantt.markOverload' },
+/** 图例圆点的颜色必须和 index.css 甘特主题块里那一段逐一对齐 —— 图例对不上
+ * 条,比没有图例更糟。改一边记得改另一边。 */
+const MARK_LEGEND: Array<{ mark: string; dot: string; labelKey: string }> = [
+  { mark: 'late', dot: 'bg-[#d97706]', labelKey: 'panels.gantt.markLate' },
+  { mark: 'frozen', dot: 'bg-[#b9c2cb]', labelKey: 'panels.gantt.markFrozen' },
+  { mark: 'batch', dot: 'bg-[#5b93d6]', labelKey: 'panels.gantt.markBatch' },
+  { mark: 'maxlag', dot: 'bg-[#e06a78]', labelKey: 'panels.gantt.markMaxLag' },
+  { mark: 'overload', dot: 'bg-[#d1435b]', labelKey: 'panels.gantt.markOverload' },
 ];
 
 type Load =
@@ -160,14 +149,10 @@ type Load =
 
 type Availability = { state: 'checking' } | { state: 'unavailable' } | { state: 'available'; mod: GanttModule };
 
-/** dhtmlx `templates.task_class(start, end, task)` —— 把 `marks` 翻成 CSS 类。
- * 泳道父行和没有标记的条返回空字符串,不加任何装饰。 */
+/** dhtmlx 的 `templates.task_class(start, end, task)` 签名适配 —— 映射本体和
+ * 那段"为什么不用 Tailwind 工具类"的推理都在 gantt-marks.ts。 */
 function taskClass(_start: unknown, _end: unknown, task: unknown): string {
-  const marks = (task as { marks?: string[] } | undefined)?.marks ?? [];
-  return marks
-    .map((m) => MARK_CLASSES[m])
-    .filter(Boolean)
-    .join(' ');
+  return ganttTaskClass(task);
 }
 
 

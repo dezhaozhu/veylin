@@ -53,6 +53,11 @@ export function ganttChartConfig(scale: GanttScaleLevel): Record<string, unknown
     branch_loading: true,
     grid_width: 190,
     scale_height: 56,
+    // 条高只占行高一半多一点,剩下的是留白。默认条几乎顶满行高,几百条挨在一起
+    // 就横向连成一片,认不出行的边界 —— 这是"看久了眼睛发花"的一半原因
+    // (另一半是标记的虚线纹理,见 index.css 甘特主题块)。
+    row_height: 30,
+    bar_height: 16,
     min_column_width,
     scales,
     columns: [

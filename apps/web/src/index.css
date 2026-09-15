@@ -260,6 +260,59 @@ body.sidebar-column-resizing [data-slot="sidebar-container"] {
   box-shadow: inset 3px 0 0 0 rgb(245 158 11 / 0.85);
 }
 
+/* Gantt theme — the read-only schedule chart (gantt-panel.tsx, gantt-marks.ts).
+
+   Scoped on dhtmlx's own `.gantt_container` rather than a class of ours, because
+   the library stylesheet is UNLAYERED: it outranks every Tailwind utility (those
+   live in @layer utilities) regardless of source order. Two class selectors here
+   beat the library's single `.gantt_task_line`, so these land without !important.
+   That layering is also why the marks below are hand-written CSS instead of the
+   Tailwind classes they used to be — see gantt-marks.ts for the full story.
+
+   Saturation is the scarce resource: hundreds of bars means "normal" has to be
+   the quietest thing on screen, so the default bar is low-chroma and colour is
+   spent only on the honest marks. Dark mode is deliberately untouched — the
+   library ships no dark theme, so recolouring just the bars would leave them
+   sitting on a light chart. */
+.gantt_container {
+  --dhx-gantt-task-background: #9fb2c4;
+  --dhx-gantt-project-background: #d4dde6;
+  --dhx-gantt-project-color: #5b6672;
+}
+
+/* 晚了 — the same left-accent idiom as `.ag-row.sched-late` above, so the table
+   and the chart speak one visual language for the same fact. */
+.gantt_container .gantt_task_line.vg-late {
+  box-shadow: inset 3px 0 0 0 #d97706;
+}
+
+/* 锁定/人工 — drained of colour rather than flagged: it's a fact about how the
+   bar got there, not something to act on. */
+.gantt_container .gantt_task_line.vg-frozen {
+  --dhx-gantt-task-background: #b9c2cb;
+}
+
+/* 拼炉 / 会凉 — `outline`, not `border`: the library sets `border` on every bar
+   and would win the shorthand back. Both write `outline`, so a bar carrying both
+   shows 会凉 (declared second) — the more urgent fact wins, on purpose. */
+.gantt_container .gantt_task_line.vg-batch {
+  outline: 1px solid #5b93d6;
+  outline-offset: -1px;
+}
+.gantt_container .gantt_task_line.vg-maxlag {
+  outline: 1px solid #e06a78;
+  outline-offset: -1px;
+}
+
+/* 超载 — lane parent rows only (gantt-window-model.ts attaches it to `lane:*`),
+   so a dashed edge costs ~20 rows rather than hundreds; at leaf density dashes
+   degrade into a dot texture that's genuinely tiring to look at. Offset outwards
+   so it reads as "this whole lane", not "this one bar". */
+.gantt_container .gantt_task_line.vg-overload {
+  outline: 1px dashed #d1435b;
+  outline-offset: 2px;
+}
+
 @keyframes indeterminate-bar {
   0% {
     transform: translateX(-120%);
