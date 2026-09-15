@@ -33,6 +33,14 @@ function mcpHostUrl(threadId: string | undefined): string {
   return threadId ? `/api/mcp-apps/host?threadId=${encodeURIComponent(threadId)}` : '/api/mcp-apps/host';
 }
 
+/** 和 `mcp-app-theme.ts` 对上。对话里的 iframe 会一直拿着第一次读到的 HTML,
+ * 右侧摊开是新实例所以看着是新样式。key 一变,内联才会重新去 host 拉。 */
+const GANTT_CHROME_REV = 'd4e4e7-solid-y07';
+
+function isGanttWidgetUri(uri: string | undefined): boolean {
+  return !!uri && /(?:^|\/)gantt(?:\.html)?$/.test(uri);
+}
+
 
 /**
  * Tool-call renderer with MCP Apps support. When a tool declares a `ui://`
@@ -69,7 +77,12 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
     ? ({ ...p, mcp: { app: { resourceUri: uri } } } as unknown as typeof props)
     : props;
   const { render: Render } = useResource(
-    McpAppRenderer({ host: mcpHost, fallback: <ToolFallback {...props} /> }),
+    McpAppRenderer({
+      host: mcpHost,
+      fallback: <ToolFallback {...props} />,
+      // 默认内联高大约 150px,甘特会走缩略画法,颜色和虚线对不上右侧那张。
+      ...(isGanttWidgetUri(uri) ? { maxHeight: 480 } : {}),
+    }),
   );
 
   // 修正桥, in-chat context: the widget's "这里不对?" prefills the CURRENT
@@ -150,7 +163,9 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
               在右侧打开
             </button>
           </div>
-          <Render {...part} />
+          <div key={isGanttWidgetUri(uri) ? GANTT_CHROME_REV : 'app'}>
+            <Render {...part} />
+          </div>
         </div>
       ) : (
         <Render {...part} />

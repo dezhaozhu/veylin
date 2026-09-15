@@ -6,6 +6,7 @@ import { resolveScopedMcp } from '../mcp-scoping.js';
 import { resolvePinnedProjectScope, type PinnedProjectScope } from '../project-store.js';
 import { sceneSetKey } from '../compass-pool.js';
 import { resolveThreadForRead } from '../thread-state.js';
+import { themeMcpAppHtml } from '../mcp-app-theme.js';
 
 /**
  * What resolveScopedServerNames hands the host's client builder (v3 re-key):
@@ -293,7 +294,14 @@ export function registerMcpAppsRoutes(app: FastifyInstance, deps: ServerDeps): v
           const result = await client.resources.read(server, uri);
           const html = extractHtml(result);
           if (!html) return reply.code(404).send({ error: 'resource has no html body' });
-          return { uri: html.uri ?? uri, mimeType: MCP_APP_MIME, html: html.html };
+          const resolvedUri = html.uri ?? uri;
+          // 宿主侧配色:iframe 是独立 origin 的沙箱,样式表跨不进去,但 HTML 从
+          // 这里流过 —— 唯一能改 widget 观感的地方。认不出的 uri 原样透传。
+          return {
+            uri: resolvedUri,
+            mimeType: MCP_APP_MIME,
+            html: themeMcpAppHtml(resolvedUri, html.html),
+          };
         }
         case 'resources/list':
           return await client.resources.list();
