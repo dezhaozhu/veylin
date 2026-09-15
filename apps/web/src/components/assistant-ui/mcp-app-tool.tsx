@@ -29,13 +29,15 @@ import { useNavigateAnchor } from '@/components/assistant-ui/use-navigate-anchor
 // to enforce the thread's project pin, travels as a `?threadId=` query param
 // on the url instead. Built per-thread (not module-scope) so it tracks thread
 // switches.
-function mcpHostUrl(threadId: string | undefined): string {
-  return threadId ? `/api/mcp-apps/host?threadId=${encodeURIComponent(threadId)}` : '/api/mcp-apps/host';
-}
-
 /** 和 `mcp-app-theme.ts` 对上。对话里的 iframe 会一直拿着第一次读到的 HTML,
- * 右侧摊开是新实例所以看着是新样式。key 一变,内联才会重新去 host 拉。 */
-const GANTT_CHROME_REV = 'd4e4e7-solid-y07';
+ * 右侧摊开是新实例所以看着是新样式。这个字变了,host 和 iframe 才会重新拉。 */
+const GANTT_CHROME_REV = 'd4e4e7-late-d9a9a6';
+
+function mcpHostUrl(threadId: string | undefined): string {
+  const q = new URLSearchParams({ v: GANTT_CHROME_REV });
+  if (threadId) q.set('threadId', threadId);
+  return `/api/mcp-apps/host?${q}`;
+}
 
 function isGanttWidgetUri(uri: string | undefined): boolean {
   return !!uri && /(?:^|\/)gantt(?:\.html)?$/.test(uri);
@@ -62,7 +64,7 @@ export const McpAppToolFallback: ToolCallMessagePartComponent = (props) => {
   const threadProjects = useThreadProjects();
   const pinnedProjectId = threadId ? threadProjects[threadId] : undefined;
   const appTools = useAppTools(threadId, pinnedProjectId);
-  const mcpHost = useMemo(() => McpAppsRemoteHost({ url: mcpHostUrl(threadId) }), [threadId]);
+  const mcpHost = useMemo(() => McpAppsRemoteHost({ url: mcpHostUrl(threadId) }), [threadId, GANTT_CHROME_REV]);
   const p = props as unknown as Record<string, unknown>;
 
 
