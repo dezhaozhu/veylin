@@ -724,26 +724,36 @@ export async function listThreadsForResource(
     isSidebarChatThreadId(row.threadId),
   );
 
-  return Promise.all(
+  // 算标题是纯读,可以并发。
+  const resolved = await Promise.all(
     rows.map(async (row) => {
       let title = row.title?.trim() || undefined;
       if (title && isUnusableTitle(title)) title = undefined;
-      if (!title && memory) {
-        const derived = await deriveThreadTitleFromMemory(memory, row.threadId, resourceId);
-        if (derived) {
-          title = derived;
-          await setThreadTitle(row.threadId, derived);
-        }
-      }
-
+      const backfill = !title && memory
+        ? ((await deriveThreadTitleFromMemory(memory, row.threadId, resourceId)) ?? undefined)
+        : undefined;
       return {
-        remoteId: row.threadId,
-        title,
-        lastMessageAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
-        status: 'regular' as const,
+        entry: {
+          remoteId: row.threadId,
+          title: title ?? backfill,
+          lastMessageAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
+          status: 'regular' as const,
+        },
+        backfill,
       };
     }),
   );
+
+  // 存标题只是顺手的缓存,**串行而且失败不算数**。这是个读接口:
+  // 并发写同一张表会让嵌入式 SurrealDB 报 read conflict,而写在 Promise.all 里,
+  // 一条失败就整份列表 500 —— 侧栏直接空掉,人以为对话全丢了。
+  // 标题存不下最多下次再算一遍,不该让列表读不出来。
+  for (const { entry, backfill } of resolved) {
+    if (!backfill) continue;
+    await setThreadTitle(entry.remoteId, backfill).catch(() => undefined);
+  }
+
+  return resolved.map((r) => r.entry);
 }
 
 /**
