@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FC } from 'react';
 import { CheckIcon, ChevronDownIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
+import type { CorrectionPayload } from '@/lib/correction-bridge';
 import type { DisplayRow } from './scene-card-merge';
 import {
   CapacityBarChart,
@@ -20,8 +21,11 @@ import {
   extractHonestySegments,
   extractJudgmentPositives,
   extractRulesHitRate,
+  formatMeasure,
+  formatRowValue,
   groupDisplayBySection,
   groupSectionsByTab,
+  isProseFact,
   pickGlanceChanges,
   pickKeyMetrics,
   readSceneSnapshot,
@@ -38,14 +42,40 @@ import { useOpenCorrection } from './use-open-correction';
 /**
  * Default glance matches the chat shell: title, status, four numbers.
  * Charts, judgment, findings, and narrative stay behind “详细检查”.
+ *
+ * 除项目首页外,右侧面板也挂这块(`right-panel/panels/widget-panel.tsx`),同一份
+ * 数据不再有两种专业程度。两个宿主有两处必须分开,所以做成了注入 —— 见 `onReport`
+ * 和 `trackVisits`。
  */
 export const SceneCardSummaryPanel: FC<{
   rows: readonly DisplayRow[];
   narrative: NarrativeSnippet | null;
   source: string;
   projectId: string;
+  /**
+   * 「报错」的落点。缺省是项目首页的语义:开一条新会话、钉到本页项目、填好草稿
+   * (`useOpenCorrection`)。对话流和右栏里人已经在会话里了,该填当前输入框,所以
+   * 由宿主传进来。两条路拿到的 payload 形状相同,引用的字段也就一致。
+   */
+  onReport?: (payload: CorrectionPayload) => void;
+  /**
+   * 是否参与「自上次访问变化了什么」。
+   *
+   * 右栏摊开的是**某次工具调用的快照**,不是此刻的场景状态 —— 打开一条旧消息的卡
+   * 就会把过期数字写成新基线,项目首页随后报出来的差值全是假的。所以那条路要关掉
+   * 它:不读(不显示差值)、更不写。
+   */
+  trackVisits?: boolean;
   className?: string;
-}> = ({ rows, narrative, source, projectId, className }) => {
+}> = ({
+  rows,
+  narrative,
+  source,
+  projectId,
+  onReport,
+  trackVisits = true,
+  className,
+}) => {
   const { t } = useTranslation();
   const openCorrection = useOpenCorrection(projectId);
   const heroes = useMemo(() => pickKeyMetrics(rows, 4), [rows]);
@@ -75,7 +105,7 @@ export const SceneCardSummaryPanel: FC<{
 
   const baselineRef = useRef<SceneVisitSnapshot | null | undefined>(undefined);
   if (baselineRef.current === undefined) {
-    baselineRef.current = readSceneSnapshot(projectId, source);
+    baselineRef.current = trackVisits ? readSceneSnapshot(projectId, source) : null;
   }
   const previousAt = baselineRef.current?.at ?? null;
   const deltas = useMemo(
@@ -84,6 +114,7 @@ export const SceneCardSummaryPanel: FC<{
   );
 
   useEffect(() => {
+    if (!trackVisits) return;
     const save = () =>
       writeSceneSnapshot(projectId, source, {
         at: new Date().toISOString(),
@@ -94,7 +125,7 @@ export const SceneCardSummaryPanel: FC<{
       window.removeEventListener('pagehide', save);
       save();
     };
-  }, [projectId, source, rows]);
+  }, [projectId, source, rows, trackVisits]);
 
   const [detailsOpen, setDetailsOpen] = useState(true);
   const [capacityOpen, setCapacityOpen] = useState(false);
@@ -115,12 +146,15 @@ export const SceneCardSummaryPanel: FC<{
   const topCapacity = capacityBars[0] ?? null;
 
   const report = (row: DisplayRow) => {
-    openCorrection(source, {
+    // payload 在这里拼一次,两个宿主引用的字段就一定一致。
+    const payload: CorrectionPayload = {
       scene: source,
       section: row.section,
       label: row.label,
       current: row.value,
-    });
+    };
+    if (onReport) onReport(payload);
+    else openCorrection(source, payload);
   };
 
   const formatMetric = (item: AttentionItem): string | null => {
@@ -258,13 +292,20 @@ export const SceneCardSummaryPanel: FC<{
                     <span>
                       <span className="text-foreground font-medium">{t('projectPage.chartCapacity')}</span>
                       {' · '}
-                      {topCapacity
-                        ? t('projectPage.capacityGlance', {
+                      {topCapacity?.unit
+                        ? t('projectPage.capacityGlanceUnit', {
                             count: capacityBars.length + (capacityTruncated ?? 0),
                             name: topCapacity.label,
-                            k: topCapacity.num,
+                            value: formatMeasure(topCapacity.num),
+                            unit: topCapacity.unit,
                           })
-                        : t('projectPage.capacityGlancePlain', { count: capacityBars.length })}
+                        : topCapacity
+                          ? t('projectPage.capacityGlance', {
+                              count: capacityBars.length + (capacityTruncated ?? 0),
+                              name: topCapacity.label,
+                              k: formatMeasure(topCapacity.num),
+                            })
+                          : t('projectPage.capacityGlancePlain', { count: capacityBars.length })}
                     </span>
                   </button>
                   {capacityOpen ? (
@@ -413,7 +454,25 @@ export const SceneCardSummaryPanel: FC<{
                           {sec.rows.map((r) => {
                             const delta =
                               typeof r.num === 'number' ? deltas[r.key] : undefined;
-                            return (
+                            const value = formatRowValue(r);
+                            return isProseFact(r, value) ? (
+                              <div
+                                key={r.key}
+                                className="group/fact min-w-0 py-1 sm:col-span-2"
+                              >
+                                <dt className="text-muted-foreground flex items-baseline gap-2 text-xs">
+                                  <span className="min-w-0">{r.label}</span>
+                                  <button
+                                    type="button"
+                                    className="hover:text-foreground shrink-0 text-[10px] opacity-0 transition-opacity group-hover/fact:opacity-100 focus-visible:opacity-100"
+                                    onClick={() => report(r)}
+                                  >
+                                    {t('projectPage.reportWrong')}
+                                  </button>
+                                </dt>
+                                <dd className="mt-1 text-sm leading-relaxed">{value}</dd>
+                              </div>
+                            ) : (
                               <div
                                 key={r.key}
                                 className="group/fact flex min-w-0 items-baseline justify-between gap-3 py-1"
@@ -422,7 +481,7 @@ export const SceneCardSummaryPanel: FC<{
                                   {r.label}
                                 </dt>
                                 <dd className="flex shrink-0 items-baseline gap-1.5 text-sm tabular-nums">
-                                  <span>{r.value}</span>
+                                  <span>{value}</span>
                                   {delta != null ? <DeltaBadge delta={delta} /> : null}
                                   <button
                                     type="button"

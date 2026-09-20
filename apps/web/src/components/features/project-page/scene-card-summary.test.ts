@@ -12,8 +12,11 @@ import {
   extractHonestySegments,
   extractJudgmentPositives,
   extractRulesHitRate,
+  formatMeasure,
+  formatRowValue,
   groupDisplayBySection,
   groupSectionsByTab,
+  isProseFact,
   pickGlanceChanges,
   pickKeyMetrics,
   recommendationKey,
@@ -127,6 +130,76 @@ describe('summary charts from display', () => {
     );
   });
 
+  // 真机 guolu 讲的是吨/月,不是并行台数。写死 `capacity.k.` 前缀会让这张图整个不出,
+  // 八个资源(最高的和最低的差近四倍)退化成一列文字。
+  it('图也认 K 以外的产能口径,并把单位带出来', () => {
+    const bars = extractCapacityBars([
+      { key: 'capacity.tonnage.汇能', section: '产能口径', label: '汇能', value: '', num: 6801.2, unit: '吨/月' },
+      { key: 'capacity.tonnage.绿叶', section: '产能口径', label: '绿叶', value: '', num: 5167.8, unit: '吨/月' },
+      row('capacity.tonnage._truncated', '产能口径', '未显示资源', '另有 44 个', 44),
+    ]);
+    assert.deepEqual(
+      bars.map((b) => b.label),
+      ['汇能', '绿叶'],
+    );
+    assert.equal(bars[0]?.unit, '吨/月');
+  });
+
+  it('两种口径不共用一根轴 —— 条长只在同一口径内可比', () => {
+    const bars = extractCapacityBars([
+      row('capacity.k.a', '产能口径', 'A', 'K=3', 3),
+      { key: 'capacity.tonnage.x', section: '产能口径', label: 'X', value: '', num: 900, unit: '吨/月' },
+      { key: 'capacity.tonnage.y', section: '产能口径', label: 'Y', value: '', num: 800, unit: '吨/月' },
+    ]);
+    assert.deepEqual(
+      bars.map((b) => b.key),
+      ['capacity.tonnage.x', 'capacity.tonnage.y'],
+    );
+  });
+
+  // 真机上 K 那一口径十个资源全是 1,出图就是十根等长满格条。口径多的那个不一定是
+  // 有信息的那个,所以先挑能把资源分开的。
+  it('宁可挑行数少但有区分度的口径,也不要全场同一个读数', () => {
+    const bars = extractCapacityBars([
+      row('capacity.k.a', '产能口径', 'A', 'K=1', 1),
+      row('capacity.k.b', '产能口径', 'B', 'K=1', 1),
+      row('capacity.k.c', '产能口径', 'C', 'K=1', 1),
+      { key: 'capacity.tonnage.x', section: '产能口径', label: 'X', value: '', num: 900, unit: '吨/月' },
+      { key: 'capacity.tonnage.y', section: '产能口径', label: 'Y', value: '', num: 200, unit: '吨/月' },
+    ]);
+    assert.deepEqual(
+      bars.map((b) => b.label),
+      ['X', 'Y'],
+    );
+  });
+
+  it('全都没区分度时仍然出图口径,交给图自己去讲', () => {
+    const bars = extractCapacityBars([
+      row('capacity.k.a', '产能口径', 'A', 'K=1', 1),
+      row('capacity.k.b', '产能口径', 'B', 'K=1', 1),
+    ]);
+    assert.equal(bars.length, 2);
+    assert.ok(bars.every((b) => b.num === 1));
+  });
+
+  // 截断数和图必须讲同一个口径,否则图上是台数、旁边写着"另有 44 个吨/月资源未显示"。
+  it('截断数取自出图的那个口径', () => {
+    const rows = [
+      { key: 'capacity.tonnage.x', section: '产能口径', label: 'X', value: '', num: 900, unit: '吨/月' },
+      { key: 'capacity.tonnage.y', section: '产能口径', label: 'Y', value: '', num: 800, unit: '吨/月' },
+      row('capacity.tonnage._truncated', '产能口径', '未显示', '另有 44 个', 44),
+      row('capacity.k._truncated', '产能口径', '未显示', '另有 9 个', 9),
+    ];
+    assert.equal(extractCapacityTruncated(rows), 44);
+  });
+
+  it('一条数值行都没有时,截断数仍然报得出来', () => {
+    assert.equal(
+      extractCapacityTruncated([row('capacity.k._truncated', '产能口径', '未显示', '另有 9 个', 9)]),
+      9,
+    );
+  });
+
   it('computes rules hit rate or returns null', () => {
     assert.deepEqual(
       extractRulesHitRate([
@@ -136,6 +209,61 @@ describe('summary charts from display', () => {
       { active: 96, hit: 5 },
     );
     assert.equal(extractRulesHitRate([row('rules.active', '规则健康', '有效', '96', 96)]), null);
+  });
+});
+
+describe('formatMeasure / formatRowValue', () => {
+  it('解算器浮点不原样上屏', () => {
+    const m = formatMeasure(6801.249999999997);
+    assert.ok(!/249999/.test(m), m);
+    assert.ok(/6.?801/.test(m), m);
+  });
+
+  it('整数不长出小数位,小数留两位', () => {
+    assert.match(formatMeasure(2451), /^2.?451$/);
+    assert.match(formatMeasure(3.456), /^3[.,]46$/);
+  });
+
+  it('只重写行首那个数,单位和口径说明留着', () => {
+    const cleaned = formatRowValue({
+      key: 'capacity.tonnage.汇能',
+      section: '产能口径',
+      label: '汇能',
+      value: '6801.249999999997 吨/月(多规则取最大)',
+      num: 6801.249999999997,
+    });
+    assert.ok(!/249999/.test(cleaned), cleaned);
+    assert.ok(cleaned.endsWith(' 吨/月(多规则取最大)'), cleaned);
+  });
+
+  it('value 不是以那个数打头就不碰它', () => {
+    const untouched = formatRowValue(row('rules.hit', '规则健康', '命中', '命中 99 条', 99));
+    assert.equal(untouched, '命中 99 条');
+  });
+});
+
+// 「标签 ——— 数值」那个行型里,右值不收缩、左标签 truncate,所以长文本会把标签挤没。
+// 真机上红线的 effect 有 200 字,实物截图里规则名整个不见了。
+describe('isProseFact', () => {
+  const redLine = {
+    key: 'red_lines.r1',
+    section: '红线',
+    label: 'classless 外协 fallback (priority 10, only catches classes with no per-class rule)',
+    value:
+      '吨/月 (monthly_weight) · 上锅, 东方热能, 中科, 华益, 四方, 山东博宇, 德海, 德耐特, 招标, 新桠欣, 杭州杭富',
+  };
+
+  it('长的定性文本走通栏,不跟标签挤一行', () => {
+    assert.equal(isProseFact(redLine, redLine.value), true);
+  });
+
+  it('数值行照旧「标签 ——— 数值」', () => {
+    assert.equal(isProseFact(row('rules.hit', '规则健康', '上次命中', '319 条', 319), '319 条'), false);
+  });
+
+  it('短的文字值也照旧 —— 通栏是给长文本的,不是给所有非数值', () => {
+    assert.equal(isProseFact(row('problem.levels', '问题结构', '层级', '二级'), '二级'), false);
+    assert.equal(isProseFact(row('rules.changed', '规则健康', '规则集自上次排产', '未变'), '未变'), false);
   });
 });
 
@@ -194,6 +322,19 @@ describe('trust / attention / detail tabs', () => {
     assert.deepEqual(
       groups.map((g) => g.tab),
       ['data', 'capacity', 'rules', 'other'],
+    );
+  });
+
+  /** 红线是最硬的那类规则,归「其它」等于把硬约束埋在杂项里。文案在 i18n 的
+   *  projectPage.redLineSection,和 tabForSection 的正则是一对。 */
+  it('红线归「规则」页,不落进「其它」', () => {
+    const groups = groupSectionsByTab([
+      { section: '红线规则 L1', rows: [row('red_lines.r1', '红线规则 L1', '某红线', '吨/月')] },
+      { section: '其它来源', rows: [row('d', '其它来源', 'D', '4', 4)] },
+    ]);
+    assert.deepEqual(
+      groups.map((g) => g.tab),
+      ['rules', 'other'],
     );
   });
 

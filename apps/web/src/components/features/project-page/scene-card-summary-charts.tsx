@@ -1,6 +1,7 @@
 import { useState, type FC } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
+import { formatMeasure } from './scene-card-summary';
 import type { CapacityBar, HonestySegment, RulesHitRate } from './scene-card-summary';
 
 /** Tone → CSS color (aligned with Compass scene-card widget palette). */
@@ -64,7 +65,9 @@ export const HonestyBarChart: FC<{
 export const HonestyQualityCard = HonestyBarChart;
 
 /**
- * Capacity K: label | bar | value on one line, two columns so bars stay short.
+ * Capacity: label | bar | value on one line, two columns so bars stay short.
+ * Every bar shares one dimension, so the unit is stated once in the header
+ * rather than repeated on each row.
  */
 export const CapacityBarChart: FC<{
   bars: readonly CapacityBar[];
@@ -77,11 +80,19 @@ export const CapacityBarChart: FC<{
   const max = Math.max(...bars.map((b) => b.num), 1);
   const visible = expanded ? bars : bars.slice(0, previewLimit);
   const hidden = Math.max(0, bars.length - previewLimit);
+  const unit = bars.find((b) => b.unit)?.unit ?? null;
+  const reading = (num: number) =>
+    unit ? `${formatMeasure(num)} ${unit}` : `K=${formatMeasure(num)}`;
+  // 全场一个读数时,条形图是十根等长满格条 —— 零信息量,还像是画坏了。
+  const uniform = bars.length > 1 && bars.every((b) => b.num === bars[0]?.num);
 
   return (
     <div className={cn('min-w-0', className)}>
       <div className="mb-2 flex items-baseline justify-between gap-3">
-        <p className="text-foreground text-xs font-semibold">{t('projectPage.chartCapacity')}</p>
+        <p className="text-foreground text-xs font-semibold">
+          {t('projectPage.chartCapacity')}
+          {unit ? <span className="text-muted-foreground font-normal"> · {unit}</span> : null}
+        </p>
         <p className="text-muted-foreground text-xs tabular-nums">
           {truncated != null && truncated > 0
             ? t('projectPage.capacityMetaTruncated', {
@@ -91,11 +102,19 @@ export const CapacityBarChart: FC<{
             : t('projectPage.capacityResourceCount', { count: bars.length })}
         </p>
       </div>
+      {uniform ? (
+        <p className="text-muted-foreground text-xs">
+          {t('projectPage.capacityUniform', {
+            count: bars.length,
+            value: reading(bars[0]?.num ?? 0),
+          })}
+        </p>
+      ) : (
       <ul className="grid gap-x-8 gap-y-2 sm:grid-cols-2">
         {visible.map((b) => (
           <li
             key={b.key}
-            className="grid grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)_2.75rem] items-center gap-2 text-xs"
+            className="grid grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)_3.75rem] items-center gap-2 text-xs"
           >
             <span className="text-muted-foreground truncate" title={b.label}>
               {b.label}
@@ -106,11 +125,14 @@ export const CapacityBarChart: FC<{
                 style={{ width: `${(b.num / max) * 100}%` }}
               />
             </div>
-            <span className="text-right font-medium tabular-nums">K={b.num}</span>
+            <span className="text-right font-medium tabular-nums">
+              {unit ? formatMeasure(b.num) : `K=${formatMeasure(b.num)}`}
+            </span>
           </li>
         ))}
       </ul>
-      {hidden > 0 ? (
+      )}
+      {!uniform && hidden > 0 ? (
         <button
           type="button"
           className="text-muted-foreground hover:text-foreground mt-2 text-xs font-medium underline-offset-4 hover:underline"

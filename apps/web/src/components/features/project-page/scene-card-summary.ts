@@ -106,8 +106,8 @@ export type HonestySegment = {
   tone?: string;
 };
 
-/** Parallel-K bar for the capacity strip (from `capacity.k.*` rows). */
-export type CapacityBar = { key: string; label: string; num: number };
+/** One resource in the capacity strip (from `capacity.<dimension>.*` rows). */
+export type CapacityBar = { key: string; label: string; num: number; unit?: string };
 
 /** Hit-rate ring inputs (from `rules.active` + `rules.hit`). */
 export type RulesHitRate = { active: number; hit: number };
@@ -130,38 +130,130 @@ export function extractHonestySegments(rows: readonly DisplayRow[]): HonestySegm
     }));
 }
 
+/** `capacity.<dimension>.<resource>` — the measure a tenant states capacity in. */
+function capacityDimension(key: string): string | null {
+  const parts = key.split('.');
+  return parts.length >= 3 && parts[0] === 'capacity' && parts[1] ? parts[1] : null;
+}
+
+function isCapacityBarRow(row: DisplayRow): row is DisplayRow & { num: number } {
+  return (
+    capacityDimension(row.key) != null &&
+    !row.key.endsWith('._truncated') &&
+    typeof row.num === 'number' &&
+    Number.isFinite(row.num) &&
+    row.num > 0
+  );
+}
+
 /**
- * Top parallel-K resources for a bar strip. Skips `_truncated` and non-numeric
- * rows; highest K first, capped.
+ * Bar lengths are only comparable inside one dimension (parallel machines,
+ * monthly tonnage, …), so the strip charts one dimension instead of putting
+ * different measures on a shared axis.
+ *
+ * A dimension that reads the same for every resource (real case: `K=1` across
+ * the board) draws ten identical full-width bars and tells the reader nothing,
+ * so dimensions that actually separate resources are preferred over merely
+ * well-populated ones. Ties break on dimension name to keep the pick stable.
+ */
+function pickCapacityDimension(rows: readonly DisplayRow[]): string | null {
+  const seen = new Map<string, number[]>();
+  for (const row of rows) {
+    if (!isCapacityBarRow(row)) continue;
+    const dim = capacityDimension(row.key);
+    if (!dim) continue;
+    const nums = seen.get(dim);
+    if (nums) nums.push(row.num);
+    else seen.set(dim, [row.num]);
+  }
+  let best: string | null = null;
+  let bestRank: [number, number] = [-1, -1];
+  for (const [dim, nums] of [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const varies = nums.some((n) => n !== nums[0]) ? 1 : 0;
+    const rank: [number, number] = [varies, nums.length];
+    if (rank[0] > bestRank[0] || (rank[0] === bestRank[0] && rank[1] > bestRank[1])) {
+      best = dim;
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
+/**
+ * Top resources for the capacity strip, largest first and capped. Skips
+ * `_truncated` filler and non-numeric rows.
  */
 export function extractCapacityBars(rows: readonly DisplayRow[], limit = 12): CapacityBar[] {
+  const dimension = pickCapacityDimension(rows);
+  if (!dimension) return [];
   return rows
-    .filter(
-      (r): r is DisplayRow & { num: number } =>
-        r.key.startsWith('capacity.k.') &&
-        !r.key.endsWith('._truncated') &&
-        !r.key.includes('._truncated') &&
-        typeof r.num === 'number' &&
-        Number.isFinite(r.num) &&
-        r.num > 0,
+    .filter((r): r is DisplayRow & { num: number } =>
+      isCapacityBarRow(r) && capacityDimension(r.key) === dimension,
     )
     .slice()
     .sort((a, b) => b.num - a.num)
     .slice(0, limit)
-    .map((r) => ({ key: r.key, label: r.label, num: r.num }));
+    .map((r) => ({
+      key: r.key,
+      label: r.label,
+      num: r.num,
+      ...(r.unit ? { unit: r.unit } : {}),
+    }));
 }
 
-/** Count of resources omitted from the K strip (`capacity.k._truncated`). */
+/**
+ * Count of resources omitted from the strip (`capacity.<dimension>._truncated`),
+ * read from the same dimension the strip charts so the two never disagree.
+ */
 export function extractCapacityTruncated(rows: readonly DisplayRow[]): number | null {
-  const row = rows.find(
-    (r) =>
-      (r.key === 'capacity.k._truncated' || r.key.endsWith('._truncated')) &&
-      r.key.includes('capacity'),
+  const dimension = pickCapacityDimension(rows);
+  const row = rows.find((r) =>
+    dimension
+      ? r.key === `capacity.${dimension}._truncated`
+      : r.key.endsWith('._truncated') && r.key.startsWith('capacity'),
   );
   if (!row || typeof row.num !== 'number' || !Number.isFinite(row.num) || row.num <= 0) {
     return null;
   }
   return row.num;
+}
+
+/**
+ * Compass sends raw solver floats (`6801.249999999997`), so measures are
+ * rounded for display: coarser as they grow, trailing zeros dropped.
+ */
+export function formatMeasure(num: number): string {
+  if (!Number.isFinite(num)) return String(num);
+  const digits = Number.isInteger(num) ? 0 : Math.abs(num) >= 100 ? 1 : 2;
+  try {
+    return new Intl.NumberFormat(undefined, { maximumFractionDigits: digits }).format(num);
+  } catch {
+    return num.toFixed(digits);
+  }
+}
+
+/**
+ * `value` stays authoritative — it is Compass's own wording, unit included, and
+ * often carries a qualifier the number alone cannot express. But Compass builds
+ * it by concatenating a raw solver float, so a row can read
+ * `6801.249999999997 吨/月(多规则取最大)`. Only that leading number is rewritten.
+ */
+/**
+ * 「标签 ——— 数值」那个行型只装得下短数值:右值不收缩,左标签一 truncate,一段长文本
+ * 会把标签整个挤没(红线的 `effect` 是 200 字,实物上只剩一串资源名)。定性长文本得换
+ * 成上下两行、通栏。
+ */
+export function isProseFact(row: DisplayRow, value: string): boolean {
+  return typeof row.num !== 'number' && value.length > 40;
+}
+
+export function formatRowValue(row: DisplayRow): string {
+  if (typeof row.num !== 'number' || !Number.isFinite(row.num) || Number.isInteger(row.num)) {
+    return row.value;
+  }
+  const raw = String(row.num);
+  if (!row.value.startsWith(raw)) return row.value;
+  return `${formatMeasure(row.num)}${row.value.slice(raw.length)}`;
 }
 
 export type TrustScore = {
@@ -332,7 +424,10 @@ export type DetailTabId = 'data' | 'capacity' | 'rules' | 'other';
 export function tabForSection(section: string): DetailTabId {
   if (/诚实|honest|数据口径|问题结构|问题/.test(section)) return 'data';
   if (/产能|capacity|资源/.test(section)) return 'capacity';
-  if (/规则|rule/.test(section)) return 'rules';
+  // 红线(L1)也归「规则」—— 它是最硬的那类规则。不点名的话它落进「其它」,
+  // 等于把硬约束埋在杂项里(红线由 scene-card-panel-input.ts 补进来,display
+  // 合同目前不投影它)。
+  if (/规则|rule|红线|red[\s-]?line/i.test(section)) return 'rules';
   return 'other';
 }
 
