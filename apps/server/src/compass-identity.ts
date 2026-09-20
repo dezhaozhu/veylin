@@ -209,9 +209,19 @@ function headersEqual(a: Record<string, string>, b: Record<string, string>): boo
   return aKeys.every((key) => a[key] === b[key]);
 }
 
+/**
+ * `transport` 必须参与比较。少了它,一条 url/headers 都对、只有传输方式是 `sse`
+ * 的行会被判成 `unchanged` —— 而 Compass 的 `/mcp/` 是 streamable HTTP,用 SSE
+ * 客户端连上去只会拿到一条永远不发 `endpoint` 事件的空流,超时算连接失败。对账器
+ * 每轮报 `unchanged=1`,连接却一直是 0/1,日志里看不出任何可疑。
+ *
+ * 行是怎么变成 `sse` 的不重要(`repos.ts` 读到空的 transport 列就默认 `sse`),
+ * 重要的是:这个字段决定连不连得上,就该归对账器管。
+ */
 function matchesDesired(existing: McpServer, entry: DesiredCompassEntry): boolean {
   return (
     existing.url === entry.url &&
+    existing.transport === entry.transport &&
     existing.enabled === entry.enabled &&
     existing.group === entry.group &&
     existing.managed === true &&
@@ -438,6 +448,9 @@ export async function reconcileCompassIdentity(
       case 'adopt': {
         const entry = action.entry;
         await deps.updateRemoteMcpServer(deps.tenantId, action.id, {
+          // transport 也要写回 —— 只比不写的话,一条传输方式不对的行会每轮都被
+          // 判成要 adopt、每轮都改不掉,对账器空转。
+          transport: entry.transport,
           url: entry.url,
           headers: entry.headers,
           enabled: entry.enabled,

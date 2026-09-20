@@ -166,6 +166,26 @@ describe('desiredVsCurrent (pure diff — untouched fn, re-keyed fixtures)', () 
     assert.deepEqual(desiredVsCurrent(desired, current), [{ kind: 'unchanged', id: 'srv-1' }]);
   });
 
+  /** Compass 的 `/mcp/` 是 streamable HTTP。一条只有 transport 不对的行如果被放过,
+   *  连接永远是 0/1,而对账器每轮都报 unchanged —— 故障现场没有任何可疑的行。 */
+  it('adopts a row that differs only by transport', () => {
+    const desired = desiredCompassEntries(CONFIG, ['guolu']);
+    const current = [
+      server({
+        id: 'srv-1',
+        name: COMPASS_ENTRY_NAME,
+        transport: 'sse',
+        url: desired[0]!.url,
+        headers: desired[0]!.headers,
+        group: desired[0]!.group,
+        managed: true,
+      }),
+    ];
+    assert.deepEqual(desiredVsCurrent(desired, current), [
+      { kind: 'adopt', id: 'srv-1', entry: desired[0] },
+    ]);
+  });
+
   it('legacy-entry disable matrix: managed compass-guolu/-shangzhong/-对比 all fall into the disable branch; manual rows untouched', () => {
     // These legacy names never equal `compass`, so adopt-by-name cannot capture
     // them — desiredVsCurrent retires them via its ordinary disable branch.
@@ -520,6 +540,48 @@ describe('reconcileCompassIdentity — integration against the real embedded sto
     const shangzhongProject = projects.find((p) => p.name === '上重');
     assert.deepEqual(shangzhongProject?.sources, ['shangzhong']);
     assert.equal(shangzhongProject?.managed, true);
+  });
+
+  /** 真机上踩到过:这条行除了 transport 全对,于是每轮 unchanged=1,而 MCP 连接
+   *  一直 0/1。修好之后它得能自己愈合 —— 判出来要 adopt,并且真的写回 http。 */
+  it('heals a stored compass row left on the sse transport', async () => {
+    const suffix = Date.now();
+    const tenantId = `compass-identity-test-transport-${suffix}`;
+
+    const stale = await createRemoteMcpServer(tenantId, {
+      name: COMPASS_ENTRY_NAME,
+      transport: 'sse',
+      url: `${CONFIG.url}/mcp/`,
+      headers: { Authorization: `Bearer ${CONFIG.token}` },
+      enabled: true,
+      group: COMPASS_IDENTITY_GROUP,
+      managed: true,
+    });
+
+    let rebuildCalls = 0;
+    const summary = await reconcileCompassIdentity({
+      tenantId,
+      config: CONFIG,
+      fetchSources: async () => ({ ok: true, sources: ['guolu'] }),
+      listRemoteMcpServers,
+      createRemoteMcpServer,
+      updateRemoteMcpServer,
+      rebuildMcp: async () => {
+        rebuildCalls += 1;
+      },
+      ...projectDeps,
+      log: () => undefined,
+      warn: () => undefined,
+    });
+
+    assert.equal(summary.adopted, 1);
+    assert.equal(summary.unchanged, 0, '只差 transport 的行被放过了');
+    assert.equal(rebuildCalls, 1, 'transport 变了却没重建连接');
+
+    const after = (await listRemoteMcpServers(tenantId)).find((s) => s.id === stale.id);
+    assert.equal(after?.transport, 'http', 'transport 没被写回去');
+    assert.equal(after?.url, `${CONFIG.url}/mcp/`);
+    assert.equal(after?.enabled, true);
   });
 
   it('revoke → disable, re-grant → re-enable the SAME default project row (no duplicates)', async () => {
