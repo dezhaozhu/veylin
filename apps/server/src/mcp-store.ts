@@ -222,6 +222,21 @@ export async function listActiveMcpServerNames(
   ];
 }
 
+/**
+ * 通用客户端(createMcpClient)真正负责连接的那些服务 —— 即 active 减去 Compass
+ * 身份条目,与 buildMcpServerConfigs 的跳过规则一致。健康快照必须拿它当期望集合:
+ * Compass 只走 compass-pool,拿 active 当期望会让它永远"未连接",自愈循环于是
+ * 反复重建、每次都 invalidateCompassPool 把正在用的 Compass 连接断掉。
+ */
+export async function listGenericClientMcpServerNames(tenantId: string): Promise<string[]> {
+  const pooled = new Set(
+    (await listRemoteMcpServers(tenantId))
+      .filter((s) => s.group === COMPASS_IDENTITY_GROUP)
+      .map((s) => s.name),
+  );
+  return (await listActiveMcpServerNames(tenantId)).filter((name) => !pooled.has(name));
+}
+
 /** Keywords whose value is JSON *data*, not a nested schema — must not be walked as one. */
 const DATA_VALUE_SCHEMA_KEYS = new Set(['default', 'examples', 'const', 'enum']);
 

@@ -36,8 +36,10 @@ export function isMcpAutoRetryEnabled(env: NodeJS.ProcessEnv = process.env): boo
 
 /**
  * True when the snapshot has any disconnected server. `buildMcpHealthSnapshot`
- * is only ever given `activeNames` (already filtered to enabled servers — see
- * `listActiveMcpServerNames`), so every entry here is by construction
+ * is only ever given `activeNames` (already filtered to enabled servers the
+ * generic client connects — see
+ * `listGenericClientMcpServerNames`, which also drops pool-only Compass entries),
+ * so every entry here is by construction
  * "enabled but disconnected"; there is no separate enabled/disabled check to make.
  */
 export function hasDisconnectedServer(snapshot: McpHealthSnapshot | undefined): boolean {

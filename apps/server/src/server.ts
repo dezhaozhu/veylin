@@ -49,7 +49,7 @@ import { refreshAgentPackages, isAgentHotReloadEnabled } from './agent-packages-
 import {
   createMcpClient,
   createRemoteMcpServer,
-  listActiveMcpServerNames,
+  listGenericClientMcpServerNames,
   listMcpServerGroups,
   listRemoteMcpServers,
   sanitizeMcpToolsets,
@@ -200,7 +200,8 @@ async function main() {
   let taskToolset: Record<string, unknown> = {};
 
   async function rebuildMcp(tenantId: string) {
-    const activeNames = await listActiveMcpServerNames(tenantId);
+    // 只算通用客户端负责的服务:Compass 走 compass-pool,不在这里连,也不该在这里判断开。
+    const activeNames = await listGenericClientMcpServerNames(tenantId);
     // Keep the previous good toolsets when a rebuild fails or stalls: one
     // misbehaving remote server must not wipe (or block) every other server's
     // tools for the whole process. @mastra already isolates per-server connect
